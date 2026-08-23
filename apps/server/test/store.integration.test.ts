@@ -36,7 +36,7 @@ beforeAll(async () => {
   };
   const created = createApp({ config, db, blobs: new FileSystemBlobStore(blobRoot, config.baseUrl) });
   app = created.app;
-  await created.store.seedDevelopmentIdentities();
+  await created.services.identities.seedDevelopmentIdentities();
 });
 
 afterAll(async () => {
@@ -46,7 +46,7 @@ afterAll(async () => {
 
 describe("rNet M1 store", () => {
   let vibeId = "";
-  let objectId = "";
+  let mediaObjectId = "";
   let originUri = "";
   let originHash = "";
 
@@ -132,7 +132,7 @@ describe("rNet M1 store", () => {
     });
     expect(response.status).toBe(201);
     const body = await response.json();
-    objectId = body.items[0].uri.split("/").at(-1);
+    mediaObjectId = body.items[0].uri.split("/").at(-1);
     expect(body.items[0].owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
   });
 
@@ -172,15 +172,15 @@ describe("rNet M1 store", () => {
   test("lets a granted machine read but never exposes origins", async () => {
     const vibe = await request(`/rnet/v0/vibes/${vibeId}`, { headers: machine });
     expect(vibe.status).toBe(200);
-    const object = await request(`/rnet/v0/objects/${objectId}`, { headers: machine });
-    expect(object.status).toBe(200);
-    expect(object.headers.get("ETag")).toBe('"0"');
+    const mediaObjectResponse = await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine });
+    expect(mediaObjectResponse.status).toBe(200);
+    expect(mediaObjectResponse.headers.get("ETag")).toBe('"0"');
     const origin = await request(`/rnet/v0/origins/${originUri.split("/").at(-1)}`, { headers: machine });
     expect(origin.status).toBe(403);
   });
 
   test("revision-protects machine writes and refuses source-shaped fields", async () => {
-    const update = await request(`/rnet/v0/objects/${objectId}/user`, {
+    const update = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
       headers: { ...machine, "If-Match": "0" },
       json: { properties: { category: "coffee" } },
@@ -188,20 +188,20 @@ describe("rNet M1 store", () => {
     expect(update.status).toBe(200);
     expect(update.headers.get("ETag")).toBe('"1"');
 
-    const stale = await request(`/rnet/v0/objects/${objectId}/user`, {
+    const stale = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
       headers: { ...machine, "If-Match": "0" },
       json: { properties: { category: "food" } },
     });
     expect(stale.status).toBe(409);
 
-    const corrupt = await request(`/rnet/v0/objects/${objectId}/user`, {
+    const corrupt = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
       headers: { ...machine, "If-Match": "1" },
       json: { properties: {}, source: { properties: { amount: 0 } } },
     });
     expect(corrupt.status).toBe(422);
-    const unchanged = await (await request(`/rnet/v0/objects/${objectId}`, { headers: machine })).json();
+    const unchanged = await (await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine })).json();
     expect(unchanged.source.properties.amount).toBe(-6.5);
   });
 
@@ -217,30 +217,30 @@ describe("rNet M1 store", () => {
       body: "A machine-authored note",
     });
     expect(uploaded.status).toBe(201);
-    const element = await uploaded.json();
-    expect(element.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
-    expect(element.uri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
-    expect(element.content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    const mediaElement = await uploaded.json();
+    expect(mediaElement.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+    expect(mediaElement.uri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
+    expect(mediaElement.content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
     const created = await request("/rnet/v0/objects", {
       method: "POST",
       headers: machine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
-        objects: [{ type: "note", elements: [element.uri], properties: { title: "Machine-authored" } }],
+        objects: [{ type: "note", elements: [mediaElement.uri], properties: { title: "Machine-authored" } }],
       },
     });
     expect(created.status).toBe(201);
     const document = (await created.json()).items[0];
-    expect(document.owner).toBe(element.owner);
+    expect(document.owner).toBe(mediaElement.owner);
     expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
     expect(document.source.origins).toEqual([
       "rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48",
     ]);
-    const elementRead = await request(`/rnet/v0/elements/${element.uri.split("/").at(-1)}`, { headers: machine });
-    expect(elementRead.status).toBe(200);
-    expect((await elementRead.json()).content_hash).toBe(element.content_hash);
+    const mediaElementRead = await request(`/rnet/v0/elements/${mediaElement.uri.split("/").at(-1)}`, { headers: machine });
+    expect(mediaElementRead.status).toBe(200);
+    expect((await mediaElementRead.json()).content_hash).toBe(mediaElement.content_hash);
 
-    const inferred = await request(`/rnet/v0/objects/${objectId}/inferred`, {
+    const inferred = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
       headers: machine,
       json: { task: "forecast", entry: { model: "test/model", properties: { next: 42 } } },
@@ -248,7 +248,7 @@ describe("rNet M1 store", () => {
     expect(inferred.status).toBe(200);
     expect((await inferred.json()).inferred["rbudget:forecast"].properties.next).toBe(42);
 
-    const spoof = await request(`/rnet/v0/objects/${objectId}/inferred`, {
+    const spoof = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
       headers: machine,
       json: { task: "rhizome:forecast", entry: { model: "test/model", properties: {} } },
@@ -320,7 +320,7 @@ describe("rNet M1 store", () => {
     const disposableVibe = await disposableVibeResponse.json();
     const disposableVibeId = disposableVibe.uri.split("/").at(-1);
 
-    const elementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
+    const mediaElementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
       method: "POST",
       headers: {
         ...machine,
@@ -330,21 +330,21 @@ describe("rNet M1 store", () => {
       },
       body: "Retained after Vibe deletion",
     });
-    expect(elementResponse.status).toBe(201);
-    const element = await elementResponse.json();
-    const elementId = element.uri.split("/").at(-1);
+    expect(mediaElementResponse.status).toBe(201);
+    const mediaElement = await mediaElementResponse.json();
+    const retainedMediaElementUuid = mediaElement.uri.split("/").at(-1);
 
-    const objectResponse = await request("/rnet/v0/objects", {
+    const mediaObjectResponse = await request("/rnet/v0/objects", {
       method: "POST",
       headers: machine,
       json: {
         vibe: disposableVibe.uri,
-        objects: [{ type: "note", elements: [element.uri], properties: { title: "Retained" } }],
+        objects: [{ type: "note", elements: [mediaElement.uri], properties: { title: "Retained" } }],
       },
     });
-    expect(objectResponse.status).toBe(201);
-    const object = (await objectResponse.json()).items[0];
-    const objectId = object.uri.split("/").at(-1);
+    expect(mediaObjectResponse.status).toBe(201);
+    const mediaObject = (await mediaObjectResponse.json()).items[0];
+    const retainedMediaObjectUuid = mediaObject.uri.split("/").at(-1);
 
     expect((await request(`/rnet/v0/vibes/${disposableVibeId}`, { method: "DELETE", headers: owner })).status).toBe(
       204,
@@ -353,7 +353,7 @@ describe("rNet M1 store", () => {
       `select
          (select created_for_vibe from elements where uuid = $1) as element_vibe,
          (select created_for_vibe from objects where uuid = $2) as object_vibe`,
-      [elementId, objectId],
+      [retainedMediaElementUuid, retainedMediaObjectUuid],
     );
     expect(retained[0]?.element_vibe).toBeNull();
     expect(retained[0]?.object_vibe).toBeNull();

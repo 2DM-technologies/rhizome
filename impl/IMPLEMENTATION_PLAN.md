@@ -72,7 +72,11 @@ rhizome/                            # PRODUCT (closed).
 │       └── sandboxing.md           # alpha isolation + bridge decision
 ├── apps/                           # what Rhizome deploys
 │   ├── server/                     # the rNet store — Bun + Hono
-│   │   └── src/ routes/ db/ blobs/ push/ pull/ auth/ metering/
+│   │   └── src/
+│   │       ├── routes/             # one Hono router + its controllers per protocol resource
+│   │       ├── services/           # domain methods; routes never query the database directly
+│   │       ├── db/models/          # one Drizzle table definition per database model
+│   │       ├── blobs/ pull/ auth/ metering/
 │   │       └── push/tasks/         # one dir per task: prompt + output schema (plan §5.1)
 │   ├── host/                       # the Rhizome shell — Vite + React SPA, React Router.
 │   │                               # Holds the session, talks to the store directly, and
