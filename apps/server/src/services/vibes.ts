@@ -2,7 +2,6 @@ import { validateSchema, type Grant, type MediaObject, type Vibe } from "@rnet/t
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import type { Actor } from "../auth.ts";
 import type { Database } from "../db/index.ts";
 import { grants } from "../db/models/grant.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
@@ -10,39 +9,43 @@ import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
-import type { AccessService, DbVibe } from "./access.ts";
-import type { IdentityService } from "./identities.ts";
-import type { MediaObjectService } from "./media-objects.ts";
+import { AccessService, type DbVibe } from "./access.ts";
+import { IdentityService } from "./identities.ts";
+import { MediaObjectService } from "./media-objects.ts";
 import { schemaProblem } from "./problems.ts";
+import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
-export interface CreateVibeInput {
-  title: string;
-  pull?: Vibe["pull"];
-  grants?: Grant[];
-}
-
-export type UpdateVibeInput = Partial<CreateVibeInput>;
-
 export class VibeService {
-  constructor(
-    private readonly db: Database,
-    private readonly access: AccessService,
-    private readonly identities: IdentityService,
-    private readonly mediaObjectService: MediaObjectService,
-  ) {}
+  private readonly db: Database;
+  private readonly actor: ServiceContext["actor"];
+  private readonly access: AccessService;
+  private readonly identities: IdentityService;
+  private readonly mediaObjectService: MediaObjectService;
 
-  async listVibes(actor: Actor): Promise<Vibe[]> {
+  constructor(context: ServiceContext) {
+    this.db = context.db;
+    this.actor = context.actor;
+    this.access = new AccessService(context);
+    this.identities = new IdentityService(context.db);
+    this.mediaObjectService = new MediaObjectService(context);
+  }
+
+  async listVibes(): Promise<Vibe[]> {
     const vibeRows =
-      actor.kind === "user"
-        ? await this.db.select().from(vibes).where(eq(vibes.ownerUuid, actor.uuid)).orderBy(asc(vibes.createdAt))
+      this.actor.kind === "user"
+        ? await this.db
+            .select()
+            .from(vibes)
+            .where(eq(vibes.ownerUuid, this.actor.uuid))
+            .orderBy(asc(vibes.createdAt))
         : await this.db
             .select({ vibe: vibes })
             .from(vibes)
             .innerJoin(grants, eq(grants.vibeUuid, vibes.uuid))
             .where(
               and(
-                eq(grants.subject, actor.subject),
+                eq(grants.subject, this.actor.subject),
                 isNull(grants.revokedAt),
                 sql`${grants.scopes} @> '["read"]'::jsonb`,
               ),
@@ -52,15 +55,16 @@ export class VibeService {
     return Promise.all(vibeRows.map((vibe) => this.toDocument(vibe)));
   }
 
-  async createVibe(actor: Actor, input: CreateVibeInput): Promise<Vibe> {
-    await this.access.assertAuthenticated(actor);
-    if (actor.kind !== "user") throw grantMissing("owner");
+  async createVibe(input: Pick<Vibe, "title" | "pull" | "grants">): Promise<Vibe> {
+    await this.access.assertAuthenticated();
+    if (this.actor.kind !== "user") throw grantMissing("owner");
+    const ownerUuid = this.actor.uuid;
     const vibeUuid = uuidv7();
     const candidateVibe = {
       rnet_schema: "0.1",
       uri: `rnet://vibe/${vibeUuid}`,
       title: input.title,
-      owner: `rnet://id/${actor.uuid}`,
+      owner: `rnet://id/${ownerUuid}`,
       objects: [],
       ...(input.pull === undefined ? {} : { pull: input.pull }),
       ...(input.grants === undefined ? {} : { grants: input.grants }),
@@ -76,7 +80,7 @@ export class VibeService {
         .values({
           uuid: vibeUuid,
           title: vibeDocument.title,
-          ownerUuid: actor.uuid,
+          ownerUuid,
           rnetSchema: vibeDocument.rnet_schema,
           pullConfig: vibeDocument.pull,
           inferred: vibeDocument.inferred ?? {},
@@ -95,7 +99,7 @@ export class VibeService {
       await transaction.insert(vibeRevisions).values({
         vibeUuid,
         rev: 1,
-        actor: actor.subject,
+        actor: this.actor.subject,
         snapshot: snapshotVibe(vibeRecord, vibeDocument.grants ?? []),
         membershipDelta: { added: [], removed: [] },
       });
@@ -103,14 +107,17 @@ export class VibeService {
     });
   }
 
-  async getVibe(actor: Actor, vibeUuid: string): Promise<Vibe> {
-    const vibeRecord = await this.access.assertVibeScope(actor, vibeUuid, "read");
+  async getVibe(vibeUuid: string): Promise<Vibe> {
+    const vibeRecord = await this.access.assertVibeScope(vibeUuid, "read");
     return this.toDocument(vibeRecord);
   }
 
-  async updateVibe(actor: Actor, vibeUuid: string, patch: UpdateVibeInput): Promise<Vibe> {
-    await this.access.assertVibeOwner(actor, vibeUuid);
-    const currentVibe = await this.getVibe(actor, vibeUuid);
+  async updateVibe(
+    vibeUuid: string,
+    patch: Partial<Pick<Vibe, "title" | "pull" | "grants">>,
+  ): Promise<Vibe> {
+    await this.access.assertVibeOwner(vibeUuid);
+    const currentVibe = await this.getVibe(vibeUuid);
     const allowed = new Set(["title", "pull", "grants"]);
     const extra = Object.keys(patch).find((key) => !allowed.has(key));
     if (extra) throw schemaProblem([{ instancePath: `/${extra}`, message: "property is not patchable" }]);
@@ -163,20 +170,20 @@ export class VibeService {
       await transaction.insert(vibeRevisions).values({
         vibeUuid,
         rev: vibeRecord.rev,
-        actor: actor.subject,
+        actor: this.actor.subject,
         snapshot: snapshotVibe(vibeRecord, vibeDocument.grants ?? []),
       });
       return vibeDocument;
     });
   }
 
-  async deleteVibe(actor: Actor, vibeUuid: string): Promise<void> {
-    await this.access.assertVibeOwner(actor, vibeUuid);
+  async deleteVibe(vibeUuid: string): Promise<void> {
+    await this.access.assertVibeOwner(vibeUuid);
     await this.db.delete(vibes).where(eq(vibes.uuid, vibeUuid));
   }
 
-  async listMediaObjects(actor: Actor, vibeUuid: string): Promise<MediaObject[]> {
-    await this.access.assertVibeScope(actor, vibeUuid, "read");
+  async listMediaObjects(vibeUuid: string): Promise<MediaObject[]> {
+    await this.access.assertVibeScope(vibeUuid, "read");
     const mediaObjectRows = await this.db
       .select({ mediaObject: mediaObjects })
       .from(vibeMediaObjects)
@@ -188,13 +195,13 @@ export class VibeService {
     );
   }
 
-  async addMediaObjectRefs(actor: Actor, vibeUuid: string, references: string[]): Promise<void> {
-    const targetVibe = await this.access.assertVibeScope(actor, vibeUuid, "write:objects");
+  async addMediaObjectRefs(vibeUuid: string, references: string[]): Promise<void> {
+    const targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
     const mediaObjectUuids = references.map(uriId);
     if (new Set(mediaObjectUuids).size !== mediaObjectUuids.length) {
       throw schemaProblem([{ instancePath: "/objects", message: "must not contain duplicate object URIs" }]);
     }
-    const actorIsOwner = actor.kind === "user" && actor.uuid === targetVibe.ownerUuid;
+    const actorIsOwner = this.actor.kind === "user" && this.actor.uuid === targetVibe.ownerUuid;
     for (const mediaObjectUuid of mediaObjectUuids) {
       const [mediaObjectRecord] = await this.db
         .select({
@@ -208,7 +215,7 @@ export class VibeService {
       if (mediaObjectRecord.ownerUuid !== targetVibe.ownerUuid) throw grantMissing("owner");
       if (
         !actorIsOwner &&
-        (mediaObjectRecord.createdBy !== actor.subject || mediaObjectRecord.createdForVibe !== vibeUuid)
+        (mediaObjectRecord.createdBy !== this.actor.subject || mediaObjectRecord.createdForVibe !== vibeUuid)
       ) {
         throw grantMissing("write:objects");
       }
@@ -243,7 +250,6 @@ export class VibeService {
       );
       await this.recordMembershipChange(
         transaction,
-        actor,
         vibeUuid,
         references,
         [],
@@ -251,8 +257,8 @@ export class VibeService {
     });
   }
 
-  async removeMediaObjectRefs(actor: Actor, vibeUuid: string, references: string[]): Promise<void> {
-    await this.access.assertVibeOwner(actor, vibeUuid);
+  async removeMediaObjectRefs(vibeUuid: string, references: string[]): Promise<void> {
+    await this.access.assertVibeOwner(vibeUuid);
     const mediaObjectUuids = references.map(uriId);
     await this.db.transaction(async (transaction) => {
       if (mediaObjectUuids.length) {
@@ -267,7 +273,6 @@ export class VibeService {
       }
       await this.recordMembershipChange(
         transaction,
-        actor,
         vibeUuid,
         [],
         references,
@@ -328,7 +333,6 @@ export class VibeService {
 
   private async recordMembershipChange(
     transaction: Parameters<Parameters<Database["transaction"]>[0]>[0],
-    actor: Actor,
     vibeUuid: string,
     added: string[],
     removed: string[],
@@ -346,7 +350,7 @@ export class VibeService {
     await transaction.insert(vibeRevisions).values({
       vibeUuid,
       rev: vibeRecord.rev,
-      actor: actor.subject,
+      actor: this.actor.subject,
       snapshot: snapshotVibe(
         vibeRecord,
         activeGrants.map((grant) => ({ subject: grant.subject, scope: grant.scopes })),

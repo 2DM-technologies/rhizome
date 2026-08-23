@@ -2,7 +2,6 @@ import { validateMediaObject, type MediaObject } from "@rnet/types";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import type { Actor } from "../auth.ts";
 import type { Database } from "../db/index.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
@@ -13,60 +12,53 @@ import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
-import type { AccessService, DbVibe } from "./access.ts";
-import type { IdentityService } from "./identities.ts";
+import { AccessService, type DbVibe } from "./access.ts";
+import { IdentityService } from "./identities.ts";
 import { schemaProblem } from "./problems.ts";
+import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
 export type DbMediaObject = typeof mediaObjects.$inferSelect;
 
-export interface CreateMediaObjectsInput {
-  vibe?: string;
-  objects: unknown[];
-}
-
-export interface SetMediaObjectUserInput {
-  properties: Record<string, unknown>;
-}
-
-export interface SetMediaObjectInferredInput {
-  task: string;
-  entry: NonNullable<MediaObject["inferred"]>[string];
-}
-
 export class MediaObjectService {
-  constructor(
-    private readonly db: Database,
-    private readonly access: AccessService,
-    private readonly identities: IdentityService,
-  ) {}
+  private readonly db: Database;
+  private readonly actor: ServiceContext["actor"];
+  private readonly access: AccessService;
+  private readonly identities: IdentityService;
 
-  async getMediaObject(actor: Actor, uuid: string): Promise<{ document: MediaObject; userRev: number }> {
+  constructor(context: ServiceContext) {
+    this.db = context.db;
+    this.actor = context.actor;
+    this.access = new AccessService(context);
+    this.identities = new IdentityService(context.db);
+  }
+
+  async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
     const [mediaObjectRecord] = await this.db.select().from(mediaObjects).where(eq(mediaObjects.uuid, uuid));
     if (!mediaObjectRecord) throw notFound("Object");
-    if (!(await this.access.canReadMediaObject(actor, uuid))) throw grantMissing("read");
+    if (!(await this.access.canReadMediaObject(uuid))) throw grantMissing("read");
     return { document: await this.toDocument(mediaObjectRecord), userRev: mediaObjectRecord.userRev };
   }
 
-  async createMediaObjects(actor: Actor, body: CreateMediaObjectsInput): Promise<MediaObject[]> {
-    await this.access.assertAuthenticated(actor);
-    const vibeUuid = body.vibe ? uriId(body.vibe) : undefined;
+  async createMediaObjects(vibe: string | undefined, mediaObjectInputs: unknown[]): Promise<MediaObject[]> {
+    await this.access.assertAuthenticated();
+    const vibeUuid = vibe ? uriId(vibe) : undefined;
     let targetVibe: DbVibe | undefined;
-    if (actor.kind === "client") {
+    if (this.actor.kind === "client") {
       if (!vibeUuid) throw schemaProblem([{ instancePath: "/vibe", message: "is required for clients" }]);
-      targetVibe = await this.access.assertVibeScope(actor, vibeUuid, "write:objects");
+      targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
     } else if (vibeUuid) {
-      targetVibe = await this.access.assertVibeScope(actor, vibeUuid, "write:objects");
+      targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
     }
-    const ownerUuid = targetVibe?.ownerUuid ?? (actor.kind === "user" ? actor.uuid : undefined);
+    const ownerUuid = targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
     if (!ownerUuid) throw grantMissing("owner");
-    const actorOwnsRecords = actor.kind === "user" && actor.uuid === ownerUuid;
+    const actorOwnsRecords = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
 
-    const mediaObjectDocuments = body.objects.map((item, index) =>
-      this.normalizeMediaObject(actor, ownerUuid, item, index),
+    const mediaObjectDocuments = mediaObjectInputs.map((item, index) =>
+      this.normalizeMediaObject(ownerUuid, item, index),
     );
     for (const mediaObjectDocument of mediaObjectDocuments) {
-      await this.assertMediaObjectReferences(actor, vibeUuid, ownerUuid, mediaObjectDocument);
+      await this.assertMediaObjectReferences(vibeUuid, ownerUuid, mediaObjectDocument);
     }
 
     return this.db.transaction(async (transaction) => {
@@ -88,7 +80,7 @@ export class MediaObjectService {
         await transaction.insert(mediaObjects).values({
           uuid: mediaObjectUuid,
           ownerUuid,
-          createdBy: actor.subject,
+          createdBy: this.actor.subject,
           createdForVibe: actorOwnsRecords ? null : vibeUuid,
           type: mediaObjectDocument.type,
           keys: mediaObjectDocument.keys ?? {},
@@ -119,7 +111,7 @@ export class MediaObjectService {
           block: "source",
           rev: 1,
           snapshot: mediaObjectDocument.source,
-          actor: actor.subject,
+          actor: this.actor.subject,
         });
         if (vibeUuid && nextVibePosition !== undefined) {
           await transaction.insert(vibeMediaObjects).values({
@@ -135,14 +127,13 @@ export class MediaObjectService {
   }
 
   async setUser(
-    actor: Actor,
     mediaObjectUuid: string,
     expectedRev: number,
-    value: SetMediaObjectUserInput,
+    properties: Record<string, unknown>,
   ): Promise<{ document: MediaObject; userRev: number }> {
-    await this.access.assertMediaObjectScope(actor, mediaObjectUuid, "write:user");
+    await this.access.assertMediaObjectScope(mediaObjectUuid, "write:user");
     const candidateUser: NonNullable<MediaObject["user"]> = {
-      properties: value.properties,
+      properties,
       updated_at: new Date().toISOString(),
     };
     const updatedMediaObject = await this.db.transaction(async (transaction) => {
@@ -184,7 +175,7 @@ export class MediaObjectService {
         block: "user",
         rev: nextMediaObject.userRev,
         snapshot: candidateUser,
-        actor: actor.subject,
+        actor: this.actor.subject,
       });
       return nextMediaObject;
     });
@@ -195,15 +186,13 @@ export class MediaObjectService {
   }
 
   async setInferred(
-    actor: Actor,
     mediaObjectUuid: string,
-    body: SetMediaObjectInferredInput,
+    task: string,
+    entry: NonNullable<MediaObject["inferred"]>[string],
   ): Promise<MediaObject> {
-    await this.access.assertMediaObjectScope(actor, mediaObjectUuid, "write:inferred");
-    const task = body.task;
-    const entry = body.entry;
-    const key = actor.kind === "client" ? `${actor.name}:${task}` : task;
-    if (actor.kind === "client" && task.includes(":")) {
+    await this.access.assertMediaObjectScope(mediaObjectUuid, "write:inferred");
+    const key = this.actor.kind === "client" ? `${this.actor.name}:${task}` : task;
+    if (this.actor.kind === "client" && task.includes(":")) {
       throw new Problem(403, "writer_namespace_mismatch", "Writer namespace mismatch", "Pass a bare task name");
     }
     const updatedMediaObject = await this.db.transaction(async (transaction) => {
@@ -250,7 +239,7 @@ export class MediaObjectService {
         block: "inferred",
         rev: (maxRevision?.max ?? 0) + 1,
         snapshot: inferred,
-        actor: actor.subject,
+        actor: this.actor.subject,
       });
       return nextMediaObject;
     });
@@ -269,7 +258,7 @@ export class MediaObjectService {
     );
   }
 
-  private normalizeMediaObject(actor: Actor, ownerUuid: string, input: unknown, index: number): MediaObject {
+  private normalizeMediaObject(ownerUuid: string, input: unknown, index: number): MediaObject {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw schemaProblem([{ instancePath: `/objects/${index}`, message: "must be an object" }]);
     }
@@ -282,7 +271,7 @@ export class MediaObjectService {
       ]);
     }
     const candidateMediaObject =
-      actor.kind === "client"
+      this.actor.kind === "client"
         ? {
             rnet_schema: "0.1",
             uri: `rnet://object/${mediaObjectUuid}`,
@@ -292,7 +281,7 @@ export class MediaObjectService {
             ...(rawMediaObject.keys === undefined ? {} : { keys: rawMediaObject.keys }),
             source: {
               ingest: { method: "authored", reproducible: false },
-              origins: [`rnet://client/${actor.uuid}`],
+              origins: [`rnet://client/${this.actor.uuid}`],
               properties: rawMediaObject.properties ?? {},
             },
           }
@@ -318,7 +307,6 @@ export class MediaObjectService {
   }
 
   private async assertMediaObjectReferences(
-    actor: Actor,
     vibeUuid: string | undefined,
     ownerUuid: string,
     mediaObjectDocument: MediaObject,
@@ -338,12 +326,12 @@ export class MediaObjectService {
         throw schemaProblem([{ instancePath: "/elements", message: `unknown element ${uri}` }]);
       }
       if (mediaElementRecord.ownerUuid !== ownerUuid) throw grantMissing("owner");
-      const actorOwnsRecord = actor.kind === "user" && actor.uuid === ownerUuid;
+      const actorOwnsRecord = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
       if (!actorOwnsRecord) {
         const createdForTarget =
-          mediaElementRecord.createdBy === actor.subject && mediaElementRecord.createdForVibe === vibeUuid;
+          mediaElementRecord.createdBy === this.actor.subject && mediaElementRecord.createdForVibe === vibeUuid;
         const readableInTarget = vibeUuid
-          ? await this.canReadMediaElementInVibe(actor, mediaElementUuid, vibeUuid)
+          ? await this.canReadMediaElementInVibe(mediaElementUuid, vibeUuid)
           : false;
         if (!createdForTarget && !readableInTarget) throw grantMissing("read");
       }
@@ -365,12 +353,11 @@ export class MediaObjectService {
   }
 
   private async canReadMediaElementInVibe(
-    actor: Actor,
     mediaElementUuid: string,
     vibeUuid: string,
   ): Promise<boolean> {
     try {
-      await this.access.assertVibeScope(actor, vibeUuid, "read");
+      await this.access.assertVibeScope(vibeUuid, "read");
     } catch (error) {
       if (error instanceof Problem && [403, 404].includes(error.status)) return false;
       throw error;

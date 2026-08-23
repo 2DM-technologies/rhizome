@@ -13,7 +13,7 @@ import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
-import { createServices } from "./services/index.ts";
+import { IdentityService } from "./services/identities.ts";
 
 export interface AppDependencies {
   config: ServerConfig;
@@ -22,7 +22,7 @@ export interface AppDependencies {
 }
 
 export function createApp({ db, blobs }: AppDependencies) {
-  const services = createServices(db);
+  const identityService = new IdentityService(db);
   const app = new Hono<AppEnvironment>();
 
   app.use(logger());
@@ -53,11 +53,11 @@ export function createApp({ db, blobs }: AppDependencies) {
   app.notFound((context) => problemResponse(context, notFound("Route")));
 
   app.get("/health", (context) => context.json({ ok: true, service: "rhizome" }));
-  app.route("/rnet/v0/vibes", createVibeRoutes(services));
-  app.route("/rnet/v0/objects", createMediaObjectRoutes(services));
-  app.route("/rnet/v0/elements", createMediaElementRoutes(services, blobs));
-  app.route("/rnet/v0/origins", createOriginRoutes(services, blobs));
-  app.route("/rnet/v0/operations", createOperationRoutes(services));
+  app.route("/rnet/v0/vibes", createVibeRoutes(db));
+  app.route("/rnet/v0/objects", createMediaObjectRoutes(db));
+  app.route("/rnet/v0/elements", createMediaElementRoutes(db, blobs));
+  app.route("/rnet/v0/origins", createOriginRoutes(db, blobs));
+  app.route("/rnet/v0/operations", createOperationRoutes(db));
 
-  return { app, services };
+  return { app, identityService };
 }

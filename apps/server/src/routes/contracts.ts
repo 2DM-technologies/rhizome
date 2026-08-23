@@ -16,14 +16,14 @@ import {
 } from "@rnet/types";
 import Ajv2020, { type ErrorObject } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import type { Context, Input, MiddlewareHandler } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
+import type { Input, MiddlewareHandler } from "hono";
+import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
-import { Problem } from "../errors.ts";
+import { Problem, problemResponse } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
 import type { AppEnvironment } from "./types.ts";
 
-export type JsonSchemaDocument = Readonly<Record<string, unknown>>;
+export type JsonSchemaDocument = JSONSchema;
 
 export interface ContractSchema<Value> {
   readonly document: JsonSchemaDocument;
@@ -44,7 +44,25 @@ type JsonInput<Value extends object> = Input & {
   out: { json: Value };
 };
 
-type SchemaValue<Schema> = Schema extends ContractSchema<infer Value> ? Value : never;
+type ContractInput<RequestBody extends object | undefined> = RequestBody extends object
+  ? JsonInput<RequestBody>
+  : Input;
+
+type RnetSchemaReferences = [
+  typeof grantSchema,
+  typeof ingestRecordSchema,
+  typeof mediaElementSchema,
+  typeof mediaObjectSchema,
+  typeof originArtifactSchema,
+  typeof trackPropertiesSchema,
+  typeof transactionPropertiesSchema,
+  typeof vibeSchema,
+];
+
+type JsonSchemaValue<Schema extends JSONSchema> = FromSchema<
+  Schema,
+  { keepDefaultedPropertiesOptional: true; references: RnetSchemaReferences }
+>;
 
 const ajv = new Ajv2020({
   allErrors: true,
@@ -67,8 +85,11 @@ const RNET_DOCUMENTS = {
 
 for (const document of Object.values(RNET_DOCUMENTS)) ajv.addSchema(document);
 
-export function jsonSchema<Value>(document: JsonSchemaDocument): ContractSchema<Value> {
-  const validate = ajv.compile<Value>(document);
+export function jsonSchema<const Schema extends JSONSchema>(
+  document: Schema,
+): ContractSchema<JsonSchemaValue<Schema>>;
+export function jsonSchema(document: JSONSchema): ContractSchema<unknown> {
+  const validate = ajv.compile(document);
   return {
     document,
     validate(value) {
@@ -92,9 +113,9 @@ export function rnetDocument<Name extends SchemaName>(name: Name): ContractSchem
 }
 
 export function collectionOf<Value>(item: ContractSchema<Value>): ContractSchema<{ items: Value[] }> {
-  const id = item.document.$id;
+  const id = typeof item.document === "object" ? item.document.$id : undefined;
   if (typeof id !== "string") throw new Error("Collection item schemas must have an $id");
-  const collection = jsonSchema<{ items: Value[] }>({
+  const collection = jsonSchema({
     type: "object",
     required: ["items"],
     properties: { items: { type: "array", items: { $ref: id } } },
@@ -114,48 +135,63 @@ export function collectionOf<Value>(item: ContractSchema<Value>): ContractSchema
               instancePath: `/items/${index}${issue.instancePath}`,
             }));
       });
-      return issues.length ? { ok: false, issues } : envelope;
+      return issues.length
+        ? { ok: false, issues }
+        : { ok: true, value: envelope.value as { items: Value[] } };
     },
   };
 }
 
-export function defineRoute<
+export const problemSchema = jsonSchema({
+  type: "object",
+  required: ["type", "title", "status", "detail", "code"],
+  properties: {
+    type: { type: "string", format: "uri" },
+    title: { type: "string", minLength: 1 },
+    status: { type: "integer", minimum: 400, maximum: 599 },
+    detail: { type: "string" },
+    code: { type: "string", minLength: 1 },
+  },
+  additionalProperties: true,
+});
+
+export function rnetRoute<
   RequestBody extends object | undefined,
   const Responses extends ContractResponses,
->(contract: RouteContract<RequestBody, Responses>): RouteContract<RequestBody, Responses> {
-  return contract;
-}
-
-export function validateJsonRequest<RequestBody extends object>(
-  contract: RouteContract<RequestBody, ContractResponses>,
-): MiddlewareHandler<AppEnvironment, string, JsonInput<RequestBody>> {
-  return async (context, next) => {
-    const body = await context.req.json().catch(() => {
-      throw new Problem(422, "schema_violation", "Invalid JSON", "The request body must be JSON");
-    });
-    const validation = contract.request.json.validate(body);
-    if (!validation.ok) throw schemaProblem(validation.issues);
-    context.req.addValidatedData("json", validation.value);
-    await next();
-  };
-}
-
-export function jsonResponse<
-  Responses extends ContractResponses,
-  Status extends keyof Responses & ContentfulStatusCode,
 >(
-  context: Context<AppEnvironment>,
-  contract: { readonly responses: Responses },
-  status: Status,
-  value: SchemaValue<Responses[Status]>,
-): Response {
-  const schema = contract.responses[status];
-  if (!schema) throw new Error(`No response schema declared for status ${status}`);
-  const validation = schema.validate(value);
-  if (!validation.ok) {
-    throw new Error(`Route produced an invalid ${status} response: ${JSON.stringify(validation.issues)}`);
-  }
-  return context.json(validation.value as never, status);
+  contract: RouteContract<RequestBody, Responses>,
+): MiddlewareHandler<AppEnvironment, string, ContractInput<RequestBody>> {
+  return async (context, next) => {
+    try {
+      if (contract.request) {
+        const body = await context.req.json().catch(() => {
+          throw new Problem(422, "schema_violation", "Invalid JSON", "The request body must be JSON");
+        });
+        const validation = contract.request.json.validate(body);
+        if (!validation.ok) throw schemaProblem(validation.issues);
+        context.req.addValidatedData("json", validation.value);
+      }
+      await next();
+    } catch (error) {
+      if (!(error instanceof Problem)) throw error;
+      context.res = problemResponse(context, error);
+    }
+
+    const schema = contract.responses[context.res.status];
+    if (!schema) return;
+    const value = await context.res
+      .clone()
+      .json()
+      .catch(() => {
+        throw new Error(`Route produced a non-JSON ${context.res.status} response`);
+      });
+    const validation = schema.validate(value);
+    if (!validation.ok) {
+      throw new Error(
+        `Route produced an invalid ${context.res.status} response: ${JSON.stringify(validation.issues)}`,
+      );
+    }
+  };
 }
 
 function validationIssues(errors: ErrorObject[] | null | undefined): ValidationIssue[] {

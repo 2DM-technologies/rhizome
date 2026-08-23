@@ -5,9 +5,9 @@ import { createDatabase } from "./db/index.ts";
 
 const config = loadConfig();
 const { db } = createDatabase(config.databaseUrl);
-const { app, services } = createApp({ config, db, blobs: createBlobStore(config) });
+const { app, identityService } = createApp({ config, db, blobs: createBlobStore(config) });
 
-await services.identities.seedDevelopmentIdentities();
+await identityService.seedDevelopmentIdentities();
 
 console.log(`Rhizome listening on ${config.baseUrl}`);
 

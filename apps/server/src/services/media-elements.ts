@@ -1,10 +1,10 @@
 import { eq } from "drizzle-orm";
 
-import type { Actor } from "../auth.ts";
 import type { Database } from "../db/index.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { grantMissing, notFound } from "../errors.ts";
-import type { AccessService } from "./access.ts";
+import { AccessService } from "./access.ts";
+import type { ServiceContext } from "./types.ts";
 
 export type DbMediaElement = typeof mediaElements.$inferSelect;
 
@@ -20,10 +20,13 @@ export interface CreateMediaElementInput {
 }
 
 export class MediaElementService {
-  constructor(
-    private readonly db: Database,
-    private readonly access: AccessService,
-  ) {}
+  private readonly db: Database;
+  private readonly access: AccessService;
+
+  constructor(context: ServiceContext) {
+    this.db = context.db;
+    this.access = new AccessService(context);
+  }
 
   async createMediaElement(input: CreateMediaElementInput): Promise<DbMediaElement> {
     const [mediaElementRecord] = await this.db
@@ -44,8 +47,8 @@ export class MediaElementService {
     return mediaElementRecord;
   }
 
-  async getMediaElement(actor: Actor, uuid: string): Promise<DbMediaElement> {
-    if (!(await this.access.canReadMediaElement(actor, uuid))) throw grantMissing("read");
+  async getMediaElement(uuid: string): Promise<DbMediaElement> {
+    if (!(await this.access.canReadMediaElement(uuid))) throw grantMissing("read");
     const [mediaElementRecord] = await this.db
       .select()
       .from(mediaElements)

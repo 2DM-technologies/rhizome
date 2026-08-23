@@ -1,10 +1,10 @@
 import { eq } from "drizzle-orm";
 
-import type { Actor } from "../auth.ts";
 import type { Database } from "../db/index.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { notFound } from "../errors.ts";
-import type { AccessService } from "./access.ts";
+import { AccessService } from "./access.ts";
+import type { ServiceContext } from "./types.ts";
 
 export type DbOriginArtifact = typeof originArtifacts.$inferSelect;
 
@@ -18,13 +18,16 @@ export interface CreateOriginArtifactInput {
 }
 
 export class OriginArtifactService {
-  constructor(
-    private readonly db: Database,
-    private readonly access: AccessService,
-  ) {}
+  private readonly db: Database;
+  private readonly access: AccessService;
 
-  async createOriginArtifact(actor: Actor, input: CreateOriginArtifactInput): Promise<DbOriginArtifact> {
-    await this.access.assertRecordOwner(actor, input.ownerUuid);
+  constructor(context: ServiceContext) {
+    this.db = context.db;
+    this.access = new AccessService(context);
+  }
+
+  async createOriginArtifact(input: CreateOriginArtifactInput): Promise<DbOriginArtifact> {
+    await this.access.assertRecordOwner(input.ownerUuid);
     const [originArtifact] = await this.db
       .insert(originArtifacts)
       .values({
@@ -41,13 +44,13 @@ export class OriginArtifactService {
     return originArtifact;
   }
 
-  async getOriginArtifact(actor: Actor, uuid: string): Promise<DbOriginArtifact> {
+  async getOriginArtifact(uuid: string): Promise<DbOriginArtifact> {
     const [originArtifact] = await this.db
       .select()
       .from(originArtifacts)
       .where(eq(originArtifacts.uuid, uuid));
     if (!originArtifact || originArtifact.tombstonedAt) throw notFound("Origin");
-    await this.access.assertRecordOwner(actor, originArtifact.ownerUuid);
+    await this.access.assertRecordOwner(originArtifact.ownerUuid);
     return originArtifact;
   }
 }

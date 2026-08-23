@@ -36,7 +36,7 @@ beforeAll(async () => {
   };
   const created = createApp({ config, db, blobs: new FileSystemBlobStore(blobRoot, config.baseUrl) });
   app = created.app;
-  await created.services.identities.seedDevelopmentIdentities();
+  await created.identityService.seedDevelopmentIdentities();
 });
 
 afterAll(async () => {
