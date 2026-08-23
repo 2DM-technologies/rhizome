@@ -33,6 +33,7 @@ export interface ContractSchema<Value> {
 type ContractResponses = Readonly<Record<number, ContractSchema<unknown>>>;
 type ContractRequest = Readonly<{
   json?: ContractSchema<object>;
+  multipart?: ContractSchema<object>;
   param?: ContractSchema<object>;
 }>;
 
@@ -51,6 +52,14 @@ type ContractValue<Schema> = Schema extends ContractSchema<infer Value> ? Value 
 type ContractTargets<Request extends ContractRequest> = (Request extends { json: infer Schema }
   ? { json: ContractValue<Schema> }
   : object) &
+  (Request extends { multipart: infer Schema }
+    ? {
+        form: {
+          metadata: ContractValue<Schema>;
+          uploads: ReadonlyMap<string, File>;
+        };
+      }
+    : object) &
   (Request extends { param: infer Schema } ? { param: ContractValue<Schema> } : object);
 
 type ContractInput<Request extends ContractRequest | undefined> = Request extends ContractRequest
@@ -217,6 +226,48 @@ export function rnetRoute<
         const validation = contract.request.json.validate(body);
         if (!validation.ok) throw schemaProblem(validation.issues);
         context.req.addValidatedData("json", validation.value);
+      }
+      if (contract.request?.multipart) {
+        const form = await context.req.formData().catch(() => {
+          throw new Problem(
+            422,
+            "schema_violation",
+            "Invalid multipart body",
+            "The request body must be multipart/form-data",
+          );
+        });
+        if (form.getAll("metadata").length !== 1) {
+          throw schemaProblem([{ instancePath: "/metadata", message: "must appear exactly once" }]);
+        }
+        const metadataPart = form.get("metadata");
+        if (typeof metadataPart !== "string") {
+          throw schemaProblem([
+            { instancePath: "/metadata", message: "must be a JSON string form field" },
+          ]);
+        }
+        let metadata: unknown;
+        try {
+          metadata = JSON.parse(metadataPart) as unknown;
+        } catch {
+          throw schemaProblem([{ instancePath: "/metadata", message: "must contain valid JSON" }]);
+        }
+        const validation = contract.request.multipart.validate(metadata);
+        if (!validation.ok) throw schemaProblem(validation.issues, "/metadata");
+
+        const uploads = new Map<string, File>();
+        for (const [name, value] of form.entries()) {
+          if (name === "metadata") continue;
+          if (typeof value === "string") {
+            throw schemaProblem([
+              { instancePath: `/${name}`, message: "must be a binary file part" },
+            ]);
+          }
+          if (uploads.has(name)) {
+            throw schemaProblem([{ instancePath: `/${name}`, message: "must be unique" }]);
+          }
+          uploads.set(name, value as File);
+        }
+        context.req.addValidatedData("form", { metadata: validation.value, uploads });
       }
       await next();
     } catch (error) {

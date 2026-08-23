@@ -240,42 +240,68 @@ describe("rNet M1 store", () => {
   });
 
   test("server-grounds client-authored objects and prefixes inference", async () => {
-    const uploaded = await app.request("http://rhizome.test/rnet/v0/elements", {
+    const detachedUpload = await app.request("http://rhizome.test/rnet/v0/elements", {
       method: "POST",
-      headers: {
-        ...machine,
-        "Content-Type": "text/plain",
-        "X-Rnet-Kind": "text",
-        "X-Rnet-Vibe": `rnet://vibe/${vibeId}`,
-      },
-      body: "A machine-authored note",
+      headers: { ...machine, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
+      body: "Detached machine upload",
     });
-    expect(uploaded.status).toBe(201);
-    const mediaElement = await uploaded.json();
-    expect(mediaElement.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
-    expect(mediaElement.uri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
-    expect(mediaElement.content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(detachedUpload.status).toBe(403);
+
+    const [beforeRejectedUpload] = await client.unsafe(
+      "select count(*)::int as elements from media_elements",
+    );
+    const missingUpload = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: machine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            elements: [{ upload: "missing", kind: "text", mime: "text/plain" }],
+            properties: { title: "Must not commit" },
+          },
+        ],
+      },
+    });
+    expect(missingUpload.status).toBe(422);
+    const [afterRejectedUpload] = await client.unsafe(
+      "select count(*)::int as elements from media_elements",
+    );
+    expect(afterRejectedUpload?.elements).toBe(beforeRejectedUpload?.elements);
+
     const created = await request("/rnet/v0/objects", {
       method: "POST",
       headers: machine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
         objects: [
-          { type: "note", elements: [mediaElement.uri], properties: { title: "Machine-authored" } },
+          {
+            type: "note",
+            elements: [{ upload: "note", kind: "text", mime: "text/plain" }],
+            properties: { title: "Machine-authored" },
+          },
         ],
+      },
+      uploads: {
+        note: { bytes: "A machine-authored note", mime: "text/plain" },
       },
     });
     expect(created.status).toBe(201);
     const document = (await created.json()).mediaObjects[0];
-    expect(document.owner).toBe(mediaElement.owner);
+    expect(document.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
     expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
     expect(document.source.origins).toEqual(["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"]);
+    const mediaElementUri = document.elements[0];
+    expect(mediaElementUri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
     const mediaElementRead = await request(
-      `/rnet/v0/elements/${mediaElement.uri.split("/").at(-1)}`,
+      `/rnet/v0/elements/${mediaElementUri.split("/").at(-1)}`,
       { headers: machine },
     );
     expect(mediaElementRead.status).toBe(200);
-    expect((await mediaElementRead.json()).content_hash).toBe(mediaElement.content_hash);
+    const mediaElement = await mediaElementRead.json();
+    expect(mediaElement.owner).toBe(document.owner);
+    expect(mediaElement.content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
 
     const inferred = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
@@ -357,32 +383,26 @@ describe("rNet M1 store", () => {
     const disposableVibe = await disposableVibeResponse.json();
     const disposableVibeId = disposableVibe.uri.split("/").at(-1);
 
-    const mediaElementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
-      method: "POST",
-      headers: {
-        ...machine,
-        "Content-Type": "text/plain",
-        "X-Rnet-Kind": "text",
-        "X-Rnet-Vibe": disposableVibe.uri,
-      },
-      body: "Retained after Vibe deletion",
-    });
-    expect(mediaElementResponse.status).toBe(201);
-    const mediaElement = await mediaElementResponse.json();
-    const retainedMediaElementUuid = mediaElement.uri.split("/").at(-1);
-
     const mediaObjectResponse = await request("/rnet/v0/objects", {
       method: "POST",
       headers: machine,
       json: {
         vibe: disposableVibe.uri,
         objects: [
-          { type: "note", elements: [mediaElement.uri], properties: { title: "Retained" } },
+          {
+            type: "note",
+            elements: [{ upload: "retained", kind: "text", mime: "text/plain" }],
+            properties: { title: "Retained" },
+          },
         ],
+      },
+      uploads: {
+        retained: { bytes: "Retained after Vibe deletion", mime: "text/plain" },
       },
     });
     expect(mediaObjectResponse.status).toBe(201);
     const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
+    const retainedMediaElementUuid = mediaObject.elements[0].split("/").at(-1);
     const retainedMediaObjectUuid = mediaObject.uri.split("/").at(-1);
 
     expect(
@@ -391,12 +411,12 @@ describe("rNet M1 store", () => {
     ).toBe(204);
     const retained = await client.unsafe(
       `select
-         (select created_for_vibe from media_elements where uuid = $1) as element_vibe,
-         (select created_for_vibe from media_objects where uuid = $2) as object_vibe`,
+         exists(select 1 from media_elements where uuid = $1) as element_exists,
+         exists(select 1 from media_objects where uuid = $2) as object_exists`,
       [retainedMediaElementUuid, retainedMediaObjectUuid],
     );
-    expect(retained[0]?.element_vibe).toBeNull();
-    expect(retained[0]?.object_vibe).toBeNull();
+    expect(retained[0]?.element_exists).toBe(true);
+    expect(retained[0]?.object_exists).toBe(true);
   });
 
   test("revocation fails closed on the next request", async () => {
@@ -489,8 +509,29 @@ describe("rNet M1 store", () => {
 
 async function request(
   path: string,
-  options: { method?: string; headers?: Record<string, string>; json?: unknown } = {},
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    json?: unknown;
+    uploads?: Record<string, { bytes: string | Uint8Array; mime: string }>;
+  } = {},
 ): Promise<Response> {
+  if (path === "/rnet/v0/objects" && options.json !== undefined) {
+    const form = new FormData();
+    form.set("metadata", JSON.stringify(options.json));
+    for (const [name, upload] of Object.entries(options.uploads ?? {})) {
+      const bytes =
+        typeof upload.bytes === "string"
+          ? upload.bytes
+          : (upload.bytes.slice().buffer as ArrayBuffer);
+      form.set(name, new Blob([bytes], { type: upload.mime }), name);
+    }
+    return app.request(`http://rhizome.test${path}`, {
+      method: options.method,
+      headers: options.headers,
+      body: form,
+    });
+  }
   const headers = {
     ...(options.json === undefined ? {} : { "Content-Type": "application/json" }),
     ...options.headers,

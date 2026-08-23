@@ -17,7 +17,6 @@ export interface CreateMediaElementInput {
   mime: string;
   byteSize: number;
   createdBy: string;
-  createdForVibe?: string;
 }
 
 export class MediaElementService {
@@ -41,7 +40,6 @@ export class MediaElementService {
         byteSize: input.byteSize,
         rnetSchema: RNET_SCHEMA_VERSION,
         createdBy: input.createdBy,
-        createdForVibe: input.createdForVibe ?? null,
       })
       .returning();
     if (!mediaElementRecord) throw new Error("Media element metadata was not stored");

@@ -8,7 +8,7 @@ import {
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import type { Database } from "../db/index.ts";
+import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { grants } from "../db/models/grant.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
@@ -80,7 +80,7 @@ export class VibeService {
     const vibeDocument = validation.value;
     await this.assertGrantSubjects(vibeDocument.grants ?? []);
 
-    return this.db.transaction(async (transaction) => {
+    return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const [vibeRecord] = await transaction
         .insert(vibes)
         .values({
@@ -134,7 +134,7 @@ export class VibeService {
     const vibeDocument = validation.value;
     await this.assertGrantSubjects(vibeDocument.grants ?? []);
 
-    return this.db.transaction(async (transaction) => {
+    return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const [vibeRecord] = await transaction
         .update(vibes)
         .set({
@@ -212,32 +212,21 @@ export class VibeService {
   }
 
   async addMediaObjectRefs(vibeUuid: string, references: string[]): Promise<void> {
-    const targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
+    await this.access.assertVibeOwner(vibeUuid);
+    if (this.actor.kind !== "user") throw new Error("Owner assertion did not narrow the actor");
     const mediaObjectUuids = references.map(uriId);
     if (new Set(mediaObjectUuids).size !== mediaObjectUuids.length) {
       throw schemaProblem([
         { instancePath: "/objects", message: "must not contain duplicate object URIs" },
       ]);
     }
-    const actorIsOwner = this.actor.kind === "user" && this.actor.uuid === targetVibe.ownerUuid;
     for (const mediaObjectUuid of mediaObjectUuids) {
       const [mediaObjectRecord] = await this.db
-        .select({
-          ownerUuid: mediaObjects.ownerUuid,
-          createdBy: mediaObjects.createdBy,
-          createdForVibe: mediaObjects.createdForVibe,
-        })
+        .select({ ownerUuid: mediaObjects.ownerUuid })
         .from(mediaObjects)
         .where(eq(mediaObjects.uuid, mediaObjectUuid));
       if (!mediaObjectRecord) throw notFound("Object");
-      if (mediaObjectRecord.ownerUuid !== targetVibe.ownerUuid) throw grantMissing("owner");
-      if (
-        !actorIsOwner &&
-        (mediaObjectRecord.createdBy !== this.actor.subject ||
-          mediaObjectRecord.createdForVibe !== vibeUuid)
-      ) {
-        throw grantMissing("write:objects");
-      }
+      if (mediaObjectRecord.ownerUuid !== this.actor.uuid) throw grantMissing("owner");
       const [membership] = await this.db
         .select({ mediaObjectUuid: vibeMediaObjects.mediaObjectUuid })
         .from(vibeMediaObjects)
@@ -256,7 +245,7 @@ export class VibeService {
         ]);
       }
     }
-    await this.db.transaction(async (transaction) => {
+    await this.db.transaction(async (transaction: DatabaseTransaction) => {
       await transaction.execute(
         sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`,
       );
@@ -279,7 +268,7 @@ export class VibeService {
   async removeMediaObjectRefs(vibeUuid: string, references: string[]): Promise<void> {
     await this.access.assertVibeOwner(vibeUuid);
     const mediaObjectUuids = references.map(uriId);
-    await this.db.transaction(async (transaction) => {
+    await this.db.transaction(async (transaction: DatabaseTransaction) => {
       if (mediaObjectUuids.length) {
         await transaction
           .delete(vibeMediaObjects)
@@ -349,7 +338,7 @@ export class VibeService {
   }
 
   private async recordMembershipChange(
-    transaction: Parameters<Parameters<Database["transaction"]>[0]>[0],
+    transaction: DatabaseTransaction,
     vibeUuid: string,
     added: string[],
     removed: string[],

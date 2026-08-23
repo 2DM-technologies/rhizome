@@ -1,9 +1,10 @@
-import { mediaObjectSchema, vibeSchema } from "@rnet/types";
+import { mediaElementSchema, mediaObjectSchema, vibeSchema } from "@rnet/types";
 import { Hono } from "hono";
 
+import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
-import { MediaObjectService } from "../services/media-objects.ts";
+import { MediaObjectService, type PendingMediaElementUpload } from "../services/media-objects.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -12,16 +13,44 @@ import {
   rnetDocument,
   rnetRoute,
 } from "./contracts.ts";
+import { requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
 const MediaObjectDocumentSchema = rnetDocument("media-object");
 const MediaObjectCollectionSchema = collectionOf(MediaObjectDocumentSchema, "mediaObjects");
+const MediaElementUploadReferenceSchema = {
+  type: "object",
+  required: ["upload", "kind", "mime"],
+  properties: {
+    upload: { type: "string", minLength: 1 },
+    kind: mediaElementSchema.properties.kind,
+    mime: mediaElementSchema.properties.mime,
+  },
+  additionalProperties: false,
+} as const;
 const CreateMediaObjectsRequestSchema = jsonSchema({
   type: "object",
   required: ["objects"],
   properties: {
     vibe: vibeSchema.properties.uri,
-    objects: { type: "array", minItems: 1, items: { type: "object" } },
+    objects: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        properties: {
+          elements: {
+            type: "array",
+            items: {
+              anyOf: [
+                mediaObjectSchema.properties.elements.items,
+                MediaElementUploadReferenceSchema,
+              ],
+            },
+          },
+        },
+      },
+    },
   },
   additionalProperties: false,
 });
@@ -41,20 +70,41 @@ const SetMediaObjectInferredRequestSchema = jsonSchema({
   additionalProperties: false,
 });
 
-export function createMediaObjectRoutes(db: Database) {
+export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   const router = new Hono<AppEnvironment>();
 
   router.post(
     "/",
     rnetRoute({
       auth: "authenticated",
-      request: { json: CreateMediaObjectsRequestSchema },
-      responses: { 201: MediaObjectCollectionSchema, 401: ProblemSchema, 422: ProblemSchema },
+      request: { multipart: CreateMediaObjectsRequestSchema },
+      responses: {
+        201: MediaObjectCollectionSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        415: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
-      const input = context.req.valid("json");
-      const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      const mediaObjects = await mediaObjectService.createMediaObjects(input.vibe, input.objects);
+      const input = context.req.valid("form");
+      const pendingUploads = new Map<string, PendingMediaElementUpload>();
+      for (const [name, file] of input.uploads) {
+        pendingUploads.set(name, {
+          bytes: new Uint8Array(await file.arrayBuffer()),
+          ...(file.type ? { mime: requestMime(file.type) } : {}),
+        });
+      }
+      const mediaObjectService = new MediaObjectService({
+        db,
+        actor: context.get("actor"),
+        blobs,
+      });
+      const mediaObjects = await mediaObjectService.createMediaObjects(
+        input.metadata.vibe,
+        input.metadata.objects,
+        pendingUploads,
+      );
       return context.json({ mediaObjects }, 201);
     },
   );

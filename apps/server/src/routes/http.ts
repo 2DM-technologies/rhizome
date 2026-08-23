@@ -11,11 +11,6 @@ export function requestMime(value?: string): string {
   return mime;
 }
 
-export async function contentHash(bytes: Uint8Array): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice().buffer));
-  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-
 export function normalizedUuid(value: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
     throw notFound("Record");

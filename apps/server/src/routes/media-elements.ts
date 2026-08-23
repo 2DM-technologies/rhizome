@@ -3,13 +3,12 @@ import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
 
 import type { BlobStore } from "../blobs/index.ts";
+import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
-import { AccessService } from "../services/access.ts";
 import { MediaElementService, type DbMediaElement } from "../services/media-elements.ts";
-import { uriId } from "../services/uris.ts";
 import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
-import { blobResponse, contentHash, normalizedUuid, requestMime } from "./http.ts";
+import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
 const MediaElementDocumentSchema = rnetDocument("media-element");
@@ -20,34 +19,19 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   router.post(
     "/",
     rnetRoute({
-      auth: "authenticated",
-      responses: { 201: MediaElementDocumentSchema, 401: ProblemSchema, 422: ProblemSchema },
+      auth: "user",
+      responses: {
+        201: MediaElementDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const actor = context.get("actor");
+      if (actor.kind !== "user") throw new Error("User middleware did not narrow the actor");
       const mediaElementService = new MediaElementService({ db, actor });
-      let uploadVibeUuid: string | undefined;
-      let ownerUuid: string;
-      if (actor.kind === "client") {
-        const accessService = new AccessService({ db, actor });
-        const vibe = context.req.header("X-Rnet-Vibe");
-        if (!vibe) {
-          throw new Problem(
-            403,
-            "grant_missing",
-            "Grant context missing",
-            "X-Rnet-Vibe is required",
-            { scope: "write:objects" },
-          );
-        }
-        uploadVibeUuid = normalizedUuid(uriId(vibe));
-        ownerUuid = (await accessService.assertVibeScope(uploadVibeUuid, "write:objects"))
-          .ownerUuid;
-      } else if (actor.kind === "user") {
-        ownerUuid = actor.uuid;
-      } else {
-        throw new Error("Authentication assertion did not narrow to a user or client");
-      }
+      const ownerUuid = actor.uuid;
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const mime = requestMime(context.req.header("Content-Type"));
       const kind = context.req.header("X-Rnet-Kind");
@@ -84,7 +68,6 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
         mime,
         byteSize: bytes.byteLength,
         createdBy: actor.subject,
-        createdForVibe: actor.kind === "client" ? uploadVibeUuid : undefined,
       });
       return context.json(mediaElement, 201);
     },

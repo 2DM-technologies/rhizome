@@ -8,14 +8,24 @@ export interface CreateVibeInput {
 
 export interface CreateObjectsInput {
   vibe?: string;
-  objects: MediaObject[];
+  objects: Array<
+    Omit<MediaObject, "elements"> & {
+      elements: Array<string | { upload: string; kind: MediaElement["kind"] }>;
+    }
+  >;
+  uploads?: Record<
+    string,
+    {
+      bytes: Blob | ArrayBuffer | Uint8Array;
+      mime: string;
+    }
+  >;
 }
 
 export interface UploadElementInput {
   bytes: Blob | ArrayBuffer | Uint8Array;
   kind: MediaElement["kind"];
   mime: string;
-  vibe?: string;
 }
 
 export interface UploadOriginInput {
@@ -66,7 +76,12 @@ export class RhizomeClient {
     const token = typeof this.#token === "function" ? await this.#token() : this.#token;
     const headers = new Headers(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    if (init.body && !(init.body instanceof Blob) && !headers.has("Content-Type")) {
+    if (
+      init.body &&
+      !(init.body instanceof Blob) &&
+      !(init.body instanceof FormData) &&
+      !headers.has("Content-Type")
+    ) {
       headers.set("Content-Type", "application/json");
     }
 
@@ -107,10 +122,27 @@ export class RhizomeClient {
   }
 
   async createObjects(input: CreateObjectsInput): Promise<MediaObject[]> {
+    const form = new FormData();
+    const objects = input.objects.map((mediaObject) => ({
+      ...mediaObject,
+      elements: mediaObject.elements.map((element) => {
+        if (typeof element === "string") return element;
+        const upload = input.uploads?.[element.upload];
+        if (!upload) throw new Error(`Missing upload bytes for ${element.upload}`);
+        return { ...element, mime: upload.mime };
+      }),
+    }));
+    form.set("metadata", JSON.stringify({ vibe: input.vibe, objects }));
+    for (const [name, upload] of Object.entries(input.uploads ?? {})) {
+      const bytes =
+        upload.bytes instanceof Blob ? upload.bytes : new Blob([ownedBuffer(upload.bytes)]);
+      const file = bytes.type === upload.mime ? bytes : new Blob([bytes], { type: upload.mime });
+      form.set(name, file, name);
+    }
     return (
       await this.#request<{ mediaObjects: MediaObject[] }>("/objects", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: form,
       })
     ).value.mediaObjects;
   }
@@ -144,7 +176,6 @@ export class RhizomeClient {
       "Content-Type": input.mime,
       "X-Rnet-Kind": input.kind,
     };
-    if (input.vibe) headers["X-Rnet-Vibe"] = input.vibe;
     return (
       await this.#request<MediaElement>("/elements", {
         method: "POST",

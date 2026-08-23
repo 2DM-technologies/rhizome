@@ -1,5 +1,5 @@
 {
-  "id": "e13717ff-bd1e-4545-b8c3-923a974cd231",
+  "id": "dace3706-ceee-4714-8819-7e424d7c71c5",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -236,12 +236,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "created_for_vibe": {
-          "name": "created_for_vibe",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "tombstoned_at": {
           "name": "tombstoned_at",
           "type": "timestamp with time zone",
@@ -278,19 +272,6 @@
             "uuid"
           ],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "media_elements_created_for_vibe_vibes_uuid_fk": {
-          "name": "media_elements_created_for_vibe_vibes_uuid_fk",
-          "tableFrom": "media_elements",
-          "tableTo": "vibes",
-          "columnsFrom": [
-            "created_for_vibe"
-          ],
-          "columnsTo": [
-            "uuid"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -626,12 +607,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "created_for_vibe": {
-          "name": "created_for_vibe",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "type": {
           "name": "type",
           "type": "text",
@@ -758,19 +733,6 @@
             "uuid"
           ],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "media_objects_created_for_vibe_vibes_uuid_fk": {
-          "name": "media_objects_created_for_vibe_vibes_uuid_fk",
-          "tableFrom": "media_objects",
-          "tableTo": "vibes",
-          "columnsFrom": [
-            "created_for_vibe"
-          ],
-          "columnsTo": [
-            "uuid"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

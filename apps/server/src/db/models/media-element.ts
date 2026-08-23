@@ -2,7 +2,6 @@ import { sql } from "drizzle-orm";
 import { bigint, check, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import { users } from "./user.ts";
-import { vibes } from "./vibe.ts";
 
 export const mediaElements = pgTable(
   "media_elements",
@@ -18,7 +17,6 @@ export const mediaElements = pgTable(
     rnetSchema: text("rnet_schema").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull(),
-    createdForVibe: uuid("created_for_vibe").references(() => vibes.uuid, { onDelete: "set null" }),
     tombstonedAt: timestamp("tombstoned_at", { withTimezone: true }),
   },
   (mediaElement) => [

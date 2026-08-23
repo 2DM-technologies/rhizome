@@ -130,8 +130,9 @@ export function createVibeRoutes(db: Database) {
   router.post(
     "/:id/objects",
     rnetRoute({
+      auth: "user",
       request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 401: ProblemSchema, 403: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const body = context.req.valid("json");

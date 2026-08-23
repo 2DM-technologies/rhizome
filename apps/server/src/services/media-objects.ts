@@ -1,8 +1,16 @@
-import { RNET_SCHEMA_VERSION, validateMediaObject, type MediaObject } from "@rnet/types";
+import {
+  RNET_SCHEMA_VERSION,
+  validateMediaObject,
+  validateSchema,
+  type MediaElement,
+  type MediaObject,
+} from "@rnet/types";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import type { Database } from "../db/index.ts";
+import { contentHash } from "../blobs/content.ts";
+import type { BlobStore } from "../blobs/index.ts";
+import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
@@ -20,17 +28,49 @@ import { uriId } from "./uris.ts";
 
 export type DbMediaObject = typeof mediaObjects.$inferSelect;
 
+export interface PendingMediaElementUpload {
+  bytes: Uint8Array;
+  mime?: string;
+}
+
+interface PreparedMediaElementUpload extends PendingMediaElementUpload {
+  uuid: string;
+  contentHash: string;
+  kind?: string;
+}
+
+interface ReadyMediaElementUpload extends PreparedMediaElementUpload {
+  kind: MediaElement["kind"];
+  mime: string;
+}
+
+type MediaObjectBlockSnapshot =
+  NonNullable<MediaObject["user"]> | NonNullable<MediaObject["inferred"]>;
+
+interface MediaObjectBlockUpdate<Snapshot extends MediaObjectBlockSnapshot> {
+  block: "user" | "inferred";
+  buildSnapshot(currentMediaObject: DbMediaObject): Snapshot;
+  buildCandidate(currentMediaObject: DbMediaObject, snapshot: Snapshot): DbMediaObject;
+  persist(
+    transaction: DatabaseTransaction,
+    currentMediaObject: DbMediaObject,
+    snapshot: Snapshot,
+  ): Promise<{ mediaObject: DbMediaObject; revision: number }>;
+}
+
 export class MediaObjectService {
   private readonly db: Database;
   private readonly actor: ServiceContext["actor"];
   private readonly access: AccessService;
   private readonly identities: IdentityService;
+  private readonly blobs?: BlobStore;
 
-  constructor(context: ServiceContext) {
+  constructor(context: ServiceContext & { blobs?: BlobStore }) {
     this.db = context.db;
     this.actor = context.actor;
     this.access = new AccessService(context);
     this.identities = new IdentityService(context.db);
+    this.blobs = context.blobs;
   }
 
   async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
@@ -49,8 +89,8 @@ export class MediaObjectService {
   async createMediaObjects(
     vibe: string | undefined,
     mediaObjectInputs: unknown[],
+    pendingUploads: ReadonlyMap<string, PendingMediaElementUpload> = new Map(),
   ): Promise<MediaObject[]> {
-    await this.access.assertAuthenticated();
     const vibeUuid = vibe ? uriId(vibe) : undefined;
     let targetVibe: DbVibe | undefined;
     if (this.actor.kind === "client") {
@@ -63,17 +103,90 @@ export class MediaObjectService {
     const ownerUuid =
       targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
     if (!ownerUuid) throw grantMissing("owner");
-    const actorOwnsRecords = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
+    const preparedUploads = new Map<string, PreparedMediaElementUpload>(
+      await Promise.all(
+        [...pendingUploads].map(
+          async ([name, upload]) =>
+            [
+              name,
+              {
+                ...upload,
+                uuid: uuidv7(),
+                contentHash: await contentHash(upload.bytes),
+              } as PreparedMediaElementUpload,
+            ] as const,
+        ),
+      ),
+    );
 
     const mediaObjectDocuments = mediaObjectInputs.map((item, index) =>
-      this.normalizeMediaObject(ownerUuid, item, index),
+      this.normalizeMediaObject(ownerUuid, item, index, preparedUploads),
+    );
+    const unusedUpload = [...preparedUploads].find(([, upload]) => !upload.kind || !upload.mime);
+    if (unusedUpload) {
+      throw schemaProblem([
+        { instancePath: `/uploads/${unusedUpload[0]}`, message: "is not referenced by an object" },
+      ]);
+    }
+    const uploadedElementUuids = new Set(
+      [...preparedUploads.values()].map((upload) => upload.uuid),
     );
     for (const mediaObjectDocument of mediaObjectDocuments) {
-      await this.assertMediaObjectReferences(vibeUuid, ownerUuid, mediaObjectDocument);
+      await this.assertMediaObjectReferences(
+        vibeUuid,
+        ownerUuid,
+        mediaObjectDocument,
+        uploadedElementUuids,
+      );
+    }
+    const readyUploads = new Map<string, ReadyMediaElementUpload>();
+    if (preparedUploads.size) {
+      if (!this.blobs) throw new Error("Blob storage is required for atomic element uploads");
+      for (const [name, upload] of preparedUploads) {
+        const candidateMediaElement = {
+          rnet_schema: RNET_SCHEMA_VERSION,
+          uri: `rnet://element/${upload.uuid}`,
+          owner: `rnet://id/${ownerUuid}`,
+          content_hash: upload.contentHash,
+          kind: upload.kind,
+          mime: upload.mime,
+          bytes: await this.blobs.signedUrl("elements", upload.contentHash),
+          byte_size: upload.bytes.byteLength,
+          created_at: new Date().toISOString(),
+        };
+        const validation = validateSchema("media-element", candidateMediaElement);
+        if (!validation.ok) throw schemaProblem(validation.issues, `/uploads/${name}`);
+        const readyUpload: ReadyMediaElementUpload = {
+          ...upload,
+          kind: validation.value.kind,
+          mime: validation.value.mime,
+        };
+        readyUploads.set(name, readyUpload);
+        await this.blobs.put(
+          "elements",
+          readyUpload.contentHash,
+          readyUpload.bytes,
+          readyUpload.mime,
+        );
+      }
     }
 
-    return this.db.transaction(async (transaction) => {
+    return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const createdMediaObjects: MediaObject[] = [];
+      if (readyUploads.size) {
+        await transaction.insert(mediaElements).values(
+          [...readyUploads.values()].map((upload) => ({
+            uuid: upload.uuid,
+            ownerUuid,
+            contentHash: upload.contentHash,
+            kind: upload.kind,
+            mime: upload.mime,
+            byteSize: upload.bytes.byteLength,
+            rnetSchema: RNET_SCHEMA_VERSION,
+            createdBy: this.actor.subject,
+          })),
+        );
+      }
       let nextVibePosition: number | undefined;
       if (vibeUuid) {
         await transaction.execute(
@@ -94,7 +207,6 @@ export class MediaObjectService {
           uuid: mediaObjectUuid,
           ownerUuid,
           createdBy: this.actor.subject,
-          createdForVibe: actorOwnsRecords ? null : vibeUuid,
           type: mediaObjectDocument.type,
           keys: mediaObjectDocument.keys ?? {},
           source: mediaObjectDocument.source,
@@ -151,48 +263,35 @@ export class MediaObjectService {
       properties,
       updated_at: new Date().toISOString(),
     };
-    const updatedMediaObject = await this.db.transaction(async (transaction) => {
-      await transaction.execute(
-        sql`SELECT 1 FROM ${mediaObjects} WHERE ${mediaObjects.uuid} = ${mediaObjectUuid}::uuid FOR UPDATE`,
-      );
-      const [currentMediaObject] = await transaction
-        .select()
-        .from(mediaObjects)
-        .where(eq(mediaObjects.uuid, mediaObjectUuid));
-      if (!currentMediaObject) throw notFound("Object");
-      const mediaElementReferences = await transaction
-        .select({ uuid: mediaObjectElements.mediaElementUuid })
-        .from(mediaObjectElements)
-        .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectUuid))
-        .orderBy(asc(mediaObjectElements.position));
-      const candidateMediaObject = this.toDocumentFromMediaElementUuids(
-        { ...currentMediaObject, user: candidateUser },
-        mediaElementReferences.map((reference) => reference.uuid),
-      );
-      const validation = validateMediaObject(candidateMediaObject);
-      if (!validation.ok) throw schemaProblem(validation.issues);
-      if (currentMediaObject.userRev !== expectedRev) {
-        throw new Problem(409, "revision_conflict", "Revision conflict", "The user block changed", {
-          expected: expectedRev,
-          current: currentMediaObject.userRev,
-        });
-      }
-      const [nextMediaObject] = await transaction
-        .update(mediaObjects)
-        .set({ user: candidateUser, userRev: sql`${mediaObjects.userRev} + 1` })
-        .where(and(eq(mediaObjects.uuid, mediaObjectUuid), eq(mediaObjects.userRev, expectedRev)))
-        .returning();
-      if (!nextMediaObject) {
-        throw new Problem(409, "revision_conflict", "Revision conflict", "The user block changed");
-      }
-      await transaction.insert(mediaObjectRevisions).values({
-        mediaObjectUuid,
-        block: "user",
-        rev: nextMediaObject.userRev,
-        snapshot: candidateUser,
-        actor: this.actor.subject,
-      });
-      return nextMediaObject;
+    const updatedMediaObject = await this.updateMediaObjectBlock(mediaObjectUuid, {
+      block: "user",
+      buildSnapshot: () => candidateUser,
+      buildCandidate: (currentMediaObject, user) => ({ ...currentMediaObject, user }),
+      persist: async (transaction, currentMediaObject, user) => {
+        if (currentMediaObject.userRev !== expectedRev) {
+          throw new Problem(
+            409,
+            "revision_conflict",
+            "Revision conflict",
+            "The user block changed",
+            { expected: expectedRev, current: currentMediaObject.userRev },
+          );
+        }
+        const [nextMediaObject] = await transaction
+          .update(mediaObjects)
+          .set({ user, userRev: sql`${mediaObjects.userRev} + 1` })
+          .where(and(eq(mediaObjects.uuid, mediaObjectUuid), eq(mediaObjects.userRev, expectedRev)))
+          .returning();
+        if (!nextMediaObject) {
+          throw new Problem(
+            409,
+            "revision_conflict",
+            "Revision conflict",
+            "The user block changed",
+          );
+        }
+        return { mediaObject: nextMediaObject, revision: nextMediaObject.userRev };
+      },
     });
     return {
       document: await this.toDocument(updatedMediaObject),
@@ -215,7 +314,40 @@ export class MediaObjectService {
         "Pass a bare task name",
       );
     }
-    const updatedMediaObject = await this.db.transaction(async (transaction) => {
+    const updatedMediaObject = await this.updateMediaObjectBlock(mediaObjectUuid, {
+      block: "inferred",
+      buildSnapshot: (currentMediaObject) => ({
+        ...currentMediaObject.inferred,
+        [key]: entry,
+      }),
+      buildCandidate: (currentMediaObject, inferred) => ({ ...currentMediaObject, inferred }),
+      persist: async (transaction, _currentMediaObject, inferred) => {
+        const [maxRevision] = await transaction
+          .select({ max: sql<number>`coalesce(max(${mediaObjectRevisions.rev}), 0)::int` })
+          .from(mediaObjectRevisions)
+          .where(
+            and(
+              eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectUuid),
+              eq(mediaObjectRevisions.block, "inferred"),
+            ),
+          );
+        const [nextMediaObject] = await transaction
+          .update(mediaObjects)
+          .set({ inferred })
+          .where(eq(mediaObjects.uuid, mediaObjectUuid))
+          .returning();
+        if (!nextMediaObject) throw notFound("Object");
+        return { mediaObject: nextMediaObject, revision: (maxRevision?.max ?? 0) + 1 };
+      },
+    });
+    return this.toDocument(updatedMediaObject);
+  }
+
+  private async updateMediaObjectBlock<Snapshot extends MediaObjectBlockSnapshot>(
+    mediaObjectUuid: string,
+    update: MediaObjectBlockUpdate<Snapshot>,
+  ): Promise<DbMediaObject> {
+    return this.db.transaction(async (transaction: DatabaseTransaction) => {
       await transaction.execute(
         sql`SELECT 1 FROM ${mediaObjects} WHERE ${mediaObjects.uuid} = ${mediaObjectUuid}::uuid FOR UPDATE`,
       );
@@ -224,46 +356,30 @@ export class MediaObjectService {
         .from(mediaObjects)
         .where(eq(mediaObjects.uuid, mediaObjectUuid));
       if (!currentMediaObject) throw notFound("Object");
-      const inferred: NonNullable<MediaObject["inferred"]> = {
-        ...currentMediaObject.inferred,
-        [key]: entry,
-      };
+
+      const snapshot = update.buildSnapshot(currentMediaObject);
       const mediaElementReferences = await transaction
         .select({ uuid: mediaObjectElements.mediaElementUuid })
         .from(mediaObjectElements)
         .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectUuid))
         .orderBy(asc(mediaObjectElements.position));
       const candidateMediaObject = this.toDocumentFromMediaElementUuids(
-        { ...currentMediaObject, inferred },
+        update.buildCandidate(currentMediaObject, snapshot),
         mediaElementReferences.map((reference) => reference.uuid),
       );
       const validation = validateMediaObject(candidateMediaObject);
       if (!validation.ok) throw schemaProblem(validation.issues);
-      const [maxRevision] = await transaction
-        .select({ max: sql<number>`coalesce(max(${mediaObjectRevisions.rev}), 0)::int` })
-        .from(mediaObjectRevisions)
-        .where(
-          and(
-            eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectUuid),
-            eq(mediaObjectRevisions.block, "inferred"),
-          ),
-        );
-      const [nextMediaObject] = await transaction
-        .update(mediaObjects)
-        .set({ inferred })
-        .where(eq(mediaObjects.uuid, mediaObjectUuid))
-        .returning();
-      if (!nextMediaObject) throw notFound("Object");
+
+      const persisted = await update.persist(transaction, currentMediaObject, snapshot);
       await transaction.insert(mediaObjectRevisions).values({
         mediaObjectUuid,
-        block: "inferred",
-        rev: (maxRevision?.max ?? 0) + 1,
-        snapshot: inferred,
+        block: update.block,
+        rev: persisted.revision,
+        snapshot,
         actor: this.actor.subject,
       });
-      return nextMediaObject;
+      return persisted.mediaObject;
     });
-    return this.toDocument(updatedMediaObject);
   }
 
   async toDocument(mediaObjectRecord: DbMediaObject): Promise<MediaObject> {
@@ -278,7 +394,12 @@ export class MediaObjectService {
     );
   }
 
-  private normalizeMediaObject(ownerUuid: string, input: unknown, index: number): MediaObject {
+  private normalizeMediaObject(
+    ownerUuid: string,
+    input: unknown,
+    index: number,
+    uploads: Map<string, PreparedMediaElementUpload>,
+  ): MediaObject {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw schemaProblem([{ instancePath: `/objects/${index}`, message: "must be an object" }]);
     }
@@ -294,6 +415,7 @@ export class MediaObjectService {
         },
       ]);
     }
+    const elements = this.resolveMediaElementInputs(rawMediaObject.elements, index, uploads);
     const candidateMediaObject =
       this.actor.kind === "client"
         ? {
@@ -301,7 +423,7 @@ export class MediaObjectService {
             uri: `rnet://object/${mediaObjectUuid}`,
             owner,
             type: rawMediaObject.type,
-            elements: rawMediaObject.elements ?? [],
+            elements: elements ?? [],
             ...(rawMediaObject.keys === undefined ? {} : { keys: rawMediaObject.keys }),
             source: {
               ingest: { method: "authored", reproducible: false },
@@ -309,7 +431,11 @@ export class MediaObjectService {
               properties: rawMediaObject.properties ?? {},
             },
           }
-        : { ...rawMediaObject, owner };
+        : {
+            ...rawMediaObject,
+            owner,
+            ...(elements === undefined ? {} : { elements }),
+          };
     const validation = validateMediaObject(candidateMediaObject);
     if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}`);
     if (
@@ -335,19 +461,86 @@ export class MediaObjectService {
     return validation.value;
   }
 
+  private resolveMediaElementInputs(
+    input: unknown,
+    mediaObjectIndex: number,
+    uploads: Map<string, PreparedMediaElementUpload>,
+  ): unknown[] | undefined {
+    if (input === undefined) return undefined;
+    if (!Array.isArray(input)) {
+      throw schemaProblem([
+        { instancePath: `/objects/${mediaObjectIndex}/elements`, message: "must be an array" },
+      ]);
+    }
+    return input.map((element, elementIndex) => {
+      if (typeof element === "string") return element;
+      const pointer = `/objects/${mediaObjectIndex}/elements/${elementIndex}`;
+      if (!element || typeof element !== "object" || Array.isArray(element)) {
+        throw schemaProblem([
+          { instancePath: pointer, message: "must be an element URI or upload" },
+        ]);
+      }
+      const descriptor = element as Record<string, unknown>;
+      if (
+        typeof descriptor.upload !== "string" ||
+        typeof descriptor.kind !== "string" ||
+        typeof descriptor.mime !== "string"
+      ) {
+        throw schemaProblem([
+          { instancePath: pointer, message: "upload references require upload, kind, and mime" },
+        ]);
+      }
+      const descriptorMime = descriptor.mime.split(";", 1)[0]?.trim();
+      if (!descriptorMime) {
+        throw schemaProblem([{ instancePath: `${pointer}/mime`, message: "must not be empty" }]);
+      }
+      const extra = Object.keys(descriptor).find(
+        (key) => !["upload", "kind", "mime"].includes(key),
+      );
+      if (extra) {
+        throw schemaProblem([{ instancePath: `${pointer}/${extra}`, message: "is not allowed" }]);
+      }
+      const upload = uploads.get(descriptor.upload);
+      if (!upload) {
+        throw schemaProblem([
+          {
+            instancePath: `${pointer}/upload`,
+            message: `has no file part named ${descriptor.upload}`,
+          },
+        ]);
+      }
+      if (upload.kind && upload.kind !== descriptor.kind) {
+        throw schemaProblem([
+          { instancePath: `${pointer}/kind`, message: "conflicts with another reference" },
+        ]);
+      }
+      if (upload.mime && upload.mime !== descriptorMime) {
+        throw schemaProblem([
+          {
+            instancePath: `${pointer}/mime`,
+            message: "conflicts with the file part or another reference",
+          },
+        ]);
+      }
+      upload.kind = descriptor.kind;
+      upload.mime = descriptorMime;
+      return `rnet://element/${upload.uuid}`;
+    });
+  }
+
   private async assertMediaObjectReferences(
     vibeUuid: string | undefined,
     ownerUuid: string,
     mediaObjectDocument: MediaObject,
+    uploadedElementUuids: ReadonlySet<string>,
   ): Promise<void> {
     for (const uri of mediaObjectDocument.elements) {
       const mediaElementUuid = uriId(uri);
+      if (uploadedElementUuids.has(mediaElementUuid)) continue;
       const [mediaElementRecord] = await this.db
         .select({
           uuid: mediaElements.uuid,
           ownerUuid: mediaElements.ownerUuid,
-          createdBy: mediaElements.createdBy,
-          createdForVibe: mediaElements.createdForVibe,
         })
         .from(mediaElements)
         .where(eq(mediaElements.uuid, mediaElementUuid));
@@ -357,13 +550,10 @@ export class MediaObjectService {
       if (mediaElementRecord.ownerUuid !== ownerUuid) throw grantMissing("owner");
       const actorOwnsRecord = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
       if (!actorOwnsRecord) {
-        const createdForTarget =
-          mediaElementRecord.createdBy === this.actor.subject &&
-          mediaElementRecord.createdForVibe === vibeUuid;
         const readableInTarget = vibeUuid
           ? await this.canReadMediaElementInVibe(mediaElementUuid, vibeUuid)
           : false;
-        if (!createdForTarget && !readableInTarget) throw grantMissing("read");
+        if (!readableInTarget) throw grantMissing("read");
       }
     }
     for (const uri of mediaObjectDocument.source.origins) {

@@ -3,10 +3,11 @@ import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
 
 import type { BlobStore } from "../blobs/index.ts";
+import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
 import { OriginArtifactService, type DbOriginArtifact } from "../services/origin-artifacts.ts";
 import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
-import { blobResponse, contentHash, requestMime } from "./http.ts";
+import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
 const OriginArtifactDocumentSchema = rnetDocument("origin-artifact");

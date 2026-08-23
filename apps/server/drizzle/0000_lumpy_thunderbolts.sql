@@ -30,7 +30,6 @@ CREATE TABLE "media_elements" (
 	"rnet_schema" text NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" text NOT NULL,
-	"created_for_vibe" uuid,
 	"tombstoned_at" timestamp with time zone,
 	CONSTRAINT "media_elements_kind_check" CHECK ("media_elements"."kind" IN ('text', 'image', 'audio', 'video', 'document'))
 );
@@ -65,7 +64,6 @@ CREATE TABLE "media_objects" (
 	"uuid" uuid PRIMARY KEY NOT NULL,
 	"owner_uuid" uuid NOT NULL,
 	"created_by" text NOT NULL,
-	"created_for_vibe" uuid,
 	"type" text NOT NULL,
 	"keys" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"source" jsonb NOT NULL,
@@ -163,7 +161,6 @@ CREATE TABLE "vibes" (
 ALTER TABLE "grants" ADD CONSTRAINT "grants_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "machines" ADD CONSTRAINT "machines_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_elements" ADD CONSTRAINT "media_elements_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "media_elements" ADD CONSTRAINT "media_elements_created_for_vibe_vibes_uuid_fk" FOREIGN KEY ("created_for_vibe") REFERENCES "public"."vibes"("uuid") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_elements" ADD CONSTRAINT "media_object_elements_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_elements" ADD CONSTRAINT "media_object_elements_media_element_uuid_media_elements_uuid_fk" FOREIGN KEY ("media_element_uuid") REFERENCES "public"."media_elements"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -172,7 +169,6 @@ ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_machine_
 ALTER TABLE "media_object_revisions" ADD CONSTRAINT "media_object_revisions_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_revisions" ADD CONSTRAINT "media_object_revisions_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_objects" ADD CONSTRAINT "media_objects_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "media_objects" ADD CONSTRAINT "media_objects_created_for_vibe_vibes_uuid_fk" FOREIGN KEY ("created_for_vibe") REFERENCES "public"."vibes"("uuid") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "meter" ADD CONSTRAINT "meter_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "operations" ADD CONSTRAINT "operations_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "origins" ADD CONSTRAINT "origins_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

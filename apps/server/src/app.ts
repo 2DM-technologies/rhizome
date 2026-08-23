@@ -33,7 +33,7 @@ export function createApp({ db, blobs }: AppDependencies) {
       context.header("Access-Control-Allow-Origin", context.req.header("Origin") ?? "*");
       context.header(
         "Access-Control-Allow-Headers",
-        "Authorization, Content-Type, If-Match, X-Rnet-Kind, X-Rnet-Label, X-Rnet-Vibe",
+        "Authorization, Content-Type, If-Match, X-Rnet-Kind, X-Rnet-Label",
       );
       context.header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
       context.header("Vary", "Origin");
@@ -59,7 +59,7 @@ export function createApp({ db, blobs }: AppDependencies) {
 
   app.get("/health", (context) => context.json({ ok: true, service: "rhizome" }));
   app.route("/rnet/v0/vibes", createVibeRoutes(db));
-  app.route("/rnet/v0/objects", createMediaObjectRoutes(db));
+  app.route("/rnet/v0/objects", createMediaObjectRoutes(db, blobs));
   app.route("/rnet/v0/elements", createMediaElementRoutes(db, blobs));
   app.route("/rnet/v0/origins", createOriginRoutes(db, blobs));
   app.route("/rnet/v0/operations", createOperationRoutes(db));

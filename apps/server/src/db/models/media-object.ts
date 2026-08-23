@@ -3,7 +3,6 @@ import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-o
 
 import type { JsonObject } from "./shared.ts";
 import { users } from "./user.ts";
-import { vibes } from "./vibe.ts";
 
 export const mediaObjects = pgTable(
   "media_objects",
@@ -13,7 +12,6 @@ export const mediaObjects = pgTable(
       .notNull()
       .references(() => users.uuid),
     createdBy: text("created_by").notNull(),
-    createdForVibe: uuid("created_for_vibe").references(() => vibes.uuid, { onDelete: "set null" }),
     type: text("type").notNull(),
     keys: jsonb("keys").$type<Record<string, string>>().notNull().default({}),
     source: jsonb("source").$type<MediaObject["source"]>().notNull(),
