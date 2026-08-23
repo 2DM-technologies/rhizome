@@ -1,0 +1,30 @@
+{
+  "name": "rhizome",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.10",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "machines/*"
+  ],
+  "scripts": {
+    "dev": "bun --filter @rhizome/server --filter @rhizome/host dev",
+    "dev:server": "bun --filter @rhizome/server dev",
+    "dev:host": "bun --filter @rhizome/host dev",
+    "db:migrate": "bun run apps/server/src/db/migrate.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build": "bun --filter '*' build",
+    "check": "bun run typecheck && bun test && bun run build"
+  },
+  "dependencies": {
+    "@rnet/conformance": "file:../rnet/packages/conformance",
+    "@rnet/types": "file:../rnet/packages/types"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "26.2.0",
+    "typescript": "6.0.3"
+  }
+}
