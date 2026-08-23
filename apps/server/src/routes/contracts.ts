@@ -112,13 +112,18 @@ export function rnetDocument<Name extends SchemaName>(name: Name): ContractSchem
   };
 }
 
-export function collectionOf<Value>(item: ContractSchema<Value>): ContractSchema<{ items: Value[] }> {
+type Collection<Key extends string, Value> = { [Property in Key]: Value[] };
+
+export function collectionOf<Value, const Key extends string = "items">(
+  item: ContractSchema<Value>,
+  key: Key = "items" as Key,
+): ContractSchema<Collection<Key, Value>> {
   const id = typeof item.document === "object" ? item.document.$id : undefined;
   if (typeof id !== "string") throw new Error("Collection item schemas must have an $id");
   const collection = jsonSchema({
     type: "object",
-    required: ["items"],
-    properties: { items: { type: "array", items: { $ref: id } } },
+    required: [key],
+    properties: { [key]: { type: "array", items: { $ref: id } } },
     additionalProperties: false,
   });
   return {
@@ -126,7 +131,8 @@ export function collectionOf<Value>(item: ContractSchema<Value>): ContractSchema
     validate(value) {
       const envelope = collection.validate(value);
       if (!envelope.ok) return envelope;
-      const issues = envelope.value.items.flatMap((entry, index) => {
+      const entries = (envelope.value as Record<Key, unknown[]>)[key];
+      const issues = entries.flatMap((entry, index) => {
         const validation = item.validate(entry);
         return validation.ok
           ? []
@@ -137,7 +143,7 @@ export function collectionOf<Value>(item: ContractSchema<Value>): ContractSchema
       });
       return issues.length
         ? { ok: false, issues }
-        : { ok: true, value: envelope.value as { items: Value[] } };
+        : { ok: true, value: envelope.value as Collection<Key, Value> };
     },
   };
 }

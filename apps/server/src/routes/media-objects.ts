@@ -14,7 +14,7 @@ import {
 import type { AppEnvironment } from "./types.ts";
 
 const mediaObjectDocumentSchema = rnetDocument("media-object");
-const mediaObjectCollectionSchema = collectionOf(mediaObjectDocumentSchema);
+const mediaObjectCollectionSchema = collectionOf(mediaObjectDocumentSchema, "mediaObjects");
 const createMediaObjectsRequestSchema = jsonSchema({
   type: "object",
   required: ["objects"],
@@ -52,10 +52,8 @@ export function createMediaObjectRoutes(db: Database) {
     async (context) => {
       const input = context.req.valid("json");
       const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      return context.json(
-        { items: await mediaObjectService.createMediaObjects(input.vibe, input.objects) },
-        201,
-      );
+      const mediaObjects = await mediaObjectService.createMediaObjects(input.vibe, input.objects);
+      return context.json({ mediaObjects }, 201);
     },
   );
   router.get(

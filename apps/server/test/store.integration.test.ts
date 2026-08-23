@@ -149,8 +149,8 @@ describe("rNet M1 store", () => {
     });
     expect(response.status).toBe(201);
     const body = await response.json();
-    mediaObjectId = body.items[0].uri.split("/").at(-1);
-    expect(body.items[0].owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+    mediaObjectId = body.mediaObjects[0].uri.split("/").at(-1);
+    expect(body.mediaObjects[0].owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
   });
 
   test("preserves batch insertion order with unique Vibe positions", async () => {
@@ -247,7 +247,7 @@ describe("rNet M1 store", () => {
       },
     });
     expect(created.status).toBe(201);
-    const document = (await created.json()).items[0];
+    const document = (await created.json()).mediaObjects[0];
     expect(document.owner).toBe(mediaElement.owner);
     expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
     expect(document.source.origins).toEqual([
@@ -300,7 +300,7 @@ describe("rNet M1 store", () => {
         ],
       },
     });
-    const privateObject = (await privateObjectResponse.json()).items[0];
+    const privateObject = (await privateObjectResponse.json()).mediaObjects[0];
     const attachKnownObject = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
       method: "POST",
       headers: machine,
@@ -360,7 +360,7 @@ describe("rNet M1 store", () => {
       },
     });
     expect(mediaObjectResponse.status).toBe(201);
-    const mediaObject = (await mediaObjectResponse.json()).items[0];
+    const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
     const retainedMediaObjectUuid = mediaObject.uri.split("/").at(-1);
 
     expect((await request(`/rnet/v0/vibes/${disposableVibeId}`, { method: "DELETE", headers: owner })).status).toBe(
