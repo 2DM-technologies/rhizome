@@ -47,7 +47,12 @@ export function createApp({ db, blobs }: AppDependencies) {
     console.error(error);
     return problemResponse(
       context,
-      new Problem(500, "internal_error", "Internal error", "The store could not complete the request"),
+      new Problem(
+        500,
+        "internal_error",
+        "Internal error",
+        "The store could not complete the request",
+      ),
     );
   });
   app.notFound((context) => problemResponse(context, notFound("Route")));

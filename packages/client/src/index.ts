@@ -1,15 +1,4 @@
-import type {
-  Grant,
-  MediaElement,
-  MediaObject,
-  OriginArtifact,
-  Vibe,
-} from "@rnet/types";
-
-export interface Page<T> {
-  items: T[];
-  next?: string;
-}
+import type { Grant, MediaElement, MediaObject, OriginArtifact, Vibe } from "@rnet/types";
 
 export interface CreateVibeInput {
   title: string;
@@ -70,7 +59,10 @@ export class RhizomeClient {
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
-  async #request<T>(path: string, init: RequestInit = {}): Promise<{ value: T; response: Response }> {
+  async #request<T>(
+    path: string,
+    init: RequestInit = {},
+  ): Promise<{ value: T; response: Response }> {
     const token = typeof this.#token === "function" ? await this.#token() : this.#token;
     const headers = new Headers(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -95,11 +87,12 @@ export class RhizomeClient {
   }
 
   async listVibes(): Promise<Vibe[]> {
-    return (await this.#request<Page<Vibe>>("/vibes")).value.items;
+    return (await this.#request<{ vibes: Vibe[] }>("/vibes")).value.vibes;
   }
 
   async createVibe(input: CreateVibeInput): Promise<Vibe> {
-    return (await this.#request<Vibe>("/vibes", { method: "POST", body: JSON.stringify(input) })).value;
+    return (await this.#request<Vibe>("/vibes", { method: "POST", body: JSON.stringify(input) }))
+      .value;
   }
 
   async getVibe(uriOrId: string): Promise<Vibe> {
@@ -107,17 +100,19 @@ export class RhizomeClient {
   }
 
   async getVibeObjects(uriOrId: string): Promise<MediaObject[]> {
-    const page = await this.#request<Page<MediaObject>>(
+    const response = await this.#request<{ mediaObjects: MediaObject[] }>(
       `/vibes/${encodeURIComponent(idFromUri(uriOrId))}/objects?expand=full`,
     );
-    return page.value.items;
+    return response.value.mediaObjects;
   }
 
   async createObjects(input: CreateObjectsInput): Promise<MediaObject[]> {
-    return (await this.#request<{ items: MediaObject[] }>("/objects", {
-      method: "POST",
-      body: JSON.stringify(input),
-    })).value.items;
+    return (
+      await this.#request<{ mediaObjects: MediaObject[] }>("/objects", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    ).value.mediaObjects;
   }
 
   async getObject(uriOrId: string): Promise<VersionedObject> {
@@ -127,7 +122,11 @@ export class RhizomeClient {
     return { value, userRev: Number(response.headers.get("ETag")?.replaceAll('"', "") ?? 0) };
   }
 
-  async setUser(uriOrId: string, properties: Record<string, unknown>, ifMatch: number): Promise<VersionedObject> {
+  async setUser(
+    uriOrId: string,
+    properties: Record<string, unknown>,
+    ifMatch: number,
+  ): Promise<VersionedObject> {
     const { value, response } = await this.#request<MediaObject>(
       `/objects/${encodeURIComponent(idFromUri(uriOrId))}/user`,
       {
@@ -141,20 +140,27 @@ export class RhizomeClient {
 
   async uploadElement(input: UploadElementInput): Promise<MediaElement> {
     const bytes = input.bytes instanceof Blob ? input.bytes : new Blob([ownedBuffer(input.bytes)]);
-    const headers: Record<string, string> = { "Content-Type": input.mime, "X-Rnet-Kind": input.kind };
+    const headers: Record<string, string> = {
+      "Content-Type": input.mime,
+      "X-Rnet-Kind": input.kind,
+    };
     if (input.vibe) headers["X-Rnet-Vibe"] = input.vibe;
-    return (await this.#request<MediaElement>("/elements", {
-      method: "POST",
-      headers,
-      body: bytes,
-    })).value;
+    return (
+      await this.#request<MediaElement>("/elements", {
+        method: "POST",
+        headers,
+        body: bytes,
+      })
+    ).value;
   }
 
   async uploadOrigin(input: UploadOriginInput): Promise<OriginArtifact> {
     const bytes = input.bytes instanceof Blob ? input.bytes : new Blob([ownedBuffer(input.bytes)]);
     const headers: Record<string, string> = { "Content-Type": input.mime };
     if (input.label) headers["X-Rnet-Label"] = input.label;
-    return (await this.#request<OriginArtifact>("/origins", { method: "POST", headers, body: bytes })).value;
+    return (
+      await this.#request<OriginArtifact>("/origins", { method: "POST", headers, body: bytes })
+    ).value;
   }
 }
 

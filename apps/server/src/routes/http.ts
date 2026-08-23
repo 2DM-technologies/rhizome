@@ -6,7 +6,8 @@ import type { AppEnvironment } from "./types.ts";
 
 export function requestMime(value?: string): string {
   const mime = value?.split(";", 1)[0]?.trim();
-  if (!mime) throw new Problem(415, "mime_required", "Media type required", "Content-Type is required");
+  if (!mime)
+    throw new Problem(415, "mime_required", "Media type required", "Content-Type is required");
   return mime;
 }
 

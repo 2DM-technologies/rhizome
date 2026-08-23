@@ -1,4 +1,4 @@
-import { validateMediaObject, type MediaObject } from "@rnet/types";
+import { RNET_SCHEMA_VERSION, validateMediaObject, type MediaObject } from "@rnet/types";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -34,23 +34,34 @@ export class MediaObjectService {
   }
 
   async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
-    const [mediaObjectRecord] = await this.db.select().from(mediaObjects).where(eq(mediaObjects.uuid, uuid));
+    const [mediaObjectRecord] = await this.db
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.uuid, uuid));
     if (!mediaObjectRecord) throw notFound("Object");
     if (!(await this.access.canReadMediaObject(uuid))) throw grantMissing("read");
-    return { document: await this.toDocument(mediaObjectRecord), userRev: mediaObjectRecord.userRev };
+    return {
+      document: await this.toDocument(mediaObjectRecord),
+      userRev: mediaObjectRecord.userRev,
+    };
   }
 
-  async createMediaObjects(vibe: string | undefined, mediaObjectInputs: unknown[]): Promise<MediaObject[]> {
+  async createMediaObjects(
+    vibe: string | undefined,
+    mediaObjectInputs: unknown[],
+  ): Promise<MediaObject[]> {
     await this.access.assertAuthenticated();
     const vibeUuid = vibe ? uriId(vibe) : undefined;
     let targetVibe: DbVibe | undefined;
     if (this.actor.kind === "client") {
-      if (!vibeUuid) throw schemaProblem([{ instancePath: "/vibe", message: "is required for clients" }]);
+      if (!vibeUuid)
+        throw schemaProblem([{ instancePath: "/vibe", message: "is required for clients" }]);
       targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
     } else if (vibeUuid) {
       targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
     }
-    const ownerUuid = targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
+    const ownerUuid =
+      targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
     if (!ownerUuid) throw grantMissing("owner");
     const actorOwnsRecords = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
 
@@ -65,7 +76,9 @@ export class MediaObjectService {
       const createdMediaObjects: MediaObject[] = [];
       let nextVibePosition: number | undefined;
       if (vibeUuid) {
-        await transaction.execute(sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`);
+        await transaction.execute(
+          sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`,
+        );
         const [maxPosition] = await transaction
           .select({ max: sql<number>`coalesce(max(${vibeMediaObjects.position}), -1)::int` })
           .from(vibeMediaObjects)
@@ -99,13 +112,15 @@ export class MediaObjectService {
             })),
           );
         }
-        await transaction.insert(mediaObjectOrigins).values(
-          mediaObjectDocument.source.origins.map((uri) =>
-            uri.startsWith("rnet://origin/")
-              ? { mediaObjectUuid, originArtifactUuid: uriId(uri) }
-              : { mediaObjectUuid, machineUuid: uriId(uri) },
-          ),
-        );
+        await transaction
+          .insert(mediaObjectOrigins)
+          .values(
+            mediaObjectDocument.source.origins.map((uri) =>
+              uri.startsWith("rnet://origin/")
+                ? { mediaObjectUuid, originArtifactUuid: uriId(uri) }
+                : { mediaObjectUuid, machineUuid: uriId(uri) },
+            ),
+          );
         await transaction.insert(mediaObjectRevisions).values({
           mediaObjectUuid,
           block: "source",
@@ -193,7 +208,12 @@ export class MediaObjectService {
     await this.access.assertMediaObjectScope(mediaObjectUuid, "write:inferred");
     const key = this.actor.kind === "client" ? `${this.actor.name}:${task}` : task;
     if (this.actor.kind === "client" && task.includes(":")) {
-      throw new Problem(403, "writer_namespace_mismatch", "Writer namespace mismatch", "Pass a bare task name");
+      throw new Problem(
+        403,
+        "writer_namespace_mismatch",
+        "Writer namespace mismatch",
+        "Pass a bare task name",
+      );
     }
     const updatedMediaObject = await this.db.transaction(async (transaction) => {
       await transaction.execute(
@@ -263,17 +283,21 @@ export class MediaObjectService {
       throw schemaProblem([{ instancePath: `/objects/${index}`, message: "must be an object" }]);
     }
     const rawMediaObject = input as Record<string, unknown>;
-    const mediaObjectUuid = typeof rawMediaObject.uri === "string" ? uriId(rawMediaObject.uri) : uuidv7();
+    const mediaObjectUuid =
+      typeof rawMediaObject.uri === "string" ? uriId(rawMediaObject.uri) : uuidv7();
     const owner = `rnet://id/${ownerUuid}`;
     if (rawMediaObject.owner !== undefined && rawMediaObject.owner !== owner) {
       throw schemaProblem([
-        { instancePath: `/objects/${index}/owner`, message: "conflicts with the store-assigned owner" },
+        {
+          instancePath: `/objects/${index}/owner`,
+          message: "conflicts with the store-assigned owner",
+        },
       ]);
     }
     const candidateMediaObject =
       this.actor.kind === "client"
         ? {
-            rnet_schema: "0.1",
+            rnet_schema: RNET_SCHEMA_VERSION,
             uri: `rnet://object/${mediaObjectUuid}`,
             owner,
             type: rawMediaObject.type,
@@ -288,8 +312,13 @@ export class MediaObjectService {
         : { ...rawMediaObject, owner };
     const validation = validateMediaObject(candidateMediaObject);
     if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}`);
-    if (validation.value.user !== undefined || Object.keys(validation.value.inferred ?? {}).length) {
-      throw schemaProblem([{ instancePath: `/objects/${index}`, message: "creation cannot write user or inferred" }]);
+    if (
+      validation.value.user !== undefined ||
+      Object.keys(validation.value.inferred ?? {}).length
+    ) {
+      throw schemaProblem([
+        { instancePath: `/objects/${index}`, message: "creation cannot write user or inferred" },
+      ]);
     }
     const ingest = validation.value.source.ingest;
     const allowedStamp =
@@ -329,7 +358,8 @@ export class MediaObjectService {
       const actorOwnsRecord = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
       if (!actorOwnsRecord) {
         const createdForTarget =
-          mediaElementRecord.createdBy === this.actor.subject && mediaElementRecord.createdForVibe === vibeUuid;
+          mediaElementRecord.createdBy === this.actor.subject &&
+          mediaElementRecord.createdForVibe === vibeUuid;
         const readableInTarget = vibeUuid
           ? await this.canReadMediaElementInVibe(mediaElementUuid, vibeUuid)
           : false;
@@ -343,11 +373,15 @@ export class MediaObjectService {
           .from(originArtifacts)
           .where(eq(originArtifacts.uuid, uriId(uri)));
         if (!originArtifact) {
-          throw schemaProblem([{ instancePath: "/source/origins", message: `unknown origin ${uri}` }]);
+          throw schemaProblem([
+            { instancePath: "/source/origins", message: `unknown origin ${uri}` },
+          ]);
         }
         if (originArtifact.ownerUuid !== ownerUuid) throw grantMissing("owner");
       } else if (!(await this.identities.hasMachineUuid(uriId(uri)))) {
-        throw schemaProblem([{ instancePath: "/source/origins", message: `unknown client ${uri}` }]);
+        throw schemaProblem([
+          { instancePath: "/source/origins", message: `unknown client ${uri}` },
+        ]);
       }
     }
   }
@@ -365,7 +399,10 @@ export class MediaObjectService {
     const [membership] = await this.db
       .select({ mediaObjectUuid: mediaObjectElements.mediaObjectUuid })
       .from(mediaObjectElements)
-      .innerJoin(vibeMediaObjects, eq(vibeMediaObjects.mediaObjectUuid, mediaObjectElements.mediaObjectUuid))
+      .innerJoin(
+        vibeMediaObjects,
+        eq(vibeMediaObjects.mediaObjectUuid, mediaObjectElements.mediaObjectUuid),
+      )
       .where(
         and(
           eq(mediaObjectElements.mediaElementUuid, mediaElementUuid),
@@ -380,7 +417,7 @@ export class MediaObjectService {
     mediaElementUuids: string[],
   ): MediaObject {
     return {
-      rnet_schema: "0.1",
+      rnet_schema: RNET_SCHEMA_VERSION,
       uri: `rnet://object/${mediaObjectRecord.uuid}`,
       owner: `rnet://id/${mediaObjectRecord.ownerUuid}`,
       type: mediaObjectRecord.type,
@@ -388,7 +425,9 @@ export class MediaObjectService {
       ...(Object.keys(mediaObjectRecord.keys).length ? { keys: mediaObjectRecord.keys } : {}),
       source: mediaObjectRecord.source,
       ...(mediaObjectRecord.user ? { user: mediaObjectRecord.user } : {}),
-      ...(Object.keys(mediaObjectRecord.inferred).length ? { inferred: mediaObjectRecord.inferred } : {}),
+      ...(Object.keys(mediaObjectRecord.inferred).length
+        ? { inferred: mediaObjectRecord.inferred }
+        : {}),
       ...mediaObjectRecord.extensions,
     } as MediaObject;
   }

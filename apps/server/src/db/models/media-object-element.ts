@@ -6,8 +6,12 @@ import { mediaObjects } from "./media-object.ts";
 export const mediaObjectElements = pgTable(
   "media_object_elements",
   {
-    mediaObjectUuid: uuid("media_object_uuid").notNull().references(() => mediaObjects.uuid, { onDelete: "cascade" }),
-    mediaElementUuid: uuid("media_element_uuid").notNull().references(() => mediaElements.uuid),
+    mediaObjectUuid: uuid("media_object_uuid")
+      .notNull()
+      .references(() => mediaObjects.uuid, { onDelete: "cascade" }),
+    mediaElementUuid: uuid("media_element_uuid")
+      .notNull()
+      .references(() => mediaElements.uuid),
     position: integer("position").notNull(),
   },
   (mediaObjectElement) => [

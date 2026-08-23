@@ -34,9 +34,19 @@ export class R2BlobStore implements BlobStore {
     this.#buckets = options.buckets;
   }
 
-  async put(namespace: BlobNamespace, key: string, bytes: Uint8Array, contentType?: string): Promise<void> {
+  async put(
+    namespace: BlobNamespace,
+    key: string,
+    bytes: Uint8Array,
+    contentType?: string,
+  ): Promise<void> {
     await this.#client.send(
-      new PutObjectCommand({ Bucket: this.#buckets[namespace], Key: key, Body: bytes, ContentType: contentType }),
+      new PutObjectCommand({
+        Bucket: this.#buckets[namespace],
+        Key: key,
+        Body: bytes,
+        ContentType: contentType,
+      }),
     );
   }
 
@@ -46,16 +56,22 @@ export class R2BlobStore implements BlobStore {
         new GetObjectCommand({ Bucket: this.#buckets[namespace], Key: key }),
       );
       if (!response.Body) return null;
-      return { bytes: await response.Body.transformToByteArray(), contentType: response.ContentType };
+      return {
+        bytes: await response.Body.transformToByteArray(),
+        contentType: response.ContentType,
+      };
     } catch (error) {
-      const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+      const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
+        ?.httpStatusCode;
       if (status === 404) return null;
       throw error;
     }
   }
 
   async delete(namespace: BlobNamespace, key: string): Promise<void> {
-    await this.#client.send(new DeleteObjectCommand({ Bucket: this.#buckets[namespace], Key: key }));
+    await this.#client.send(
+      new DeleteObjectCommand({ Bucket: this.#buckets[namespace], Key: key }),
+    );
   }
 
   async signedUrl(namespace: BlobNamespace, key: string, expiresInSeconds = 900): Promise<string> {

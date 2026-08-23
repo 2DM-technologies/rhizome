@@ -26,17 +26,26 @@ export class IdentityService {
   }
 
   async hasMachineName(name: string): Promise<boolean> {
-    const [machine] = await this.db.select({ uuid: machines.uuid }).from(machines).where(eq(machines.name, name));
+    const [machine] = await this.db
+      .select({ uuid: machines.uuid })
+      .from(machines)
+      .where(eq(machines.name, name));
     return Boolean(machine);
   }
 
   async hasMachineUuid(uuid: string): Promise<boolean> {
-    const [machine] = await this.db.select({ uuid: machines.uuid }).from(machines).where(eq(machines.uuid, uuid));
+    const [machine] = await this.db
+      .select({ uuid: machines.uuid })
+      .from(machines)
+      .where(eq(machines.uuid, uuid));
     return Boolean(machine);
   }
 
   async hasUserUuid(uuid: string): Promise<boolean> {
-    const [user] = await this.db.select({ uuid: users.uuid }).from(users).where(eq(users.uuid, uuid));
+    const [user] = await this.db
+      .select({ uuid: users.uuid })
+      .from(users)
+      .where(eq(users.uuid, uuid));
     return Boolean(user);
   }
 }

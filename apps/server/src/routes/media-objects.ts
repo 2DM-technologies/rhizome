@@ -5,17 +5,18 @@ import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
 import { MediaObjectService } from "../services/media-objects.ts";
 import {
+  ProblemSchema,
+  RecordIdParamsSchema,
   collectionOf,
   jsonSchema,
-  problemSchema,
   rnetDocument,
   rnetRoute,
 } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
 
-const mediaObjectDocumentSchema = rnetDocument("media-object");
-const mediaObjectCollectionSchema = collectionOf(mediaObjectDocumentSchema, "mediaObjects");
-const createMediaObjectsRequestSchema = jsonSchema({
+const MediaObjectDocumentSchema = rnetDocument("media-object");
+const MediaObjectCollectionSchema = collectionOf(MediaObjectDocumentSchema, "mediaObjects");
+const CreateMediaObjectsRequestSchema = jsonSchema({
   type: "object",
   required: ["objects"],
   properties: {
@@ -24,13 +25,13 @@ const createMediaObjectsRequestSchema = jsonSchema({
   },
   additionalProperties: false,
 });
-const setMediaObjectUserRequestSchema = jsonSchema({
+const SetMediaObjectUserRequestSchema = jsonSchema({
   type: "object",
   required: ["properties"],
   properties: { properties: { type: "object" } },
   additionalProperties: false,
 });
-const setMediaObjectInferredRequestSchema = jsonSchema({
+const SetMediaObjectInferredRequestSchema = jsonSchema({
   type: "object",
   required: ["task", "entry"],
   properties: {
@@ -46,8 +47,9 @@ export function createMediaObjectRoutes(db: Database) {
   router.post(
     "/",
     rnetRoute({
-      request: { json: createMediaObjectsRequestSchema },
-      responses: { 201: mediaObjectCollectionSchema, 422: problemSchema },
+      auth: "authenticated",
+      request: { json: CreateMediaObjectsRequestSchema },
+      responses: { 201: MediaObjectCollectionSchema, 401: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const input = context.req.valid("json");
@@ -58,19 +60,23 @@ export function createMediaObjectRoutes(db: Database) {
   );
   router.get(
     "/:id",
-    rnetRoute({ responses: { 200: mediaObjectDocumentSchema } }),
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
+    }),
     async (context) => {
       const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      const result = await mediaObjectService.getMediaObject(context.req.param("id"));
+      const result = await mediaObjectService.getMediaObject(context.req.valid("param").id);
+      const mediaObject = result.document;
       context.header("ETag", `"${result.userRev}"`);
-      return context.json(result.document);
+      return context.json(mediaObject);
     },
   );
   router.patch(
     "/:id/user",
     rnetRoute({
-      request: { json: setMediaObjectUserRequestSchema },
-      responses: { 200: mediaObjectDocumentSchema, 422: problemSchema },
+      request: { param: RecordIdParamsSchema, json: SetMediaObjectUserRequestSchema },
+      responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const header = context.req.header("If-Match");
@@ -89,26 +95,30 @@ export function createMediaObjectRoutes(db: Database) {
       const input = context.req.valid("json");
       const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
       const result = await mediaObjectService.setUser(
-        context.req.param("id"),
+        context.req.valid("param").id,
         expectedRevision,
         input.properties,
       );
+      const mediaObject = result.document;
       context.header("ETag", `"${result.userRev}"`);
-      return context.json(result.document);
+      return context.json(mediaObject);
     },
   );
   router.put(
     "/:id/inferred",
     rnetRoute({
-      request: { json: setMediaObjectInferredRequestSchema },
-      responses: { 200: mediaObjectDocumentSchema, 422: problemSchema },
+      request: { param: RecordIdParamsSchema, json: SetMediaObjectInferredRequestSchema },
+      responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const input = context.req.valid("json");
       const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      return context.json(
-        await mediaObjectService.setInferred(context.req.param("id"), input.task, input.entry),
+      const mediaObject = await mediaObjectService.setInferred(
+        context.req.valid("param").id,
+        input.task,
+        input.entry,
       );
+      return context.json(mediaObject);
     },
   );
 

@@ -12,7 +12,10 @@ export interface AppVariables {
   actor: Actor;
 }
 
-export async function devAuth(c: Context<{ Variables: AppVariables }>, next: Next): Promise<Response | void> {
+export async function devAuth(
+  c: Context<{ Variables: AppVariables }>,
+  next: Next,
+): Promise<Response | void> {
   const authorization = c.req.header("Authorization");
   let actor: Actor;
   if (authorization === "Bearer dev:user") {

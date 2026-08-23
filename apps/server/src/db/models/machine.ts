@@ -1,5 +1,14 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import type { JsonObject } from "./shared.ts";
 import { users } from "./user.ts";

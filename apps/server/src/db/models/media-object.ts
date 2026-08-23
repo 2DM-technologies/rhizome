@@ -9,7 +9,9 @@ export const mediaObjects = pgTable(
   "media_objects",
   {
     uuid: uuid("uuid").primaryKey(),
-    ownerUuid: uuid("owner_uuid").notNull().references(() => users.uuid),
+    ownerUuid: uuid("owner_uuid")
+      .notNull()
+      .references(() => users.uuid),
     createdBy: text("created_by").notNull(),
     createdForVibe: uuid("created_for_vibe").references(() => vibes.uuid, { onDelete: "set null" }),
     type: text("type").notNull(),

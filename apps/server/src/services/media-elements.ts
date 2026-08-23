@@ -1,3 +1,4 @@
+import { RNET_SCHEMA_VERSION } from "@rnet/types";
 import { eq } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
@@ -38,7 +39,7 @@ export class MediaElementService {
         kind: input.kind,
         mime: input.mime,
         byteSize: input.byteSize,
-        rnetSchema: "0.1",
+        rnetSchema: RNET_SCHEMA_VERSION,
         createdBy: input.createdBy,
         createdForVibe: input.createdForVibe ?? null,
       })

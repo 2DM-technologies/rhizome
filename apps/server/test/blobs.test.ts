@@ -20,7 +20,10 @@ beforeAll(async () => {
     port: 0,
     silent: true,
     directory: join(scratch, "s3"),
-    configureBuckets: ["elements", "origins", "bundles", "assets"].map((name) => ({ name, configs: [] })),
+    configureBuckets: ["elements", "origins", "bundles", "assets"].map((name) => ({
+      name,
+      configs: [],
+    })),
   });
   const address = await s3.run();
   endpoint = `http://${address.address}:${address.port}`;

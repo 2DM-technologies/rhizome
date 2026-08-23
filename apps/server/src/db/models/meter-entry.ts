@@ -4,7 +4,9 @@ import { operations } from "./operation.ts";
 import type { JsonObject } from "./shared.ts";
 
 export const meterEntries = pgTable("meter", {
-  operationUuid: uuid("operation_uuid").primaryKey().references(() => operations.uuid),
+  operationUuid: uuid("operation_uuid")
+    .primaryKey()
+    .references(() => operations.uuid),
   payer: text("payer").notNull(),
   model: text("model"),
   tokensIn: integer("tokens_in").notNull().default(0),

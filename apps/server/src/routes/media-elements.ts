@@ -1,4 +1,4 @@
-import { validateSchema, type MediaElement } from "@rnet/types";
+import { RNET_SCHEMA_VERSION, validateSchema, type MediaElement } from "@rnet/types";
 import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
 
@@ -8,26 +8,28 @@ import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access.ts";
 import { MediaElementService, type DbMediaElement } from "../services/media-elements.ts";
 import { uriId } from "../services/uris.ts";
-import { problemSchema, rnetDocument, rnetRoute } from "./contracts.ts";
+import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
 import { blobResponse, contentHash, normalizedUuid, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
-const mediaElementDocumentSchema = rnetDocument("media-element");
+const MediaElementDocumentSchema = rnetDocument("media-element");
 
 export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   const router = new Hono<AppEnvironment>();
 
   router.post(
     "/",
-    rnetRoute({ responses: { 201: mediaElementDocumentSchema, 422: problemSchema } }),
+    rnetRoute({
+      auth: "authenticated",
+      responses: { 201: MediaElementDocumentSchema, 401: ProblemSchema, 422: ProblemSchema },
+    }),
     async (context) => {
       const actor = context.get("actor");
-      const accessService = new AccessService({ db, actor });
       const mediaElementService = new MediaElementService({ db, actor });
-      await accessService.assertAuthenticated();
       let uploadVibeUuid: string | undefined;
       let ownerUuid: string;
       if (actor.kind === "client") {
+        const accessService = new AccessService({ db, actor });
         const vibe = context.req.header("X-Rnet-Vibe");
         if (!vibe) {
           throw new Problem(
@@ -39,7 +41,8 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
           );
         }
         uploadVibeUuid = normalizedUuid(uriId(vibe));
-        ownerUuid = (await accessService.assertVibeScope(uploadVibeUuid, "write:objects")).ownerUuid;
+        ownerUuid = (await accessService.assertVibeScope(uploadVibeUuid, "write:objects"))
+          .ownerUuid;
       } else if (actor.kind === "user") {
         ownerUuid = actor.uuid;
       } else {
@@ -51,7 +54,7 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
       const contentHashValue = await contentHash(bytes);
       const mediaElementUuid = uuidv7();
       const candidateMediaElement = {
-        rnet_schema: "0.1",
+        rnet_schema: RNET_SCHEMA_VERSION,
         uri: `rnet://element/${mediaElementUuid}`,
         owner: `rnet://id/${ownerUuid}`,
         content_hash: contentHashValue,
@@ -71,45 +74,57 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
           { errors: validation.issues },
         );
       }
+      const mediaElement = validation.value;
       await blobs.put("elements", contentHashValue, bytes, mime);
       await mediaElementService.createMediaElement({
         uuid: mediaElementUuid,
         ownerUuid,
         contentHash: contentHashValue,
-        kind: validation.value.kind,
+        kind: mediaElement.kind,
         mime,
         byteSize: bytes.byteLength,
         createdBy: actor.subject,
         createdForVibe: actor.kind === "client" ? uploadVibeUuid : undefined,
       });
-      return context.json(validation.value, 201);
+      return context.json(mediaElement, 201);
     },
   );
   router.get(
     "/:id",
-    rnetRoute({ responses: { 200: mediaElementDocumentSchema } }),
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 200: MediaElementDocumentSchema, 422: ProblemSchema },
+    }),
     async (context) => {
       const mediaElementService = new MediaElementService({ db, actor: context.get("actor") });
-      const mediaElement = await mediaElementService.getMediaElement(
-        normalizedUuid(context.req.param("id")),
-      );
-      return context.json(await mediaElementDocument(mediaElement, blobs));
+      const mediaElement = await mediaElementService.getMediaElement(context.req.valid("param").id);
+      const document = await mediaElementDocument(mediaElement, blobs);
+      return context.json(document);
     },
   );
-  router.get("/:id/bytes", async (context) => {
-    const mediaElementService = new MediaElementService({ db, actor: context.get("actor") });
-    const mediaElement = await mediaElementService.getMediaElement(
-      normalizedUuid(context.req.param("id")),
-    );
-    return blobResponse(context, await blobs.get("elements", mediaElement.contentHash));
-  });
+  router.get(
+    "/:id/bytes",
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 422: ProblemSchema },
+    }),
+    async (context) => {
+      const mediaElementService = new MediaElementService({ db, actor: context.get("actor") });
+      const mediaElement = await mediaElementService.getMediaElement(context.req.valid("param").id);
+      const blob = await blobs.get("elements", mediaElement.contentHash);
+      return blobResponse(context, blob);
+    },
+  );
 
   return router;
 }
 
-async function mediaElementDocument(mediaElement: DbMediaElement, blobs: BlobStore): Promise<MediaElement> {
+async function mediaElementDocument(
+  mediaElement: DbMediaElement,
+  blobs: BlobStore,
+): Promise<MediaElement> {
   return {
-    rnet_schema: "0.1",
+    rnet_schema: RNET_SCHEMA_VERSION,
     uri: `rnet://element/${mediaElement.uuid}`,
     owner: `rnet://id/${mediaElement.ownerUuid}`,
     content_hash: mediaElement.contentHash,

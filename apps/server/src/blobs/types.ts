@@ -6,7 +6,12 @@ export interface StoredBlob {
 }
 
 export interface BlobStore {
-  put(namespace: BlobNamespace, key: string, bytes: Uint8Array, contentType?: string): Promise<void>;
+  put(
+    namespace: BlobNamespace,
+    key: string,
+    bytes: Uint8Array,
+    contentType?: string,
+  ): Promise<void>;
   get(namespace: BlobNamespace, key: string): Promise<StoredBlob | null>;
   delete(namespace: BlobNamespace, key: string): Promise<void>;
   signedUrl(namespace: BlobNamespace, key: string, expiresInSeconds?: number): Promise<string>;

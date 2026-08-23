@@ -8,7 +8,7 @@ import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
-import { grantMissing, notFound, Problem } from "../errors.ts";
+import { authenticationRequired, grantMissing, notFound, Problem } from "../errors.ts";
 import type { ServiceContext } from "./types.ts";
 
 export type Scope = Grant["scope"][number];
@@ -24,16 +24,17 @@ export class AccessService {
   }
 
   async assertAuthenticated(): Promise<void> {
-    if (this.actor.kind === "public") {
-      throw new Problem(401, "authentication_required", "Authentication required", "Sign in to continue");
-    }
+    if (this.actor.kind === "public") throw authenticationRequired();
   }
 
   async assertVibeOwner(vibeUuid?: string): Promise<void> {
     await this.assertAuthenticated();
     if (this.actor.kind !== "user") throw grantMissing("owner");
     if (!vibeUuid) return;
-    const [vibe] = await this.db.select({ ownerUuid: vibes.ownerUuid }).from(vibes).where(eq(vibes.uuid, vibeUuid));
+    const [vibe] = await this.db
+      .select({ ownerUuid: vibes.ownerUuid })
+      .from(vibes)
+      .where(eq(vibes.uuid, vibeUuid));
     if (!vibe) throw notFound("Vibe");
     if (vibe.ownerUuid !== this.actor.uuid) throw grantMissing("owner");
   }

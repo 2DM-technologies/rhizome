@@ -11,21 +11,9 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "jsx": "react-jsx",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "types": [
-      "bun",
-      "node"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["bun", "node"],
     "noEmit": true
   },
-  "include": [
-    "apps/**/*.ts",
-    "apps/**/*.tsx",
-    "packages/**/*.ts",
-    "packages/**/*.tsx"
-  ]
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "packages/**/*.tsx"]
 }

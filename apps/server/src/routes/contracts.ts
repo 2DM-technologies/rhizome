@@ -19,7 +19,7 @@ import addFormats from "ajv-formats";
 import type { Input, MiddlewareHandler } from "hono";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
-import { Problem, problemResponse } from "../errors.ts";
+import { authenticationRequired, grantMissing, Problem, problemResponse } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
 import type { AppEnvironment } from "./types.ts";
 
@@ -31,21 +31,33 @@ export interface ContractSchema<Value> {
 }
 
 type ContractResponses = Readonly<Record<number, ContractSchema<unknown>>>;
+type ContractRequest = Readonly<{
+  json?: ContractSchema<object>;
+  param?: ContractSchema<object>;
+}>;
 
 export type RouteContract<
-  RequestBody extends object | undefined,
+  Request extends ContractRequest | undefined,
   Responses extends ContractResponses,
-> = { readonly responses: Responses } & (RequestBody extends object
-  ? { readonly request: { readonly json: ContractSchema<RequestBody> } }
+> = {
+  readonly auth?: "authenticated" | "user";
+  readonly responses: Responses;
+} & (Request extends ContractRequest
+  ? { readonly request: Request }
   : { readonly request?: never });
 
-type JsonInput<Value extends object> = Input & {
-  in: { json: Value };
-  out: { json: Value };
-};
+type ContractValue<Schema> = Schema extends ContractSchema<infer Value> ? Value : never;
 
-type ContractInput<RequestBody extends object | undefined> = RequestBody extends object
-  ? JsonInput<RequestBody>
+type ContractTargets<Request extends ContractRequest> = (Request extends { json: infer Schema }
+  ? { json: ContractValue<Schema> }
+  : object) &
+  (Request extends { param: infer Schema } ? { param: ContractValue<Schema> } : object);
+
+type ContractInput<Request extends ContractRequest | undefined> = Request extends ContractRequest
+  ? Input & {
+      in: ContractTargets<Request>;
+      out: ContractTargets<Request>;
+    }
   : Input;
 
 type RnetSchemaReferences = [
@@ -100,7 +112,9 @@ export function jsonSchema(document: JSONSchema): ContractSchema<unknown> {
   };
 }
 
-export function rnetDocument<Name extends SchemaName>(name: Name): ContractSchema<SchemaTypes[Name]> {
+export function rnetDocument<Name extends SchemaName>(
+  name: Name,
+): ContractSchema<SchemaTypes[Name]> {
   return {
     document: RNET_DOCUMENTS[name],
     validate(value) {
@@ -138,7 +152,7 @@ export function collectionOf<Value, const Key extends string = "items">(
           ? []
           : validation.issues.map((issue) => ({
               ...issue,
-              instancePath: `/items/${index}${issue.instancePath}`,
+              instancePath: `/${key}/${index}${issue.instancePath}`,
             }));
       });
       return issues.length
@@ -148,7 +162,7 @@ export function collectionOf<Value, const Key extends string = "items">(
   };
 }
 
-export const problemSchema = jsonSchema({
+export const ProblemSchema = jsonSchema({
   type: "object",
   required: ["type", "title", "status", "detail", "code"],
   properties: {
@@ -161,17 +175,44 @@ export const problemSchema = jsonSchema({
   additionalProperties: true,
 });
 
+export const RecordIdParamsSchema = jsonSchema({
+  type: "object",
+  required: ["id"],
+  properties: {
+    id: {
+      type: "string",
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    },
+  },
+  additionalProperties: false,
+});
+
 export function rnetRoute<
-  RequestBody extends object | undefined,
+  Request extends ContractRequest | undefined,
   const Responses extends ContractResponses,
 >(
-  contract: RouteContract<RequestBody, Responses>,
-): MiddlewareHandler<AppEnvironment, string, ContractInput<RequestBody>> {
+  contract: RouteContract<Request, Responses>,
+): MiddlewareHandler<AppEnvironment, string, ContractInput<Request>> {
   return async (context, next) => {
     try {
-      if (contract.request) {
+      const actor = context.get("actor");
+      if (contract.auth && actor.kind === "public") {
+        throw authenticationRequired();
+      }
+      if (contract.auth === "user" && actor.kind !== "user") throw grantMissing("owner");
+      if (contract.request?.param) {
+        const validation = contract.request.param.validate(context.req.param());
+        if (!validation.ok) throw schemaProblem(validation.issues);
+        context.req.addValidatedData("param", validation.value);
+      }
+      if (contract.request?.json) {
         const body = await context.req.json().catch(() => {
-          throw new Problem(422, "schema_violation", "Invalid JSON", "The request body must be JSON");
+          throw new Problem(
+            422,
+            "schema_violation",
+            "Invalid JSON",
+            "The request body must be JSON",
+          );
         });
         const validation = contract.request.json.validate(body);
         if (!validation.ok) throw schemaProblem(validation.issues);

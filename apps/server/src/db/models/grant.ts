@@ -6,7 +6,9 @@ import { vibes } from "./vibe.ts";
 export const grants = pgTable(
   "grants",
   {
-    vibeUuid: uuid("vibe_uuid").notNull().references(() => vibes.uuid, { onDelete: "cascade" }),
+    vibeUuid: uuid("vibe_uuid")
+      .notNull()
+      .references(() => vibes.uuid, { onDelete: "cascade" }),
     subject: text("subject").notNull(),
     scopes: jsonb("scopes").$type<Grant["scope"]>().notNull(),
     grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),

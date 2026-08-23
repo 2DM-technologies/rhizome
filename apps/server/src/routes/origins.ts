@@ -1,29 +1,34 @@
-import type { OriginArtifact } from "@rnet/types";
+import { RNET_SCHEMA_VERSION, type OriginArtifact } from "@rnet/types";
 import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
-import { AccessService } from "../services/access.ts";
 import { OriginArtifactService, type DbOriginArtifact } from "../services/origin-artifacts.ts";
-import { problemSchema, rnetDocument, rnetRoute } from "./contracts.ts";
-import { blobResponse, contentHash, normalizedUuid, requestMime } from "./http.ts";
+import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
+import { blobResponse, contentHash, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
-const originArtifactDocumentSchema = rnetDocument("origin-artifact");
+const OriginArtifactDocumentSchema = rnetDocument("origin-artifact");
 
 export function createOriginRoutes(db: Database, blobs: BlobStore) {
   const router = new Hono<AppEnvironment>();
 
   router.post(
     "/",
-    rnetRoute({ responses: { 201: originArtifactDocumentSchema, 415: problemSchema } }),
+    rnetRoute({
+      auth: "user",
+      responses: {
+        201: OriginArtifactDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        415: ProblemSchema,
+      },
+    }),
     async (context) => {
       const actor = context.get("actor");
-      const accessService = new AccessService({ db, actor });
       const originArtifactService = new OriginArtifactService({ db, actor });
-      await accessService.assertVibeOwner();
-      if (actor.kind !== "user") throw new Error("Owner assertion did not narrow to a user");
+      if (actor.kind !== "user") throw new Error("User middleware did not narrow the actor");
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const mime = requestMime(context.req.header("Content-Type"));
       const contentHashValue = await contentHash(bytes);
@@ -43,22 +48,34 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   );
   router.get(
     "/:id",
-    rnetRoute({ responses: { 200: originArtifactDocumentSchema } }),
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 200: OriginArtifactDocumentSchema, 422: ProblemSchema },
+    }),
     async (context) => {
       const originArtifactService = new OriginArtifactService({ db, actor: context.get("actor") });
       const originArtifact = await originArtifactService.getOriginArtifact(
-        normalizedUuid(context.req.param("id")),
+        context.req.valid("param").id,
       );
-      return context.json(await originArtifactDocument(originArtifact, blobs));
+      const document = await originArtifactDocument(originArtifact, blobs);
+      return context.json(document);
     },
   );
-  router.get("/:id/bytes", async (context) => {
-    const originArtifactService = new OriginArtifactService({ db, actor: context.get("actor") });
-    const originArtifact = await originArtifactService.getOriginArtifact(
-      normalizedUuid(context.req.param("id")),
-    );
-    return blobResponse(context, await blobs.get("origins", originArtifact.contentHash));
-  });
+  router.get(
+    "/:id/bytes",
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 422: ProblemSchema },
+    }),
+    async (context) => {
+      const originArtifactService = new OriginArtifactService({ db, actor: context.get("actor") });
+      const originArtifact = await originArtifactService.getOriginArtifact(
+        context.req.valid("param").id,
+      );
+      const blob = await blobs.get("origins", originArtifact.contentHash);
+      return blobResponse(context, blob);
+    },
+  );
 
   return router;
 }
@@ -68,7 +85,7 @@ async function originArtifactDocument(
   blobs: BlobStore,
 ): Promise<OriginArtifact> {
   return {
-    rnet_schema: "0.1",
+    rnet_schema: RNET_SCHEMA_VERSION,
     uri: `rnet://origin/${originArtifact.uuid}`,
     owner: `rnet://id/${originArtifact.ownerUuid}`,
     content_hash: originArtifact.contentHash,

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runStoreConformance } from "@rnet/conformance";
+import { RNET_SCHEMA_VERSION } from "@rnet/types";
 import S3rver from "s3rver";
 
 import { createApp } from "../src/app.ts";
@@ -34,7 +35,11 @@ beforeAll(async () => {
     baseUrl: "http://rhizome.test",
     blob: { driver: "fs", root: blobRoot },
   };
-  const created = createApp({ config, db, blobs: new FileSystemBlobStore(blobRoot, config.baseUrl) });
+  const created = createApp({
+    config,
+    db,
+    blobs: new FileSystemBlobStore(blobRoot, config.baseUrl),
+  });
   app = created.app;
   await created.identityService.seedDevelopmentIdentities();
 });
@@ -71,6 +76,10 @@ describe("rNet M1 store", () => {
     });
     expect(malformed.status).toBe(422);
     expect(malformed.headers.get("Content-Type")).toContain("application/problem+json");
+
+    const invalidPath = await request("/rnet/v0/elements/not-a-uuid", { headers: owner });
+    expect(invalidPath.status).toBe(422);
+    expect(invalidPath.headers.get("Content-Type")).toContain("application/problem+json");
   });
 
   test("creates a Vibe with a real machine grant", async () => {
@@ -134,7 +143,7 @@ describe("rNet M1 store", () => {
         vibe: `rnet://vibe/${vibeId}`,
         objects: [
           {
-            rnet_schema: "0.1",
+            rnet_schema: RNET_SCHEMA_VERSION,
             uri: "rnet://object/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b50",
             type: "transaction",
             elements: [],
@@ -164,7 +173,7 @@ describe("rNet M1 store", () => {
       json: {
         vibe: `rnet://vibe/${vibeId}`,
         objects: uris.map((uri, index) => ({
-          rnet_schema: "0.1",
+          rnet_schema: RNET_SCHEMA_VERSION,
           uri,
           type: "note",
           elements: [],
@@ -177,8 +186,10 @@ describe("rNet M1 store", () => {
       },
     });
     expect(response.status).toBe(201);
-    const listed = await (await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })).json();
-    expect(listed.items.slice(-2).map((item: { uri: string }) => item.uri)).toEqual(uris);
+    const listed = await (
+      await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
+    ).json();
+    expect(listed.mediaObjects.slice(-2).map((item: { uri: string }) => item.uri)).toEqual(uris);
     const positions = await client.unsafe(
       "select position from vibe_media_objects where vibe_uuid = $1 order by position",
       [vibeId],
@@ -189,10 +200,14 @@ describe("rNet M1 store", () => {
   test("lets a granted machine read but never exposes origins", async () => {
     const vibe = await request(`/rnet/v0/vibes/${vibeId}`, { headers: machine });
     expect(vibe.status).toBe(200);
-    const mediaObjectResponse = await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine });
+    const mediaObjectResponse = await request(`/rnet/v0/objects/${mediaObjectId}`, {
+      headers: machine,
+    });
     expect(mediaObjectResponse.status).toBe(200);
     expect(mediaObjectResponse.headers.get("ETag")).toBe('"0"');
-    const origin = await request(`/rnet/v0/origins/${originUri.split("/").at(-1)}`, { headers: machine });
+    const origin = await request(`/rnet/v0/origins/${originUri.split("/").at(-1)}`, {
+      headers: machine,
+    });
     expect(origin.status).toBe(403);
   });
 
@@ -218,7 +233,9 @@ describe("rNet M1 store", () => {
       json: { properties: {}, source: { properties: { amount: 0 } } },
     });
     expect(corrupt.status).toBe(422);
-    const unchanged = await (await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine })).json();
+    const unchanged = await (
+      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine })
+    ).json();
     expect(unchanged.source.properties.amount).toBe(-6.5);
   });
 
@@ -243,17 +260,20 @@ describe("rNet M1 store", () => {
       headers: machine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
-        objects: [{ type: "note", elements: [mediaElement.uri], properties: { title: "Machine-authored" } }],
+        objects: [
+          { type: "note", elements: [mediaElement.uri], properties: { title: "Machine-authored" } },
+        ],
       },
     });
     expect(created.status).toBe(201);
     const document = (await created.json()).mediaObjects[0];
     expect(document.owner).toBe(mediaElement.owner);
     expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
-    expect(document.source.origins).toEqual([
-      "rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48",
-    ]);
-    const mediaElementRead = await request(`/rnet/v0/elements/${mediaElement.uri.split("/").at(-1)}`, { headers: machine });
+    expect(document.source.origins).toEqual(["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"]);
+    const mediaElementRead = await request(
+      `/rnet/v0/elements/${mediaElement.uri.split("/").at(-1)}`,
+      { headers: machine },
+    );
     expect(mediaElementRead.status).toBe(200);
     expect((await mediaElementRead.json()).content_hash).toBe(mediaElement.content_hash);
 
@@ -287,7 +307,7 @@ describe("rNet M1 store", () => {
         vibe: privateVibe.uri,
         objects: [
           {
-            rnet_schema: "0.1",
+            rnet_schema: RNET_SCHEMA_VERSION,
             uri: "rnet://object/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b53",
             type: "note",
             elements: [],
@@ -356,16 +376,19 @@ describe("rNet M1 store", () => {
       headers: machine,
       json: {
         vibe: disposableVibe.uri,
-        objects: [{ type: "note", elements: [mediaElement.uri], properties: { title: "Retained" } }],
+        objects: [
+          { type: "note", elements: [mediaElement.uri], properties: { title: "Retained" } },
+        ],
       },
     });
     expect(mediaObjectResponse.status).toBe(201);
     const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
     const retainedMediaObjectUuid = mediaObject.uri.split("/").at(-1);
 
-    expect((await request(`/rnet/v0/vibes/${disposableVibeId}`, { method: "DELETE", headers: owner })).status).toBe(
-      204,
-    );
+    expect(
+      (await request(`/rnet/v0/vibes/${disposableVibeId}`, { method: "DELETE", headers: owner }))
+        .status,
+    ).toBe(204);
     const retained = await client.unsafe(
       `select
          (select created_for_vibe from media_elements where uuid = $1) as element_vibe,
@@ -398,11 +421,23 @@ describe("rNet M1 store", () => {
       clientToken: "dev:client:rbudget",
       fetch: async (input, init) => app.request(input, init),
     });
-    expect(summary.failed, JSON.stringify(summary.checks.filter((check) => !check.passed), null, 2)).toBe(0);
+    expect(
+      summary.failed,
+      JSON.stringify(
+        summary.checks.filter((check) => !check.passed),
+        null,
+        2,
+      ),
+    ).toBe(0);
   });
 
   test("passes the independent rNet HTTP conformance suite with R2 storage", async () => {
-    const buckets = { elements: "elements", origins: "origins", bundles: "bundles", assets: "assets" } as const;
+    const buckets = {
+      elements: "elements",
+      origins: "origins",
+      bundles: "bundles",
+      assets: "assets",
+    } as const;
     const s3 = new S3rver({
       address: "127.0.0.1",
       port: 0,
@@ -438,7 +473,14 @@ describe("rNet M1 store", () => {
         clientToken: "dev:client:rbudget",
         fetch: async (input, init) => r2App.request(input, init),
       });
-      expect(summary.failed, JSON.stringify(summary.checks.filter((check) => !check.passed), null, 2)).toBe(0);
+      expect(
+        summary.failed,
+        JSON.stringify(
+          summary.checks.filter((check) => !check.passed),
+          null,
+          2,
+        ),
+      ).toBe(0);
     } finally {
       await s3.close();
     }
@@ -449,7 +491,10 @@ async function request(
   path: string,
   options: { method?: string; headers?: Record<string, string>; json?: unknown } = {},
 ): Promise<Response> {
-  const headers = { ...(options.json === undefined ? {} : { "Content-Type": "application/json" }), ...options.headers };
+  const headers = {
+    ...(options.json === undefined ? {} : { "Content-Type": "application/json" }),
+    ...options.headers,
+  };
   return app.request(`http://rhizome.test${path}`, {
     method: options.method,
     headers,

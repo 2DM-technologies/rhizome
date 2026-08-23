@@ -6,7 +6,9 @@ import { vibes } from "./vibe.ts";
 export const vibeRevisions = pgTable(
   "vibe_revisions",
   {
-    vibeUuid: uuid("vibe_uuid").notNull().references(() => vibes.uuid, { onDelete: "cascade" }),
+    vibeUuid: uuid("vibe_uuid")
+      .notNull()
+      .references(() => vibes.uuid, { onDelete: "cascade" }),
     rev: integer("rev").notNull(),
     snapshot: jsonb("snapshot").$type<JsonObject>().notNull(),
     membershipDelta: jsonb("membership_delta").$type<{ added: string[]; removed: string[] }>(),

@@ -7,7 +7,9 @@ import { users } from "./user.ts";
 export const vibes = pgTable("vibes", {
   uuid: uuid("uuid").primaryKey(),
   title: text("title").notNull(),
-  ownerUuid: uuid("owner_uuid").notNull().references(() => users.uuid),
+  ownerUuid: uuid("owner_uuid")
+    .notNull()
+    .references(() => users.uuid),
   rnetSchema: text("rnet_schema").notNull(),
   inferred: jsonb("inferred").$type<NonNullable<Vibe["inferred"]>>().notNull().default({}),
   pullConfig: jsonb("pull_config").$type<Vibe["pull"]>(),

@@ -1,4 +1,10 @@
-import { validateSchema, type Grant, type MediaObject, type Vibe } from "@rnet/types";
+import {
+  RNET_SCHEMA_VERSION,
+  validateSchema,
+  type Grant,
+  type MediaObject,
+  type Vibe,
+} from "@rnet/types";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -61,7 +67,7 @@ export class VibeService {
     const ownerUuid = this.actor.uuid;
     const vibeUuid = uuidv7();
     const candidateVibe = {
-      rnet_schema: "0.1",
+      rnet_schema: RNET_SCHEMA_VERSION,
       uri: `rnet://vibe/${vibeUuid}`,
       title: input.title,
       owner: `rnet://id/${ownerUuid}`,
@@ -120,7 +126,8 @@ export class VibeService {
     const currentVibe = await this.getVibe(vibeUuid);
     const allowed = new Set(["title", "pull", "grants"]);
     const extra = Object.keys(patch).find((key) => !allowed.has(key));
-    if (extra) throw schemaProblem([{ instancePath: `/${extra}`, message: "property is not patchable" }]);
+    if (extra)
+      throw schemaProblem([{ instancePath: `/${extra}`, message: "property is not patchable" }]);
     const candidateVibe = { ...currentVibe, ...patch };
     const validation = validateSchema("vibe", candidateVibe);
     if (!validation.ok) throw schemaProblem(validation.issues);
@@ -130,13 +137,22 @@ export class VibeService {
     return this.db.transaction(async (transaction) => {
       const [vibeRecord] = await transaction
         .update(vibes)
-        .set({ title: vibeDocument.title, pullConfig: vibeDocument.pull, rev: sql`${vibes.rev} + 1` })
+        .set({
+          title: vibeDocument.title,
+          pullConfig: vibeDocument.pull,
+          rev: sql`${vibes.rev} + 1`,
+        })
         .where(eq(vibes.uuid, vibeUuid))
         .returning();
       if (!vibeRecord) throw notFound("Vibe");
       if (patch.grants !== undefined) {
-        const existingGrants = await transaction.select().from(grants).where(eq(grants.vibeUuid, vibeUuid));
-        const nextGrants = new Map((vibeDocument.grants ?? []).map((grant) => [grant.subject, grant]));
+        const existingGrants = await transaction
+          .select()
+          .from(grants)
+          .where(eq(grants.vibeUuid, vibeUuid));
+        const nextGrants = new Map(
+          (vibeDocument.grants ?? []).map((grant) => [grant.subject, grant]),
+        );
         const now = new Date();
         for (const existingGrant of existingGrants) {
           const replacementGrant = nextGrants.get(existingGrant.subject);
@@ -199,7 +215,9 @@ export class VibeService {
     const targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
     const mediaObjectUuids = references.map(uriId);
     if (new Set(mediaObjectUuids).size !== mediaObjectUuids.length) {
-      throw schemaProblem([{ instancePath: "/objects", message: "must not contain duplicate object URIs" }]);
+      throw schemaProblem([
+        { instancePath: "/objects", message: "must not contain duplicate object URIs" },
+      ]);
     }
     const actorIsOwner = this.actor.kind === "user" && this.actor.uuid === targetVibe.ownerUuid;
     for (const mediaObjectUuid of mediaObjectUuids) {
@@ -215,7 +233,8 @@ export class VibeService {
       if (mediaObjectRecord.ownerUuid !== targetVibe.ownerUuid) throw grantMissing("owner");
       if (
         !actorIsOwner &&
-        (mediaObjectRecord.createdBy !== this.actor.subject || mediaObjectRecord.createdForVibe !== vibeUuid)
+        (mediaObjectRecord.createdBy !== this.actor.subject ||
+          mediaObjectRecord.createdForVibe !== vibeUuid)
       ) {
         throw grantMissing("write:objects");
       }
@@ -230,12 +249,17 @@ export class VibeService {
         );
       if (membership) {
         throw schemaProblem([
-          { instancePath: "/objects", message: `object is already in the Vibe: ${mediaObjectUuid}` },
+          {
+            instancePath: "/objects",
+            message: `object is already in the Vibe: ${mediaObjectUuid}`,
+          },
         ]);
       }
     }
     await this.db.transaction(async (transaction) => {
-      await transaction.execute(sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`);
+      await transaction.execute(
+        sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`,
+      );
       const [maxPosition] = await transaction
         .select({ max: sql<number>`coalesce(max(${vibeMediaObjects.position}), -1)::int` })
         .from(vibeMediaObjects)
@@ -248,12 +272,7 @@ export class VibeService {
           position: firstPosition + index,
         })),
       );
-      await this.recordMembershipChange(
-        transaction,
-        vibeUuid,
-        references,
-        [],
-      );
+      await this.recordMembershipChange(transaction, vibeUuid, references, []);
     });
   }
 
@@ -271,12 +290,7 @@ export class VibeService {
             ),
           );
       }
-      await this.recordMembershipChange(
-        transaction,
-        vibeUuid,
-        [],
-        references,
-      );
+      await this.recordMembershipChange(transaction, vibeUuid, [], references);
     });
   }
 
@@ -284,14 +298,17 @@ export class VibeService {
     const seenSubjects = new Set<string>();
     for (const grant of candidateGrants) {
       if (seenSubjects.has(grant.subject)) {
-        throw schemaProblem([{ instancePath: "/grants", message: `duplicate subject ${grant.subject}` }]);
+        throw schemaProblem([
+          { instancePath: "/grants", message: `duplicate subject ${grant.subject}` },
+        ]);
       }
       seenSubjects.add(grant.subject);
       if (grant.subject === "public") continue;
       if (grant.subject.startsWith("client:")) {
         if (await this.identities.hasMachineName(grant.subject.slice("client:".length))) continue;
       } else if (grant.subject.startsWith("id:rnet://id/")) {
-        if (await this.identities.hasUserUuid(grant.subject.slice("id:rnet://id/".length))) continue;
+        if (await this.identities.hasUserUuid(grant.subject.slice("id:rnet://id/".length)))
+          continue;
       }
       throw new Problem(
         422,
@@ -316,7 +333,7 @@ export class VibeService {
         .where(and(eq(grants.vibeUuid, vibeRecord.uuid), isNull(grants.revokedAt))),
     ]);
     return {
-      rnet_schema: "0.1",
+      rnet_schema: RNET_SCHEMA_VERSION,
       uri: `rnet://vibe/${vibeRecord.uuid}`,
       title: vibeRecord.title,
       owner: `rnet://id/${vibeRecord.ownerUuid}`,

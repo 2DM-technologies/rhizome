@@ -6,7 +6,9 @@ export const originArtifacts = pgTable(
   "origins",
   {
     uuid: uuid("uuid").primaryKey(),
-    ownerUuid: uuid("owner_uuid").notNull().references(() => users.uuid),
+    ownerUuid: uuid("owner_uuid")
+      .notNull()
+      .references(() => users.uuid),
     contentHash: text("content_hash").notNull(),
     mime: text("mime").notNull(),
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),

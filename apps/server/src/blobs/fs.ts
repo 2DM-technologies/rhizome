@@ -18,7 +18,12 @@ export class FileSystemBlobStore implements BlobStore {
     return join(this.#root, namespace, key);
   }
 
-  async put(namespace: BlobNamespace, key: string, bytes: Uint8Array, _contentType?: string): Promise<void> {
+  async put(
+    namespace: BlobNamespace,
+    key: string,
+    bytes: Uint8Array,
+    _contentType?: string,
+  ): Promise<void> {
     const path = this.#path(namespace, key);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, bytes, { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {

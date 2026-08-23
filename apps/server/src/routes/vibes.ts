@@ -6,18 +6,19 @@ import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access.ts";
 import { VibeService } from "../services/vibes.ts";
 import {
+  ProblemSchema,
+  RecordIdParamsSchema,
   collectionOf,
   jsonSchema,
-  problemSchema,
   rnetDocument,
   rnetRoute,
 } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
 
-const vibeDocumentSchema = rnetDocument("vibe");
-const vibeCollectionSchema = collectionOf(vibeDocumentSchema);
-const mediaObjectCollectionSchema = collectionOf(rnetDocument("media-object"));
-const createVibeRequestSchema = jsonSchema({
+const VibeDocumentSchema = rnetDocument("vibe");
+const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes");
+const MediaObjectCollectionSchema = collectionOf(rnetDocument("media-object"), "mediaObjects");
+const CreateVibeRequestSchema = jsonSchema({
   type: "object",
   required: ["title"],
   properties: {
@@ -27,7 +28,7 @@ const createVibeRequestSchema = jsonSchema({
   },
   additionalProperties: false,
 });
-const updateVibeRequestSchema = jsonSchema({
+const UpdateVibeRequestSchema = jsonSchema({
   type: "object",
   properties: {
     title: vibeSchema.properties.title,
@@ -36,7 +37,7 @@ const updateVibeRequestSchema = jsonSchema({
   },
   additionalProperties: false,
 });
-const mediaObjectRefsSchema = jsonSchema({
+const MediaObjectRefsSchema = jsonSchema({
   type: "object",
   required: ["objects"],
   properties: {
@@ -52,96 +53,140 @@ const mediaObjectRefsSchema = jsonSchema({
 export function createVibeRoutes(db: Database) {
   const router = new Hono<AppEnvironment>();
 
-  router.get("/", rnetRoute({ responses: { 200: vibeCollectionSchema } }), async (context) => {
+  router.get("/", rnetRoute({ responses: { 200: VibeCollectionSchema } }), async (context) => {
     const vibeService = new VibeService({ db, actor: context.get("actor") });
-    return context.json({ items: await vibeService.listVibes() });
+    const vibes = await vibeService.listVibes();
+    return context.json({ vibes });
   });
   router.post(
     "/",
     rnetRoute({
-      request: { json: createVibeRequestSchema },
-      responses: { 201: vibeDocumentSchema, 422: problemSchema },
+      auth: "user",
+      request: { json: CreateVibeRequestSchema },
+      responses: {
+        201: VibeDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const vibeService = new VibeService({ db, actor: context.get("actor") });
-      return context.json(await vibeService.createVibe(context.req.valid("json")), 201);
+      const vibe = await vibeService.createVibe(context.req.valid("json"));
+      return context.json(vibe, 201);
     },
   );
   router.get(
     "/:id",
-    rnetRoute({ responses: { 200: vibeDocumentSchema } }),
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
+    }),
     async (context) => {
       const vibeService = new VibeService({ db, actor: context.get("actor") });
-      return context.json(await vibeService.getVibe(context.req.param("id")));
+      const vibe = await vibeService.getVibe(context.req.valid("param").id);
+      return context.json(vibe);
     },
   );
   router.patch(
     "/:id",
     rnetRoute({
-      request: { json: updateVibeRequestSchema },
-      responses: { 200: vibeDocumentSchema, 422: problemSchema },
+      request: { param: RecordIdParamsSchema, json: UpdateVibeRequestSchema },
+      responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const vibeService = new VibeService({ db, actor: context.get("actor") });
-      return context.json(
-        await vibeService.updateVibe(context.req.param("id"), context.req.valid("json")),
+      const vibe = await vibeService.updateVibe(
+        context.req.valid("param").id,
+        context.req.valid("json"),
       );
+      return context.json(vibe);
     },
   );
-  router.delete("/:id", async (context) => {
-    const vibeService = new VibeService({ db, actor: context.get("actor") });
-    await vibeService.deleteVibe(context.req.param("id"));
-    return context.body(null, 204);
-  });
-  router.get(
-    "/:id/objects",
-    rnetRoute({ responses: { 200: mediaObjectCollectionSchema } }),
+  router.delete(
+    "/:id",
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 422: ProblemSchema },
+    }),
     async (context) => {
       const vibeService = new VibeService({ db, actor: context.get("actor") });
-      return context.json({ items: await vibeService.listMediaObjects(context.req.param("id")) });
+      await vibeService.deleteVibe(context.req.valid("param").id);
+      return context.body(null, 204);
+    },
+  );
+  router.get(
+    "/:id/objects",
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 200: MediaObjectCollectionSchema, 422: ProblemSchema },
+    }),
+    async (context) => {
+      const vibeService = new VibeService({ db, actor: context.get("actor") });
+      const mediaObjects = await vibeService.listMediaObjects(context.req.valid("param").id);
+      return context.json({ mediaObjects });
     },
   );
   router.post(
     "/:id/objects",
     rnetRoute({
-      request: { json: mediaObjectRefsSchema },
-      responses: { 422: problemSchema },
+      request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
+      responses: { 422: ProblemSchema },
     }),
     async (context) => {
       const body = context.req.valid("json");
       const vibeService = new VibeService({ db, actor: context.get("actor") });
-      await vibeService.addMediaObjectRefs(context.req.param("id"), body.objects);
+      await vibeService.addMediaObjectRefs(context.req.valid("param").id, body.objects);
       return context.body(null, 204);
     },
   );
   router.delete(
     "/:id/objects",
     rnetRoute({
-      request: { json: mediaObjectRefsSchema },
-      responses: { 422: problemSchema },
+      request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
+      responses: { 422: ProblemSchema },
     }),
     async (context) => {
       const body = context.req.valid("json");
       const vibeService = new VibeService({ db, actor: context.get("actor") });
-      await vibeService.removeMediaObjectRefs(context.req.param("id"), body.objects);
+      await vibeService.removeMediaObjectRefs(context.req.valid("param").id, body.objects);
       return context.body(null, 204);
     },
   );
-  router.post("/:id/push", async (context) => {
-    const accessService = new AccessService({ db, actor: context.get("actor") });
-    await accessService.assertVibeScope(context.req.param("id"), "push");
-    throw new Problem(
-      501,
-      "not_implemented",
-      "Push is scheduled for M3",
-      "The operation record exists in M1; model execution lands in M3",
-    );
-  });
-  router.post("/:id/pull", async (context) => {
-    const accessService = new AccessService({ db, actor: context.get("actor") });
-    await accessService.assertVibeScope(context.req.param("id"), "pull");
-    throw new Problem(501, "not_implemented", "Pull is scheduled for M2", "Compiled ingestion lands in M2");
-  });
+  router.post(
+    "/:id/push",
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 422: ProblemSchema },
+    }),
+    async (context) => {
+      const accessService = new AccessService({ db, actor: context.get("actor") });
+      await accessService.assertVibeScope(context.req.valid("param").id, "push");
+      throw new Problem(
+        501,
+        "not_implemented",
+        "Push is scheduled for M3",
+        "The operation record exists in M1; model execution lands in M3",
+      );
+    },
+  );
+  router.post(
+    "/:id/pull",
+    rnetRoute({
+      request: { param: RecordIdParamsSchema },
+      responses: { 422: ProblemSchema },
+    }),
+    async (context) => {
+      const accessService = new AccessService({ db, actor: context.get("actor") });
+      await accessService.assertVibeScope(context.req.valid("param").id, "pull");
+      throw new Problem(
+        501,
+        "not_implemented",
+        "Pull is scheduled for M2",
+        "Compiled ingestion lands in M2",
+      );
+    },
+  );
 
   return router;
 }

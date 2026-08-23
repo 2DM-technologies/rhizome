@@ -8,7 +8,9 @@ export const mediaElements = pgTable(
   "media_elements",
   {
     uuid: uuid("uuid").primaryKey(),
-    ownerUuid: uuid("owner_uuid").notNull().references(() => users.uuid),
+    ownerUuid: uuid("owner_uuid")
+      .notNull()
+      .references(() => users.uuid),
     contentHash: text("content_hash").notNull(),
     kind: text("kind").notNull(),
     mime: text("mime").notNull(),
@@ -20,7 +22,10 @@ export const mediaElements = pgTable(
     tombstonedAt: timestamp("tombstoned_at", { withTimezone: true }),
   },
   (mediaElement) => [
-    check("media_elements_kind_check", sql`${mediaElement.kind} IN ('text', 'image', 'audio', 'video', 'document')`),
+    check(
+      "media_elements_kind_check",
+      sql`${mediaElement.kind} IN ('text', 'image', 'audio', 'video', 'document')`,
+    ),
     index("media_elements_content_hash_idx").on(mediaElement.contentHash),
   ],
 );

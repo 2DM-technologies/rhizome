@@ -32,6 +32,17 @@ export function notFound(kind: string): Problem {
   return new Problem(404, "not_found", "Not found", `${kind} does not exist`);
 }
 
+export function authenticationRequired(): Problem {
+  return new Problem(
+    401,
+    "authentication_required",
+    "Authentication required",
+    "Sign in to continue",
+  );
+}
+
 export function grantMissing(scope: string): Problem {
-  return new Problem(403, "grant_missing", "Grant missing", `The ${scope} scope is required`, { scope });
+  return new Problem(403, "grant_missing", "Grant missing", `The ${scope} scope is required`, {
+    scope,
+  });
 }
