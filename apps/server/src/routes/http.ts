@@ -1,19 +1,8 @@
-import { validateSchema } from "@rnet/types";
 import type { Context } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
 import { notFound, Problem } from "../errors.ts";
 import type { AppEnvironment } from "./types.ts";
-
-export async function jsonBody(context: Context<AppEnvironment>): Promise<Record<string, unknown>> {
-  const body = await context.req.json().catch(() => {
-    throw new Problem(422, "schema_violation", "Invalid JSON", "The request body must be JSON");
-  });
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new Problem(422, "schema_violation", "Schema violation", "The request body must be an object");
-  }
-  return body as Record<string, unknown>;
-}
 
 export function requestMime(value?: string): string {
   const mime = value?.split(";", 1)[0]?.trim();
@@ -31,11 +20,6 @@ export function normalizedUuid(value: string): string {
     throw notFound("Record");
   }
   return value;
-}
-
-export function assertDocument(schema: "origin-artifact", value: unknown): void {
-  const result = validateSchema(schema, value);
-  if (!result.ok) throw new Error(`Store produced an invalid ${schema}: ${JSON.stringify(result.issues)}`);
 }
 
 export function blobResponse(

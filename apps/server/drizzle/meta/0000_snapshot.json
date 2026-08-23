@@ -1,137 +1,9 @@
 {
-  "id": "0e76ed78-5e8f-4b45-96dc-e19fc2b3aebb",
+  "id": "e13717ff-bd1e-4545-b8c3-923a974cd231",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.elements": {
-      "name": "elements",
-      "schema": "",
-      "columns": {
-        "uuid": {
-          "name": "uuid",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "owner_uuid": {
-          "name": "owner_uuid",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "mime": {
-          "name": "mime",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "byte_size": {
-          "name": "byte_size",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "rnet_schema": {
-          "name": "rnet_schema",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "created_for_vibe": {
-          "name": "created_for_vibe",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "tombstoned_at": {
-          "name": "tombstoned_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "elements_content_hash_idx": {
-          "name": "elements_content_hash_idx",
-          "columns": [
-            {
-              "expression": "content_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "elements_owner_uuid_users_uuid_fk": {
-          "name": "elements_owner_uuid_users_uuid_fk",
-          "tableFrom": "elements",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_uuid"
-          ],
-          "columnsTo": [
-            "uuid"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "elements_created_for_vibe_vibes_uuid_fk": {
-          "name": "elements_created_for_vibe_vibes_uuid_fk",
-          "tableFrom": "elements",
-          "tableTo": "vibes",
-          "columnsFrom": [
-            "created_for_vibe"
-          ],
-          "columnsTo": [
-            "uuid"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "elements_kind_check": {
-          "name": "elements_kind_check",
-          "value": "\"elements\".\"kind\" IN ('text', 'image', 'audio', 'video', 'document')"
-        }
-      },
-      "isRLSEnabled": false
-    },
     "public.grants": {
       "name": "grants",
       "schema": "",
@@ -305,108 +177,146 @@
       },
       "isRLSEnabled": false
     },
-    "public.meter": {
-      "name": "meter",
+    "public.media_elements": {
+      "name": "media_elements",
       "schema": "",
       "columns": {
-        "operation_uuid": {
-          "name": "operation_uuid",
+        "uuid": {
+          "name": "uuid",
           "type": "uuid",
           "primaryKey": true,
           "notNull": true
         },
-        "payer": {
-          "name": "payer",
+        "owner_uuid": {
+          "name": "owner_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_hash": {
+          "name": "content_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": true
         },
-        "model": {
-          "name": "model",
+        "kind": {
+          "name": "kind",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "tokens_in": {
-          "name": "tokens_in",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "tokens_out": {
-          "name": "tokens_out",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "turns": {
-          "name": "turns",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "duration_ms": {
-          "name": "duration_ms",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "usd": {
-          "name": "usd",
-          "type": "numeric(12, 6)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
-        },
-        "abort_reason": {
-          "name": "abort_reason",
+        "mime": {
+          "name": "mime",
           "type": "text",
           "primaryKey": false,
+          "notNull": true
+        },
+        "byte_size": {
+          "name": "byte_size",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rnet_schema": {
+          "name": "rnet_schema",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_for_vibe": {
+          "name": "created_for_vibe",
+          "type": "uuid",
+          "primaryKey": false,
           "notNull": false
         },
-        "breakdown": {
-          "name": "breakdown",
-          "type": "jsonb",
+        "tombstoned_at": {
+          "name": "tombstoned_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "media_elements_content_hash_idx": {
+          "name": "media_elements_content_hash_idx",
+          "columns": [
+            {
+              "expression": "content_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
-        "meter_operation_uuid_operations_uuid_fk": {
-          "name": "meter_operation_uuid_operations_uuid_fk",
-          "tableFrom": "meter",
-          "tableTo": "operations",
+        "media_elements_owner_uuid_users_uuid_fk": {
+          "name": "media_elements_owner_uuid_users_uuid_fk",
+          "tableFrom": "media_elements",
+          "tableTo": "users",
           "columnsFrom": [
-            "operation_uuid"
+            "owner_uuid"
           ],
           "columnsTo": [
             "uuid"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "media_elements_created_for_vibe_vibes_uuid_fk": {
+          "name": "media_elements_created_for_vibe_vibes_uuid_fk",
+          "tableFrom": "media_elements",
+          "tableTo": "vibes",
+          "columnsFrom": [
+            "created_for_vibe"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "media_elements_kind_check": {
+          "name": "media_elements_kind_check",
+          "value": "\"media_elements\".\"kind\" IN ('text', 'image', 'audio', 'video', 'document')"
+        }
+      },
       "isRLSEnabled": false
     },
-    "public.object_elements": {
-      "name": "object_elements",
+    "public.media_object_elements": {
+      "name": "media_object_elements",
       "schema": "",
       "columns": {
-        "object_uuid": {
-          "name": "object_uuid",
+        "media_object_uuid": {
+          "name": "media_object_uuid",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "element_uuid": {
-          "name": "element_uuid",
+        "media_element_uuid": {
+          "name": "media_element_uuid",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -420,12 +330,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "object_elements_object_uuid_objects_uuid_fk": {
-          "name": "object_elements_object_uuid_objects_uuid_fk",
-          "tableFrom": "object_elements",
-          "tableTo": "objects",
+        "media_object_elements_media_object_uuid_media_objects_uuid_fk": {
+          "name": "media_object_elements_media_object_uuid_media_objects_uuid_fk",
+          "tableFrom": "media_object_elements",
+          "tableTo": "media_objects",
           "columnsFrom": [
-            "object_uuid"
+            "media_object_uuid"
           ],
           "columnsTo": [
             "uuid"
@@ -433,12 +343,12 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "object_elements_element_uuid_elements_uuid_fk": {
-          "name": "object_elements_element_uuid_elements_uuid_fk",
-          "tableFrom": "object_elements",
-          "tableTo": "elements",
+        "media_object_elements_media_element_uuid_media_elements_uuid_fk": {
+          "name": "media_object_elements_media_element_uuid_media_elements_uuid_fk",
+          "tableFrom": "media_object_elements",
+          "tableTo": "media_elements",
           "columnsFrom": [
-            "element_uuid"
+            "media_element_uuid"
           ],
           "columnsTo": [
             "uuid"
@@ -448,10 +358,10 @@
         }
       },
       "compositePrimaryKeys": {
-        "object_elements_object_uuid_position_pk": {
-          "name": "object_elements_object_uuid_position_pk",
+        "media_object_elements_media_object_uuid_position_pk": {
+          "name": "media_object_elements_media_object_uuid_position_pk",
           "columns": [
-            "object_uuid",
+            "media_object_uuid",
             "position"
           ]
         }
@@ -461,12 +371,12 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.object_origins": {
-      "name": "object_origins",
+    "public.media_object_origins": {
+      "name": "media_object_origins",
       "schema": "",
       "columns": {
-        "object_uuid": {
-          "name": "object_uuid",
+        "media_object_uuid": {
+          "name": "media_object_uuid",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -485,11 +395,11 @@
         }
       },
       "indexes": {
-        "object_origins_artifact_unique_idx": {
-          "name": "object_origins_artifact_unique_idx",
+        "media_object_origins_artifact_unique_idx": {
+          "name": "media_object_origins_artifact_unique_idx",
           "columns": [
             {
-              "expression": "object_uuid",
+              "expression": "media_object_uuid",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -502,16 +412,16 @@
             }
           ],
           "isUnique": true,
-          "where": "\"object_origins\".\"machine_uuid\" IS NULL",
+          "where": "\"media_object_origins\".\"machine_uuid\" IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "object_origins_machine_unique_idx": {
-          "name": "object_origins_machine_unique_idx",
+        "media_object_origins_machine_unique_idx": {
+          "name": "media_object_origins_machine_unique_idx",
           "columns": [
             {
-              "expression": "object_uuid",
+              "expression": "media_object_uuid",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -524,16 +434,16 @@
             }
           ],
           "isUnique": true,
-          "where": "\"object_origins\".\"artifact_uuid\" IS NULL",
+          "where": "\"media_object_origins\".\"artifact_uuid\" IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "object_origins_object_idx": {
-          "name": "object_origins_object_idx",
+        "media_object_origins_object_idx": {
+          "name": "media_object_origins_object_idx",
           "columns": [
             {
-              "expression": "object_uuid",
+              "expression": "media_object_uuid",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -546,12 +456,12 @@
         }
       },
       "foreignKeys": {
-        "object_origins_object_uuid_objects_uuid_fk": {
-          "name": "object_origins_object_uuid_objects_uuid_fk",
-          "tableFrom": "object_origins",
-          "tableTo": "objects",
+        "media_object_origins_media_object_uuid_media_objects_uuid_fk": {
+          "name": "media_object_origins_media_object_uuid_media_objects_uuid_fk",
+          "tableFrom": "media_object_origins",
+          "tableTo": "media_objects",
           "columnsFrom": [
-            "object_uuid"
+            "media_object_uuid"
           ],
           "columnsTo": [
             "uuid"
@@ -559,9 +469,9 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "object_origins_artifact_uuid_origins_uuid_fk": {
-          "name": "object_origins_artifact_uuid_origins_uuid_fk",
-          "tableFrom": "object_origins",
+        "media_object_origins_artifact_uuid_origins_uuid_fk": {
+          "name": "media_object_origins_artifact_uuid_origins_uuid_fk",
+          "tableFrom": "media_object_origins",
           "tableTo": "origins",
           "columnsFrom": [
             "artifact_uuid"
@@ -572,9 +482,9 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "object_origins_machine_uuid_machines_uuid_fk": {
-          "name": "object_origins_machine_uuid_machines_uuid_fk",
-          "tableFrom": "object_origins",
+        "media_object_origins_machine_uuid_machines_uuid_fk": {
+          "name": "media_object_origins_machine_uuid_machines_uuid_fk",
+          "tableFrom": "media_object_origins",
           "tableTo": "machines",
           "columnsFrom": [
             "machine_uuid"
@@ -590,19 +500,19 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "object_origins_exactly_one_check": {
-          "name": "object_origins_exactly_one_check",
-          "value": "num_nonnulls(\"object_origins\".\"artifact_uuid\", \"object_origins\".\"machine_uuid\") = 1"
+        "media_object_origins_exactly_one_check": {
+          "name": "media_object_origins_exactly_one_check",
+          "value": "num_nonnulls(\"media_object_origins\".\"artifact_uuid\", \"media_object_origins\".\"machine_uuid\") = 1"
         }
       },
       "isRLSEnabled": false
     },
-    "public.object_revisions": {
-      "name": "object_revisions",
+    "public.media_object_revisions": {
+      "name": "media_object_revisions",
       "schema": "",
       "columns": {
-        "object_uuid": {
-          "name": "object_uuid",
+        "media_object_uuid": {
+          "name": "media_object_uuid",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -647,12 +557,12 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "object_revisions_object_uuid_objects_uuid_fk": {
-          "name": "object_revisions_object_uuid_objects_uuid_fk",
-          "tableFrom": "object_revisions",
-          "tableTo": "objects",
+        "media_object_revisions_media_object_uuid_media_objects_uuid_fk": {
+          "name": "media_object_revisions_media_object_uuid_media_objects_uuid_fk",
+          "tableFrom": "media_object_revisions",
+          "tableTo": "media_objects",
           "columnsFrom": [
-            "object_uuid"
+            "media_object_uuid"
           ],
           "columnsTo": [
             "uuid"
@@ -660,9 +570,9 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "object_revisions_operation_uuid_operations_uuid_fk": {
-          "name": "object_revisions_operation_uuid_operations_uuid_fk",
-          "tableFrom": "object_revisions",
+        "media_object_revisions_operation_uuid_operations_uuid_fk": {
+          "name": "media_object_revisions_operation_uuid_operations_uuid_fk",
+          "tableFrom": "media_object_revisions",
           "tableTo": "operations",
           "columnsFrom": [
             "operation_uuid"
@@ -675,10 +585,10 @@
         }
       },
       "compositePrimaryKeys": {
-        "object_revisions_object_uuid_block_rev_pk": {
-          "name": "object_revisions_object_uuid_block_rev_pk",
+        "media_object_revisions_media_object_uuid_block_rev_pk": {
+          "name": "media_object_revisions_media_object_uuid_block_rev_pk",
           "columns": [
-            "object_uuid",
+            "media_object_uuid",
             "block",
             "rev"
           ]
@@ -687,15 +597,15 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "object_revisions_block_check": {
-          "name": "object_revisions_block_check",
-          "value": "\"object_revisions\".\"block\" IN ('source', 'user', 'inferred')"
+        "media_object_revisions_block_check": {
+          "name": "media_object_revisions_block_check",
+          "value": "\"media_object_revisions\".\"block\" IN ('source', 'user', 'inferred')"
         }
       },
       "isRLSEnabled": false
     },
-    "public.objects": {
-      "name": "objects",
+    "public.media_objects": {
+      "name": "media_objects",
       "schema": "",
       "columns": {
         "uuid": {
@@ -790,8 +700,8 @@
         }
       },
       "indexes": {
-        "objects_type_idx": {
-          "name": "objects_type_idx",
+        "media_objects_type_idx": {
+          "name": "media_objects_type_idx",
           "columns": [
             {
               "expression": "type",
@@ -805,8 +715,8 @@
           "method": "btree",
           "with": {}
         },
-        "objects_keys_idx": {
-          "name": "objects_keys_idx",
+        "media_objects_keys_idx": {
+          "name": "media_objects_keys_idx",
           "columns": [
             {
               "expression": "keys",
@@ -820,8 +730,8 @@
           "method": "gin",
           "with": {}
         },
-        "objects_inferred_idx": {
-          "name": "objects_inferred_idx",
+        "media_objects_inferred_idx": {
+          "name": "media_objects_inferred_idx",
           "columns": [
             {
               "expression": "inferred",
@@ -837,9 +747,9 @@
         }
       },
       "foreignKeys": {
-        "objects_owner_uuid_users_uuid_fk": {
-          "name": "objects_owner_uuid_users_uuid_fk",
-          "tableFrom": "objects",
+        "media_objects_owner_uuid_users_uuid_fk": {
+          "name": "media_objects_owner_uuid_users_uuid_fk",
+          "tableFrom": "media_objects",
           "tableTo": "users",
           "columnsFrom": [
             "owner_uuid"
@@ -850,9 +760,9 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "objects_created_for_vibe_vibes_uuid_fk": {
-          "name": "objects_created_for_vibe_vibes_uuid_fk",
-          "tableFrom": "objects",
+        "media_objects_created_for_vibe_vibes_uuid_fk": {
+          "name": "media_objects_created_for_vibe_vibes_uuid_fk",
+          "tableFrom": "media_objects",
           "tableTo": "vibes",
           "columnsFrom": [
             "created_for_vibe"
@@ -861,6 +771,96 @@
             "uuid"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.meter": {
+      "name": "meter",
+      "schema": "",
+      "columns": {
+        "operation_uuid": {
+          "name": "operation_uuid",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "payer": {
+          "name": "payer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tokens_in": {
+          "name": "tokens_in",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "tokens_out": {
+          "name": "tokens_out",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "turns": {
+          "name": "turns",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duration_ms": {
+          "name": "duration_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "usd": {
+          "name": "usd",
+          "type": "numeric(12, 6)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "abort_reason": {
+          "name": "abort_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "breakdown": {
+          "name": "breakdown",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "meter_operation_uuid_operations_uuid_fk": {
+          "name": "meter_operation_uuid_operations_uuid_fk",
+          "tableFrom": "meter",
+          "tableTo": "operations",
+          "columnsFrom": [
+            "operation_uuid"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -1162,8 +1162,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.vibe_objects": {
-      "name": "vibe_objects",
+    "public.vibe_media_objects": {
+      "name": "vibe_media_objects",
       "schema": "",
       "columns": {
         "vibe_uuid": {
@@ -1172,8 +1172,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "object_uuid": {
-          "name": "object_uuid",
+        "media_object_uuid": {
+          "name": "media_object_uuid",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -1193,8 +1193,8 @@
         }
       },
       "indexes": {
-        "vibe_objects_position_idx": {
-          "name": "vibe_objects_position_idx",
+        "vibe_media_objects_position_idx": {
+          "name": "vibe_media_objects_position_idx",
           "columns": [
             {
               "expression": "vibe_uuid",
@@ -1216,9 +1216,9 @@
         }
       },
       "foreignKeys": {
-        "vibe_objects_vibe_uuid_vibes_uuid_fk": {
-          "name": "vibe_objects_vibe_uuid_vibes_uuid_fk",
-          "tableFrom": "vibe_objects",
+        "vibe_media_objects_vibe_uuid_vibes_uuid_fk": {
+          "name": "vibe_media_objects_vibe_uuid_vibes_uuid_fk",
+          "tableFrom": "vibe_media_objects",
           "tableTo": "vibes",
           "columnsFrom": [
             "vibe_uuid"
@@ -1229,12 +1229,12 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "vibe_objects_object_uuid_objects_uuid_fk": {
-          "name": "vibe_objects_object_uuid_objects_uuid_fk",
-          "tableFrom": "vibe_objects",
-          "tableTo": "objects",
+        "vibe_media_objects_media_object_uuid_media_objects_uuid_fk": {
+          "name": "vibe_media_objects_media_object_uuid_media_objects_uuid_fk",
+          "tableFrom": "vibe_media_objects",
+          "tableTo": "media_objects",
           "columnsFrom": [
-            "object_uuid"
+            "media_object_uuid"
           ],
           "columnsTo": [
             "uuid"
@@ -1244,20 +1244,20 @@
         }
       },
       "compositePrimaryKeys": {
-        "vibe_objects_vibe_uuid_object_uuid_pk": {
-          "name": "vibe_objects_vibe_uuid_object_uuid_pk",
+        "vibe_media_objects_vibe_uuid_media_object_uuid_pk": {
+          "name": "vibe_media_objects_vibe_uuid_media_object_uuid_pk",
           "columns": [
             "vibe_uuid",
-            "object_uuid"
+            "media_object_uuid"
           ]
         }
       },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "vibe_objects_position_check": {
-          "name": "vibe_objects_position_check",
-          "value": "\"vibe_objects\".\"position\" >= 0"
+        "vibe_media_objects_position_check": {
+          "name": "vibe_media_objects_position_check",
+          "value": "\"vibe_media_objects\".\"position\" >= 0"
         }
       },
       "isRLSEnabled": false

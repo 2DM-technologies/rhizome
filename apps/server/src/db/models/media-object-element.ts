@@ -4,10 +4,10 @@ import { mediaElements } from "./media-element.ts";
 import { mediaObjects } from "./media-object.ts";
 
 export const mediaObjectElements = pgTable(
-  "object_elements",
+  "media_object_elements",
   {
-    mediaObjectUuid: uuid("object_uuid").notNull().references(() => mediaObjects.uuid, { onDelete: "cascade" }),
-    mediaElementUuid: uuid("element_uuid").notNull().references(() => mediaElements.uuid),
+    mediaObjectUuid: uuid("media_object_uuid").notNull().references(() => mediaObjects.uuid, { onDelete: "cascade" }),
+    mediaElementUuid: uuid("media_element_uuid").notNull().references(() => mediaElements.uuid),
     position: integer("position").notNull(),
   },
   (mediaObjectElement) => [

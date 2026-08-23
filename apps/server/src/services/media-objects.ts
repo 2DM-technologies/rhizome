@@ -20,6 +20,20 @@ import { uriId } from "./uris.ts";
 
 export type DbMediaObject = typeof mediaObjects.$inferSelect;
 
+export interface CreateMediaObjectsInput {
+  vibe?: string;
+  objects: unknown[];
+}
+
+export interface SetMediaObjectUserInput {
+  properties: Record<string, unknown>;
+}
+
+export interface SetMediaObjectInferredInput {
+  task: string;
+  entry: NonNullable<MediaObject["inferred"]>[string];
+}
+
 export class MediaObjectService {
   constructor(
     private readonly db: Database,
@@ -34,15 +48,9 @@ export class MediaObjectService {
     return { document: await this.toDocument(mediaObjectRecord), userRev: mediaObjectRecord.userRev };
   }
 
-  async createMediaObjects(
-    actor: Actor,
-    body: { vibe?: unknown; objects?: unknown },
-  ): Promise<MediaObject[]> {
+  async createMediaObjects(actor: Actor, body: CreateMediaObjectsInput): Promise<MediaObject[]> {
     await this.access.assertAuthenticated(actor);
-    if (!Array.isArray(body.objects) || body.objects.length === 0) {
-      throw schemaProblem([{ instancePath: "/objects", message: "must be a non-empty array" }]);
-    }
-    const vibeUuid = typeof body.vibe === "string" ? uriId(body.vibe) : undefined;
+    const vibeUuid = body.vibe ? uriId(body.vibe) : undefined;
     let targetVibe: DbVibe | undefined;
     if (actor.kind === "client") {
       if (!vibeUuid) throw schemaProblem([{ instancePath: "/vibe", message: "is required for clients" }]);
@@ -130,20 +138,11 @@ export class MediaObjectService {
     actor: Actor,
     mediaObjectUuid: string,
     expectedRev: number,
-    value: unknown,
+    value: SetMediaObjectUserInput,
   ): Promise<{ document: MediaObject; userRev: number }> {
     await this.access.assertMediaObjectScope(actor, mediaObjectUuid, "write:user");
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw schemaProblem([{ instancePath: "/", message: "must be an object" }]);
-    }
-    const extra = Object.keys(value).find((key) => key !== "properties");
-    if (extra) throw schemaProblem([{ instancePath: `/${extra}`, message: "cannot be written through write:user" }]);
-    const properties = (value as Record<string, unknown>).properties;
-    if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
-      throw schemaProblem([{ instancePath: "/properties", message: "must be an object" }]);
-    }
     const candidateUser: NonNullable<MediaObject["user"]> = {
-      properties: properties as Record<string, unknown>,
+      properties: value.properties,
       updated_at: new Date().toISOString(),
     };
     const updatedMediaObject = await this.db.transaction(async (transaction) => {
@@ -195,13 +194,14 @@ export class MediaObjectService {
     };
   }
 
-  async setInferred(actor: Actor, mediaObjectUuid: string, body: Record<string, unknown>): Promise<MediaObject> {
+  async setInferred(
+    actor: Actor,
+    mediaObjectUuid: string,
+    body: SetMediaObjectInferredInput,
+  ): Promise<MediaObject> {
     await this.access.assertMediaObjectScope(actor, mediaObjectUuid, "write:inferred");
     const task = body.task;
     const entry = body.entry;
-    if (typeof task !== "string" || !entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw schemaProblem([{ instancePath: "/", message: "task and entry are required" }]);
-    }
     const key = actor.kind === "client" ? `${actor.name}:${task}` : task;
     if (actor.kind === "client" && task.includes(":")) {
       throw new Problem(403, "writer_namespace_mismatch", "Writer namespace mismatch", "Pass a bare task name");
@@ -217,7 +217,7 @@ export class MediaObjectService {
       if (!currentMediaObject) throw notFound("Object");
       const inferred: NonNullable<MediaObject["inferred"]> = {
         ...currentMediaObject.inferred,
-        [key]: entry as NonNullable<MediaObject["inferred"]>[string],
+        [key]: entry,
       };
       const mediaElementReferences = await transaction
         .select({ uuid: mediaObjectElements.mediaElementUuid })

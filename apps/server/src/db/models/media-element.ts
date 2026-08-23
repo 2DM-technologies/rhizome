@@ -5,7 +5,7 @@ import { users } from "./user.ts";
 import { vibes } from "./vibe.ts";
 
 export const mediaElements = pgTable(
-  "elements",
+  "media_elements",
   {
     uuid: uuid("uuid").primaryKey(),
     ownerUuid: uuid("owner_uuid").notNull().references(() => users.uuid),
@@ -20,7 +20,7 @@ export const mediaElements = pgTable(
     tombstonedAt: timestamp("tombstoned_at", { withTimezone: true }),
   },
   (mediaElement) => [
-    check("elements_kind_check", sql`${mediaElement.kind} IN ('text', 'image', 'audio', 'video', 'document')`),
-    index("elements_content_hash_idx").on(mediaElement.contentHash),
+    check("media_elements_kind_check", sql`${mediaElement.kind} IN ('text', 'image', 'audio', 'video', 'document')`),
+    index("media_elements_content_hash_idx").on(mediaElement.contentHash),
   ],
 );

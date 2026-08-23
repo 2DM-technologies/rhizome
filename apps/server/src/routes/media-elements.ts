@@ -7,8 +7,13 @@ import { Problem } from "../errors.ts";
 import type { Services } from "../services/index.ts";
 import type { DbMediaElement } from "../services/media-elements.ts";
 import { uriId } from "../services/uris.ts";
+import { defineRoute, jsonResponse, rnetDocument } from "./contracts.ts";
 import { blobResponse, contentHash, normalizedUuid, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
+
+const mediaElementDocumentSchema = rnetDocument("media-element");
+const createMediaElementRoute = defineRoute({ responses: { 201: mediaElementDocumentSchema } });
+const getMediaElementRoute = defineRoute({ responses: { 200: mediaElementDocumentSchema } });
 
 export function createMediaElementRoutes(services: Services, blobs: BlobStore) {
   const router = new Hono<AppEnvironment>();
@@ -73,14 +78,14 @@ export function createMediaElementRoutes(services: Services, blobs: BlobStore) {
       createdBy: actor.subject,
       createdForVibe: actor.kind === "client" ? uploadVibeUuid : undefined,
     });
-    return context.json(validation.value, 201);
+    return jsonResponse(context, createMediaElementRoute, 201, validation.value);
   });
   router.get("/:id", async (context) => {
     const mediaElement = await services.mediaElements.getMediaElement(
       context.get("actor"),
       normalizedUuid(context.req.param("id")),
     );
-    return context.json(await mediaElementDocument(mediaElement, blobs));
+    return jsonResponse(context, getMediaElementRoute, 200, await mediaElementDocument(mediaElement, blobs));
   });
   router.get("/:id/bytes", async (context) => {
     const mediaElement = await services.mediaElements.getMediaElement(

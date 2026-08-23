@@ -6,7 +6,7 @@ import { users } from "./user.ts";
 import { vibes } from "./vibe.ts";
 
 export const mediaObjects = pgTable(
-  "objects",
+  "media_objects",
   {
     uuid: uuid("uuid").primaryKey(),
     ownerUuid: uuid("owner_uuid").notNull().references(() => users.uuid),
@@ -24,8 +24,8 @@ export const mediaObjects = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (mediaObject) => [
-    index("objects_type_idx").on(mediaObject.type),
-    index("objects_keys_idx").using("gin", mediaObject.keys),
-    index("objects_inferred_idx").using("gin", mediaObject.inferred),
+    index("media_objects_type_idx").on(mediaObject.type),
+    index("media_objects_keys_idx").using("gin", mediaObject.keys),
+    index("media_objects_inferred_idx").using("gin", mediaObject.inferred),
   ],
 );

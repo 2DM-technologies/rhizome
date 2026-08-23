@@ -16,6 +16,14 @@ import type { MediaObjectService } from "./media-objects.ts";
 import { schemaProblem } from "./problems.ts";
 import { uriId } from "./uris.ts";
 
+export interface CreateVibeInput {
+  title: string;
+  pull?: Vibe["pull"];
+  grants?: Grant[];
+}
+
+export type UpdateVibeInput = Partial<CreateVibeInput>;
+
 export class VibeService {
   constructor(
     private readonly db: Database,
@@ -44,10 +52,7 @@ export class VibeService {
     return Promise.all(vibeRows.map((vibe) => this.toDocument(vibe)));
   }
 
-  async createVibe(
-    actor: Actor,
-    input: { title?: unknown; pull?: unknown; grants?: unknown },
-  ): Promise<Vibe> {
+  async createVibe(actor: Actor, input: CreateVibeInput): Promise<Vibe> {
     await this.access.assertAuthenticated(actor);
     if (actor.kind !== "user") throw grantMissing("owner");
     const vibeUuid = uuidv7();
@@ -103,7 +108,7 @@ export class VibeService {
     return this.toDocument(vibeRecord);
   }
 
-  async updateVibe(actor: Actor, vibeUuid: string, patch: Record<string, unknown>): Promise<Vibe> {
+  async updateVibe(actor: Actor, vibeUuid: string, patch: UpdateVibeInput): Promise<Vibe> {
     await this.access.assertVibeOwner(actor, vibeUuid);
     const currentVibe = await this.getVibe(actor, vibeUuid);
     const allowed = new Set(["title", "pull", "grants"]);
@@ -183,11 +188,8 @@ export class VibeService {
     );
   }
 
-  async addMediaObjectRefs(actor: Actor, vibeUuid: string, references: unknown): Promise<void> {
+  async addMediaObjectRefs(actor: Actor, vibeUuid: string, references: string[]): Promise<void> {
     const targetVibe = await this.access.assertVibeScope(actor, vibeUuid, "write:objects");
-    if (!Array.isArray(references) || !references.every((reference) => typeof reference === "string")) {
-      throw schemaProblem([{ instancePath: "/objects", message: "must be an array of object URIs" }]);
-    }
     const mediaObjectUuids = references.map(uriId);
     if (new Set(mediaObjectUuids).size !== mediaObjectUuids.length) {
       throw schemaProblem([{ instancePath: "/objects", message: "must not contain duplicate object URIs" }]);
@@ -243,17 +245,14 @@ export class VibeService {
         transaction,
         actor,
         vibeUuid,
-        references as string[],
+        references,
         [],
       );
     });
   }
 
-  async removeMediaObjectRefs(actor: Actor, vibeUuid: string, references: unknown): Promise<void> {
+  async removeMediaObjectRefs(actor: Actor, vibeUuid: string, references: string[]): Promise<void> {
     await this.access.assertVibeOwner(actor, vibeUuid);
-    if (!Array.isArray(references) || !references.every((reference) => typeof reference === "string")) {
-      throw schemaProblem([{ instancePath: "/objects", message: "must be an array of object URIs" }]);
-    }
     const mediaObjectUuids = references.map(uriId);
     await this.db.transaction(async (transaction) => {
       if (mediaObjectUuids.length) {
@@ -271,7 +270,7 @@ export class VibeService {
         actor,
         vibeUuid,
         [],
-        references as string[],
+        references,
       );
     });
   }

@@ -5,8 +5,13 @@ import { v7 as uuidv7 } from "uuid";
 import type { BlobStore } from "../blobs/index.ts";
 import type { DbOriginArtifact } from "../services/origin-artifacts.ts";
 import type { Services } from "../services/index.ts";
-import { assertDocument, blobResponse, contentHash, normalizedUuid, requestMime } from "./http.ts";
+import { defineRoute, jsonResponse, rnetDocument } from "./contracts.ts";
+import { blobResponse, contentHash, normalizedUuid, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
+
+const originArtifactDocumentSchema = rnetDocument("origin-artifact");
+const createOriginArtifactRoute = defineRoute({ responses: { 201: originArtifactDocumentSchema } });
+const getOriginArtifactRoute = defineRoute({ responses: { 200: originArtifactDocumentSchema } });
 
 export function createOriginRoutes(services: Services, blobs: BlobStore) {
   const router = new Hono<AppEnvironment>();
@@ -29,15 +34,19 @@ export function createOriginRoutes(services: Services, blobs: BlobStore) {
       label: context.req.header("X-Rnet-Label"),
     });
     const document = await originArtifactDocument(originArtifact, blobs);
-    assertDocument("origin-artifact", document);
-    return context.json(document, 201);
+    return jsonResponse(context, createOriginArtifactRoute, 201, document);
   });
   router.get("/:id", async (context) => {
     const originArtifact = await services.originArtifacts.getOriginArtifact(
       context.get("actor"),
       normalizedUuid(context.req.param("id")),
     );
-    return context.json(await originArtifactDocument(originArtifact, blobs));
+    return jsonResponse(
+      context,
+      getOriginArtifactRoute,
+      200,
+      await originArtifactDocument(originArtifact, blobs),
+    );
   });
   router.get("/:id/bytes", async (context) => {
     const originArtifact = await services.originArtifacts.getOriginArtifact(

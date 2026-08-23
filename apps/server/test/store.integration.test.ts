@@ -22,8 +22,8 @@ const machine = { Authorization: "Bearer dev:client:rbudget" };
 beforeAll(async () => {
   await client.unsafe(`
     TRUNCATE TABLE
-      meter, object_revisions, vibe_revisions, object_origins, object_elements,
-      vibe_objects, grants, operations, objects, elements, origins, vibes, machines, users
+      meter, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
+      vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, machines, users
     CASCADE
   `);
   blobRoot = await mkdtemp(join(tmpdir(), "rhizome-blobs-"));
@@ -54,6 +54,23 @@ describe("rNet M1 store", () => {
     const response = await request("/rnet/v0/vibes", { method: "POST", json: { title: "Nope" } });
     expect(response.status).toBe(401);
     expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+  });
+
+  test("validates JSON request schemas at the route boundary", async () => {
+    const extraProperty = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Nope", source: {} },
+    });
+    expect(extraProperty.status).toBe(422);
+
+    const malformed = await app.request("http://rhizome.test/rnet/v0/vibes", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "application/json" },
+      body: "{",
+    });
+    expect(malformed.status).toBe(422);
+    expect(malformed.headers.get("Content-Type")).toContain("application/problem+json");
   });
 
   test("creates a Vibe with a real machine grant", async () => {
@@ -163,7 +180,7 @@ describe("rNet M1 store", () => {
     const listed = await (await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })).json();
     expect(listed.items.slice(-2).map((item: { uri: string }) => item.uri)).toEqual(uris);
     const positions = await client.unsafe(
-      "select position from vibe_objects where vibe_uuid = $1 order by position",
+      "select position from vibe_media_objects where vibe_uuid = $1 order by position",
       [vibeId],
     );
     expect(positions.map((row) => row.position)).toEqual([0, 1, 2]);
@@ -351,8 +368,8 @@ describe("rNet M1 store", () => {
     );
     const retained = await client.unsafe(
       `select
-         (select created_for_vibe from elements where uuid = $1) as element_vibe,
-         (select created_for_vibe from objects where uuid = $2) as object_vibe`,
+         (select created_for_vibe from media_elements where uuid = $1) as element_vibe,
+         (select created_for_vibe from media_objects where uuid = $2) as object_vibe`,
       [retainedMediaElementUuid, retainedMediaObjectUuid],
     );
     expect(retained[0]?.element_vibe).toBeNull();

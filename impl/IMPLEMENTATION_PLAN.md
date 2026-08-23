@@ -131,7 +131,7 @@ JSON columns are `JSONB`. Timestamps are `TIMESTAMPTZ`.
 
 **Record ownership is explicit in both protocol and storage, not inferred from Vibe membership.** Origins, elements, objects, and Vibes carry required immutable `owner` URIs on the wire; Rhizome stores their local identifiers as `owner_uuid`. A record may be temporarily unattached or referenced by several Vibes, so joins cannot answer who may administer, tombstone, or garbage-collect it. A machine-created element or object inherits the owner of the Vibe that authorized the write. `created_by` remains separate audit data identifying the actor, while Vibe membership and grants continue to determine delegated read/write access. For v0.1, an object's owner must match its Vibe, its elements, and any OriginArtifacts in its provenance; cross-owner references wait for sharing semantics.
 
-**`updated_at` only where there is no revision log.** `objects` and `vibes` carry rev counters and write to `object_revisions` / `vibe_revisions` on every mutation, so "when did this change" is answered more precisely — and with *what* changed and *who* changed it — by the log. `origins` and `elements` are immutable (only tombstoned). `machines` has no log, so it carries `updated_at`. `users` carries both: `updated_at` for editable fields, and `user_revisions` for `inferred`, because memory is not recomputable and an accidental clear must be recoverable.
+**`updated_at` only where there is no revision log.** `media_objects` and `vibes` carry rev counters and write to `media_object_revisions` / `vibe_revisions` on every mutation, so "when did this change" is answered more precisely — and with *what* changed and *who* changed it — by the log. `origins` and `media_elements` are immutable (only tombstoned). `machines` has no log, so it carries `updated_at`. `users` carries both: `updated_at` for editable fields, and `user_revisions` for `inferred`, because memory is not recomputable and an accidental clear must be recoverable.
 
 **Every stored document records its version.** `rnet_schema` is on origins, elements, objects, and vibes without exception — a short column on rows you are writing anyway, and the alternative is a carve-out that has to be justified and will eventually be justified wrongly. Note that record metadata is *not* fully re-derivable from the bytes: `label` is the filename the user handed over, `uploaded_at` is when they did it, and `mime` cannot be reliably sniffed. Only `content_hash` and `byte_size` come from the content.
 
@@ -155,7 +155,7 @@ CREATE TABLE origins (                  -- provenance records: raw exports, API 
 );
 CREATE INDEX origins_content_hash_idx ON origins(content_hash);
 
-CREATE TABLE elements (                 -- media records: what a human consumes
+CREATE TABLE media_elements (           -- media records: what a human consumes
   uuid          UUID PRIMARY KEY,       -- UUIDv7; the rnet://element/{uuid}
   owner_uuid    UUID NOT NULL REFERENCES users(uuid),
   content_hash  TEXT NOT NULL,           -- sha256:{hash}; R2 key, never a capability
@@ -168,10 +168,10 @@ CREATE TABLE elements (                 -- media records: what a human consumes
   created_for_vibe UUID REFERENCES vibes(uuid), -- required for client uploads; internal scope
   tombstoned_at TIMESTAMPTZ
 );
-CREATE INDEX elements_content_hash_idx ON elements(content_hash);
+CREATE INDEX media_elements_content_hash_idx ON media_elements(content_hash);
 
 -- ══ Objects ══════════════════════════════════════════════════════════
-CREATE TABLE objects (
+CREATE TABLE media_objects (
   uuid          UUID PRIMARY KEY,       -- UUIDv7; the rnet://object/{uuid}
   owner_uuid    UUID NOT NULL REFERENCES users(uuid),
   created_by    TEXT NOT NULL,          -- authenticated user/client URI; internal audit
@@ -189,15 +189,15 @@ CREATE TABLE objects (
   rnet_schema   TEXT NOT NULL,          -- protocol version this row was written under
   created_at    TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX objects_type_idx ON objects(type);
-CREATE INDEX objects_keys_idx ON objects USING GIN (keys jsonb_path_ops);
-CREATE INDEX objects_inferred_idx ON objects USING GIN (inferred jsonb_path_ops);
+CREATE INDEX media_objects_type_idx ON media_objects(type);
+CREATE INDEX media_objects_keys_idx ON media_objects USING GIN (keys jsonb_path_ops);
+CREATE INDEX media_objects_inferred_idx ON media_objects USING GIN (inferred jsonb_path_ops);
 
-CREATE TABLE object_elements (          -- ordered element refs
-  object_uuid   UUID NOT NULL REFERENCES objects(uuid) ON DELETE CASCADE,
-  element_uuid  UUID NOT NULL REFERENCES elements(uuid),
+CREATE TABLE media_object_elements (    -- ordered element refs
+  media_object_uuid  UUID NOT NULL REFERENCES media_objects(uuid) ON DELETE CASCADE,
+  media_element_uuid UUID NOT NULL REFERENCES media_elements(uuid),
   position      INTEGER NOT NULL,
-  PRIMARY KEY (object_uuid, position)
+  PRIMARY KEY (media_object_uuid, position)
 );
 
 -- Grounding: uniform, always ≥1 row per object. Two nullable FK columns rather
@@ -205,14 +205,14 @@ CREATE TABLE object_elements (          -- ordered element refs
 -- integrity on the provenance link instead of the application doing it by
 -- convention. "Every object points at what it came from" is the invariant the
 -- whole grounding rule rests on — worth two columns to have the database hold it.
-CREATE TABLE object_origins (
-  object_uuid   UUID NOT NULL REFERENCES objects(uuid) ON DELETE CASCADE,
+CREATE TABLE media_object_origins (
+  media_object_uuid UUID NOT NULL REFERENCES media_objects(uuid) ON DELETE CASCADE,
   artifact_uuid UUID REFERENCES origins(uuid),    -- set when ingested from an artifact
   machine_uuid  UUID REFERENCES machines(uuid),   -- set when authored in a client
   CHECK (num_nonnulls(artifact_uuid, machine_uuid) = 1),
-  UNIQUE (object_uuid, artifact_uuid, machine_uuid)
+  UNIQUE (media_object_uuid, artifact_uuid, machine_uuid)
 );
-CREATE INDEX object_origins_object_idx ON object_origins(object_uuid);
+CREATE INDEX media_object_origins_object_idx ON media_object_origins(media_object_uuid);
 
 -- ══ Vibes ════════════════════════════════════════════════════════════
 CREATE TABLE vibes (
@@ -227,12 +227,12 @@ CREATE TABLE vibes (
   rev           INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE vibe_objects (
+CREATE TABLE vibe_media_objects (
   vibe_uuid     UUID NOT NULL REFERENCES vibes(uuid) ON DELETE CASCADE,
-  object_uuid   UUID NOT NULL REFERENCES objects(uuid),
+  media_object_uuid UUID NOT NULL REFERENCES media_objects(uuid),
   position      INTEGER NOT NULL CHECK (position >= 0), -- protocol-visible order
   added_at      TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (vibe_uuid, object_uuid),
+  PRIMARY KEY (vibe_uuid, media_object_uuid),
   UNIQUE (vibe_uuid, position)
 );
 
@@ -252,15 +252,15 @@ CREATE TABLE grants (
 -- vibe_revisions row (which already snapshots grants), not a timestamp.
 
 -- ══ History ══════════════════════════════════════════════════════════
-CREATE TABLE object_revisions (
-  object_uuid   UUID NOT NULL REFERENCES objects(uuid) ON DELETE CASCADE,
+CREATE TABLE media_object_revisions (
+  media_object_uuid UUID NOT NULL REFERENCES media_objects(uuid) ON DELETE CASCADE,
   block         TEXT NOT NULL CHECK (block IN ('source','user','inferred')),
   rev           INTEGER NOT NULL,
   snapshot      JSONB NOT NULL,         -- the block as it was
   actor         TEXT NOT NULL,          -- 'id:…' | 'client:…' | 'system'
   operation_uuid UUID REFERENCES operations(uuid),
   created_at    TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (object_uuid, block, rev)
+  PRIMARY KEY (media_object_uuid, block, rev)
 );
 
 CREATE TABLE vibe_revisions (
@@ -432,7 +432,7 @@ CREATE TABLE machines (
 
 ### History and revert
 
-History lives in the store's revision tables, never inside the object or Vibe JSON itself — a reader fetching current state should not drag the archive along with it. Every mediated write appends to `object_revisions` / `vibe_revisions` before applying. **Revert is not a special operation:** read an old snapshot, write it as the new current revision through the normal If-Match path — so it flows through existing mutation semantics and appears in history itself. All three blocks are versioned and retained: `user` history is the product (undo), `source` history is re-ingestion lineage, `inferred` history is the record of what models used to think. Only `user` writes take an `If-Match` — re-running a push task is a re-derivation, not a conflicting edit.
+History lives in the store's revision tables, never inside the object or Vibe JSON itself — a reader fetching current state should not drag the archive along with it. Every mediated write appends to `media_object_revisions` / `vibe_revisions` before applying. **Revert is not a special operation:** read an old snapshot, write it as the new current revision through the normal If-Match path — so it flows through existing mutation semantics and appears in history itself. All three blocks are versioned and retained: `user` history is the product (undo), `source` history is re-ingestion lineage, `inferred` history is the record of what models used to think. Only `user` writes take an `If-Match` — re-running a push task is a re-derivation, not a conflicting edit.
 
 ---
 
@@ -762,7 +762,7 @@ Notes for implementers:
 
 Conformance fixtures assert the **invariants**, not every field of every type — type vocabularies are validated by their own schemas, so "a transaction without `currency` is rejected" is a schema test, not a fixture.
 
-**Must accept:** an owned transaction object with `elements: []` (pure meaning-objects are normal) · an object with an `x-` namespaced extension · a Vibe with a writer-keyed inferred block · an owned authored object whose only origin is `rnet://client/{uuid}` · element, origin, object, and Vibe records carrying the same valid `rnet://id/{opaque}` owner · a paginated Vibe read that preserves `vibe_objects.position` order.
+**Must accept:** an owned transaction object with `elements: []` (pure meaning-objects are normal) · an object with an `x-` namespaced extension · a Vibe with a writer-keyed inferred block · an owned authored object whose only origin is `rnet://client/{uuid}` · element, origin, object, and Vibe records carrying the same valid `rnet://id/{opaque}` owner · a paginated Vibe read that preserves `vibe_media_objects.position` order.
 
 **Must reject:** an element, origin, object, or Vibe missing `owner` · a client-supplied owner conflicting with the authenticated owner · a cross-owner object/Vibe, object/element, or object/origin reference · a machine attaching a pre-existing same-owner object that it did not create for the target Vibe · an object with `source.origins: []` (grounding is uniform) · an inferred key with no `{writer}:` prefix · an inferred entry missing `model` · an ingest record claiming `generated_parser` without `parser_hash` · an ingest record claiming `agent` with `reproducible: true` · an unnamespaced additional property on a core object · a payload that fails its registered type vocabulary.
 
