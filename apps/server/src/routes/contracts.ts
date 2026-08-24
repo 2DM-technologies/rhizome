@@ -16,7 +16,7 @@ import {
 } from "@rnet/types";
 import Ajv2020, { type ErrorObject } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import type { Input, MiddlewareHandler } from "hono";
+import type { Handler, Input, MiddlewareHandler } from "hono";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
 import type { Actor, AppVariables, AuthenticatedActor, ClientActor, UserActor } from "../auth.ts";
@@ -37,8 +37,8 @@ export interface UnvalidatedContractResponse {
 }
 
 type ContractResponse = ContractSchema<unknown> | UnvalidatedContractResponse | null;
-type ContractResponses = Readonly<Record<number, ContractResponse>>;
-type ContractRequest = Readonly<{
+export type ContractResponses = Readonly<Record<number, ContractResponse>>;
+export type ContractRequest = Readonly<{
   binary?: Readonly<{
     contentType: string;
     document: JsonSchemaDocument;
@@ -84,12 +84,13 @@ type ContractTargets<Request extends ContractRequest> = (Request extends { json:
   (Request extends { header: infer Schema } ? { header: ContractValue<Schema> } : object) &
   (Request extends { param: infer Schema } ? { param: ContractValue<Schema> } : object);
 
-type ContractInput<Request extends ContractRequest | undefined> = Request extends ContractRequest
-  ? Input & {
-      in: ContractTargets<Request>;
-      out: ContractTargets<Request>;
-    }
-  : Input;
+export type ContractInput<Request extends ContractRequest | undefined> =
+  Request extends ContractRequest
+    ? Input & {
+        in: ContractTargets<Request>;
+        out: ContractTargets<Request>;
+      }
+    : Input;
 
 export type RouteAuth = "user" | "client" | "user_or_client";
 
@@ -101,9 +102,15 @@ type RouteActor<Auth extends RouteAuth | undefined> = Auth extends "user"
       ? AuthenticatedActor
       : Actor;
 
-type RouteEnvironment<Auth extends RouteAuth | undefined> = {
+export type RouteEnvironment<Auth extends RouteAuth | undefined> = {
   Variables: Omit<AppVariables, "actor"> & { actor: RouteActor<Auth> };
 };
+
+export type RnetRouteHandler<
+  Auth extends RouteAuth | undefined,
+  Request extends ContractRequest | undefined,
+  Path extends string,
+> = Handler<RouteEnvironment<Auth>, Path, ContractInput<Request>>;
 
 type RnetSchemaReferences = [
   typeof grantSchema,
@@ -291,22 +298,11 @@ export function binaryResponse(
   };
 }
 
-type OpenApiRouteContract = RouteContract<
+export type OpenApiRouteContract = RouteContract<
   RouteAuth | undefined,
   ContractRequest | undefined,
   ContractResponses
 >;
-
-const RNET_ROUTE_CONTRACT = Symbol("rnetRouteContract");
-
-type ContractMiddleware = ((...args: never[]) => unknown) & {
-  readonly [RNET_ROUTE_CONTRACT]: OpenApiRouteContract;
-};
-
-export function routeContract(handler: unknown): OpenApiRouteContract | undefined {
-  if (typeof handler !== "function") return undefined;
-  return (handler as Partial<ContractMiddleware>)[RNET_ROUTE_CONTRACT];
-}
 
 export function rnetRoute<
   Request extends ContractRequest | undefined,
@@ -413,9 +409,6 @@ export function rnetRoute<
       );
     }
   };
-  Object.defineProperty(middleware, RNET_ROUTE_CONTRACT, {
-    value: contract as OpenApiRouteContract,
-  });
   return middleware;
 }
 

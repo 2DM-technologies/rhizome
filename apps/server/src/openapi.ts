@@ -3,19 +3,14 @@ import type { JSONSchema } from "json-schema-to-ts";
 import {
   ProblemSchema,
   RNET_DOCUMENTS,
-  routeContract,
   type ContractSchema,
+  type OpenApiRouteContract,
   type UnvalidatedContractResponse,
 } from "./routes/contracts.ts";
+import type { RegisteredRnetRoute } from "./routes/rnet-router.ts";
 
 type JsonObject = Record<string, unknown>;
 type OpenApiSchema = boolean | JsonObject;
-
-interface RegisteredRoute {
-  readonly handler: unknown;
-  readonly method: string;
-  readonly path: string;
-}
 
 const COMPONENT_NAMES = {
   grant: "Grant",
@@ -35,13 +30,12 @@ const SCHEMA_COMPONENTS = Object.fromEntries(
   ]),
 );
 
-export function createOpenApiDocument(routes: readonly RegisteredRoute[]) {
+export function createOpenApiDocument(routes: readonly RegisteredRnetRoute[]) {
   const paths: Record<string, Record<string, unknown>> = {};
   const operationIds = new Set<string>();
 
   for (const route of routes) {
-    const contract = routeContract(route.handler);
-    if (!contract) continue;
+    const contract = route.contract;
     if (operationIds.has(contract.operationId)) {
       throw new Error(`Duplicate OpenAPI operationId: ${contract.operationId}`);
     }
@@ -76,7 +70,7 @@ export function createOpenApiDocument(routes: readonly RegisteredRoute[]) {
   } as const;
 }
 
-function operation(contract: NonNullable<ReturnType<typeof routeContract>>): JsonObject {
+function operation(contract: OpenApiRouteContract): JsonObject {
   const parameters = [
     ...parametersFor(contract.request?.param, "path"),
     ...parametersFor(contract.request?.header, "header"),
@@ -126,7 +120,7 @@ function parametersFor(
 }
 
 function requestBodyFor(
-  request: NonNullable<NonNullable<ReturnType<typeof routeContract>>["request"]>,
+  request: NonNullable<OpenApiRouteContract["request"]>,
 ): JsonObject | undefined {
   if (request.json) {
     return {

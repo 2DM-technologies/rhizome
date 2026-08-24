@@ -1,10 +1,8 @@
-import { Hono } from "hono";
-
 import type { Database } from "../db/index.ts";
 import { OperationKindEnum, OperationStatusEnum } from "../db/models/operation.ts";
 import { OperationsService } from "../services/operation-service.ts";
-import { ProblemSchema, RecordIdParamsSchema, jsonSchema, rnetRoute } from "./contracts.ts";
-import type { AppEnvironment } from "./types.ts";
+import { ProblemSchema, RecordIdParamsSchema, jsonSchema } from "./contracts.ts";
+import { createRnetRouter } from "./rnet-router.ts";
 
 const OperationDocumentSchema = jsonSchema({
   type: "object",
@@ -23,15 +21,15 @@ const OperationDocumentSchema = jsonSchema({
 });
 
 export function createOperationRoutes(db: Database) {
-  const router = new Hono<AppEnvironment>();
+  const router = createRnetRouter();
 
   router.get(
     "/:id",
-    rnetRoute({
+    {
       operationId: "getOperation",
       request: { param: RecordIdParamsSchema },
       responses: { 200: OperationDocumentSchema, 422: ProblemSchema },
-    }),
+    },
     async (context) => {
       const operationsService = new OperationsService({ db, actor: context.get("actor") });
       const operation = await operationsService.getOperation(context.req.valid("param").id);

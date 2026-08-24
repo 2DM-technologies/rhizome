@@ -1,5 +1,4 @@
 import { mediaObjectSchema, validateMediaObjectProperties } from "@rnet/types";
-import { Hono } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
@@ -14,11 +13,10 @@ import {
   collectionOf,
   jsonSchema,
   rnetDocument,
-  rnetRoute,
 } from "./contracts.ts";
 import { requestMime } from "./http.ts";
 import { CreateMediaObjectsRequestSchema } from "./media-object-contracts.ts";
-import type { AppEnvironment } from "./types.ts";
+import { createRnetRouter } from "./rnet-router.ts";
 
 const MediaObjectDocumentSchema = rnetDocument("media-object");
 const MediaObjectCollectionSchema = collectionOf(MediaObjectDocumentSchema, "mediaObjects");
@@ -39,11 +37,11 @@ const SetMediaObjectInferredRequestSchema = jsonSchema({
 });
 
 export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
-  const router = new Hono<AppEnvironment>();
+  const router = createRnetRouter();
 
   router.post(
     "/",
-    rnetRoute({
+    {
       operationId: "createMediaObjects",
       auth: "user_or_client",
       request: { multipart: CreateMediaObjectsRequestSchema },
@@ -54,7 +52,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
         415: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const input = context.req.valid("form");
       for (const [index, mediaObject] of input.metadata.objects.entries()) {
@@ -90,11 +88,11 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   );
   router.get(
     "/:id",
-    rnetRoute({
+    {
       operationId: "getMediaObject",
       request: { param: RecordIdParamsSchema },
       responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
-    }),
+    },
     async (context) => {
       const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
       const result = await mediaObjectsService.getMediaObject(context.req.valid("param").id);
@@ -105,7 +103,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   );
   router.patch(
     "/:id/user",
-    rnetRoute({
+    {
       operationId: "setMediaObjectUser",
       auth: "user_or_client",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectUserRequestSchema },
@@ -116,7 +114,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
         409: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const header = context.req.header("If-Match");
       if (header === undefined) {
@@ -145,7 +143,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   );
   router.put(
     "/:id/inferred",
-    rnetRoute({
+    {
       operationId: "setMediaObjectInferred",
       auth: "user_or_client",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectInferredRequestSchema },
@@ -155,7 +153,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
         403: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const input = context.req.valid("json");
       const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });

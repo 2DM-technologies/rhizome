@@ -1,5 +1,4 @@
 import { mediaElementSchema, type MediaElement } from "@rnet/types";
-import { Hono } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
@@ -14,10 +13,9 @@ import {
   jsonObjectSchema,
   jsonSchemaValue,
   rnetDocument,
-  rnetRoute,
 } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
-import type { AppEnvironment } from "./types.ts";
+import { createRnetRouter } from "./rnet-router.ts";
 
 const MediaElementDocumentSchema = rnetDocument("media-element");
 const MediaElementMimeSchema = jsonSchemaValue<MediaElement["mime"]>(
@@ -31,11 +29,11 @@ const MediaElementUploadHeadersSchema = jsonObjectSchema(
 );
 
 export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
-  const router = new Hono<AppEnvironment>();
+  const router = createRnetRouter();
 
   router.post(
     "/",
-    rnetRoute({
+    {
       operationId: "createMediaElement",
       auth: "user",
       request: { binary: BinaryRequest, header: MediaElementUploadHeadersSchema },
@@ -45,7 +43,7 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
         403: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const actor = context.get("actor");
       const mediaElementsService = new MediaElementsService({ db, actor, blobs });
@@ -69,11 +67,11 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   );
   router.get(
     "/:id",
-    rnetRoute({
+    {
       operationId: "getMediaElement",
       request: { param: RecordIdParamsSchema },
       responses: { 200: MediaElementDocumentSchema, 422: ProblemSchema },
-    }),
+    },
     async (context) => {
       const mediaElementsService = new MediaElementsService({ db, actor: context.get("actor") });
       const mediaElement = await mediaElementsService.getMediaElement(
@@ -85,11 +83,11 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   );
   router.get(
     "/:id/bytes",
-    rnetRoute({
+    {
       operationId: "getMediaElementBytes",
       request: { param: RecordIdParamsSchema },
       responses: { 200: binaryResponse("*/*"), 422: ProblemSchema },
-    }),
+    },
     async (context) => {
       const mediaElementsService = new MediaElementsService({ db, actor: context.get("actor") });
       const mediaElement = await mediaElementsService.getMediaElement(

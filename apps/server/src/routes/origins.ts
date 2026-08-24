@@ -1,5 +1,4 @@
 import { originArtifactSchema, type OriginArtifact } from "@rnet/types";
-import { Hono } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
@@ -14,10 +13,9 @@ import {
   jsonObjectSchema,
   jsonSchemaValue,
   rnetDocument,
-  rnetRoute,
 } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
-import type { AppEnvironment } from "./types.ts";
+import { createRnetRouter } from "./rnet-router.ts";
 
 const OriginArtifactDocumentSchema = rnetDocument("origin-artifact");
 const OriginArtifactMimeSchema = jsonSchemaValue<OriginArtifact["mime"]>(
@@ -31,11 +29,11 @@ const OriginArtifactUploadHeadersSchema = jsonObjectSchema(
 );
 
 export function createOriginRoutes(db: Database, blobs: BlobStore) {
-  const router = new Hono<AppEnvironment>();
+  const router = createRnetRouter();
 
   router.post(
     "/",
-    rnetRoute({
+    {
       operationId: "createOriginArtifact",
       auth: "user",
       request: { binary: BinaryRequest, header: OriginArtifactUploadHeadersSchema },
@@ -46,7 +44,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
         415: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const originArtifactsService = new OriginArtifactsService({
         db,
@@ -69,7 +67,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   );
   router.get(
     "/:id",
-    rnetRoute({
+    {
       operationId: "getOriginArtifact",
       auth: "user",
       request: { param: RecordIdParamsSchema },
@@ -79,7 +77,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
         403: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const originArtifactsService = new OriginArtifactsService({
         db,
@@ -95,7 +93,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   );
   router.get(
     "/:id/bytes",
-    rnetRoute({
+    {
       operationId: "getOriginArtifactBytes",
       auth: "user",
       request: { param: RecordIdParamsSchema },
@@ -105,7 +103,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
         403: ProblemSchema,
         422: ProblemSchema,
       },
-    }),
+    },
     async (context) => {
       const originArtifactsService = new OriginArtifactsService({
         db,
