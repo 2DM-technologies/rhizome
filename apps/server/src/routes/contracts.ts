@@ -328,7 +328,16 @@ export function rnetRoute<
         context.req.addValidatedData("param", validation.value);
       }
       if (contract.request?.header) {
-        const headerValues = contractHeaderValues(context.req.header(), contract.request.header);
+        const headerDocument = contract.request.header.document;
+        const headerProperties =
+          typeof headerDocument === "object" ? headerDocument.properties : undefined;
+        const headerNames =
+          headerProperties &&
+          typeof headerProperties === "object" &&
+          !Array.isArray(headerProperties)
+            ? Object.keys(headerProperties)
+            : [];
+        const headerValues = pickContractHeaders(context.req.header(), headerNames);
         const validation = contract.request.header.validate(headerValues, actor);
         if (!validation.ok) throw schemaProblem(validation.issues);
         context.req.addValidatedData("header", validation.value);
@@ -412,15 +421,12 @@ export function rnetRoute<
   return middleware;
 }
 
-function contractHeaderValues(
+function pickContractHeaders(
   requestHeaders: Record<string, string>,
-  schema: ContractSchema<object>,
+  headerNames: readonly string[],
 ): Record<string, string> {
-  if (typeof schema.document !== "object") return {};
-  const properties = schema.document.properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return {};
   const values: Record<string, string> = {};
-  for (const name of Object.keys(properties)) {
+  for (const name of headerNames) {
     const value = requestHeaders[name.toLowerCase()];
     if (value !== undefined) values[name] = value;
   }
