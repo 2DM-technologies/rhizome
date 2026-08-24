@@ -100,28 +100,6 @@ export class AccessService {
     return vibe;
   }
 
-  async canReadMediaObject(mediaObjectUuid: string): Promise<boolean> {
-    const [mediaObjectRecord] = await this.db
-      .select({ ownerUuid: mediaObjects.ownerUuid })
-      .from(mediaObjects)
-      .where(eq(mediaObjects.uuid, mediaObjectUuid));
-    if (!mediaObjectRecord) return false;
-    if (this.actor.kind === "user" && this.actor.uuid === mediaObjectRecord.ownerUuid) return true;
-    const memberships = await this.db
-      .select({ vibeUuid: vibeMediaObjects.vibeUuid })
-      .from(vibeMediaObjects)
-      .where(eq(vibeMediaObjects.mediaObjectUuid, mediaObjectUuid));
-    for (const membership of memberships) {
-      try {
-        await this.assertVibeScope(membership.vibeUuid, GRANT_SCOPE.READ);
-        return true;
-      } catch (error) {
-        if (!(error instanceof Problem) || ![403, 404].includes(error.status)) throw error;
-      }
-    }
-    return false;
-  }
-
   async assertMediaObjectScope(mediaObjectUuid: string, scope: Scope): Promise<void> {
     const [mediaObjectRecord] = await this.db
       .select({ ownerUuid: mediaObjects.ownerUuid })
@@ -157,7 +135,12 @@ export class AccessService {
       .from(mediaObjectElements)
       .where(eq(mediaObjectElements.mediaElementUuid, mediaElementUuid));
     for (const reference of references) {
-      if (await this.canReadMediaObject(reference.mediaObjectUuid)) return true;
+      try {
+        await this.assertMediaObjectScope(reference.mediaObjectUuid, GRANT_SCOPE.READ);
+        return true;
+      } catch (error) {
+        if (!(error instanceof Problem) || ![403, 404].includes(error.status)) throw error;
+      }
     }
     return false;
   }

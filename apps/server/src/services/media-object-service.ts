@@ -87,7 +87,7 @@ export class MediaObjectsService {
   async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
     const mediaObjectRecord = await this.findById(uuid);
     if (!mediaObjectRecord) throw notFound("Object");
-    if (!(await this.access.canReadMediaObject(uuid))) throw grantMissing(GRANT_SCOPE.READ);
+    await this.access.assertMediaObjectScope(uuid, GRANT_SCOPE.READ);
     return {
       document: await this.toDocument(mediaObjectRecord),
       userRev: mediaObjectRecord.userRev,

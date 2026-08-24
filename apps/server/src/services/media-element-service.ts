@@ -37,9 +37,6 @@ export interface PreparedMediaElementUpload extends CreateMediaElementUpload {
   mime: string;
 }
 
-export type PersistableMediaElement = MediaElement &
-  Required<Pick<MediaElement, "byte_size" | "created_at">>;
-
 export interface CreateMediaElementInput {
   ownerUuid: string;
   mediaElementUpload: CreateMediaElementUpload;
@@ -65,7 +62,7 @@ export class MediaElementsService {
     mediaElementUpload,
     transaction,
     validationPath,
-  }: CreateMediaElementInput): Promise<PersistableMediaElement> {
+  }: CreateMediaElementInput): Promise<MediaElement> {
     if (!this.blobs) throw new Error("Blob storage is required to create a media element");
     const mediaElementUuid = mediaElementUpload.uuid ?? uuidv7();
     const contentHashValue =
@@ -83,11 +80,11 @@ export class MediaElementsService {
     };
     const validation = validateSchema("media-element", candidateMediaElement);
     if (!validation.ok) throw schemaProblem(validation.issues, validationPath);
-    const mediaElement: PersistableMediaElement = {
+    const mediaElement = {
       ...validation.value,
       byte_size: candidateMediaElement.byte_size,
       created_at: candidateMediaElement.created_at,
-    };
+    } satisfies MediaElement;
     await this.blobs.put(
       "elements",
       mediaElement.content_hash,

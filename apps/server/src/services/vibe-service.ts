@@ -14,7 +14,7 @@ import type {
   CreateVibeRequest,
   MediaObjectRefsRequest,
   UpdateVibeRequest,
-} from "../routes/vibe-contracts.ts";
+} from "../routes/vibes.ts";
 import { AccessService } from "./access-service.ts";
 import { IdentityService } from "./identity-service.ts";
 import { MediaObjectsService } from "./media-object-service.ts";

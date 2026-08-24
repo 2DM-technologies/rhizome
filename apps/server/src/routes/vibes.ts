@@ -1,3 +1,4 @@
+import { vibeSchema } from "@rnet/types";
 import { Hono } from "hono";
 
 import type { Database } from "../db/index.ts";
@@ -9,15 +10,49 @@ import {
   ProblemSchema,
   RecordIdParamsSchema,
   collectionOf,
+  jsonSchema,
   rnetDocument,
   rnetRoute,
+  type ContractValue,
 } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
-import {
-  CreateVibeRequestSchema,
-  MediaObjectRefsRequestSchema,
-  UpdateVibeRequestSchema,
-} from "./vibe-contracts.ts";
+
+const VibeWritableProperties = {
+  title: vibeSchema.properties.title,
+  pull: vibeSchema.properties.pull,
+  grants: vibeSchema.properties.grants,
+} as const;
+
+export const CreateVibeRequestSchema = jsonSchema({
+  type: "object",
+  required: ["title"],
+  properties: VibeWritableProperties,
+  additionalProperties: false,
+});
+
+export const UpdateVibeRequestSchema = jsonSchema({
+  type: "object",
+  properties: VibeWritableProperties,
+  additionalProperties: false,
+});
+
+export const MediaObjectRefsRequestSchema = jsonSchema({
+  type: "object",
+  required: ["objects"],
+  properties: {
+    objects: {
+      type: "array",
+      minItems: 1,
+      uniqueItems: true,
+      items: vibeSchema.properties.objects.items,
+    },
+  },
+  additionalProperties: false,
+});
+
+export type CreateVibeRequest = ContractValue<typeof CreateVibeRequestSchema>;
+export type UpdateVibeRequest = ContractValue<typeof UpdateVibeRequestSchema>;
+export type MediaObjectRefsRequest = ContractValue<typeof MediaObjectRefsRequestSchema>;
 
 const VibeDocumentSchema = rnetDocument("vibe");
 const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes");
