@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 import type { Database } from "../db/index.ts";
 import { OperationKindEnum, OperationStatusEnum } from "../db/models/operation.ts";
-import { OperationService } from "../services/operation-service.ts";
+import { OperationsService } from "../services/operation-service.ts";
 import { ProblemSchema, RecordIdParamsSchema, jsonSchema, rnetRoute } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
 
@@ -33,8 +33,8 @@ export function createOperationRoutes(db: Database) {
       responses: { 200: OperationDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const operationService = new OperationService({ db, actor: context.get("actor") });
-      const operation = await operationService.getOperation(context.req.valid("param").id);
+      const operationsService = new OperationsService({ db, actor: context.get("actor") });
+      const operation = await operationsService.getOperation(context.req.valid("param").id);
       const document = {
         operation_id: operation.uuid,
         kind: operation.kind,

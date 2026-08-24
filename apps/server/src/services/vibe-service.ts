@@ -1,10 +1,4 @@
-import {
-  RNET_SCHEMA_VERSION,
-  validateSchema,
-  type Grant,
-  type MediaObject,
-  type Vibe,
-} from "@rnet/types";
+import { validateSchema, type Grant, type MediaObject, type Vibe } from "@rnet/types";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -15,49 +9,52 @@ import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
+import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import { AccessService, type DbVibe } from "./access-service.ts";
 import { IdentityService } from "./identity-service.ts";
-import { MediaObjectService } from "./media-object-service.ts";
+import { MediaObjectsService } from "./media-object-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
-export class VibeService {
+export class VibesService {
   private readonly db: Database;
   private readonly actor: ServiceContext["actor"];
   private readonly access: AccessService;
   private readonly identities: IdentityService;
-  private readonly mediaObjectService: MediaObjectService;
+  private readonly mediaObjectsService: MediaObjectsService;
 
   constructor(context: ServiceContext) {
     this.db = context.db;
     this.actor = context.actor;
     this.access = new AccessService(context);
     this.identities = new IdentityService(context.db);
-    this.mediaObjectService = new MediaObjectService(context);
+    this.mediaObjectsService = new MediaObjectsService(context);
   }
 
   async listVibes(): Promise<Vibe[]> {
-    const vibeRows =
-      this.actor.kind === "user"
-        ? await this.db
-            .select()
-            .from(vibes)
-            .where(eq(vibes.ownerUuid, this.actor.uuid))
-            .orderBy(asc(vibes.createdAt))
-        : await this.db
-            .select({ vibe: vibes })
-            .from(vibes)
-            .innerJoin(grants, eq(grants.vibeUuid, vibes.uuid))
-            .where(
-              and(
-                eq(grants.subject, this.actor.subject),
-                isNull(grants.revokedAt),
-                sql`${grants.scopes} @> ${JSON.stringify([GRANT_SCOPE.READ])}::jsonb`,
-              ),
-            )
-            .orderBy(asc(vibes.createdAt))
-            .then((items) => items.map((item) => item.vibe));
+    let vibeRows: DbVibe[];
+    if (this.actor.kind === "user") {
+      vibeRows = await this.db
+        .select()
+        .from(vibes)
+        .where(eq(vibes.ownerUuid, this.actor.uuid))
+        .orderBy(asc(vibes.createdAt));
+    } else {
+      const grantedVibeRows: { vibe: DbVibe }[] = await this.db
+        .select({ vibe: vibes })
+        .from(vibes)
+        .innerJoin(grants, eq(grants.vibeUuid, vibes.uuid))
+        .where(
+          and(
+            eq(grants.subject, this.actor.subject),
+            isNull(grants.revokedAt),
+            sql`${grants.scopes} @> ${JSON.stringify([GRANT_SCOPE.READ])}::jsonb`,
+          ),
+        )
+        .orderBy(asc(vibes.createdAt));
+      vibeRows = grantedVibeRows.map(({ vibe }) => vibe);
+    }
     return Promise.all(vibeRows.map((vibe) => this.toDocument(vibe)));
   }
 
@@ -218,7 +215,7 @@ export class VibeService {
       .where(eq(vibeMediaObjects.vibeUuid, vibeUuid))
       .orderBy(asc(vibeMediaObjects.position), asc(vibeMediaObjects.addedAt));
     return Promise.all(
-      mediaObjectRows.map(({ mediaObject }) => this.mediaObjectService.toDocument(mediaObject)),
+      mediaObjectRows.map(({ mediaObject }) => this.mediaObjectsService.toDocument(mediaObject)),
     );
   }
 

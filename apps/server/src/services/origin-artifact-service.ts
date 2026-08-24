@@ -19,7 +19,7 @@ export interface CreateOriginArtifactInput {
   uploadedAt: Date;
 }
 
-export class OriginArtifactService {
+export class OriginArtifactsService {
   private readonly db: Database;
   private readonly access: AccessService;
 

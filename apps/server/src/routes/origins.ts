@@ -1,12 +1,13 @@
-import { RNET_SCHEMA_VERSION, validateSchema, type OriginArtifact } from "@rnet/types";
+import { validateSchema, type OriginArtifact } from "@rnet/types";
 import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
 
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
+import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import {
-  OriginArtifactService,
+  OriginArtifactsService,
   type DbOriginArtifact,
 } from "../services/origin-artifact-service.ts";
 import { schemaProblem } from "../services/problems.ts";
@@ -42,7 +43,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
     }),
     async (context) => {
       const actor = context.get("actor");
-      const originArtifactService = new OriginArtifactService({ db, actor });
+      const originArtifactsService = new OriginArtifactsService({ db, actor });
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const mime = requestMime(context.req.header("Content-Type"));
       const contentHashValue = await contentHash(bytes);
@@ -72,7 +73,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
         bytes,
         originArtifactDocument.mime,
       );
-      const originArtifact = await originArtifactService.createOriginArtifact({
+      const originArtifact = await originArtifactsService.createOriginArtifact({
         uuid: uriId(originArtifactDocument.uri),
         ownerUuid: uriId(originArtifactDocument.owner),
         contentHash: originArtifactDocument.content_hash,
@@ -94,8 +95,11 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
       responses: { 200: OriginArtifactDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const originArtifactService = new OriginArtifactService({ db, actor: context.get("actor") });
-      const originArtifact = await originArtifactService.getOriginArtifact(
+      const originArtifactsService = new OriginArtifactsService({
+        db,
+        actor: context.get("actor"),
+      });
+      const originArtifact = await originArtifactsService.getOriginArtifact(
         context.req.valid("param").id,
       );
       const document = await toOriginArtifactDocument(originArtifact, blobs);
@@ -110,8 +114,11 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
       responses: { 200: binaryResponse("*/*"), 422: ProblemSchema },
     }),
     async (context) => {
-      const originArtifactService = new OriginArtifactService({ db, actor: context.get("actor") });
-      const originArtifact = await originArtifactService.getOriginArtifact(
+      const originArtifactsService = new OriginArtifactsService({
+        db,
+        actor: context.get("actor"),
+      });
+      const originArtifact = await originArtifactsService.getOriginArtifact(
         context.req.valid("param").id,
       );
       const blob = await blobs.get("origins", originArtifact.contentHash);

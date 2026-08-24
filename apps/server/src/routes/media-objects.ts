@@ -5,7 +5,7 @@ import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
 import type { PendingMediaElementUpload } from "../services/media-element-service.ts";
-import { MediaObjectService } from "../services/media-object-service.ts";
+import { MediaObjectsService } from "../services/media-object-service.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -62,12 +62,12 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
           ...(file.type ? { mime: requestMime(file.type) } : {}),
         });
       }
-      const mediaObjectService = new MediaObjectService({
+      const mediaObjectsService = new MediaObjectsService({
         db,
         actor: context.get("actor"),
         blobs,
       });
-      const mediaObjects = await mediaObjectService.createMediaObjects(
+      const mediaObjects = await mediaObjectsService.createMediaObjects(
         input.metadata.vibe,
         input.metadata.objects,
         pendingMediaElementUploads,
@@ -83,8 +83,8 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
       responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      const result = await mediaObjectService.getMediaObject(context.req.valid("param").id);
+      const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
+      const result = await mediaObjectsService.getMediaObject(context.req.valid("param").id);
       const mediaObject = result.document;
       context.header("ETag", `"${result.userRev}"`);
       return context.json(mediaObject);
@@ -112,8 +112,8 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
         );
       }
       const input = context.req.valid("json");
-      const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      const result = await mediaObjectService.setUser(
+      const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
+      const result = await mediaObjectsService.setUser(
         context.req.valid("param").id,
         expectedRevision,
         input.properties,
@@ -132,8 +132,8 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     }),
     async (context) => {
       const input = context.req.valid("json");
-      const mediaObjectService = new MediaObjectService({ db, actor: context.get("actor") });
-      const mediaObject = await mediaObjectService.setInferred(
+      const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
+      const mediaObject = await mediaObjectsService.setInferred(
         context.req.valid("param").id,
         input.task,
         input.entry,

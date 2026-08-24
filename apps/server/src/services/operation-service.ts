@@ -9,7 +9,7 @@ import type { ServiceContext } from "./types.ts";
 
 export type DbOperation = typeof operations.$inferSelect;
 
-export class OperationService {
+export class OperationsService {
   private readonly db: Database;
   private readonly access: AccessService;
 

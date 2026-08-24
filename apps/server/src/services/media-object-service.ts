@@ -1,9 +1,4 @@
-import {
-  RNET_SCHEMA_VERSION,
-  validateMediaObject,
-  validateSchema,
-  type MediaObject,
-} from "@rnet/types";
+import { validateMediaObject, type MediaObject } from "@rnet/types";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -24,12 +19,13 @@ import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
+import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
 import { AccessService, type DbVibe } from "./access-service.ts";
 import {
-  MediaElementService,
+  MediaElementsService,
   type PendingMediaElementUpload,
-  type PersistableMediaElement,
+  type PreparedMediaElementUpload,
 } from "./media-element-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
@@ -41,16 +37,6 @@ type MediaElementReferenceRow = { uuid: string };
 interface HashedMediaElementUpload extends PendingMediaElementUpload {
   uuid: string;
   contentHash: string;
-}
-
-interface PreparedMediaElementUpload extends HashedMediaElementUpload {
-  kind: PersistableMediaElement["kind"];
-  mime: string;
-}
-
-interface ReadyMediaElementUpload {
-  bytes: Uint8Array;
-  document: PersistableMediaElement;
 }
 
 type MediaObjectBlockSnapshot =
@@ -67,19 +53,17 @@ interface MediaObjectBlockUpdate<Snapshot extends MediaObjectBlockSnapshot> {
   ): Promise<{ mediaObject: DbMediaObject; revision: number }>;
 }
 
-export class MediaObjectService {
+export class MediaObjectsService {
   private readonly db: Database;
   private readonly actor: ServiceContext["actor"];
   private readonly access: AccessService;
-  private readonly mediaElementService: MediaElementService;
-  private readonly blobs?: BlobStore;
+  private readonly mediaElementsService: MediaElementsService;
 
   constructor(context: ServiceContext & { blobs?: BlobStore }) {
     this.db = context.db;
     this.actor = context.actor;
     this.access = new AccessService(context);
-    this.mediaElementService = new MediaElementService(context);
-    this.blobs = context.blobs;
+    this.mediaElementsService = new MediaElementsService(context);
   }
 
   async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
@@ -127,43 +111,8 @@ export class MediaObjectService {
         preparedMediaElementUploads,
       }),
     );
-    const readyMediaElementUploads = new Map<string, ReadyMediaElementUpload>();
-    if (preparedMediaElementUploads.size) {
-      if (!this.blobs) throw new Error("Blob storage is required for atomic element uploads");
-      for (const [name, upload] of preparedMediaElementUploads) {
-        const candidateMediaElement = {
-          rnet_schema: RNET_SCHEMA_VERSION,
-          uri: `rnet://element/${upload.uuid}`,
-          owner: `rnet://id/${ownerUuid}`,
-          content_hash: upload.contentHash,
-          kind: upload.kind,
-          mime: upload.mime,
-          bytes: await this.blobs.signedUrl("elements", upload.contentHash),
-          byte_size: upload.bytes.byteLength,
-          created_at: new Date().toISOString(),
-        };
-        const validation = validateSchema("media-element", candidateMediaElement);
-        if (!validation.ok) throw schemaProblem(validation.issues, `/uploads/${name}`);
-        const mediaElementDocument = {
-          ...validation.value,
-          byte_size: candidateMediaElement.byte_size,
-          created_at: candidateMediaElement.created_at,
-        };
-        const readyUpload: ReadyMediaElementUpload = {
-          bytes: upload.bytes,
-          document: mediaElementDocument,
-        };
-        readyMediaElementUploads.set(name, readyUpload);
-        await this.blobs.put(
-          "elements",
-          mediaElementDocument.content_hash,
-          readyUpload.bytes,
-          mediaElementDocument.mime,
-        );
-      }
-    }
     const uploadedMediaElementUuids = new Set(
-      [...readyMediaElementUploads.values()].map(({ document }) => uriId(document.uri)),
+      [...preparedMediaElementUploads.values()].map(({ uuid }) => uuid),
     );
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
@@ -176,8 +125,13 @@ export class MediaObjectService {
           uploadedMediaElementUuids,
         );
       }
-      for (const { document: mediaElement } of readyMediaElementUploads.values()) {
-        await this.mediaElementService.createMediaElement({ mediaElement, transaction });
+      for (const [name, mediaElementUpload] of preparedMediaElementUploads) {
+        await this.mediaElementsService.createMediaElement({
+          ownerUuid,
+          mediaElementUpload,
+          transaction,
+          validationPath: `/uploads/${name}`,
+        });
       }
       let nextVibePosition: number | undefined;
       if (vibeUuid) {

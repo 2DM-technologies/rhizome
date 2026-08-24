@@ -1,12 +1,10 @@
-import { RNET_SCHEMA_VERSION, validateSchema, type MediaElement } from "@rnet/types";
+import type { MediaElement } from "@rnet/types";
 import { Hono } from "hono";
-import { v7 as uuidv7 } from "uuid";
 
 import type { BlobStore } from "../blobs/index.ts";
-import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
-import { Problem } from "../errors.ts";
-import { MediaElementService, type DbMediaElement } from "../services/media-element-service.ts";
+import { RNET_SCHEMA_VERSION } from "../rnet.ts";
+import { MediaElementsService, type DbMediaElement } from "../services/media-element-service.ts";
 import {
   BinaryRequest,
   ProblemSchema,
@@ -38,41 +36,15 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
     }),
     async (context) => {
       const actor = context.get("actor");
-      const mediaElementService = new MediaElementService({ db, actor });
+      const mediaElementsService = new MediaElementsService({ db, actor, blobs });
       const ownerUuid = actor.uuid;
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const mime = requestMime(context.req.header("Content-Type"));
       const kind = context.req.header("X-Rnet-Kind");
-      const contentHashValue = await contentHash(bytes);
-      const mediaElementUuid = uuidv7();
-      const candidateMediaElement = {
-        rnet_schema: RNET_SCHEMA_VERSION,
-        uri: `rnet://element/${mediaElementUuid}`,
-        owner: `rnet://id/${ownerUuid}`,
-        content_hash: contentHashValue,
-        kind,
-        mime,
-        bytes: await blobs.signedUrl("elements", contentHashValue),
-        byte_size: bytes.byteLength,
-        created_at: new Date().toISOString(),
-      };
-      const validation = validateSchema("media-element", candidateMediaElement);
-      if (!validation.ok) {
-        throw new Problem(
-          422,
-          "schema_violation",
-          "Schema violation",
-          "The media element metadata does not conform",
-          { errors: validation.issues },
-        );
-      }
-      const mediaElement = {
-        ...validation.value,
-        byte_size: candidateMediaElement.byte_size,
-        created_at: candidateMediaElement.created_at,
-      };
-      await blobs.put("elements", mediaElement.content_hash, bytes, mediaElement.mime);
-      await mediaElementService.createMediaElement({ mediaElement });
+      const mediaElement = await mediaElementsService.createMediaElement({
+        ownerUuid,
+        mediaElementUpload: { bytes, mime, kind },
+      });
       return context.json(mediaElement, 201);
     },
   );
@@ -84,8 +56,10 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
       responses: { 200: MediaElementDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const mediaElementService = new MediaElementService({ db, actor: context.get("actor") });
-      const mediaElement = await mediaElementService.getMediaElement(context.req.valid("param").id);
+      const mediaElementsService = new MediaElementsService({ db, actor: context.get("actor") });
+      const mediaElement = await mediaElementsService.getMediaElement(
+        context.req.valid("param").id,
+      );
       const document = await mediaElementDocument(mediaElement, blobs);
       return context.json(document);
     },
@@ -98,8 +72,10 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
       responses: { 200: binaryResponse("*/*"), 422: ProblemSchema },
     }),
     async (context) => {
-      const mediaElementService = new MediaElementService({ db, actor: context.get("actor") });
-      const mediaElement = await mediaElementService.getMediaElement(context.req.valid("param").id);
+      const mediaElementsService = new MediaElementsService({ db, actor: context.get("actor") });
+      const mediaElement = await mediaElementsService.getMediaElement(
+        context.req.valid("param").id,
+      );
       const blob = await blobs.get("elements", mediaElement.contentHash);
       return blobResponse(context, blob);
     },

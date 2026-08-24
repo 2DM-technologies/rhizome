@@ -5,7 +5,7 @@ import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
-import { VibeService } from "../services/vibe-service.ts";
+import { VibesService } from "../services/vibe-service.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -58,8 +58,8 @@ export function createVibeRoutes(db: Database) {
     "/",
     rnetRoute({ operationId: "listVibes", responses: { 200: VibeCollectionSchema } }),
     async (context) => {
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      const vibes = await vibeService.listVibes();
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      const vibes = await vibesService.listVibes();
       return context.json({ vibes });
     },
   );
@@ -77,8 +77,8 @@ export function createVibeRoutes(db: Database) {
       },
     }),
     async (context) => {
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      const vibe = await vibeService.createVibe(context.req.valid("json"));
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      const vibe = await vibesService.createVibe(context.req.valid("json"));
       return context.json(vibe, 201);
     },
   );
@@ -90,8 +90,8 @@ export function createVibeRoutes(db: Database) {
       responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      const vibe = await vibeService.getVibe(context.req.valid("param").id);
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      const vibe = await vibesService.getVibe(context.req.valid("param").id);
       return context.json(vibe);
     },
   );
@@ -103,8 +103,8 @@ export function createVibeRoutes(db: Database) {
       responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      const vibe = await vibeService.updateVibe(
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      const vibe = await vibesService.updateVibe(
         context.req.valid("param").id,
         context.req.valid("json"),
       );
@@ -119,8 +119,8 @@ export function createVibeRoutes(db: Database) {
       responses: { 204: null, 422: ProblemSchema },
     }),
     async (context) => {
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      await vibeService.deleteVibe(context.req.valid("param").id);
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      await vibesService.deleteVibe(context.req.valid("param").id);
       return context.body(null, 204);
     },
   );
@@ -132,8 +132,8 @@ export function createVibeRoutes(db: Database) {
       responses: { 200: MediaObjectCollectionSchema, 422: ProblemSchema },
     }),
     async (context) => {
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      const mediaObjects = await vibeService.listMediaObjects(context.req.valid("param").id);
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      const mediaObjects = await vibesService.listMediaObjects(context.req.valid("param").id);
       return context.json({ mediaObjects });
     },
   );
@@ -147,8 +147,8 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const body = context.req.valid("json");
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      await vibeService.addMediaObjectRefs(context.req.valid("param").id, body.objects);
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      await vibesService.addMediaObjectRefs(context.req.valid("param").id, body.objects);
       return context.body(null, 204);
     },
   );
@@ -161,8 +161,8 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const body = context.req.valid("json");
-      const vibeService = new VibeService({ db, actor: context.get("actor") });
-      await vibeService.removeMediaObjectRefs(context.req.valid("param").id, body.objects);
+      const vibesService = new VibesService({ db, actor: context.get("actor") });
+      await vibesService.removeMediaObjectRefs(context.req.valid("param").id, body.objects);
       return context.body(null, 204);
     },
   );
