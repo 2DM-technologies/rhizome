@@ -6,8 +6,7 @@ import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
-import { MediaElementService, type DbMediaElement } from "../services/media-elements.ts";
-import { uriId } from "../services/uris.ts";
+import { MediaElementService, type DbMediaElement } from "../services/media-element-service.ts";
 import {
   BinaryRequest,
   ProblemSchema,
@@ -73,17 +72,7 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
         created_at: candidateMediaElement.created_at,
       };
       await blobs.put("elements", mediaElement.content_hash, bytes, mediaElement.mime);
-      await mediaElementService.createMediaElement({
-        uuid: uriId(mediaElement.uri),
-        ownerUuid: uriId(mediaElement.owner),
-        contentHash: mediaElement.content_hash,
-        kind: mediaElement.kind,
-        mime: mediaElement.mime,
-        byteSize: mediaElement.byte_size,
-        rnetSchema: mediaElement.rnet_schema,
-        createdAt: new Date(mediaElement.created_at),
-        createdBy: actor.subject,
-      });
+      await mediaElementService.createMediaElement({ mediaElement });
       return context.json(mediaElement, 201);
     },
   );

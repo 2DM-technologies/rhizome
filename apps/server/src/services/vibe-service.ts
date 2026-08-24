@@ -9,15 +9,15 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import type { Database, DatabaseTransaction } from "../db/index.ts";
-import { grants } from "../db/models/grant.ts";
+import { grants, GRANT_SCOPE } from "../db/models/grant.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
-import { AccessService, type DbVibe } from "./access.ts";
-import { IdentityService } from "./identities.ts";
-import { MediaObjectService } from "./media-objects.ts";
+import { AccessService, type DbVibe } from "./access-service.ts";
+import { IdentityService } from "./identity-service.ts";
+import { MediaObjectService } from "./media-object-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
@@ -53,7 +53,7 @@ export class VibeService {
               and(
                 eq(grants.subject, this.actor.subject),
                 isNull(grants.revokedAt),
-                sql`${grants.scopes} @> '["read"]'::jsonb`,
+                sql`${grants.scopes} @> ${JSON.stringify([GRANT_SCOPE.READ])}::jsonb`,
               ),
             )
             .orderBy(asc(vibes.createdAt))
@@ -114,7 +114,7 @@ export class VibeService {
   }
 
   async getVibe(vibeUuid: string): Promise<Vibe> {
-    const vibeRecord = await this.access.assertVibeScope(vibeUuid, "read");
+    const vibeRecord = await this.access.assertVibeScope(vibeUuid, GRANT_SCOPE.READ);
     return this.toDocument(vibeRecord);
   }
 
@@ -210,7 +210,7 @@ export class VibeService {
   }
 
   async listMediaObjects(vibeUuid: string): Promise<MediaObject[]> {
-    await this.access.assertVibeScope(vibeUuid, "read");
+    await this.access.assertVibeScope(vibeUuid, GRANT_SCOPE.READ);
     const mediaObjectRows = await this.db
       .select({ mediaObject: mediaObjects })
       .from(vibeMediaObjects)

@@ -2,7 +2,6 @@ import {
   RNET_SCHEMA_VERSION,
   validateMediaObject,
   validateSchema,
-  type MediaElement,
   type MediaObject,
 } from "@rnet/types";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -11,7 +10,7 @@ import { v7 as uuidv7 } from "uuid";
 import { contentHash } from "../blobs/content.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
-import { grants } from "../db/models/grant.ts";
+import { grants, GRANT_SCOPE } from "../db/models/grant.ts";
 import { dmachines } from "../db/models/dmachine.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
@@ -25,26 +24,23 @@ import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
-import { AccessService, type DbVibe } from "./access.ts";
+import { AccessService, type DbVibe } from "./access-service.ts";
+import {
+  MediaElementService,
+  type PendingMediaElementUpload,
+  type PersistableMediaElement,
+} from "./media-element-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
 export type DbMediaObject = typeof mediaObjects.$inferSelect;
 
-export interface PendingMediaElementUpload {
-  bytes: Uint8Array;
-  mime?: string;
-}
-
 interface PreparedMediaElementUpload extends PendingMediaElementUpload {
   uuid: string;
   contentHash: string;
   kind?: string;
 }
-
-type PersistableMediaElement = MediaElement &
-  Required<Pick<MediaElement, "byte_size" | "created_at">>;
 
 interface ReadyMediaElementUpload {
   bytes: Uint8Array;
@@ -69,12 +65,14 @@ export class MediaObjectService {
   private readonly db: Database;
   private readonly actor: ServiceContext["actor"];
   private readonly access: AccessService;
+  private readonly mediaElementService: MediaElementService;
   private readonly blobs?: BlobStore;
 
   constructor(context: ServiceContext & { blobs?: BlobStore }) {
     this.db = context.db;
     this.actor = context.actor;
     this.access = new AccessService(context);
+    this.mediaElementService = new MediaElementService(context);
     this.blobs = context.blobs;
   }
 
@@ -84,7 +82,7 @@ export class MediaObjectService {
       .from(mediaObjects)
       .where(eq(mediaObjects.uuid, uuid));
     if (!mediaObjectRecord) throw notFound("Object");
-    if (!(await this.access.canReadMediaObject(uuid))) throw grantMissing("read");
+    if (!(await this.access.canReadMediaObject(uuid))) throw grantMissing(GRANT_SCOPE.READ);
     return {
       document: await this.toDocument(mediaObjectRecord),
       userRev: mediaObjectRecord.userRev,
@@ -101,9 +99,9 @@ export class MediaObjectService {
     if (this.actor.kind === "client") {
       if (!vibeUuid)
         throw schemaProblem([{ instancePath: "/vibe", message: "is required for clients" }]);
-      targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
+      targetVibe = await this.access.assertVibeScope(vibeUuid, GRANT_SCOPE.WRITE_OBJECTS);
     } else if (vibeUuid) {
-      targetVibe = await this.access.assertVibeScope(vibeUuid, "write:objects");
+      targetVibe = await this.access.assertVibeScope(vibeUuid, GRANT_SCOPE.WRITE_OBJECTS);
     }
     const ownerUuid =
       targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
@@ -124,13 +122,18 @@ export class MediaObjectService {
       ),
     );
 
-    const mediaObjectDocuments = mediaObjectInputs.map((item, index) =>
-      this.normalizeMediaObject(ownerUuid, item, index, preparedUploads),
+    const mediaObjectDocuments = mediaObjectInputs.map((input, index) =>
+      this.buildMediaObjectDocument({ ownerUuid, input, index, uploads: preparedUploads }),
     );
-    const unusedUpload = [...preparedUploads].find(([, upload]) => !upload.kind || !upload.mime);
-    if (unusedUpload) {
+    const unreferencedUpload = [...preparedUploads].find(
+      ([, upload]) => !upload.kind || !upload.mime,
+    );
+    if (unreferencedUpload) {
       throw schemaProblem([
-        { instancePath: `/uploads/${unusedUpload[0]}`, message: "is not referenced by an object" },
+        {
+          instancePath: `/uploads/${unreferencedUpload[0]}`,
+          message: "is not referenced by an object",
+        },
       ]);
     }
     const readyUploads = new Map<string, ReadyMediaElementUpload>();
@@ -182,20 +185,8 @@ export class MediaObjectService {
           uploadedElementUuids,
         );
       }
-      if (readyUploads.size) {
-        await transaction.insert(mediaElements).values(
-          [...readyUploads.values()].map(({ document }) => ({
-            uuid: uriId(document.uri),
-            ownerUuid: uriId(document.owner),
-            contentHash: document.content_hash,
-            kind: document.kind,
-            mime: document.mime,
-            byteSize: document.byte_size,
-            rnetSchema: document.rnet_schema,
-            createdAt: new Date(document.created_at),
-            createdBy: this.actor.subject,
-          })),
-        );
+      for (const { document: mediaElement } of readyUploads.values()) {
+        await this.mediaElementService.createMediaElement({ mediaElement, transaction });
       }
       let nextVibePosition: number | undefined;
       if (vibeUuid) {
@@ -266,7 +257,7 @@ export class MediaObjectService {
     expectedRev: number,
     properties: Record<string, unknown>,
   ): Promise<{ document: MediaObject; userRev: number }> {
-    await this.access.assertMediaObjectScope(mediaObjectUuid, "write:user");
+    await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_USER);
     const candidateUser: NonNullable<MediaObject["user"]> = {
       properties,
       updated_at: new Date().toISOString(),
@@ -312,7 +303,7 @@ export class MediaObjectService {
     task: string,
     entry: NonNullable<MediaObject["inferred"]>[string],
   ): Promise<MediaObject> {
-    await this.access.assertMediaObjectScope(mediaObjectUuid, "write:inferred");
+    await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_INFERRED);
     if (task.includes(":")) {
       throw new Problem(
         403,
@@ -321,7 +312,7 @@ export class MediaObjectService {
         "Pass a bare task name",
       );
     }
-    if (this.actor.kind === "public") throw grantMissing("write:inferred");
+    if (this.actor.kind === "public") throw grantMissing(GRANT_SCOPE.WRITE_INFERRED);
     if (this.actor.kind === "client" && entry.durable === true) {
       throw schemaProblem([
         {
@@ -414,12 +405,17 @@ export class MediaObjectService {
     );
   }
 
-  private normalizeMediaObject(
-    ownerUuid: string,
-    input: unknown,
-    index: number,
-    uploads: Map<string, PreparedMediaElementUpload>,
-  ): MediaObject {
+  private buildMediaObjectDocument({
+    ownerUuid,
+    input,
+    index,
+    uploads,
+  }: {
+    ownerUuid: string;
+    input: unknown;
+    index: number;
+    uploads: Map<string, PreparedMediaElementUpload>;
+  }): MediaObject {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw schemaProblem([{ instancePath: `/objects/${index}`, message: "must be an object" }]);
     }
@@ -436,7 +432,11 @@ export class MediaObjectService {
     }
     const mediaObjectUuid = uuidv7();
     const owner = `rnet://id/${ownerUuid}`;
-    const elements = this.resolveMediaElementInputs(rawMediaObject.elements, index, uploads);
+    const elements = this.resolveMediaElementReferences({
+      input: rawMediaObject.elements,
+      mediaObjectIndex: index,
+      uploads,
+    });
     const extensions = Object.fromEntries(
       Object.entries(rawMediaObject).filter(([key]) => key.startsWith("x-")),
     );
@@ -451,7 +451,7 @@ export class MediaObjectService {
       rnet_schema: RNET_SCHEMA_VERSION,
       uri: `rnet://object/${mediaObjectUuid}`,
       owner,
-      elements: elements ?? [],
+      elements,
       source:
         this.actor.kind === "client"
           ? {
@@ -486,12 +486,16 @@ export class MediaObjectService {
     return validation.value;
   }
 
-  private resolveMediaElementInputs(
-    input: unknown,
-    mediaObjectIndex: number,
-    uploads: Map<string, PreparedMediaElementUpload>,
-  ): unknown[] | undefined {
-    if (input === undefined) return undefined;
+  private resolveMediaElementReferences({
+    input,
+    mediaObjectIndex,
+    uploads,
+  }: {
+    input: unknown;
+    mediaObjectIndex: number;
+    uploads: Map<string, PreparedMediaElementUpload>;
+  }): unknown[] {
+    if (input === undefined) return [];
     if (!Array.isArray(input)) {
       throw schemaProblem([
         { instancePath: `/objects/${mediaObjectIndex}/elements`, message: "must be an array" },
@@ -575,7 +579,7 @@ export class MediaObjectService {
       }
       if (mediaElementRecord.ownerUuid !== ownerUuid) throw grantMissing("owner");
       if (this.actor.kind !== "user" || this.actor.uuid !== ownerUuid) {
-        throw grantMissing("write:objects");
+        throw grantMissing(GRANT_SCOPE.WRITE_OBJECTS);
       }
     }
     for (const uri of mediaObjectDocument.source.origins) {
@@ -634,7 +638,9 @@ export class MediaObjectService {
         ),
       )
       .for("share");
-    if (!grant?.scopes.includes("write:objects")) throw grantMissing("write:objects");
+    if (!grant?.scopes.includes(GRANT_SCOPE.WRITE_OBJECTS)) {
+      throw grantMissing(GRANT_SCOPE.WRITE_OBJECTS);
+    }
   }
 
   private toDocumentFromMediaElementUuids(

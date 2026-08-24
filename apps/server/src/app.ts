@@ -14,7 +14,7 @@ import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
-import { IdentityService } from "./services/identities.ts";
+import { IdentityService } from "./services/identity-service.ts";
 
 export interface AppDependencies {
   config: ServerConfig;

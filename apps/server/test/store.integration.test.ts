@@ -287,6 +287,21 @@ describe("rNet M1 store", () => {
     );
     expect(afterRejectedUpload?.elements).toBe(beforeRejectedUpload?.elements);
 
+    const unreferencedUpload = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [{ type: "note", properties: { title: "Must reference its upload" } }],
+      },
+      uploads: { stray: { bytes: "Unreferenced bytes", mime: "text/plain" } },
+    });
+    expect(unreferencedUpload.status).toBe(422);
+    const [afterUnreferencedUpload] = await client.unsafe(
+      "select count(*)::int as elements from media_elements",
+    );
+    expect(afterUnreferencedUpload?.elements).toBe(beforeRejectedUpload?.elements);
+
     const created = await request("/rnet/v0/objects", {
       method: "POST",
       headers: dmachine,

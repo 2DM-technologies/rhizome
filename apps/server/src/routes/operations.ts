@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 
 import type { Database } from "../db/index.ts";
-import { OperationService } from "../services/operations.ts";
+import { OperationKindEnum, OperationStatusEnum } from "../db/models/operation.ts";
+import { OperationService } from "../services/operation-service.ts";
 import { ProblemSchema, RecordIdParamsSchema, jsonSchema, rnetRoute } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
 
@@ -10,8 +11,8 @@ const OperationDocumentSchema = jsonSchema({
   required: ["operation_id", "kind", "status", "request", "result", "error", "created_at"],
   properties: {
     operation_id: { type: "string", format: "uuid" },
-    kind: { enum: ["push", "pull", "agent"] },
-    status: { enum: ["queued", "running", "done", "failed", "aborted"] },
+    kind: { enum: OperationKindEnum },
+    status: { enum: OperationStatusEnum },
     request: { type: "object" },
     result: { type: ["object", "null"] },
     error: { type: ["string", "null"] },

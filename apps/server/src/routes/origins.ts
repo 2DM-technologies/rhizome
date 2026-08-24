@@ -5,7 +5,10 @@ import { v7 as uuidv7 } from "uuid";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
-import { OriginArtifactService, type DbOriginArtifact } from "../services/origin-artifacts.ts";
+import {
+  OriginArtifactService,
+  type DbOriginArtifact,
+} from "../services/origin-artifact-service.ts";
 import { schemaProblem } from "../services/problems.ts";
 import { uriId } from "../services/uris.ts";
 import {

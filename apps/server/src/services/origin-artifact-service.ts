@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { Database } from "../db/index.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { notFound } from "../errors.ts";
-import { AccessService } from "./access.ts";
+import { AccessService } from "./access-service.ts";
 import type { ServiceContext } from "./types.ts";
 
 export type DbOriginArtifact = typeof originArtifacts.$inferSelect;

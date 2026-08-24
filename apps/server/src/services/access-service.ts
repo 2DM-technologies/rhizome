@@ -1,8 +1,7 @@
-import type { Grant } from "@rnet/types";
 import { and, eq, isNull } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
-import { grants } from "../db/models/grant.ts";
+import { grants, GRANT_SCOPE, type GrantScope } from "../db/models/grant.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
@@ -11,7 +10,7 @@ import { vibes } from "../db/models/vibe.ts";
 import { authenticationRequired, grantMissing, notFound, Problem } from "../errors.ts";
 import type { ServiceContext } from "./types.ts";
 
-export type Scope = Grant["scope"][number];
+export type Scope = GrantScope;
 export type DbVibe = typeof vibes.$inferSelect;
 
 export class AccessService {
@@ -76,7 +75,7 @@ export class AccessService {
       .where(eq(vibeMediaObjects.mediaObjectUuid, mediaObjectUuid));
     for (const membership of memberships) {
       try {
-        await this.assertVibeScope(membership.vibeUuid, "read");
+        await this.assertVibeScope(membership.vibeUuid, GRANT_SCOPE.READ);
         return true;
       } catch (error) {
         if (!(error instanceof Problem) || ![403, 404].includes(error.status)) throw error;

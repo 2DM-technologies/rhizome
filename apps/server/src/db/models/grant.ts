@@ -3,6 +3,17 @@ import { jsonb, pgTable, primaryKey, text, timestamp, uuid } from "drizzle-orm/p
 
 import { vibes } from "./vibe.ts";
 
+export const GRANT_SCOPE = {
+  READ: "read",
+  WRITE_USER: "write:user",
+  WRITE_OBJECTS: "write:objects",
+  WRITE_INFERRED: "write:inferred",
+  PUSH: "push",
+  PULL: "pull",
+} as const satisfies Record<string, Grant["scope"][number]>;
+
+export type GrantScope = (typeof GRANT_SCOPE)[keyof typeof GRANT_SCOPE];
+
 export const grants = pgTable(
   "grants",
   {

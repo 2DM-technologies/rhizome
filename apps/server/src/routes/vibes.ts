@@ -2,9 +2,10 @@ import { vibeSchema } from "@rnet/types";
 import { Hono } from "hono";
 
 import type { Database } from "../db/index.ts";
+import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
-import { AccessService } from "../services/access.ts";
-import { VibeService } from "../services/vibes.ts";
+import { AccessService } from "../services/access-service.ts";
+import { VibeService } from "../services/vibe-service.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -174,7 +175,7 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const accessService = new AccessService({ db, actor: context.get("actor") });
-      await accessService.assertVibeScope(context.req.valid("param").id, "push");
+      await accessService.assertVibeScope(context.req.valid("param").id, GRANT_SCOPE.PUSH);
       throw new Problem(
         501,
         "not_implemented",
@@ -192,7 +193,7 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const accessService = new AccessService({ db, actor: context.get("actor") });
-      await accessService.assertVibeScope(context.req.valid("param").id, "pull");
+      await accessService.assertVibeScope(context.req.valid("param").id, GRANT_SCOPE.PULL);
       throw new Problem(
         501,
         "not_implemented",
