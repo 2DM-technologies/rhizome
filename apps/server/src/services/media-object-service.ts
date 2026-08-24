@@ -37,10 +37,14 @@ import { uriId } from "./uris.ts";
 
 export type DbMediaObject = typeof mediaObjects.$inferSelect;
 
-interface PreparedMediaElementUpload extends PendingMediaElementUpload {
+interface HashedMediaElementUpload extends PendingMediaElementUpload {
   uuid: string;
   contentHash: string;
-  kind?: string;
+}
+
+interface PreparedMediaElementUpload extends HashedMediaElementUpload {
+  kind: PersistableMediaElement["kind"];
+  mime: string;
 }
 
 interface ReadyMediaElementUpload {
@@ -107,40 +111,25 @@ export class MediaObjectService {
     const ownerUuid =
       targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
     if (!ownerUuid) throw grantMissing("owner");
-    const preparedUploads = new Map<string, PreparedMediaElementUpload>(
-      await Promise.all(
-        [...pendingMediaElementUploads].map(
-          async ([name, upload]) =>
-            [
-              name,
-              {
-                ...upload,
-                uuid: uuidv7(),
-                contentHash: await contentHash(upload.bytes),
-              } as PreparedMediaElementUpload,
-            ] as const,
-        ),
-      ),
+    const hashedMediaElementUploads = await this.hashMediaElementUploads(
+      pendingMediaElementUploads,
     );
-
+    const preparedMediaElementUploads = this.prepareMediaElementUploads({
+      mediaObjectInputs,
+      hashedMediaElementUploads,
+    });
     const mediaObjectDocuments = mediaObjectInputs.map((input, index) =>
-      this.buildMediaObjectDocument({ ownerUuid, input, index, uploads: preparedUploads }),
+      this.buildMediaObjectDocument({
+        ownerUuid,
+        input,
+        index,
+        preparedMediaElementUploads,
+      }),
     );
-    const unreferencedUpload = [...preparedUploads].find(
-      ([, upload]) => !upload.kind || !upload.mime,
-    );
-    if (unreferencedUpload) {
-      throw schemaProblem([
-        {
-          instancePath: `/uploads/${unreferencedUpload[0]}`,
-          message: "is not referenced by an object",
-        },
-      ]);
-    }
-    const readyUploads = new Map<string, ReadyMediaElementUpload>();
-    if (preparedUploads.size) {
+    const readyMediaElementUploads = new Map<string, ReadyMediaElementUpload>();
+    if (preparedMediaElementUploads.size) {
       if (!this.blobs) throw new Error("Blob storage is required for atomic element uploads");
-      for (const [name, upload] of preparedUploads) {
+      for (const [name, upload] of preparedMediaElementUploads) {
         const candidateMediaElement = {
           rnet_schema: RNET_SCHEMA_VERSION,
           uri: `rnet://element/${upload.uuid}`,
@@ -163,7 +152,7 @@ export class MediaObjectService {
           bytes: upload.bytes,
           document: mediaElementDocument,
         };
-        readyUploads.set(name, readyUpload);
+        readyMediaElementUploads.set(name, readyUpload);
         await this.blobs.put(
           "elements",
           mediaElementDocument.content_hash,
@@ -172,8 +161,8 @@ export class MediaObjectService {
         );
       }
     }
-    const uploadedElementUuids = new Set(
-      [...readyUploads.values()].map(({ document }) => uriId(document.uri)),
+    const uploadedMediaElementUuids = new Set(
+      [...readyMediaElementUploads.values()].map(({ document }) => uriId(document.uri)),
     );
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
@@ -183,10 +172,10 @@ export class MediaObjectService {
         await this.assertMediaObjectReferences(
           transaction,
           mediaObjectDocument,
-          uploadedElementUuids,
+          uploadedMediaElementUuids,
         );
       }
-      for (const { document: mediaElement } of readyUploads.values()) {
+      for (const { document: mediaElement } of readyMediaElementUploads.values()) {
         await this.mediaElementService.createMediaElement({ mediaElement, transaction });
       }
       let nextVibePosition: number | undefined;
@@ -259,13 +248,12 @@ export class MediaObjectService {
     properties: Record<string, unknown>,
   ): Promise<{ document: MediaObject; userRev: number }> {
     await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_USER);
-    const candidateUser: NonNullable<MediaObject["user"]> = {
-      properties,
-      updated_at: new Date().toISOString(),
-    };
     const updatedMediaObject = await this.updateMediaObjectBlock(mediaObjectUuid, {
       block: "user",
-      buildSnapshot: () => candidateUser,
+      buildSnapshot: () => ({
+        properties,
+        updated_at: new Date().toISOString(),
+      }),
       buildCandidate: (currentMediaObject, user) => ({ ...currentMediaObject, user }),
       persist: async (transaction, currentMediaObject, user) => {
         if (currentMediaObject.userRev !== expectedRev) {
@@ -406,23 +394,117 @@ export class MediaObjectService {
     );
   }
 
+  private async hashMediaElementUploads(
+    pendingMediaElementUploads: ReadonlyMap<string, PendingMediaElementUpload>,
+  ): Promise<Map<string, HashedMediaElementUpload>> {
+    return new Map(
+      await Promise.all(
+        [...pendingMediaElementUploads].map(
+          async ([name, upload]) =>
+            [
+              name,
+              {
+                ...upload,
+                uuid: uuidv7(),
+                contentHash: await contentHash(upload.bytes),
+              },
+            ] as const,
+        ),
+      ),
+    );
+  }
+
+  private prepareMediaElementUploads({
+    mediaObjectInputs,
+    hashedMediaElementUploads,
+  }: {
+    mediaObjectInputs: CreateMediaObjectInput[];
+    hashedMediaElementUploads: ReadonlyMap<string, HashedMediaElementUpload>;
+  }): Map<string, PreparedMediaElementUpload> {
+    const preparedMediaElementUploads = new Map<string, PreparedMediaElementUpload>();
+
+    for (const [mediaObjectIndex, mediaObjectInput] of mediaObjectInputs.entries()) {
+      for (const [mediaElementIndex, mediaElementReference] of (
+        mediaObjectInput.elements ?? []
+      ).entries()) {
+        if (typeof mediaElementReference === "string") continue;
+        const pointer = `/objects/${mediaObjectIndex}/elements/${mediaElementIndex}`;
+        const mime = mediaElementReference.mime.split(";", 1)[0]?.trim();
+        if (!mime) {
+          throw schemaProblem([{ instancePath: `${pointer}/mime`, message: "must not be empty" }]);
+        }
+        const hashedMediaElementUpload = hashedMediaElementUploads.get(
+          mediaElementReference.upload,
+        );
+        if (!hashedMediaElementUpload) {
+          throw schemaProblem([
+            {
+              instancePath: `${pointer}/upload`,
+              message: `has no file part named ${mediaElementReference.upload}`,
+            },
+          ]);
+        }
+        const preparedMediaElementUpload = preparedMediaElementUploads.get(
+          mediaElementReference.upload,
+        );
+        if (
+          preparedMediaElementUpload &&
+          preparedMediaElementUpload.kind !== mediaElementReference.kind
+        ) {
+          throw schemaProblem([
+            { instancePath: `${pointer}/kind`, message: "conflicts with another reference" },
+          ]);
+        }
+        const existingMime = preparedMediaElementUpload?.mime ?? hashedMediaElementUpload.mime;
+        if (existingMime && existingMime !== mime) {
+          throw schemaProblem([
+            {
+              instancePath: `${pointer}/mime`,
+              message: "conflicts with the file part or another reference",
+            },
+          ]);
+        }
+        if (!preparedMediaElementUpload) {
+          preparedMediaElementUploads.set(mediaElementReference.upload, {
+            ...hashedMediaElementUpload,
+            kind: mediaElementReference.kind,
+            mime,
+          });
+        }
+      }
+    }
+
+    const unreferencedMediaElementUpload = [...hashedMediaElementUploads.keys()].find(
+      (name) => !preparedMediaElementUploads.has(name),
+    );
+    if (unreferencedMediaElementUpload) {
+      throw schemaProblem([
+        {
+          instancePath: `/uploads/${unreferencedMediaElementUpload}`,
+          message: "is not referenced by an object",
+        },
+      ]);
+    }
+    return preparedMediaElementUploads;
+  }
+
   private buildMediaObjectDocument({
     ownerUuid,
     input,
     index,
-    uploads,
+    preparedMediaElementUploads,
   }: {
     ownerUuid: string;
     input: CreateMediaObjectInput;
     index: number;
-    uploads: Map<string, PreparedMediaElementUpload>;
+    preparedMediaElementUploads: ReadonlyMap<string, PreparedMediaElementUpload>;
   }): MediaObject {
     const mediaObjectUuid = uuidv7();
     const owner = `rnet://id/${ownerUuid}`;
     const elements = this.resolveMediaElementReferences({
       input: input.elements,
       mediaObjectIndex: index,
-      uploads,
+      preparedMediaElementUploads,
     });
     const extensions = Object.fromEntries(
       Object.entries(input).filter(([key]) => key.startsWith("x-")),
@@ -478,45 +560,21 @@ export class MediaObjectService {
   private resolveMediaElementReferences({
     input,
     mediaObjectIndex,
-    uploads,
+    preparedMediaElementUploads,
   }: {
     input: CreateMediaObjectInput["elements"];
     mediaObjectIndex: number;
-    uploads: Map<string, PreparedMediaElementUpload>;
+    preparedMediaElementUploads: ReadonlyMap<string, PreparedMediaElementUpload>;
   }): string[] {
     if (input === undefined) return [];
     return input.map((element, elementIndex) => {
       if (typeof element === "string") return element;
       const pointer = `/objects/${mediaObjectIndex}/elements/${elementIndex}`;
-      const descriptorMime = element.mime.split(";", 1)[0]?.trim();
-      if (!descriptorMime) {
-        throw schemaProblem([{ instancePath: `${pointer}/mime`, message: "must not be empty" }]);
+      const preparedMediaElementUpload = preparedMediaElementUploads.get(element.upload);
+      if (!preparedMediaElementUpload) {
+        throw new Error(`Media element upload ${element.upload} was not prepared at ${pointer}`);
       }
-      const upload = uploads.get(element.upload);
-      if (!upload) {
-        throw schemaProblem([
-          {
-            instancePath: `${pointer}/upload`,
-            message: `has no file part named ${element.upload}`,
-          },
-        ]);
-      }
-      if (upload.kind && upload.kind !== element.kind) {
-        throw schemaProblem([
-          { instancePath: `${pointer}/kind`, message: "conflicts with another reference" },
-        ]);
-      }
-      if (upload.mime && upload.mime !== descriptorMime) {
-        throw schemaProblem([
-          {
-            instancePath: `${pointer}/mime`,
-            message: "conflicts with the file part or another reference",
-          },
-        ]);
-      }
-      upload.kind = element.kind;
-      upload.mime = descriptorMime;
-      return `rnet://element/${upload.uuid}`;
+      return `rnet://element/${preparedMediaElementUpload.uuid}`;
     });
   }
 
