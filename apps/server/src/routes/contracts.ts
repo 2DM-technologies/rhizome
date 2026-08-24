@@ -21,7 +21,7 @@ import { validator } from "hono/validator";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
 import type { Actor, AppVariables, AuthenticatedActor, ClientActor, UserActor } from "../auth.ts";
-import { authenticationRequired, grantMissing } from "../errors.ts";
+import { authenticationRequired, grantMissing, problemDocumentSchema } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
 
 export type JsonSchemaDocument = JSONSchema;
@@ -266,18 +266,7 @@ export function collectionOf<Value, const Key extends string = "items">(
   };
 }
 
-export const ProblemSchema = jsonSchema({
-  type: "object",
-  required: ["type", "title", "status", "detail", "code"],
-  properties: {
-    type: { type: "string", format: "uri" },
-    title: { type: "string", minLength: 1 },
-    status: { type: "integer", minimum: 400, maximum: 599 },
-    detail: { type: "string" },
-    code: { type: "string", minLength: 1 },
-  },
-  additionalProperties: true,
-});
+export const ProblemSchema = jsonSchema(problemDocumentSchema);
 
 export const RecordIdParamsSchema = jsonSchema({
   type: "object",
