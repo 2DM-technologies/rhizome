@@ -1,17 +1,16 @@
 import { and, eq, isNull } from "drizzle-orm";
 
-import type { Database } from "../db/index.ts";
-import { grants, GRANT_SCOPE, type GrantScope } from "../db/models/grant.ts";
+import type { Database, DatabaseTransaction } from "../db/index.ts";
+import { grants, GRANT_SCOPE, type DbGrant, type GrantScope } from "../db/models/grant.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
-import { vibes } from "../db/models/vibe.ts";
+import { vibes, type DbVibe } from "../db/models/vibe.ts";
 import { authenticationRequired, grantMissing, notFound, Problem } from "../errors.ts";
 import type { ServiceContext } from "./types.ts";
 
 export type Scope = GrantScope;
-export type DbVibe = typeof vibes.$inferSelect;
 
 export class AccessService {
   private readonly db: Database;
@@ -44,7 +43,9 @@ export class AccessService {
   }
 
   async assertVibeScope(vibeUuid: string, scope: Scope): Promise<DbVibe> {
-    const [vibe] = await this.db.select().from(vibes).where(eq(vibes.uuid, vibeUuid));
+    const vibe: DbVibe | undefined = await this.db.query.vibes.findFirst({
+      where: eq(vibes.uuid, vibeUuid),
+    });
     if (!vibe) throw notFound("Vibe");
     if (this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid) return vibe;
 
@@ -58,6 +59,43 @@ export class AccessService {
           isNull(grants.revokedAt),
         ),
       );
+    if (!grant?.scopes.includes(scope)) throw grantMissing(scope);
+    return vibe;
+  }
+
+  async assertTransactionalVibeScope({
+    transaction,
+    vibeUuid,
+    expectedOwnerUuid,
+    scope,
+  }: {
+    transaction: DatabaseTransaction;
+    vibeUuid: string;
+    expectedOwnerUuid: string;
+    scope: Scope;
+  }): Promise<DbVibe> {
+    const vibeRows: DbVibe[] = await transaction
+      .select()
+      .from(vibes)
+      .where(eq(vibes.uuid, vibeUuid))
+      .for("update");
+    const [vibe] = vibeRows;
+    if (!vibe) throw notFound("Vibe");
+    if (vibe.ownerUuid !== expectedOwnerUuid) throw grantMissing("owner");
+    if (this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid) return vibe;
+
+    const grantRows: Pick<DbGrant, "scopes">[] = await transaction
+      .select({ scopes: grants.scopes })
+      .from(grants)
+      .where(
+        and(
+          eq(grants.vibeUuid, vibeUuid),
+          eq(grants.subject, this.actor.subject),
+          isNull(grants.revokedAt),
+        ),
+      )
+      .for("share");
+    const [grant] = grantRows;
     if (!grant?.scopes.includes(scope)) throw grantMissing(scope);
     return vibe;
   }

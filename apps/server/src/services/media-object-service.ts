@@ -1,11 +1,11 @@
 import { validateMediaObject, type MediaObject } from "@rnet/types";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import { contentHash } from "../blobs/content.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
-import { grants, GRANT_SCOPE } from "../db/models/grant.ts";
+import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { dmachines } from "../db/models/dmachine.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
@@ -14,14 +14,18 @@ import {
   mediaObjectRevisions,
   type MediaObjectRevisionBlock,
 } from "../db/models/media-object-revision.ts";
-import { mediaObjects } from "../db/models/media-object.ts";
+import {
+  mediaObjects,
+  type DbMediaObject,
+  type NewDbMediaObject,
+} from "../db/models/media-object.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
-import { vibes } from "../db/models/vibe.ts";
+import type { DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
-import { AccessService, type DbVibe } from "./access-service.ts";
+import { AccessService } from "./access-service.ts";
 import {
   MediaElementsService,
   type PendingMediaElementUpload,
@@ -31,7 +35,6 @@ import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
-export type DbMediaObject = typeof mediaObjects.$inferSelect;
 type MediaElementReferenceRow = { uuid: string };
 
 interface HashedMediaElementUpload extends PendingMediaElementUpload {
@@ -66,11 +69,23 @@ export class MediaObjectsService {
     this.mediaElementsService = new MediaElementsService(context);
   }
 
+  async findById(uuid: string): Promise<DbMediaObject | undefined> {
+    const mediaObject: DbMediaObject | undefined = await this.db.query.mediaObjects.findFirst({
+      where: eq(mediaObjects.uuid, uuid),
+    });
+    return mediaObject;
+  }
+
+  async findByIds(uuids: string[]): Promise<DbMediaObject[]> {
+    if (!uuids.length) return [];
+    const matchingMediaObjects: DbMediaObject[] = await this.db.query.mediaObjects.findMany({
+      where: inArray(mediaObjects.uuid, uuids),
+    });
+    return matchingMediaObjects;
+  }
+
   async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
-    const [mediaObjectRecord] = await this.db
-      .select()
-      .from(mediaObjects)
-      .where(eq(mediaObjects.uuid, uuid));
+    const mediaObjectRecord = await this.findById(uuid);
     if (!mediaObjectRecord) throw notFound("Object");
     if (!(await this.access.canReadMediaObject(uuid))) throw grantMissing(GRANT_SCOPE.READ);
     return {
@@ -117,7 +132,16 @@ export class MediaObjectsService {
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const createdMediaObjects: MediaObject[] = [];
-      await this.assertTransactionalWriteAccess(transaction, vibeUuid, ownerUuid);
+      if (vibeUuid) {
+        await this.access.assertTransactionalVibeScope({
+          transaction,
+          vibeUuid,
+          expectedOwnerUuid: ownerUuid,
+          scope: GRANT_SCOPE.WRITE_OBJECTS,
+        });
+      } else {
+        await this.access.assertRecordOwner(ownerUuid);
+      }
       for (const mediaObjectDocument of mediaObjectDocuments) {
         await this.assertMediaObjectReferences(
           transaction,
@@ -147,7 +171,7 @@ export class MediaObjectsService {
         const extensions = Object.fromEntries(
           Object.entries(mediaObjectDocument).filter(([key]) => key.startsWith("x-")),
         );
-        await transaction.insert(mediaObjects).values({
+        const newMediaObject: NewDbMediaObject = {
           uuid: mediaObjectUuid,
           ownerUuid: mediaObjectOwnerUuid,
           createdBy: this.actor.subject,
@@ -158,7 +182,8 @@ export class MediaObjectsService {
           inferred: mediaObjectDocument.inferred ?? {},
           extensions,
           rnetSchema: mediaObjectDocument.rnet_schema,
-        });
+        };
+        await transaction.insert(mediaObjects).values(newMediaObject);
         if (mediaObjectDocument.elements.length) {
           await transaction.insert(mediaObjectElements).values(
             mediaObjectDocument.elements.map((uri, position) => ({
@@ -583,39 +608,6 @@ export class MediaObjectsService {
           ]);
         }
       }
-    }
-  }
-
-  private async assertTransactionalWriteAccess(
-    transaction: DatabaseTransaction,
-    vibeUuid: string | undefined,
-    ownerUuid: string,
-  ): Promise<void> {
-    if (!vibeUuid) {
-      if (this.actor.kind !== "user" || this.actor.uuid !== ownerUuid) throw grantMissing("owner");
-      return;
-    }
-    const [vibe] = await transaction
-      .select()
-      .from(vibes)
-      .where(eq(vibes.uuid, vibeUuid))
-      .for("update");
-    if (!vibe) throw notFound("Vibe");
-    if (vibe.ownerUuid !== ownerUuid) throw grantMissing("owner");
-    if (this.actor.kind === "user" && this.actor.uuid === ownerUuid) return;
-    const [grant] = await transaction
-      .select({ scopes: grants.scopes })
-      .from(grants)
-      .where(
-        and(
-          eq(grants.vibeUuid, vibeUuid),
-          eq(grants.subject, this.actor.subject),
-          isNull(grants.revokedAt),
-        ),
-      )
-      .for("share");
-    if (!grant?.scopes.includes(GRANT_SCOPE.WRITE_OBJECTS)) {
-      throw grantMissing(GRANT_SCOPE.WRITE_OBJECTS);
     }
   }
 

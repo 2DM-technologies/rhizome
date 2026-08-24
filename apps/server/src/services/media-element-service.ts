@@ -6,15 +6,18 @@ import { contentHash } from "../blobs/content.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
-import { mediaElements, type MediaElementKind } from "../db/models/media-element.ts";
+import {
+  mediaElements,
+  type DbMediaElement,
+  type MediaElementKind,
+  type NewDbMediaElement,
+} from "../db/models/media-element.ts";
 import { grantMissing, notFound } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import { AccessService } from "./access-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
-
-export type DbMediaElement = typeof mediaElements.$inferSelect;
 
 export interface PendingMediaElementUpload {
   bytes: Uint8Array;
@@ -93,19 +96,20 @@ export class MediaElementsService {
     );
 
     const database = transaction ?? this.db;
+    const newMediaElement: NewDbMediaElement = {
+      uuid: uriId(mediaElement.uri),
+      ownerUuid: uriId(mediaElement.owner),
+      contentHash: mediaElement.content_hash,
+      kind: mediaElement.kind as MediaElementKind,
+      mime: mediaElement.mime,
+      byteSize: mediaElement.byte_size,
+      rnetSchema: mediaElement.rnet_schema,
+      createdAt: new Date(mediaElement.created_at),
+      createdBy: this.actor.subject,
+    };
     const [mediaElementRecord] = await database
       .insert(mediaElements)
-      .values({
-        uuid: uriId(mediaElement.uri),
-        ownerUuid: uriId(mediaElement.owner),
-        contentHash: mediaElement.content_hash,
-        kind: mediaElement.kind as MediaElementKind,
-        mime: mediaElement.mime,
-        byteSize: mediaElement.byte_size,
-        rnetSchema: mediaElement.rnet_schema,
-        createdAt: new Date(mediaElement.created_at),
-        createdBy: this.actor.subject,
-      })
+      .values(newMediaElement)
       .returning();
     if (!mediaElementRecord) throw new Error("Media element metadata was not stored");
     return mediaElement;

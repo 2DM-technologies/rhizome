@@ -17,3 +17,6 @@ export const vibeRevisions = pgTable(
   },
   (vibeRevision) => [primaryKey({ columns: [vibeRevision.vibeUuid, vibeRevision.rev] })],
 );
+
+export type DbVibeRevision = typeof vibeRevisions.$inferSelect;
+export type NewDbVibeRevision = typeof vibeRevisions.$inferInsert;

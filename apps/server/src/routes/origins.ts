@@ -5,11 +5,9 @@ import { v7 as uuidv7 } from "uuid";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
+import type { DbOriginArtifact } from "../db/models/origin-artifact.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import {
-  OriginArtifactsService,
-  type DbOriginArtifact,
-} from "../services/origin-artifact-service.ts";
+import { OriginArtifactsService } from "../services/origin-artifact-service.ts";
 import { schemaProblem } from "../services/problems.ts";
 import { uriId } from "../services/uris.ts";
 import {

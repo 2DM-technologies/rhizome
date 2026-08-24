@@ -3,8 +3,9 @@ import { Hono } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
+import type { DbMediaElement } from "../db/models/media-element.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import { MediaElementsService, type DbMediaElement } from "../services/media-element-service.ts";
+import { MediaElementsService } from "../services/media-element-service.ts";
 import {
   BinaryRequest,
   ProblemSchema,

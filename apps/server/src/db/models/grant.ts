@@ -27,3 +27,6 @@ export const grants = pgTable(
   },
   (grant) => [primaryKey({ columns: [grant.vibeUuid, grant.subject] })],
 );
+
+export type DbGrant = typeof grants.$inferSelect;
+export type NewDbGrant = typeof grants.$inferInsert;

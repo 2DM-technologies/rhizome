@@ -18,3 +18,6 @@ export const mediaObjectElements = pgTable(
     primaryKey({ columns: [mediaObjectElement.mediaObjectUuid, mediaObjectElement.position] }),
   ],
 );
+
+export type DbMediaObjectElement = typeof mediaObjectElements.$inferSelect;
+export type NewDbMediaObjectElement = typeof mediaObjectElements.$inferInsert;

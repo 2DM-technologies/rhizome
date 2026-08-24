@@ -27,3 +27,6 @@ export const mediaElements = pgTable(
     index("media_elements_content_hash_idx").on(mediaElement.contentHash),
   ],
 );
+
+export type DbMediaElement = typeof mediaElements.$inferSelect;
+export type NewDbMediaElement = typeof mediaElements.$inferInsert;

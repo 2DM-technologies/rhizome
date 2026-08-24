@@ -1,12 +1,14 @@
 import { eq } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
-import { originArtifacts } from "../db/models/origin-artifact.ts";
+import {
+  originArtifacts,
+  type DbOriginArtifact,
+  type NewDbOriginArtifact,
+} from "../db/models/origin-artifact.ts";
 import { notFound } from "../errors.ts";
 import { AccessService } from "./access-service.ts";
 import type { ServiceContext } from "./types.ts";
-
-export type DbOriginArtifact = typeof originArtifacts.$inferSelect;
 
 export interface CreateOriginArtifactInput {
   uuid: string;
@@ -30,18 +32,19 @@ export class OriginArtifactsService {
 
   async createOriginArtifact(input: CreateOriginArtifactInput): Promise<DbOriginArtifact> {
     await this.access.assertRecordOwner(input.ownerUuid);
+    const newOriginArtifact: NewDbOriginArtifact = {
+      uuid: input.uuid,
+      ownerUuid: input.ownerUuid,
+      contentHash: input.contentHash,
+      mime: input.mime,
+      byteSize: input.byteSize,
+      label: input.label,
+      rnetSchema: input.rnetSchema,
+      uploadedAt: input.uploadedAt,
+    };
     const [originArtifact] = await this.db
       .insert(originArtifacts)
-      .values({
-        uuid: input.uuid,
-        ownerUuid: input.ownerUuid,
-        contentHash: input.contentHash,
-        mime: input.mime,
-        byteSize: input.byteSize,
-        label: input.label,
-        rnetSchema: input.rnetSchema,
-        uploadedAt: input.uploadedAt,
-      })
+      .values(newOriginArtifact)
       .returning();
     if (!originArtifact) throw new Error("Origin artifact metadata was not stored");
     return originArtifact;

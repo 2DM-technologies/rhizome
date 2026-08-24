@@ -19,3 +19,6 @@ export const originArtifacts = pgTable(
   },
   (originArtifact) => [index("origins_content_hash_idx").on(originArtifact.contentHash)],
 );
+
+export type DbOriginArtifact = typeof originArtifacts.$inferSelect;
+export type NewDbOriginArtifact = typeof originArtifacts.$inferInsert;

@@ -33,3 +33,6 @@ export const dmachines = pgTable(
     check("dmachines_trust_check", textEnumCheck(dmachine.trust, DmachineTrustEnum)),
   ],
 );
+
+export type DbDmachine = typeof dmachines.$inferSelect;
+export type NewDbDmachine = typeof dmachines.$inferInsert;

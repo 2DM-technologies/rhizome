@@ -17,3 +17,6 @@ export const vibes = pgTable("vibes", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   rev: integer("rev").notNull().default(1),
 });
+
+export type DbVibe = typeof vibes.$inferSelect;
+export type NewDbVibe = typeof vibes.$inferInsert;

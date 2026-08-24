@@ -2,12 +2,10 @@ import { eq } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
-import { operations } from "../db/models/operation.ts";
+import { operations, type DbOperation } from "../db/models/operation.ts";
 import { notFound } from "../errors.ts";
 import { AccessService } from "./access-service.ts";
 import type { ServiceContext } from "./types.ts";
-
-export type DbOperation = typeof operations.$inferSelect;
 
 export class OperationsService {
   private readonly db: Database;

@@ -17,3 +17,6 @@ export const meterEntries = pgTable("meter", {
   abortReason: text("abort_reason"),
   breakdown: jsonb("breakdown").$type<JsonObject>(),
 });
+
+export type DbMeterEntry = typeof meterEntries.$inferSelect;
+export type NewDbMeterEntry = typeof meterEntries.$inferInsert;

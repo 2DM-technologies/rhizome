@@ -29,3 +29,6 @@ export const mediaObjects = pgTable(
     index("media_objects_inferred_idx").using("gin", mediaObject.inferred),
   ],
 );
+
+export type DbMediaObject = typeof mediaObjects.$inferSelect;
+export type NewDbMediaObject = typeof mediaObjects.$inferInsert;

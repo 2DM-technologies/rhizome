@@ -43,3 +43,6 @@ export const mediaObjectRevisions = pgTable(
     ),
   ],
 );
+
+export type DbMediaObjectRevision = typeof mediaObjectRevisions.$inferSelect;
+export type NewDbMediaObjectRevision = typeof mediaObjectRevisions.$inferInsert;

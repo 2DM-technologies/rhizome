@@ -28,3 +28,6 @@ export const mediaObjectOrigins = pgTable(
     index("media_object_origins_object_idx").on(mediaObjectOrigin.mediaObjectUuid),
   ],
 );
+
+export type DbMediaObjectOrigin = typeof mediaObjectOrigins.$inferSelect;
+export type NewDbMediaObjectOrigin = typeof mediaObjectOrigins.$inferInsert;

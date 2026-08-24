@@ -33,3 +33,6 @@ export const vibeMediaObjects = pgTable(
     check("vibe_media_objects_position_check", sql`${vibeMediaObject.position} >= 0`),
   ],
 );
+
+export type DbVibeMediaObject = typeof vibeMediaObjects.$inferSelect;
+export type NewDbVibeMediaObject = typeof vibeMediaObjects.$inferInsert;

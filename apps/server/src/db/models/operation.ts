@@ -30,3 +30,6 @@ export const operations = pgTable(
     index("operations_invoked_by_idx").on(operation.invokedBy),
   ],
 );
+
+export type DbOperation = typeof operations.$inferSelect;
+export type NewDbOperation = typeof operations.$inferInsert;
