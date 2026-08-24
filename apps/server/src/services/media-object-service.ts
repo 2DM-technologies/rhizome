@@ -324,14 +324,9 @@ export class MediaObjectsService {
       if (!currentMediaObject) throw notFound("Object");
 
       const snapshot = update.buildSnapshot(currentMediaObject);
-      const mediaElementReferences: MediaElementReferenceRow[] = await transaction
-        .select({ uuid: mediaObjectElements.mediaElementUuid })
-        .from(mediaObjectElements)
-        .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectUuid))
-        .orderBy(asc(mediaObjectElements.position));
-      const candidateMediaObject = this.toDocumentFromMediaElementUuids(
+      const candidateMediaObject = await this.toDocument(
         update.buildCandidate(currentMediaObject, snapshot),
-        mediaElementReferences.map((reference) => reference.uuid),
+        transaction,
       );
       const validation = validateMediaObject(candidateMediaObject);
       if (!validation.ok) throw schemaProblem(validation.issues);
@@ -350,8 +345,11 @@ export class MediaObjectsService {
     });
   }
 
-  async toDocument(mediaObjectRecord: DbMediaObject): Promise<MediaObject> {
-    const mediaElementReferences: MediaElementReferenceRow[] = await this.db
+  async toDocument(
+    mediaObjectRecord: DbMediaObject,
+    database: Database | DatabaseTransaction = this.db,
+  ): Promise<MediaObject> {
+    const mediaElementReferences: MediaElementReferenceRow[] = await database
       .select({ uuid: mediaObjectElements.mediaElementUuid })
       .from(mediaObjectElements)
       .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectRecord.uuid))
