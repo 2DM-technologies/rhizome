@@ -55,9 +55,9 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     }),
     async (context) => {
       const input = context.req.valid("form");
-      const pendingUploads = new Map<string, PendingMediaElementUpload>();
+      const pendingMediaElementUploads = new Map<string, PendingMediaElementUpload>();
       for (const [name, file] of input.uploads) {
-        pendingUploads.set(name, {
+        pendingMediaElementUploads.set(name, {
           bytes: new Uint8Array(await file.arrayBuffer()),
           ...(file.type ? { mime: requestMime(file.type) } : {}),
         });
@@ -70,7 +70,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
       const mediaObjects = await mediaObjectService.createMediaObjects(
         input.metadata.vibe,
         input.metadata.objects,
-        pendingUploads,
+        pendingMediaElementUploads,
       );
       return context.json({ mediaObjects }, 201);
     },

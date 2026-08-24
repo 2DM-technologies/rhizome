@@ -93,7 +93,7 @@ export class MediaObjectService {
   async createMediaObjects(
     vibe: string | undefined,
     mediaObjectInputs: CreateMediaObjectInput[],
-    pendingUploads: ReadonlyMap<string, PendingMediaElementUpload> = new Map(),
+    pendingMediaElementUploads: ReadonlyMap<string, PendingMediaElementUpload> = new Map(),
   ): Promise<MediaObject[]> {
     const vibeUuid = vibe ? uriId(vibe) : undefined;
     let targetVibe: DbVibe | undefined;
@@ -109,7 +109,7 @@ export class MediaObjectService {
     if (!ownerUuid) throw grantMissing("owner");
     const preparedUploads = new Map<string, PreparedMediaElementUpload>(
       await Promise.all(
-        [...pendingUploads].map(
+        [...pendingMediaElementUploads].map(
           async ([name, upload]) =>
             [
               name,
