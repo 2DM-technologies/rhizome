@@ -14,6 +14,7 @@ import {
 } from "../db/models/media-element.ts";
 import { grantMissing, notFound } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
+import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
 import { AccessService } from "./access-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
@@ -30,11 +31,16 @@ export interface CreateMediaElementUpload extends PendingMediaElementUpload {
   kind?: string;
 }
 
-export interface PreparedMediaElementUpload extends CreateMediaElementUpload {
+interface PreparedMediaElementUpload extends CreateMediaElementUpload {
   uuid: string;
   contentHash: string;
   kind: MediaElement["kind"];
   mime: string;
+}
+
+interface HashedMediaElementUpload extends PendingMediaElementUpload {
+  uuid: string;
+  contentHash: string;
 }
 
 export interface CreateMediaElementInput {
@@ -55,6 +61,97 @@ export class MediaElementsService {
     this.access = new AccessService(context);
     this.actor = context.actor;
     this.blobs = context.blobs;
+  }
+
+  async prepareMediaElementUploads({
+    mediaElementReferencesByObject,
+    pendingMediaElementUploads,
+  }: {
+    mediaElementReferencesByObject: CreateMediaObjectInput["elements"][];
+    pendingMediaElementUploads: ReadonlyMap<string, PendingMediaElementUpload>;
+  }): Promise<{
+    uploads: Map<string, PreparedMediaElementUpload>;
+    mediaElementUrisByObject: string[][];
+  }> {
+    const hashedMediaElementUploads = await this.hashMediaElementUploads(
+      pendingMediaElementUploads,
+    );
+    const preparedMediaElementUploads = new Map<string, PreparedMediaElementUpload>();
+
+    for (const [
+      mediaObjectIndex,
+      mediaElementReferences,
+    ] of mediaElementReferencesByObject.entries()) {
+      for (const [mediaElementIndex, mediaElementReference] of (
+        mediaElementReferences ?? []
+      ).entries()) {
+        if (typeof mediaElementReference === "string") continue;
+        const pointer = `/objects/${mediaObjectIndex}/elements/${mediaElementIndex}`;
+        const mime = mediaElementReference.mime.split(";", 1)[0]?.trim();
+        if (!mime) {
+          throw schemaProblem([{ instancePath: `${pointer}/mime`, message: "must not be empty" }]);
+        }
+        const hashedMediaElementUpload = hashedMediaElementUploads.get(
+          mediaElementReference.upload,
+        );
+        if (!hashedMediaElementUpload) {
+          throw schemaProblem([
+            {
+              instancePath: `${pointer}/upload`,
+              message: `has no file part named ${mediaElementReference.upload}`,
+            },
+          ]);
+        }
+        const preparedMediaElementUpload = preparedMediaElementUploads.get(
+          mediaElementReference.upload,
+        );
+        if (
+          preparedMediaElementUpload &&
+          preparedMediaElementUpload.kind !== mediaElementReference.kind
+        ) {
+          throw schemaProblem([
+            { instancePath: `${pointer}/kind`, message: "conflicts with another reference" },
+          ]);
+        }
+        const existingMime = preparedMediaElementUpload?.mime ?? hashedMediaElementUpload.mime;
+        if (existingMime && existingMime !== mime) {
+          throw schemaProblem([
+            {
+              instancePath: `${pointer}/mime`,
+              message: "conflicts with the file part or another reference",
+            },
+          ]);
+        }
+        if (!preparedMediaElementUpload) {
+          preparedMediaElementUploads.set(mediaElementReference.upload, {
+            ...hashedMediaElementUpload,
+            kind: mediaElementReference.kind,
+            mime,
+          });
+        }
+      }
+    }
+
+    const unreferencedMediaElementUpload = [...hashedMediaElementUploads.keys()].find(
+      (name) => !preparedMediaElementUploads.has(name),
+    );
+    if (unreferencedMediaElementUpload) {
+      throw schemaProblem([
+        {
+          instancePath: `/uploads/${unreferencedMediaElementUpload}`,
+          message: "is not referenced by an object",
+        },
+      ]);
+    }
+    const mediaElementUrisByObject = mediaElementReferencesByObject.map(
+      (mediaElementReferences, mediaObjectIndex) =>
+        this.resolveMediaElementReferences({
+          mediaElementReferences,
+          mediaObjectIndex,
+          preparedMediaElementUploads,
+        }),
+    );
+    return { uploads: preparedMediaElementUploads, mediaElementUrisByObject };
   }
 
   async createMediaElement({
@@ -120,5 +217,50 @@ export class MediaElementsService {
       .where(eq(mediaElements.uuid, uuid));
     if (!mediaElementRecord || mediaElementRecord.tombstonedAt) throw notFound("Element");
     return mediaElementRecord;
+  }
+
+  private async hashMediaElementUploads(
+    pendingMediaElementUploads: ReadonlyMap<string, PendingMediaElementUpload>,
+  ): Promise<Map<string, HashedMediaElementUpload>> {
+    return new Map(
+      await Promise.all(
+        [...pendingMediaElementUploads].map(
+          async ([name, upload]) =>
+            [
+              name,
+              {
+                ...upload,
+                uuid: uuidv7(),
+                contentHash: await contentHash(upload.bytes),
+              },
+            ] as const,
+        ),
+      ),
+    );
+  }
+
+  private resolveMediaElementReferences({
+    mediaElementReferences,
+    mediaObjectIndex,
+    preparedMediaElementUploads,
+  }: {
+    mediaElementReferences: CreateMediaObjectInput["elements"];
+    mediaObjectIndex: number;
+    preparedMediaElementUploads: ReadonlyMap<string, PreparedMediaElementUpload>;
+  }): string[] {
+    if (mediaElementReferences === undefined) return [];
+    return mediaElementReferences.map((mediaElementReference, mediaElementIndex) => {
+      if (typeof mediaElementReference === "string") return mediaElementReference;
+      const pointer = `/objects/${mediaObjectIndex}/elements/${mediaElementIndex}`;
+      const preparedMediaElementUpload = preparedMediaElementUploads.get(
+        mediaElementReference.upload,
+      );
+      if (!preparedMediaElementUpload) {
+        throw new Error(
+          `Media element upload ${mediaElementReference.upload} was not prepared at ${pointer}`,
+        );
+      }
+      return `rnet://element/${preparedMediaElementUpload.uuid}`;
+    });
   }
 }
