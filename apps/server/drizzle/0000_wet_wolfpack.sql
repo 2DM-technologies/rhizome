@@ -76,7 +76,7 @@ CREATE TABLE "media_objects" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "meter" (
+CREATE TABLE "meter_entry" (
 	"operation_uuid" uuid PRIMARY KEY NOT NULL,
 	"payer" text NOT NULL,
 	"model" text,
@@ -169,7 +169,7 @@ ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_dmachine
 ALTER TABLE "media_object_revisions" ADD CONSTRAINT "media_object_revisions_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_revisions" ADD CONSTRAINT "media_object_revisions_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_objects" ADD CONSTRAINT "media_objects_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "meter" ADD CONSTRAINT "meter_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "meter_entry" ADD CONSTRAINT "meter_entry_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "operations" ADD CONSTRAINT "operations_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "origins" ADD CONSTRAINT "origins_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vibe_media_objects" ADD CONSTRAINT "vibe_media_objects_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

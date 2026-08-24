@@ -3,7 +3,7 @@ import { integer, jsonb, numeric, pgTable, text, uuid } from "drizzle-orm/pg-cor
 import { operations } from "./operation.ts";
 import type { JsonObject } from "./shared.ts";
 
-export const meterEntries = pgTable("meter", {
+export const meterEntries = pgTable("meter_entry", {
   operationUuid: uuid("operation_uuid")
     .primaryKey()
     .references(() => operations.uuid),

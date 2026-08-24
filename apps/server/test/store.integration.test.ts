@@ -30,7 +30,7 @@ const dmachine = { Authorization: "Bearer dev:client:rbudget" };
 beforeAll(async () => {
   await client.unsafe(`
     TRUNCATE TABLE
-      meter, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
+      meter_entry, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
       vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, dmachines, users
     CASCADE
   `);

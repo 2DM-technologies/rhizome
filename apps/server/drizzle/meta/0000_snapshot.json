@@ -1,5 +1,5 @@
 {
-  "id": "ec6fb0a7-fa06-4910-85ef-cf9579a93daa",
+  "id": "4c8c8990-e424-4b2d-bdac-1d8630dfe2e5",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -742,8 +742,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.meter": {
-      "name": "meter",
+    "public.meter_entry": {
+      "name": "meter_entry",
       "schema": "",
       "columns": {
         "operation_uuid": {
@@ -812,9 +812,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "meter_operation_uuid_operations_uuid_fk": {
-          "name": "meter_operation_uuid_operations_uuid_fk",
-          "tableFrom": "meter",
+        "meter_entry_operation_uuid_operations_uuid_fk": {
+          "name": "meter_entry_operation_uuid_operations_uuid_fk",
+          "tableFrom": "meter_entry",
           "tableTo": "operations",
           "columnsFrom": [
             "operation_uuid"
