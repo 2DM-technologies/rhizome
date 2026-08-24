@@ -440,29 +440,27 @@ export class MediaObjectService {
     const extensions = Object.fromEntries(
       Object.entries(rawMediaObject).filter(([key]) => key.startsWith("x-")),
     );
-    const candidateMediaObject =
-      this.actor.kind === "client"
+    const candidateMediaObject = {
+      ...(this.actor.kind === "client"
         ? {
-            rnet_schema: RNET_SCHEMA_VERSION,
-            uri: `rnet://object/${mediaObjectUuid}`,
-            owner,
             type: rawMediaObject.type,
-            elements: elements ?? [],
             ...(rawMediaObject.keys === undefined ? {} : { keys: rawMediaObject.keys }),
-            source: {
+            ...extensions,
+          }
+        : rawMediaObject),
+      rnet_schema: RNET_SCHEMA_VERSION,
+      uri: `rnet://object/${mediaObjectUuid}`,
+      owner,
+      elements: elements ?? [],
+      source:
+        this.actor.kind === "client"
+          ? {
               ingest: { method: "authored", reproducible: false },
               origins: [`rnet://client/${this.actor.uuid}`],
               properties: rawMediaObject.properties ?? {},
-            },
-            ...extensions,
-          }
-        : {
-            ...rawMediaObject,
-            rnet_schema: RNET_SCHEMA_VERSION,
-            uri: `rnet://object/${mediaObjectUuid}`,
-            owner,
-            elements: elements ?? [],
-          };
+            }
+          : rawMediaObject.source,
+    };
     const validation = validateMediaObject(candidateMediaObject);
     if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}`);
     if (
