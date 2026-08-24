@@ -10,6 +10,11 @@ import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes, type DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
+import type {
+  CreateVibeRequest,
+  MediaObjectRefsRequest,
+  UpdateVibeRequest,
+} from "../routes/vibe-contracts.ts";
 import { AccessService } from "./access-service.ts";
 import { IdentityService } from "./identity-service.ts";
 import { MediaObjectsService } from "./media-object-service.ts";
@@ -58,7 +63,7 @@ export class VibesService {
     return Promise.all(vibeRows.map((vibe) => this.toDocument(vibe)));
   }
 
-  async createVibe(input: Pick<Vibe, "title" | "pull" | "grants">): Promise<Vibe> {
+  async createVibe(input: CreateVibeRequest): Promise<Vibe> {
     await this.access.assertAuthenticated();
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const candidateVibeUuid = uuidv7();
@@ -115,10 +120,7 @@ export class VibesService {
     return this.toDocument(vibeRecord);
   }
 
-  async updateVibe(
-    vibeUuid: string,
-    patch: Partial<Pick<Vibe, "title" | "pull" | "grants">>,
-  ): Promise<Vibe> {
+  async updateVibe(vibeUuid: string, patch: UpdateVibeRequest): Promise<Vibe> {
     await this.access.assertVibeOwner(vibeUuid);
     const currentVibe = await this.getVibe(vibeUuid);
     const allowed = new Set(["title", "pull", "grants"]);
@@ -219,7 +221,10 @@ export class VibesService {
     );
   }
 
-  async addMediaObjectRefs(vibeUuid: string, references: string[]): Promise<void> {
+  async addMediaObjectRefs(
+    vibeUuid: string,
+    references: MediaObjectRefsRequest["objects"],
+  ): Promise<void> {
     await this.access.assertVibeOwner(vibeUuid);
     if (this.actor.kind !== "user") throw new Error("Owner assertion did not narrow the actor");
     const mediaObjectUuids = references.map(uriId);
@@ -272,7 +277,10 @@ export class VibesService {
     });
   }
 
-  async removeMediaObjectRefs(vibeUuid: string, references: string[]): Promise<void> {
+  async removeMediaObjectRefs(
+    vibeUuid: string,
+    references: MediaObjectRefsRequest["objects"],
+  ): Promise<void> {
     await this.access.assertVibeOwner(vibeUuid);
     const mediaObjectUuids = references.map(uriId);
     await this.db.transaction(async (transaction: DatabaseTransaction) => {

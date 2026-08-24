@@ -1,4 +1,3 @@
-import { vibeSchema } from "@rnet/types";
 import { Hono } from "hono";
 
 import type { Database } from "../db/index.ts";
@@ -10,47 +9,19 @@ import {
   ProblemSchema,
   RecordIdParamsSchema,
   collectionOf,
-  jsonSchema,
   rnetDocument,
   rnetRoute,
 } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
+import {
+  CreateVibeRequestSchema,
+  MediaObjectRefsRequestSchema,
+  UpdateVibeRequestSchema,
+} from "./vibe-contracts.ts";
 
 const VibeDocumentSchema = rnetDocument("vibe");
 const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes");
 const MediaObjectCollectionSchema = collectionOf(rnetDocument("media-object"), "mediaObjects");
-const CreateVibeRequestSchema = jsonSchema({
-  type: "object",
-  required: ["title"],
-  properties: {
-    title: vibeSchema.properties.title,
-    pull: vibeSchema.properties.pull,
-    grants: vibeSchema.properties.grants,
-  },
-  additionalProperties: false,
-});
-const UpdateVibeRequestSchema = jsonSchema({
-  type: "object",
-  properties: {
-    title: vibeSchema.properties.title,
-    pull: vibeSchema.properties.pull,
-    grants: vibeSchema.properties.grants,
-  },
-  additionalProperties: false,
-});
-const MediaObjectRefsSchema = jsonSchema({
-  type: "object",
-  required: ["objects"],
-  properties: {
-    objects: {
-      type: "array",
-      minItems: 1,
-      uniqueItems: true,
-      items: vibeSchema.properties.objects.items,
-    },
-  },
-  additionalProperties: false,
-});
 export function createVibeRoutes(db: Database) {
   const router = new Hono<AppEnvironment>();
 
@@ -142,7 +113,7 @@ export function createVibeRoutes(db: Database) {
     rnetRoute({
       operationId: "addVibeMediaObjects",
       auth: "user",
-      request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
+      request: { param: RecordIdParamsSchema, json: MediaObjectRefsRequestSchema },
       responses: { 204: null, 401: ProblemSchema, 403: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
@@ -156,7 +127,7 @@ export function createVibeRoutes(db: Database) {
     "/:id/objects",
     rnetRoute({
       operationId: "removeVibeMediaObjects",
-      request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
+      request: { param: RecordIdParamsSchema, json: MediaObjectRefsRequestSchema },
       responses: { 204: null, 422: ProblemSchema },
     }),
     async (context) => {
