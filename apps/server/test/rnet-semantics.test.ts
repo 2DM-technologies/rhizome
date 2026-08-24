@@ -14,6 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  rnetUriPattern,
   validateMediaObject,
   validateSchema,
   type MediaObject,
@@ -187,9 +188,7 @@ describe("rNet semantics", () => {
   });
 
   test("the store mints the object UUID", () => {
-    expect(createdObject.uri).toMatch(
-      /^rnet:\/\/object\/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    );
+    expect(createdObject.uri).toMatch(new RegExp(rnetUriPattern("object")));
   });
 
   test("object creation rejects client-supplied identity fields", async () => {

@@ -1,3 +1,4 @@
+import { UUIDV7_PATTERN } from "@rnet/types";
 import type { Context, Input } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
@@ -12,7 +13,7 @@ export function requestMime(value?: string): string {
 }
 
 export function normalizedUuid(value: string): string {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+  if (!new RegExp(UUIDV7_PATTERN).test(value)) {
     throw notFound("Record");
   }
   return value;
