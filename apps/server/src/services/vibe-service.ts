@@ -135,6 +135,10 @@ export class VibesService {
     await this.assertGrantSubjects(vibeDocument.grants ?? []);
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
+      await this.access.lockVibeOwnerForWrite({
+        transaction,
+        vibeUuid: validatedVibeUuid,
+      });
       const [vibeRecord] = await transaction
         .update(vibes)
         .set({
@@ -205,7 +209,10 @@ export class VibesService {
 
   async deleteVibe(vibeUuid: string): Promise<void> {
     await this.access.assertVibeOwner(vibeUuid);
-    await this.db.delete(vibes).where(eq(vibes.uuid, vibeUuid));
+    await this.db.transaction(async (transaction: DatabaseTransaction) => {
+      await this.access.lockVibeOwnerForWrite({ transaction, vibeUuid });
+      await transaction.delete(vibes).where(eq(vibes.uuid, vibeUuid));
+    });
   }
 
   async listMediaObjects(vibeUuid: string): Promise<MediaObject[]> {
@@ -258,9 +265,7 @@ export class VibesService {
       ]);
     }
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      await transaction.execute(
-        sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`,
-      );
+      await this.access.lockVibeOwnerForWrite({ transaction, vibeUuid });
       const [maxPosition] = await transaction
         .select({ max: sql<number>`coalesce(max(${vibeMediaObjects.position}), -1)::int` })
         .from(vibeMediaObjects)
@@ -284,6 +289,7 @@ export class VibesService {
     await this.access.assertVibeOwner(vibeUuid);
     const mediaObjectUuids = references.map(uriId);
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
+      await this.access.lockVibeOwnerForWrite({ transaction, vibeUuid });
       if (mediaObjectUuids.length) {
         await transaction
           .delete(vibeMediaObjects)

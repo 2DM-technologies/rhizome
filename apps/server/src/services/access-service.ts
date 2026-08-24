@@ -1,10 +1,10 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { grants, GRANT_SCOPE, type DbGrant, type GrantScope } from "../db/models/grant.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaElements } from "../db/models/media-element.ts";
-import { mediaObjects } from "../db/models/media-object.ts";
+import { mediaObjects, type DbMediaObject } from "../db/models/media-object.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes, type DbVibe } from "../db/models/vibe.ts";
 import { authenticationRequired, grantMissing, notFound, Problem } from "../errors.ts";
@@ -63,7 +63,21 @@ export class AccessService {
     return vibe;
   }
 
-  async assertTransactionalVibeScope({
+  async lockVibeOwnerForWrite({
+    transaction,
+    vibeUuid,
+  }: {
+    transaction: DatabaseTransaction;
+    vibeUuid: string;
+  }): Promise<DbVibe> {
+    const vibe = await this.lockVibeForWrite(transaction, vibeUuid);
+    if (this.actor.kind !== "user" || this.actor.uuid !== vibe.ownerUuid) {
+      throw grantMissing("owner");
+    }
+    return vibe;
+  }
+
+  async lockVibeScopeForWrite({
     transaction,
     vibeUuid,
     expectedOwnerUuid,
@@ -74,13 +88,7 @@ export class AccessService {
     expectedOwnerUuid: string;
     scope: Scope;
   }): Promise<DbVibe> {
-    const vibeRows: DbVibe[] = await transaction
-      .select()
-      .from(vibes)
-      .where(eq(vibes.uuid, vibeUuid))
-      .for("update");
-    const [vibe] = vibeRows;
-    if (!vibe) throw notFound("Vibe");
+    const vibe = await this.lockVibeForWrite(transaction, vibeUuid);
     if (vibe.ownerUuid !== expectedOwnerUuid) throw grantMissing("owner");
     if (this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid) return vibe;
 
@@ -98,6 +106,59 @@ export class AccessService {
     const [grant] = grantRows;
     if (!grant?.scopes.includes(scope)) throw grantMissing(scope);
     return vibe;
+  }
+
+  async lockMediaObjectScopeForWrite({
+    transaction,
+    mediaObjectUuid,
+    scope,
+  }: {
+    transaction: DatabaseTransaction;
+    mediaObjectUuid: string;
+    scope: Scope;
+  }): Promise<DbMediaObject> {
+    const [mediaObjectRecord] = await transaction
+      .select({ ownerUuid: mediaObjects.ownerUuid })
+      .from(mediaObjects)
+      .where(eq(mediaObjects.uuid, mediaObjectUuid));
+    if (!mediaObjectRecord) throw notFound("Object");
+    if (this.actor.kind === "user" && this.actor.uuid === mediaObjectRecord.ownerUuid) {
+      return this.lockMediaObjectForWrite(transaction, mediaObjectUuid);
+    }
+
+    const memberships = await transaction
+      .select({ vibeUuid: vibeMediaObjects.vibeUuid })
+      .from(vibeMediaObjects)
+      .where(eq(vibeMediaObjects.mediaObjectUuid, mediaObjectUuid))
+      .orderBy(asc(vibeMediaObjects.vibeUuid));
+    for (const membership of memberships) {
+      try {
+        await this.lockVibeScopeForWrite({
+          transaction,
+          vibeUuid: membership.vibeUuid,
+          expectedOwnerUuid: mediaObjectRecord.ownerUuid,
+          scope,
+        });
+      } catch (error) {
+        if (!(error instanceof Problem) || ![403, 404].includes(error.status)) throw error;
+        continue;
+      }
+      const [lockedMembership] = await transaction
+        .select({ vibeUuid: vibeMediaObjects.vibeUuid })
+        .from(vibeMediaObjects)
+        .where(
+          and(
+            eq(vibeMediaObjects.vibeUuid, membership.vibeUuid),
+            eq(vibeMediaObjects.mediaObjectUuid, mediaObjectUuid),
+          ),
+        )
+        .for("share");
+      if (!lockedMembership) continue;
+      const lockedMediaObject = await this.lockMediaObjectForWrite(transaction, mediaObjectUuid);
+      if (lockedMediaObject.ownerUuid !== mediaObjectRecord.ownerUuid) throw grantMissing("owner");
+      return lockedMediaObject;
+    }
+    throw grantMissing(scope);
   }
 
   async assertMediaObjectScope(mediaObjectUuid: string, scope: Scope): Promise<void> {
@@ -143,5 +204,33 @@ export class AccessService {
       }
     }
     return false;
+  }
+
+  private async lockVibeForWrite(
+    transaction: DatabaseTransaction,
+    vibeUuid: string,
+  ): Promise<DbVibe> {
+    const vibeRows: DbVibe[] = await transaction
+      .select()
+      .from(vibes)
+      .where(eq(vibes.uuid, vibeUuid))
+      .for("update");
+    const [vibe] = vibeRows;
+    if (!vibe) throw notFound("Vibe");
+    return vibe;
+  }
+
+  private async lockMediaObjectForWrite(
+    transaction: DatabaseTransaction,
+    mediaObjectUuid: string,
+  ): Promise<DbMediaObject> {
+    const mediaObjectRows: DbMediaObject[] = await transaction
+      .select()
+      .from(mediaObjects)
+      .where(eq(mediaObjects.uuid, mediaObjectUuid))
+      .for("update");
+    const [mediaObject] = mediaObjectRows;
+    if (!mediaObject) throw notFound("Object");
+    return mediaObject;
   }
 }

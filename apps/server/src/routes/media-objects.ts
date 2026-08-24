@@ -94,8 +94,15 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     "/:id/user",
     rnetRoute({
       operationId: "setMediaObjectUser",
+      auth: "user_or_client",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectUserRequestSchema },
-      responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
+      responses: {
+        200: MediaObjectDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        409: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const header = context.req.header("If-Match");
@@ -127,8 +134,14 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     "/:id/inferred",
     rnetRoute({
       operationId: "setMediaObjectInferred",
+      auth: "user_or_client",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectInferredRequestSchema },
-      responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
+      responses: {
+        200: MediaObjectDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const input = context.req.valid("json");

@@ -142,6 +142,8 @@
       "patch": {
         "operationId": "updateVibe",
         "tags": ["Vibes"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user",
         "parameters": [
           {
             "name": "id",
@@ -189,6 +191,18 @@
             "description": "Successful response",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Vibe" } } }
           },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
           "422": {
             "description": "Problem response",
             "content": {
@@ -206,6 +220,8 @@
       "delete": {
         "operationId": "deleteVibe",
         "tags": ["Vibes"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user",
         "parameters": [
           {
             "name": "id",
@@ -219,6 +235,18 @@
         ],
         "responses": {
           "204": { "description": "No content" },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
           "422": {
             "description": "Problem response",
             "content": {
@@ -352,6 +380,8 @@
       "delete": {
         "operationId": "removeVibeMediaObjects",
         "tags": ["Media Objects"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user",
         "parameters": [
           {
             "name": "id",
@@ -388,6 +418,18 @@
         },
         "responses": {
           "204": { "description": "No content" },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
           "422": {
             "description": "Problem response",
             "content": {
@@ -407,6 +449,8 @@
       "post": {
         "operationId": "pushVibe",
         "tags": ["Vibes"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user_or_client",
         "parameters": [
           {
             "name": "id",
@@ -419,6 +463,18 @@
           }
         ],
         "responses": {
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
           "422": {
             "description": "Problem response",
             "content": {
@@ -444,6 +500,8 @@
       "post": {
         "operationId": "pullVibe",
         "tags": ["Vibes"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user_or_client",
         "parameters": [
           {
             "name": "id",
@@ -456,6 +514,18 @@
           }
         ],
         "responses": {
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
           "422": {
             "description": "Problem response",
             "content": {
@@ -748,6 +818,8 @@
       "patch": {
         "operationId": "setMediaObjectUser",
         "tags": ["Media Objects"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user_or_client",
         "parameters": [
           {
             "name": "id",
@@ -779,6 +851,24 @@
               "application/json": { "schema": { "$ref": "#/components/schemas/MediaObject" } }
             }
           },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "409": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
           "422": {
             "description": "Problem response",
             "content": {
@@ -798,6 +888,8 @@
       "put": {
         "operationId": "setMediaObjectInferred",
         "tags": ["Media Objects"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user_or_client",
         "parameters": [
           {
             "name": "id",
@@ -845,6 +937,18 @@
             "description": "Successful response",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/MediaObject" } }
+            }
+          },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
             }
           },
           "422": {
@@ -1026,6 +1130,8 @@
       "get": {
         "operationId": "getOriginArtifact",
         "tags": ["Origin Artifacts"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user",
         "parameters": [
           {
             "name": "id",
@@ -1042,6 +1148,18 @@
             "description": "Successful response",
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/OriginArtifact" } }
+            }
+          },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
             }
           },
           "422": {
@@ -1063,6 +1181,8 @@
       "get": {
         "operationId": "getOriginArtifactBytes",
         "tags": ["Origin Artifacts"],
+        "security": [{ "BearerAuth": [] }],
+        "x-rhizome-auth": "user",
         "parameters": [
           {
             "name": "id",
@@ -1078,6 +1198,18 @@
           "200": {
             "description": "Binary content",
             "content": { "*/*": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
+          },
+          "403": {
+            "description": "Problem response",
+            "content": {
+              "application/problem+json": { "schema": { "$ref": "#/components/schemas/Problem" } }
+            }
           },
           "422": {
             "description": "Problem response",

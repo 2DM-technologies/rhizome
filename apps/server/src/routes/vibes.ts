@@ -105,8 +105,14 @@ export function createVibeRoutes(db: Database) {
     "/:id",
     rnetRoute({
       operationId: "updateVibe",
+      auth: "user",
       request: { param: RecordIdParamsSchema, json: UpdateVibeRequestSchema },
-      responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
+      responses: {
+        200: VibeDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
@@ -121,8 +127,9 @@ export function createVibeRoutes(db: Database) {
     "/:id",
     rnetRoute({
       operationId: "deleteVibe",
+      auth: "user",
       request: { param: RecordIdParamsSchema },
-      responses: { 204: null, 422: ProblemSchema },
+      responses: { 204: null, 401: ProblemSchema, 403: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
@@ -162,8 +169,9 @@ export function createVibeRoutes(db: Database) {
     "/:id/objects",
     rnetRoute({
       operationId: "removeVibeMediaObjects",
+      auth: "user",
       request: { param: RecordIdParamsSchema, json: MediaObjectRefsRequestSchema },
-      responses: { 204: null, 422: ProblemSchema },
+      responses: { 204: null, 401: ProblemSchema, 403: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const body = context.req.valid("json");
@@ -176,8 +184,14 @@ export function createVibeRoutes(db: Database) {
     "/:id/push",
     rnetRoute({
       operationId: "pushVibe",
+      auth: "user_or_client",
       request: { param: RecordIdParamsSchema },
-      responses: { 501: ProblemSchema, 422: ProblemSchema },
+      responses: {
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+        501: ProblemSchema,
+      },
     }),
     async (context) => {
       const accessService = new AccessService({ db, actor: context.get("actor") });
@@ -194,8 +208,14 @@ export function createVibeRoutes(db: Database) {
     "/:id/pull",
     rnetRoute({
       operationId: "pullVibe",
+      auth: "user_or_client",
       request: { param: RecordIdParamsSchema },
-      responses: { 501: ProblemSchema, 422: ProblemSchema },
+      responses: {
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+        501: ProblemSchema,
+      },
     }),
     async (context) => {
       const accessService = new AccessService({ db, actor: context.get("actor") });

@@ -1,4 +1,4 @@
-import type { Context } from "hono";
+import type { Context, Input } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
 import { notFound, Problem } from "../errors.ts";
@@ -18,8 +18,12 @@ export function normalizedUuid(value: string): string {
   return value;
 }
 
-export function blobResponse(
-  context: Context<AppEnvironment>,
+export function blobResponse<
+  Environment extends AppEnvironment,
+  Path extends string,
+  Body extends Input,
+>(
+  context: Context<Environment, Path, Body>,
   blob: Awaited<ReturnType<BlobStore["get"]>>,
 ): Response {
   if (!blob) throw notFound("Blob");

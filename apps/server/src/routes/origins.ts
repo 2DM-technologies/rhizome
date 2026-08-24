@@ -89,8 +89,14 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
     "/:id",
     rnetRoute({
       operationId: "getOriginArtifact",
+      auth: "user",
       request: { param: RecordIdParamsSchema },
-      responses: { 200: OriginArtifactDocumentSchema, 422: ProblemSchema },
+      responses: {
+        200: OriginArtifactDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const originArtifactsService = new OriginArtifactsService({
@@ -108,8 +114,14 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
     "/:id/bytes",
     rnetRoute({
       operationId: "getOriginArtifactBytes",
+      auth: "user",
       request: { param: RecordIdParamsSchema },
-      responses: { 200: binaryResponse("*/*"), 422: ProblemSchema },
+      responses: {
+        200: binaryResponse("*/*"),
+        401: ProblemSchema,
+        403: ProblemSchema,
+        422: ProblemSchema,
+      },
     }),
     async (context) => {
       const originArtifactsService = new OriginArtifactsService({
