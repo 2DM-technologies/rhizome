@@ -1,5 +1,5 @@
 import { validateSchema, type MediaElement } from "@rnet/types";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import { contentHash } from "../blobs/content.ts";
@@ -87,16 +87,32 @@ export class MediaElementsService {
     validationPath: string;
   }): Promise<string[]> {
     const mediaElementUuids: string[] = [];
+    const references = mediaElementReferences ?? [];
+    const existingMediaElementUuids = references
+      .filter((reference): reference is string => typeof reference === "string")
+      .map(uriId);
+    const existingMediaElementRecords: Pick<DbMediaElement, "uuid" | "ownerUuid">[] =
+      existingMediaElementUuids.length
+        ? await transaction
+            .select({ uuid: mediaElements.uuid, ownerUuid: mediaElements.ownerUuid })
+            .from(mediaElements)
+            .where(
+              and(
+                inArray(mediaElements.uuid, existingMediaElementUuids),
+                isNull(mediaElements.tombstonedAt),
+              ),
+            )
+            .for("share")
+        : [];
+    const existingMediaElementsByUuid = new Map(
+      existingMediaElementRecords.map((mediaElement) => [mediaElement.uuid, mediaElement]),
+    );
 
-    for (const [index, mediaElementReference] of (mediaElementReferences ?? []).entries()) {
+    for (const [index, mediaElementReference] of references.entries()) {
       const pointer = `${validationPath}/${index}`;
       if (typeof mediaElementReference === "string") {
         const mediaElementUuid = uriId(mediaElementReference);
-        const [mediaElementRecord] = await transaction
-          .select({ uuid: mediaElements.uuid, ownerUuid: mediaElements.ownerUuid })
-          .from(mediaElements)
-          .where(and(eq(mediaElements.uuid, mediaElementUuid), isNull(mediaElements.tombstonedAt)))
-          .for("share");
+        const mediaElementRecord = existingMediaElementsByUuid.get(mediaElementUuid);
         if (!mediaElementRecord) {
           throw schemaProblem([
             { instancePath: pointer, message: `unknown element ${mediaElementReference}` },

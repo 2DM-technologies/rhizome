@@ -258,6 +258,32 @@ describe("rNet M1 store", () => {
   });
 
   test("server-grounds client-authored objects and prefixes inference", async () => {
+    const clientSuppliedSource = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "authored", reproducible: false },
+              origins: ["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"],
+              properties: { title: "Must not be silently discarded" },
+            },
+          },
+        ],
+      },
+    });
+    expect(clientSuppliedSource.status).toBe(422);
+
+    const ownerWithoutSource = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: { objects: [{ type: "note" }] },
+    });
+    expect(ownerWithoutSource.status).toBe(422);
+
     const detachedUpload = await app.request("http://rhizome.test/rnet/v0/elements", {
       method: "POST",
       headers: { ...dmachine, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },

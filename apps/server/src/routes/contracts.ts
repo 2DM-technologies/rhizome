@@ -27,7 +27,7 @@ export type JsonSchemaDocument = JSONSchema;
 
 export interface ContractSchema<Value> {
   readonly document: JsonSchemaDocument;
-  validate(value: unknown): ValidationResult<Value>;
+  validate(value: unknown, actor?: Actor): ValidationResult<Value>;
 }
 
 export interface UnvalidatedContractResponse {
@@ -144,6 +144,24 @@ export function jsonSchema(document: JSONSchema): ContractSchema<unknown> {
       return validate(value)
         ? { ok: true, value }
         : { ok: false, issues: validationIssues(validate.errors) };
+    },
+  };
+}
+
+export function jsonSchemaByActor<UserValue extends object, ClientValue extends object>({
+  user,
+  client,
+}: {
+  user: ContractSchema<UserValue>;
+  client: ContractSchema<ClientValue>;
+}): ContractSchema<UserValue | ClientValue> {
+  const union = jsonSchema({ oneOf: [user.document, client.document] });
+  return {
+    document: union.document,
+    validate(value, actor) {
+      if (actor?.kind === "user") return user.validate(value);
+      if (actor?.kind === "client") return client.validate(value);
+      return union.validate(value) as ValidationResult<UserValue | ClientValue>;
     },
   };
 }
@@ -274,7 +292,7 @@ export function rnetRoute<
         throw grantMissing(contract.auth === "user" ? "owner" : "client");
       }
       if (contract.request?.param) {
-        const validation = contract.request.param.validate(context.req.param());
+        const validation = contract.request.param.validate(context.req.param(), actor);
         if (!validation.ok) throw schemaProblem(validation.issues);
         context.req.addValidatedData("param", validation.value);
       }
@@ -287,7 +305,7 @@ export function rnetRoute<
             "The request body must be JSON",
           );
         });
-        const validation = contract.request.json.validate(body);
+        const validation = contract.request.json.validate(body, actor);
         if (!validation.ok) throw schemaProblem(validation.issues);
         context.req.addValidatedData("json", validation.value);
       }
@@ -315,7 +333,7 @@ export function rnetRoute<
         } catch {
           throw schemaProblem([{ instancePath: "/metadata", message: "must contain valid JSON" }]);
         }
-        const validation = contract.request.multipart.validate(metadata);
+        const validation = contract.request.multipart.validate(metadata, actor);
         if (!validation.ok) throw schemaProblem(validation.issues, "/metadata");
 
         const uploads = new Map<string, File>();

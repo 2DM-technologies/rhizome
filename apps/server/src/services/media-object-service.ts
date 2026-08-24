@@ -76,7 +76,7 @@ export class MediaObjectsService {
   async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
     const mediaObjectRecord = await this.findById(uuid);
     if (!mediaObjectRecord) throw notFound("Object");
-    await this.access.assertMediaObjectScope(uuid, GRANT_SCOPE.READ);
+    await this.access.assertMediaObjectScope(mediaObjectRecord, GRANT_SCOPE.READ);
     return {
       document: await this.toDocument(mediaObjectRecord),
       userRev: mediaObjectRecord.userRev,
@@ -458,13 +458,39 @@ export class MediaObjectsService {
     mediaObjectDocument: MediaObject,
   ): Promise<void> {
     const ownerUuid = uriId(mediaObjectDocument.owner);
-    for (const uri of mediaObjectDocument.source.origins) {
-      if (uri.startsWith("rnet://origin/")) {
-        const [originArtifact] = await transaction
+    const originArtifactUuids = mediaObjectDocument.source.origins
+      .filter((uri) => uri.startsWith("rnet://origin/"))
+      .map(uriId);
+    const dmachineUuids = mediaObjectDocument.source.origins
+      .filter((uri) => !uri.startsWith("rnet://origin/"))
+      .map(uriId);
+    const originArtifactRows: { uuid: string; ownerUuid: string }[] = originArtifactUuids.length
+      ? await transaction
           .select({ uuid: originArtifacts.uuid, ownerUuid: originArtifacts.ownerUuid })
           .from(originArtifacts)
-          .where(and(eq(originArtifacts.uuid, uriId(uri)), isNull(originArtifacts.tombstonedAt)))
-          .for("share");
+          .where(
+            and(
+              inArray(originArtifacts.uuid, originArtifactUuids),
+              isNull(originArtifacts.tombstonedAt),
+            ),
+          )
+          .for("share")
+      : [];
+    const dmachineRows: { uuid: string }[] = dmachineUuids.length
+      ? await transaction
+          .select({ uuid: dmachines.uuid })
+          .from(dmachines)
+          .where(inArray(dmachines.uuid, dmachineUuids))
+          .for("share")
+      : [];
+    const originArtifactsByUuid = new Map(
+      originArtifactRows.map((originArtifact) => [originArtifact.uuid, originArtifact]),
+    );
+    const existingDmachineUuids = new Set(dmachineRows.map((dmachine) => dmachine.uuid));
+
+    for (const uri of mediaObjectDocument.source.origins) {
+      if (uri.startsWith("rnet://origin/")) {
+        const originArtifact = originArtifactsByUuid.get(uriId(uri));
         if (!originArtifact) {
           throw schemaProblem([
             { instancePath: "/source/origins", message: `unknown origin ${uri}` },
@@ -472,12 +498,7 @@ export class MediaObjectsService {
         }
         if (originArtifact.ownerUuid !== ownerUuid) throw grantMissing("owner");
       } else {
-        const [dmachine] = await transaction
-          .select({ uuid: dmachines.uuid })
-          .from(dmachines)
-          .where(eq(dmachines.uuid, uriId(uri)))
-          .for("share");
-        if (!dmachine) {
+        if (!existingDmachineUuids.has(uriId(uri))) {
           throw schemaProblem([
             { instancePath: "/source/origins", message: `unknown client ${uri}` },
           ]);

@@ -1,6 +1,6 @@
 import { mediaElementSchema, mediaObjectSchema, vibeSchema } from "@rnet/types";
 
-import { jsonSchema, type ContractValue } from "./contracts.ts";
+import { jsonSchema, jsonSchemaByActor, type ContractValue } from "./contracts.ts";
 
 const MediaElementUploadReferenceSchema = {
   type: "object",
@@ -45,7 +45,7 @@ const ClientCreateMediaObjectInputSchema = {
   additionalProperties: false,
 } as const;
 
-export const CreateMediaObjectsRequestSchema = jsonSchema({
+const OwnerCreateMediaObjectsRequestSchema = jsonSchema({
   type: "object",
   required: ["objects"],
   properties: {
@@ -53,12 +53,29 @@ export const CreateMediaObjectsRequestSchema = jsonSchema({
     objects: {
       type: "array",
       minItems: 1,
-      items: {
-        oneOf: [OwnerCreateMediaObjectInputSchema, ClientCreateMediaObjectInputSchema],
-      },
+      items: OwnerCreateMediaObjectInputSchema,
     },
   },
   additionalProperties: false,
+});
+
+const ClientCreateMediaObjectsRequestSchema = jsonSchema({
+  type: "object",
+  required: ["vibe", "objects"],
+  properties: {
+    vibe: vibeSchema.properties.uri,
+    objects: {
+      type: "array",
+      minItems: 1,
+      items: ClientCreateMediaObjectInputSchema,
+    },
+  },
+  additionalProperties: false,
+});
+
+export const CreateMediaObjectsRequestSchema = jsonSchemaByActor({
+  user: OwnerCreateMediaObjectsRequestSchema,
+  client: ClientCreateMediaObjectsRequestSchema,
 });
 
 export type CreateMediaObjectsRequest = ContractValue<typeof CreateMediaObjectsRequestSchema>;
