@@ -9,6 +9,7 @@ import { createApp } from "../src/app.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/index.ts";
+import { seedDb } from "../src/db/seedDb.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 1 });
@@ -64,7 +65,7 @@ beforeAll(async () => {
     blobs: createBlobStore(config),
   });
   app = created.app;
-  await created.identityService.seedDevelopmentIdentities();
+  await seedDb(db);
 });
 
 afterAll(async () => {

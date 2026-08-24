@@ -13,6 +13,7 @@
     "dev:server": "bun --filter @rhizome/server dev",
     "dev:host": "bun --filter @rhizome/host dev",
     "db:migrate": "bun run apps/server/src/db/migrate.ts",
+    "db:seed": "bun run apps/server/src/db/seedDb.ts",
     "openapi:generate": "bun run scripts/generate-openapi.ts",
     "openapi:check": "bun run scripts/generate-openapi.ts --check",
     "format": "prettier --write .",

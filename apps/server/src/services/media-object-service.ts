@@ -107,7 +107,7 @@ export class MediaObjectsService {
         pendingMediaElementUploads,
       });
     const mediaObjectDocuments = mediaObjectInputs.map((input, index) =>
-      this.buildMediaObjectDocument({
+      this.buildNewMediaObjectDocument({
         ownerUuid,
         input,
         index,
@@ -368,7 +368,7 @@ export class MediaObjectsService {
     );
   }
 
-  private buildMediaObjectDocument({
+  private buildNewMediaObjectDocument({
     ownerUuid,
     input,
     index,

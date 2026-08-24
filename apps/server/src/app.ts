@@ -14,7 +14,6 @@ import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
-import { IdentityService } from "./services/identity-service.ts";
 
 export interface AppDependencies {
   config: ServerConfig;
@@ -23,7 +22,6 @@ export interface AppDependencies {
 }
 
 export function createApp({ config, db, blobs }: AppDependencies) {
-  const identityService = new IdentityService(db);
   const app = new Hono<AppEnvironment>();
 
   app.use(logger());
@@ -79,5 +77,5 @@ export function createApp({ config, db, blobs }: AppDependencies) {
   const openApiDocument = createOpenApiDocument(app.routes);
   app.get("/rnet/v0/openapi.json", (context) => context.json(openApiDocument));
 
-  return { app, identityService, openApiDocument };
+  return { app, openApiDocument };
 }
