@@ -195,19 +195,6 @@ export function transformSchema<Value>(
   };
 }
 
-export function refineSchema<Value>(
-  schema: ContractSchema<Value>,
-  refine: (value: Value, actor?: Actor) => ValidationResult<Value>,
-): ContractSchema<Value> {
-  return {
-    document: schema.document,
-    validate(value, actor) {
-      const validation = schema.validate(value, actor);
-      return validation.ok ? refine(validation.value, actor) : validation;
-    },
-  };
-}
-
 export function jsonSchemaByActor<UserValue extends object, ClientValue extends object>({
   user,
   client,

@@ -1,4 +1,4 @@
-import { mediaObjectSchema } from "@rnet/types";
+import { mediaObjectSchema, validateMediaObjectProperties } from "@rnet/types";
 import { Hono } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
@@ -6,6 +6,7 @@ import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
 import type { PendingMediaElementUpload } from "../services/media-element-service.ts";
 import { MediaObjectsService } from "../services/media-object-service.ts";
+import { schemaProblem } from "../services/problems.ts";
 import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
 import {
   ProblemSchema,
@@ -56,6 +57,16 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     }),
     async (context) => {
       const input = context.req.valid("form");
+      for (const [index, mediaObject] of input.metadata.objects.entries()) {
+        let properties = "properties" in mediaObject ? (mediaObject.properties ?? {}) : {};
+        let propertiesPath = `/objects/${index}/properties`;
+        if ("source" in mediaObject) {
+          properties = mediaObject.source.properties;
+          propertiesPath = `/objects/${index}/source/properties`;
+        }
+        const validation = validateMediaObjectProperties(mediaObject.type, properties);
+        if (!validation.ok) throw schemaProblem(validation.issues, propertiesPath);
+      }
       const pendingMediaElementUploads = new Map<string, PendingMediaElementUpload>();
       for (const [name, file] of input.uploads) {
         pendingMediaElementUploads.set(name, {

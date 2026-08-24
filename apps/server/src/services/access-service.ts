@@ -56,70 +56,6 @@ export class AccessService {
     return lockedVibe;
   }
 
-  async lockVibeScopeForWrite({
-    transaction,
-    vibeUuid,
-    expectedOwnerUuid,
-    scope,
-  }: {
-    transaction: DatabaseTransaction;
-    vibeUuid: string;
-    expectedOwnerUuid: string;
-    scope: Scope;
-  }): Promise<DbVibe> {
-    const vibe = await this.assertVibeScopeWithDatabase(transaction, vibeUuid, scope);
-    this.assertExpectedOwner(vibe, expectedOwnerUuid);
-
-    const lockedVibe = await this.lockVibe(transaction, vibeUuid, "share");
-    this.assertExpectedOwner(lockedVibe, expectedOwnerUuid);
-    await this.assertVibeScopeForRecord(transaction, lockedVibe, scope, true);
-    return lockedVibe;
-  }
-
-  async lockMediaObjectScopeForWrite({
-    transaction,
-    mediaObjectUuid,
-    scope,
-  }: {
-    transaction: DatabaseTransaction;
-    mediaObjectUuid: string;
-    scope: Scope;
-  }): Promise<DbMediaObject> {
-    const mediaObjectRecord = await this.findMediaObject(transaction, mediaObjectUuid);
-    if (this.actor.kind === "user" && this.actor.uuid === mediaObjectRecord.ownerUuid) {
-      const lockedMediaObject = await this.lockMediaObjectForWrite(transaction, mediaObjectUuid);
-      if (lockedMediaObject.ownerUuid !== mediaObjectRecord.ownerUuid) throw grantMissing("owner");
-      return lockedMediaObject;
-    }
-
-    const vibeUuid = await this.findAuthorizedMediaObjectVibe(
-      transaction,
-      mediaObjectRecord,
-      scope,
-    );
-    await this.lockVibeScopeForWrite({
-      transaction,
-      vibeUuid,
-      expectedOwnerUuid: mediaObjectRecord.ownerUuid,
-      scope,
-    });
-    const [lockedMembership] = await transaction
-      .select({ vibeUuid: vibeMediaObjects.vibeUuid })
-      .from(vibeMediaObjects)
-      .where(
-        and(
-          eq(vibeMediaObjects.vibeUuid, vibeUuid),
-          eq(vibeMediaObjects.mediaObjectUuid, mediaObjectUuid),
-        ),
-      )
-      .for("share");
-    if (!lockedMembership) throw grantMissing(scope);
-
-    const lockedMediaObject = await this.lockMediaObjectForWrite(transaction, mediaObjectUuid);
-    if (lockedMediaObject.ownerUuid !== mediaObjectRecord.ownerUuid) throw grantMissing("owner");
-    return lockedMediaObject;
-  }
-
   async assertMediaObjectScope(
     mediaObject: string | DbMediaObject,
     scope: Scope,
@@ -163,7 +99,7 @@ export class AccessService {
     scope: Scope,
   ): Promise<DbVibe> {
     const vibe = await this.findVibe(database, vibeUuid);
-    await this.assertVibeScopeForRecord(database, vibe, scope, false);
+    await this.assertVibeScopeForRecord(database, vibe, scope);
     return vibe;
   }
 
@@ -171,7 +107,6 @@ export class AccessService {
     database: Database | DatabaseTransaction,
     vibe: DbVibe,
     scope: Scope,
-    lockGrant: boolean,
   ): Promise<void> {
     if (this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid) return;
 
@@ -185,7 +120,7 @@ export class AccessService {
           isNull(grants.revokedAt),
         ),
       );
-    const grantRows: Pick<DbGrant, "scopes">[] = lockGrant ? await query.for("share") : await query;
+    const grantRows: Pick<DbGrant, "scopes">[] = await query;
     const [grant] = grantRows;
     if (!grant?.scopes.includes(scope)) throw grantMissing(scope);
   }
@@ -241,10 +176,6 @@ export class AccessService {
     }
   }
 
-  private assertExpectedOwner(vibe: DbVibe, expectedOwnerUuid: string): void {
-    if (vibe.ownerUuid !== expectedOwnerUuid) throw grantMissing("owner");
-  }
-
   private async lockVibe(
     transaction: DatabaseTransaction,
     vibeUuid: string,
@@ -258,19 +189,5 @@ export class AccessService {
     const [vibe] = vibeRows;
     if (!vibe) throw notFound("Vibe");
     return vibe;
-  }
-
-  private async lockMediaObjectForWrite(
-    transaction: DatabaseTransaction,
-    mediaObjectUuid: string,
-  ): Promise<DbMediaObject> {
-    const mediaObjectRows: DbMediaObject[] = await transaction
-      .select()
-      .from(mediaObjects)
-      .where(eq(mediaObjects.uuid, mediaObjectUuid))
-      .for("update");
-    const [mediaObject] = mediaObjectRows;
-    if (!mediaObject) throw notFound("Object");
-    return mediaObject;
   }
 }

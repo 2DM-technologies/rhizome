@@ -1,19 +1,12 @@
 import {
   mediaElementSchema,
   mediaObjectSchema,
-  validateMediaObjectProperties,
   vibeSchema,
   type MediaElement,
   type MediaObject,
-  type ValidationIssue,
 } from "@rnet/types";
 
-import {
-  jsonSchemaByActor,
-  jsonSchemaValue,
-  refineSchema,
-  type ContractValue,
-} from "./contracts.ts";
+import { jsonSchemaByActor, jsonSchemaValue, type ContractValue } from "./contracts.ts";
 
 type MediaElementUploadReference = {
   upload: string;
@@ -107,30 +100,10 @@ const ClientCreateMediaObjectsRequestSchema = jsonSchemaValue<ClientCreateMediaO
   additionalProperties: false,
 });
 
-export const CreateMediaObjectsRequestSchema = refineSchema(
-  jsonSchemaByActor({
-    user: OwnerCreateMediaObjectsRequestSchema,
-    client: ClientCreateMediaObjectsRequestSchema,
-  }),
-  (request) => {
-    const issues: ValidationIssue[] = [];
-    for (const [index, mediaObject] of request.objects.entries()) {
-      const properties =
-        "source" in mediaObject
-          ? mediaObject.source.properties
-          : "properties" in mediaObject
-            ? (mediaObject.properties ?? {})
-            : {};
-      const validation = validateMediaObjectProperties(
-        mediaObject.type,
-        properties,
-        `/objects/${index}/${"source" in mediaObject ? "source/" : ""}properties`,
-      );
-      if (!validation.ok) issues.push(...validation.issues);
-    }
-    return issues.length ? { ok: false, issues } : { ok: true, value: request };
-  },
-);
+export const CreateMediaObjectsRequestSchema = jsonSchemaByActor({
+  user: OwnerCreateMediaObjectsRequestSchema,
+  client: ClientCreateMediaObjectsRequestSchema,
+});
 
 export type CreateMediaObjectsRequest = ContractValue<typeof CreateMediaObjectsRequestSchema>;
 export type CreateMediaObjectInput = CreateMediaObjectsRequest["objects"][number];

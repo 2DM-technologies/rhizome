@@ -4,7 +4,7 @@ import { v7 as uuidv7 } from "uuid";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
-import { GRANT_SCOPE, type GrantScope } from "../db/models/grant.ts";
+import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { dmachines } from "../db/models/dmachine.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
@@ -102,22 +102,13 @@ export class MediaObjectsService {
     const ownerUuid =
       targetVibe?.ownerUuid ?? (this.actor.kind === "user" ? this.actor.uuid : undefined);
     if (!ownerUuid) throw grantMissing("owner");
+    if (!vibeUuid) await this.access.assertRecordOwner(ownerUuid);
     const mediaElementUploads = this.mediaElementsService.createUploadContext(
       pendingMediaElementUploads,
     );
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const createdMediaObjects: MediaObjectAggregate[] = [];
-      if (vibeUuid) {
-        await this.access.lockVibeScopeForWrite({
-          transaction,
-          vibeUuid,
-          expectedOwnerUuid: ownerUuid,
-          scope: GRANT_SCOPE.WRITE_OBJECTS,
-        });
-      } else {
-        await this.access.assertRecordOwner(ownerUuid);
-      }
       let nextVibePosition: number | undefined;
       if (vibeUuid) {
         const [maxPosition] = await transaction
@@ -175,45 +166,42 @@ export class MediaObjectsService {
     expectedRev: number,
     properties: Record<string, unknown>,
   ): Promise<{ mediaObject: MediaObjectAggregate; userRev: number }> {
-    await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_USER);
-    const updatedMediaObject = await this.updateMediaObjectBlock(
+    const currentMediaObject = await this.access.assertMediaObjectScope(
       mediaObjectUuid,
       GRANT_SCOPE.WRITE_USER,
-      {
-        block: "user",
-        buildSnapshot: () => ({
-          properties,
-          updated_at: new Date().toISOString(),
-        }),
-        persist: async (transaction, currentMediaObject, user) => {
-          if (currentMediaObject.userRev !== expectedRev) {
-            throw new Problem(
-              409,
-              "revision_conflict",
-              "Revision conflict",
-              "The user block changed",
-              { expected: expectedRev, current: currentMediaObject.userRev },
-            );
-          }
-          const [nextMediaObject] = await transaction
-            .update(mediaObjects)
-            .set({ user, userRev: sql`${mediaObjects.userRev} + 1` })
-            .where(
-              and(eq(mediaObjects.uuid, mediaObjectUuid), eq(mediaObjects.userRev, expectedRev)),
-            )
-            .returning();
-          if (!nextMediaObject) {
-            throw new Problem(
-              409,
-              "revision_conflict",
-              "Revision conflict",
-              "The user block changed",
-            );
-          }
-          return { mediaObject: nextMediaObject, revision: nextMediaObject.userRev };
-        },
-      },
     );
+    const updatedMediaObject = await this.updateMediaObjectBlock(currentMediaObject, {
+      block: "user",
+      buildSnapshot: () => ({
+        properties,
+        updated_at: new Date().toISOString(),
+      }),
+      persist: async (transaction, currentMediaObject, user) => {
+        if (currentMediaObject.userRev !== expectedRev) {
+          throw new Problem(
+            409,
+            "revision_conflict",
+            "Revision conflict",
+            "The user block changed",
+            { expected: expectedRev, current: currentMediaObject.userRev },
+          );
+        }
+        const [nextMediaObject] = await transaction
+          .update(mediaObjects)
+          .set({ user, userRev: sql`${mediaObjects.userRev} + 1` })
+          .where(and(eq(mediaObjects.uuid, mediaObjectUuid), eq(mediaObjects.userRev, expectedRev)))
+          .returning();
+        if (!nextMediaObject) {
+          throw new Problem(
+            409,
+            "revision_conflict",
+            "Revision conflict",
+            "The user block changed",
+          );
+        }
+        return { mediaObject: nextMediaObject, revision: nextMediaObject.userRev };
+      },
+    });
     return {
       mediaObject: await this.loadAggregate(updatedMediaObject),
       userRev: updatedMediaObject.userRev,
@@ -225,7 +213,10 @@ export class MediaObjectsService {
     task: string,
     entry: NonNullable<MediaObject["inferred"]>[string],
   ): Promise<MediaObjectAggregate> {
-    await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_INFERRED);
+    const currentMediaObject = await this.access.assertMediaObjectScope(
+      mediaObjectUuid,
+      GRANT_SCOPE.WRITE_INFERRED,
+    );
     if (task.includes(":")) {
       throw new Problem(
         403,
@@ -245,54 +236,43 @@ export class MediaObjectsService {
     }
     const writer = this.actor.kind === "client" ? this.actor.name : `user/${this.actor.uuid}`;
     const key = `${writer}:${task}`;
-    const updatedMediaObject = await this.updateMediaObjectBlock(
-      mediaObjectUuid,
-      GRANT_SCOPE.WRITE_INFERRED,
-      {
-        block: "inferred",
-        buildSnapshot: (currentMediaObject) => ({
-          ...currentMediaObject.inferred,
-          [key]: entry,
-        }),
-        persist: async (transaction, _currentMediaObject, inferred) => {
-          const [maxRevision] = await transaction
-            .select({ max: sql<number>`coalesce(max(${mediaObjectRevisions.rev}), 0)::int` })
-            .from(mediaObjectRevisions)
-            .where(
-              and(
-                eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectUuid),
-                eq(mediaObjectRevisions.block, "inferred"),
-              ),
-            );
-          const [nextMediaObject] = await transaction
-            .update(mediaObjects)
-            .set({ inferred })
-            .where(eq(mediaObjects.uuid, mediaObjectUuid))
-            .returning();
-          if (!nextMediaObject) throw notFound("Object");
-          return { mediaObject: nextMediaObject, revision: (maxRevision?.max ?? 0) + 1 };
-        },
+    const updatedMediaObject = await this.updateMediaObjectBlock(currentMediaObject, {
+      block: "inferred",
+      buildSnapshot: (currentMediaObject) => ({
+        ...currentMediaObject.inferred,
+        [key]: entry,
+      }),
+      persist: async (transaction, _currentMediaObject, inferred) => {
+        const [maxRevision] = await transaction
+          .select({ max: sql<number>`coalesce(max(${mediaObjectRevisions.rev}), 0)::int` })
+          .from(mediaObjectRevisions)
+          .where(
+            and(
+              eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectUuid),
+              eq(mediaObjectRevisions.block, "inferred"),
+            ),
+          );
+        const [nextMediaObject] = await transaction
+          .update(mediaObjects)
+          .set({ inferred })
+          .where(eq(mediaObjects.uuid, mediaObjectUuid))
+          .returning();
+        if (!nextMediaObject) throw notFound("Object");
+        return { mediaObject: nextMediaObject, revision: (maxRevision?.max ?? 0) + 1 };
       },
-    );
+    });
     return this.loadAggregate(updatedMediaObject);
   }
 
   private async updateMediaObjectBlock<Snapshot extends MediaObjectBlockSnapshot>(
-    mediaObjectUuid: string,
-    scope: GrantScope,
+    currentMediaObject: DbMediaObject,
     update: MediaObjectBlockUpdate<Snapshot>,
   ): Promise<DbMediaObject> {
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
-      const currentMediaObject = await this.access.lockMediaObjectScopeForWrite({
-        transaction,
-        mediaObjectUuid,
-        scope,
-      });
-
       const snapshot = update.buildSnapshot(currentMediaObject);
       const persisted = await update.persist(transaction, currentMediaObject, snapshot);
       await transaction.insert(mediaObjectRevisions).values({
-        mediaObjectUuid,
+        mediaObjectUuid: currentMediaObject.uuid,
         block: update.block,
         rev: persisted.revision,
         snapshot,
