@@ -36,6 +36,7 @@ import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
 export type DbMediaObject = typeof mediaObjects.$inferSelect;
+type MediaElementReferenceRow = { uuid: string };
 
 interface HashedMediaElementUpload extends PendingMediaElementUpload {
   uuid: string;
@@ -356,7 +357,7 @@ export class MediaObjectService {
       if (!currentMediaObject) throw notFound("Object");
 
       const snapshot = update.buildSnapshot(currentMediaObject);
-      const mediaElementReferences = await transaction
+      const mediaElementReferences: MediaElementReferenceRow[] = await transaction
         .select({ uuid: mediaObjectElements.mediaElementUuid })
         .from(mediaObjectElements)
         .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectUuid))
@@ -383,7 +384,7 @@ export class MediaObjectService {
   }
 
   async toDocument(mediaObjectRecord: DbMediaObject): Promise<MediaObject> {
-    const mediaElementReferences = await this.db
+    const mediaElementReferences: MediaElementReferenceRow[] = await this.db
       .select({ uuid: mediaObjectElements.mediaElementUuid })
       .from(mediaObjectElements)
       .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectRecord.uuid))
