@@ -183,18 +183,6 @@ export function jsonObjectSchema<
   return compileJsonSchema(document) as ContractSchema<ObjectContractValue<Properties, Required>>;
 }
 
-export function transformSchema<Value>(
-  schema: ContractSchema<Value>,
-  transform: (value: unknown) => unknown,
-): ContractSchema<Value> {
-  return {
-    document: schema.document,
-    validate(value, actor) {
-      return schema.validate(transform(value), actor);
-    },
-  };
-}
-
 export function jsonSchemaByActor<UserValue extends object, ClientValue extends object>({
   user,
   client,

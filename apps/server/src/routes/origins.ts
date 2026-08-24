@@ -5,6 +5,7 @@ import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
 import { serializeOriginArtifact } from "../serializers/origin-artifact-serializer.ts";
 import { OriginArtifactsService } from "../services/origin-artifact-service.ts";
+import { schemaProblem } from "../services/problems.ts";
 import {
   BinaryRequest,
   ProblemSchema,
@@ -14,32 +15,19 @@ import {
   jsonSchemaValue,
   rnetDocument,
   rnetRoute,
-  transformSchema,
 } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
 const OriginArtifactDocumentSchema = rnetDocument("origin-artifact");
-const OriginArtifactUploadHeadersSchema = transformSchema(
-  jsonObjectSchema(
-    {
-      "content-type": jsonSchemaValue<OriginArtifact["mime"]>(originArtifactSchema.properties.mime),
-      "x-rnet-label": jsonSchemaValue<OriginArtifact["label"]>(
-        originArtifactSchema.properties.label,
-      ),
-    },
-    ["content-type"] as const,
-  ),
-  (value) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-    const headers = value as Record<string, unknown>;
-    return {
-      ...headers,
-      "content-type": requestMime(
-        typeof headers["content-type"] === "string" ? headers["content-type"] : undefined,
-      ),
-    };
+const OriginArtifactMimeSchema = jsonSchemaValue<OriginArtifact["mime"]>(
+  originArtifactSchema.properties.mime,
+);
+const OriginArtifactUploadHeadersSchema = jsonObjectSchema(
+  {
+    "x-rnet-label": jsonSchemaValue<OriginArtifact["label"]>(originArtifactSchema.properties.label),
   },
+  [] as const,
 );
 
 export function createOriginRoutes(db: Database, blobs: BlobStore) {
@@ -67,9 +55,12 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
       });
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const headers = context.req.valid("header");
+      const mime = requestMime(context.req.header("Content-Type"));
+      const mimeValidation = OriginArtifactMimeSchema.validate(mime);
+      if (!mimeValidation.ok) throw schemaProblem(mimeValidation.issues, "/content-type");
       const originArtifactRecord = await originArtifactsService.createOriginArtifact({
         bytes,
-        mime: headers["content-type"],
+        mime,
         ...(headers["x-rnet-label"] ? { label: headers["x-rnet-label"] } : {}),
       });
       const originArtifact = await serializeOriginArtifact(originArtifactRecord, blobs);

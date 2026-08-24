@@ -5,6 +5,7 @@ import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
 import { serializeMediaElement } from "../serializers/media-element-serializer.ts";
 import { MediaElementsService } from "../services/media-element-service.ts";
+import { schemaProblem } from "../services/problems.ts";
 import {
   BinaryRequest,
   ProblemSchema,
@@ -14,30 +15,19 @@ import {
   jsonSchemaValue,
   rnetDocument,
   rnetRoute,
-  transformSchema,
 } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
 const MediaElementDocumentSchema = rnetDocument("media-element");
-const MediaElementUploadHeadersSchema = transformSchema(
-  jsonObjectSchema(
-    {
-      "content-type": jsonSchemaValue<MediaElement["mime"]>(mediaElementSchema.properties.mime),
-      "x-rnet-kind": jsonSchemaValue<MediaElement["kind"]>(mediaElementSchema.properties.kind),
-    },
-    ["content-type", "x-rnet-kind"] as const,
-  ),
-  (value) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-    const headers = value as Record<string, unknown>;
-    return {
-      ...headers,
-      "content-type": requestMime(
-        typeof headers["content-type"] === "string" ? headers["content-type"] : undefined,
-      ),
-    };
+const MediaElementMimeSchema = jsonSchemaValue<MediaElement["mime"]>(
+  mediaElementSchema.properties.mime,
+);
+const MediaElementUploadHeadersSchema = jsonObjectSchema(
+  {
+    "x-rnet-kind": jsonSchemaValue<MediaElement["kind"]>(mediaElementSchema.properties.kind),
   },
+  ["x-rnet-kind"] as const,
 );
 
 export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
@@ -62,11 +52,14 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
       const ownerUuid = actor.uuid;
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const headers = context.req.valid("header");
+      const mime = requestMime(context.req.header("Content-Type"));
+      const mimeValidation = MediaElementMimeSchema.validate(mime);
+      if (!mimeValidation.ok) throw schemaProblem(mimeValidation.issues, "/content-type");
       const mediaElementRecord = await mediaElementsService.createMediaElement({
         ownerUuid,
         mediaElementUpload: {
           bytes,
-          mime: headers["content-type"],
+          mime,
           kind: headers["x-rnet-kind"],
         },
       });
