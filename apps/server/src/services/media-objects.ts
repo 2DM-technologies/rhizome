@@ -43,9 +43,12 @@ interface PreparedMediaElementUpload extends PendingMediaElementUpload {
   kind?: string;
 }
 
-interface ReadyMediaElementUpload extends PreparedMediaElementUpload {
-  kind: MediaElement["kind"];
-  mime: string;
+type PersistableMediaElement = MediaElement &
+  Required<Pick<MediaElement, "byte_size" | "created_at">>;
+
+interface ReadyMediaElementUpload {
+  bytes: Uint8Array;
+  document: PersistableMediaElement;
 }
 
 type MediaObjectBlockSnapshot =
@@ -130,9 +133,6 @@ export class MediaObjectService {
         { instancePath: `/uploads/${unusedUpload[0]}`, message: "is not referenced by an object" },
       ]);
     }
-    const uploadedElementUuids = new Set(
-      [...preparedUploads.values()].map((upload) => upload.uuid),
-    );
     const readyUploads = new Map<string, ReadyMediaElementUpload>();
     if (preparedUploads.size) {
       if (!this.blobs) throw new Error("Blob storage is required for atomic element uploads");
@@ -150,20 +150,27 @@ export class MediaObjectService {
         };
         const validation = validateSchema("media-element", candidateMediaElement);
         if (!validation.ok) throw schemaProblem(validation.issues, `/uploads/${name}`);
+        const mediaElementDocument = {
+          ...validation.value,
+          byte_size: candidateMediaElement.byte_size,
+          created_at: candidateMediaElement.created_at,
+        };
         const readyUpload: ReadyMediaElementUpload = {
-          ...upload,
-          kind: validation.value.kind,
-          mime: validation.value.mime,
+          bytes: upload.bytes,
+          document: mediaElementDocument,
         };
         readyUploads.set(name, readyUpload);
         await this.blobs.put(
           "elements",
-          readyUpload.contentHash,
+          mediaElementDocument.content_hash,
           readyUpload.bytes,
-          readyUpload.mime,
+          mediaElementDocument.mime,
         );
       }
     }
+    const uploadedElementUuids = new Set(
+      [...readyUploads.values()].map(({ document }) => uriId(document.uri)),
+    );
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const createdMediaObjects: MediaObject[] = [];
@@ -171,21 +178,21 @@ export class MediaObjectService {
       for (const mediaObjectDocument of mediaObjectDocuments) {
         await this.assertMediaObjectReferences(
           transaction,
-          ownerUuid,
           mediaObjectDocument,
           uploadedElementUuids,
         );
       }
       if (readyUploads.size) {
         await transaction.insert(mediaElements).values(
-          [...readyUploads.values()].map((upload) => ({
-            uuid: upload.uuid,
-            ownerUuid,
-            contentHash: upload.contentHash,
-            kind: upload.kind,
-            mime: upload.mime,
-            byteSize: upload.bytes.byteLength,
-            rnetSchema: RNET_SCHEMA_VERSION,
+          [...readyUploads.values()].map(({ document }) => ({
+            uuid: uriId(document.uri),
+            ownerUuid: uriId(document.owner),
+            contentHash: document.content_hash,
+            kind: document.kind,
+            mime: document.mime,
+            byteSize: document.byte_size,
+            rnetSchema: document.rnet_schema,
+            createdAt: new Date(document.created_at),
             createdBy: this.actor.subject,
           })),
         );
@@ -200,12 +207,13 @@ export class MediaObjectService {
       }
       for (const [mediaObjectIndex, mediaObjectDocument] of mediaObjectDocuments.entries()) {
         const mediaObjectUuid = uriId(mediaObjectDocument.uri);
+        const mediaObjectOwnerUuid = uriId(mediaObjectDocument.owner);
         const extensions = Object.fromEntries(
           Object.entries(mediaObjectDocument).filter(([key]) => key.startsWith("x-")),
         );
         await transaction.insert(mediaObjects).values({
           uuid: mediaObjectUuid,
-          ownerUuid,
+          ownerUuid: mediaObjectOwnerUuid,
           createdBy: this.actor.subject,
           type: mediaObjectDocument.type,
           keys: mediaObjectDocument.keys ?? {},
@@ -379,13 +387,15 @@ export class MediaObjectService {
       );
       const validation = validateMediaObject(candidateMediaObject);
       if (!validation.ok) throw schemaProblem(validation.issues);
+      const validatedSnapshot = validation.value[update.block] as Snapshot | undefined;
+      if (!validatedSnapshot) throw new Error(`Validated object is missing ${update.block}`);
 
-      const persisted = await update.persist(transaction, currentMediaObject, snapshot);
+      const persisted = await update.persist(transaction, currentMediaObject, validatedSnapshot);
       await transaction.insert(mediaObjectRevisions).values({
         mediaObjectUuid,
         block: update.block,
         rev: persisted.revision,
-        snapshot,
+        snapshot: validatedSnapshot,
         actor: this.actor.subject,
       });
       return persisted.mediaObject;
@@ -547,10 +557,10 @@ export class MediaObjectService {
 
   private async assertMediaObjectReferences(
     transaction: DatabaseTransaction,
-    ownerUuid: string,
     mediaObjectDocument: MediaObject,
     uploadedElementUuids: ReadonlySet<string>,
   ): Promise<void> {
+    const ownerUuid = uriId(mediaObjectDocument.owner);
     for (const uri of mediaObjectDocument.elements) {
       const mediaElementUuid = uriId(uri);
       if (uploadedElementUuids.has(mediaElementUuid)) continue;

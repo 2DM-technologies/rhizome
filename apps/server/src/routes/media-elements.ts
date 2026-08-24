@@ -7,6 +7,7 @@ import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
 import { MediaElementService, type DbMediaElement } from "../services/media-elements.ts";
+import { uriId } from "../services/uris.ts";
 import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
@@ -57,15 +58,21 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
           { errors: validation.issues },
         );
       }
-      const mediaElement = validation.value;
-      await blobs.put("elements", contentHashValue, bytes, mime);
+      const mediaElement = {
+        ...validation.value,
+        byte_size: candidateMediaElement.byte_size,
+        created_at: candidateMediaElement.created_at,
+      };
+      await blobs.put("elements", mediaElement.content_hash, bytes, mediaElement.mime);
       await mediaElementService.createMediaElement({
-        uuid: mediaElementUuid,
-        ownerUuid,
-        contentHash: contentHashValue,
+        uuid: uriId(mediaElement.uri),
+        ownerUuid: uriId(mediaElement.owner),
+        contentHash: mediaElement.content_hash,
         kind: mediaElement.kind,
-        mime,
-        byteSize: bytes.byteLength,
+        mime: mediaElement.mime,
+        byteSize: mediaElement.byte_size,
+        rnetSchema: mediaElement.rnet_schema,
+        createdAt: new Date(mediaElement.created_at),
         createdBy: actor.subject,
       });
       return context.json(mediaElement, 201);
@@ -110,7 +117,7 @@ async function mediaElementDocument(
     uri: `rnet://element/${mediaElement.uuid}`,
     owner: `rnet://id/${mediaElement.ownerUuid}`,
     content_hash: mediaElement.contentHash,
-    kind: mediaElement.kind as MediaElement["kind"],
+    kind: mediaElement.kind,
     mime: mediaElement.mime,
     bytes: await blobs.signedUrl("elements", mediaElement.contentHash),
     byte_size: mediaElement.byteSize,

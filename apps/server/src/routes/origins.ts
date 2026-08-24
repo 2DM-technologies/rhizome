@@ -1,4 +1,4 @@
-import { RNET_SCHEMA_VERSION, type OriginArtifact } from "@rnet/types";
+import { RNET_SCHEMA_VERSION, validateSchema, type OriginArtifact } from "@rnet/types";
 import { Hono } from "hono";
 import { v7 as uuidv7 } from "uuid";
 
@@ -6,6 +6,8 @@ import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database } from "../db/index.ts";
 import { OriginArtifactService, type DbOriginArtifact } from "../services/origin-artifacts.ts";
+import { schemaProblem } from "../services/problems.ts";
+import { uriId } from "../services/uris.ts";
 import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
@@ -33,16 +35,42 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
       const mime = requestMime(context.req.header("Content-Type"));
       const contentHashValue = await contentHash(bytes);
       const originArtifactUuid = uuidv7();
-      await blobs.put("origins", contentHashValue, bytes, mime);
-      const originArtifact = await originArtifactService.createOriginArtifact({
-        uuid: originArtifactUuid,
-        ownerUuid: actor.uuid,
-        contentHash: contentHashValue,
+      const label = context.req.header("X-Rnet-Label");
+      const candidateOriginArtifact = {
+        rnet_schema: RNET_SCHEMA_VERSION,
+        uri: `rnet://origin/${originArtifactUuid}`,
+        owner: `rnet://id/${actor.uuid}`,
+        content_hash: contentHashValue,
         mime,
-        byteSize: bytes.byteLength,
-        label: context.req.header("X-Rnet-Label"),
+        bytes: await blobs.signedUrl("origins", contentHashValue),
+        byte_size: bytes.byteLength,
+        ...(label ? { label } : {}),
+        uploaded_at: new Date().toISOString(),
+      };
+      const validation = validateSchema("origin-artifact", candidateOriginArtifact);
+      if (!validation.ok) throw schemaProblem(validation.issues);
+      const originArtifactDocument = {
+        ...validation.value,
+        byte_size: candidateOriginArtifact.byte_size,
+        uploaded_at: candidateOriginArtifact.uploaded_at,
+      };
+      await blobs.put(
+        "origins",
+        originArtifactDocument.content_hash,
+        bytes,
+        originArtifactDocument.mime,
+      );
+      const originArtifact = await originArtifactService.createOriginArtifact({
+        uuid: uriId(originArtifactDocument.uri),
+        ownerUuid: uriId(originArtifactDocument.owner),
+        contentHash: originArtifactDocument.content_hash,
+        mime: originArtifactDocument.mime,
+        byteSize: originArtifactDocument.byte_size,
+        label: originArtifactDocument.label,
+        rnetSchema: originArtifactDocument.rnet_schema,
+        uploadedAt: new Date(originArtifactDocument.uploaded_at),
       });
-      const document = await originArtifactDocument(originArtifact, blobs);
+      const document = await toOriginArtifactDocument(originArtifact, blobs);
       return context.json(document, 201);
     },
   );
@@ -57,7 +85,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
       const originArtifact = await originArtifactService.getOriginArtifact(
         context.req.valid("param").id,
       );
-      const document = await originArtifactDocument(originArtifact, blobs);
+      const document = await toOriginArtifactDocument(originArtifact, blobs);
       return context.json(document);
     },
   );
@@ -80,7 +108,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   return router;
 }
 
-async function originArtifactDocument(
+async function toOriginArtifactDocument(
   originArtifact: DbOriginArtifact,
   blobs: BlobStore,
 ): Promise<OriginArtifact> {

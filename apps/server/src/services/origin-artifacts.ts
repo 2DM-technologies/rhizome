@@ -1,4 +1,3 @@
-import { RNET_SCHEMA_VERSION } from "@rnet/types";
 import { eq } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
@@ -16,6 +15,8 @@ export interface CreateOriginArtifactInput {
   mime: string;
   byteSize: number;
   label?: string;
+  rnetSchema: string;
+  uploadedAt: Date;
 }
 
 export class OriginArtifactService {
@@ -38,7 +39,8 @@ export class OriginArtifactService {
         mime: input.mime,
         byteSize: input.byteSize,
         label: input.label,
-        rnetSchema: RNET_SCHEMA_VERSION,
+        rnetSchema: input.rnetSchema,
+        uploadedAt: input.uploadedAt,
       })
       .returning();
     if (!originArtifact) throw new Error("Origin artifact metadata was not stored");

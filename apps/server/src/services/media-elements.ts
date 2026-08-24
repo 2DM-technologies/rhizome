@@ -1,4 +1,3 @@
-import { RNET_SCHEMA_VERSION } from "@rnet/types";
 import { eq } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
@@ -16,6 +15,8 @@ export interface CreateMediaElementInput {
   kind: MediaElementKind;
   mime: string;
   byteSize: number;
+  rnetSchema: string;
+  createdAt: Date;
   createdBy: string;
 }
 
@@ -38,7 +39,8 @@ export class MediaElementService {
         kind: input.kind,
         mime: input.mime,
         byteSize: input.byteSize,
-        rnetSchema: RNET_SCHEMA_VERSION,
+        rnetSchema: input.rnetSchema,
+        createdAt: input.createdAt,
         createdBy: input.createdBy,
       })
       .returning();

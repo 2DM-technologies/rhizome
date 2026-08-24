@@ -64,13 +64,12 @@ export class VibeService {
   async createVibe(input: Pick<Vibe, "title" | "pull" | "grants">): Promise<Vibe> {
     await this.access.assertAuthenticated();
     if (this.actor.kind !== "user") throw grantMissing("owner");
-    const ownerUuid = this.actor.uuid;
-    const vibeUuid = uuidv7();
+    const candidateVibeUuid = uuidv7();
     const candidateVibe = {
       rnet_schema: RNET_SCHEMA_VERSION,
-      uri: `rnet://vibe/${vibeUuid}`,
+      uri: `rnet://vibe/${candidateVibeUuid}`,
       title: input.title,
-      owner: `rnet://id/${ownerUuid}`,
+      owner: `rnet://id/${this.actor.uuid}`,
       objects: [],
       ...(input.pull === undefined ? {} : { pull: input.pull }),
       ...(input.grants === undefined ? {} : { grants: input.grants }),
@@ -78,6 +77,7 @@ export class VibeService {
     const validation = validateSchema("vibe", candidateVibe);
     if (!validation.ok) throw schemaProblem(validation.issues);
     const vibeDocument = validation.value;
+    const vibeUuid = uriId(vibeDocument.uri);
     await this.assertGrantSubjects(vibeDocument.grants ?? []);
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
@@ -86,7 +86,7 @@ export class VibeService {
         .values({
           uuid: vibeUuid,
           title: vibeDocument.title,
-          ownerUuid,
+          ownerUuid: uriId(vibeDocument.owner),
           rnetSchema: vibeDocument.rnet_schema,
           pullConfig: vibeDocument.pull,
           inferred: vibeDocument.inferred ?? {},
@@ -132,6 +132,7 @@ export class VibeService {
     const validation = validateSchema("vibe", candidateVibe);
     if (!validation.ok) throw schemaProblem(validation.issues);
     const vibeDocument = validation.value;
+    const validatedVibeUuid = uriId(vibeDocument.uri);
     await this.assertGrantSubjects(vibeDocument.grants ?? []);
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
@@ -142,14 +143,14 @@ export class VibeService {
           pullConfig: vibeDocument.pull,
           rev: sql`${vibes.rev} + 1`,
         })
-        .where(eq(vibes.uuid, vibeUuid))
+        .where(eq(vibes.uuid, validatedVibeUuid))
         .returning();
       if (!vibeRecord) throw notFound("Vibe");
       if (patch.grants !== undefined) {
         const existingGrants = await transaction
           .select()
           .from(grants)
-          .where(eq(grants.vibeUuid, vibeUuid));
+          .where(eq(grants.vibeUuid, validatedVibeUuid));
         const nextGrants = new Map(
           (vibeDocument.grants ?? []).map((grant) => [grant.subject, grant]),
         );
@@ -164,19 +165,29 @@ export class VibeService {
                 revokedAt: null,
                 ...(existingGrant.revokedAt ? { grantedAt: now } : {}),
               })
-              .where(and(eq(grants.vibeUuid, vibeUuid), eq(grants.subject, existingGrant.subject)));
+              .where(
+                and(
+                  eq(grants.vibeUuid, validatedVibeUuid),
+                  eq(grants.subject, existingGrant.subject),
+                ),
+              );
             nextGrants.delete(existingGrant.subject);
           } else if (!existingGrant.revokedAt) {
             await transaction
               .update(grants)
               .set({ revokedAt: now })
-              .where(and(eq(grants.vibeUuid, vibeUuid), eq(grants.subject, existingGrant.subject)));
+              .where(
+                and(
+                  eq(grants.vibeUuid, validatedVibeUuid),
+                  eq(grants.subject, existingGrant.subject),
+                ),
+              );
           }
         }
         if (nextGrants.size) {
           await transaction.insert(grants).values(
             [...nextGrants.values()].map((grant) => ({
-              vibeUuid,
+              vibeUuid: validatedVibeUuid,
               subject: grant.subject,
               scopes: grant.scope,
             })),
@@ -184,7 +195,7 @@ export class VibeService {
         }
       }
       await transaction.insert(vibeRevisions).values({
-        vibeUuid,
+        vibeUuid: validatedVibeUuid,
         rev: vibeRecord.rev,
         actor: this.actor.subject,
         snapshot: snapshotVibe(vibeRecord, vibeDocument.grants ?? []),
