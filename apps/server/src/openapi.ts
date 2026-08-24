@@ -7,7 +7,7 @@ import {
   type OpenApiRouteContract,
   type UnvalidatedContractResponse,
 } from "./routes/contracts.ts";
-import type { RegisteredRnetRoute } from "./routes/rnet-router.ts";
+import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 
 type JsonObject = Record<string, unknown>;
 type OpenApiSchema = boolean | JsonObject;
@@ -30,7 +30,7 @@ const SCHEMA_COMPONENTS = Object.fromEntries(
   ]),
 );
 
-export function createOpenApiDocument(routes: readonly RegisteredRnetRoute[]) {
+export function createOpenApiDocument(routes: readonly RegisteredRhizomeRoute[]) {
   const paths: Record<string, Record<string, unknown>> = {};
   const operationIds = new Set<string>();
 

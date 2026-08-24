@@ -15,7 +15,7 @@ import {
   rnetDocument,
   type ContractValue,
 } from "./contracts.ts";
-import { createRnetRouter } from "./rnet-router.ts";
+import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const VibeWritableProperties = {
   title: vibeSchema.properties.title,
@@ -58,7 +58,7 @@ const VibeDocumentSchema = rnetDocument("vibe");
 const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes");
 const MediaObjectCollectionSchema = collectionOf(rnetDocument("media-object"), "mediaObjects");
 export function createVibeRoutes(db: Database) {
-  const router = createRnetRouter();
+  const router = createRhizomeRouter();
 
   router.get(
     "/",

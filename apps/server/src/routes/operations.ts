@@ -2,7 +2,7 @@ import type { Database } from "../db/index.ts";
 import { OperationKindEnum, OperationStatusEnum } from "../db/models/operation.ts";
 import { OperationsService } from "../services/operation-service.ts";
 import { ProblemSchema, RecordIdParamsSchema, jsonSchema } from "./contracts.ts";
-import { createRnetRouter } from "./rnet-router.ts";
+import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const OperationDocumentSchema = jsonSchema({
   type: "object",
@@ -21,7 +21,7 @@ const OperationDocumentSchema = jsonSchema({
 });
 
 export function createOperationRoutes(db: Database) {
-  const router = createRnetRouter();
+  const router = createRhizomeRouter();
 
   router.get(
     "/:id",

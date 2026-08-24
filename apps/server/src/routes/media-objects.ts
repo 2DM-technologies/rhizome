@@ -16,7 +16,7 @@ import {
 } from "./contracts.ts";
 import { requestMime } from "./http.ts";
 import { CreateMediaObjectsRequestSchema } from "./media-object-contracts.ts";
-import { createRnetRouter } from "./rnet-router.ts";
+import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const MediaObjectDocumentSchema = rnetDocument("media-object");
 const MediaObjectCollectionSchema = collectionOf(MediaObjectDocumentSchema, "mediaObjects");
@@ -37,7 +37,7 @@ const SetMediaObjectInferredRequestSchema = jsonSchema({
 });
 
 export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
-  const router = createRnetRouter();
+  const router = createRhizomeRouter();
 
   router.post(
     "/",

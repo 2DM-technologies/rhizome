@@ -1,17 +1,17 @@
 import { Hono, type Handler, type MiddlewareHandler } from "hono";
 
 import {
-  rnetRoute,
+  rhizomeRoute,
   type ContractRequest,
   type ContractResponses,
   type OpenApiRouteContract,
-  type RnetRouteHandler,
+  type RhizomeRouteHandler,
   type RouteAuth,
   type RouteContract,
 } from "./contracts.ts";
 import type { AppEnvironment } from "./types.ts";
 
-export interface RegisteredRnetRoute {
+export interface RegisteredRhizomeRoute {
   contract: OpenApiRouteContract;
   method: string;
   path: string;
@@ -25,12 +25,12 @@ type RegisterRoute = <
 >(
   path: Path,
   contract: RouteContract<Auth, Request, Responses>,
-  handler: RnetRouteHandler<Auth, Request, Path>,
+  handler: RhizomeRouteHandler<Auth, Request, Path>,
 ) => void;
 
-export interface RnetRouter {
+export interface RhizomeRouter {
   readonly hono: Hono<AppEnvironment>;
-  readonly routes: RegisteredRnetRoute[];
+  readonly routes: RegisteredRhizomeRoute[];
   readonly delete: RegisterRoute;
   readonly get: RegisterRoute;
   readonly patch: RegisterRoute;
@@ -38,15 +38,15 @@ export interface RnetRouter {
   readonly put: RegisterRoute;
 }
 
-export function createRnetRouter(): RnetRouter {
+export function createRhizomeRouter(): RhizomeRouter {
   const hono = new Hono<AppEnvironment>();
-  const routes: RegisteredRnetRoute[] = [];
+  const routes: RegisteredRhizomeRoute[] = [];
 
   function register(method: string): RegisterRoute {
     return (path, contract, handler) => {
       routes.push({ method, path, contract: contract as OpenApiRouteContract });
       const handlers = [
-        ...(rnetRoute(contract) as unknown as MiddlewareHandler<AppEnvironment>[]),
+        ...(rhizomeRoute(contract) as unknown as MiddlewareHandler<AppEnvironment>[]),
         handler as unknown as Handler<AppEnvironment>,
       ];
       hono.on([method], [path], ...handlers);

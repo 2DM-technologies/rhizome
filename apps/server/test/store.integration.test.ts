@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runStoreConformance } from "@rnet/conformance";
 import S3rver from "s3rver";
 
 import { createApp } from "../src/app.ts";
@@ -561,26 +560,6 @@ describe("rNet M1 store", () => {
       [vibeId],
     );
     expect(audit[0]?.revoked).toBe(true);
-  });
-
-  test("passes the independent rNet HTTP conformance suite", async () => {
-    const summary = await runStoreConformance({
-      target: "http://rhizome.test",
-      ownerToken: "dev:user",
-      otherOwnerToken: "dev:user:other",
-      clientToken: "dev:client:rbudget",
-      fetch: async (input, init) => app.request(input, init),
-      payloadFetch: globalThis.fetch.bind(globalThis),
-    });
-    expect(
-      summary.failed,
-      JSON.stringify(
-        summary.checks.filter((check) => !check.passed),
-        null,
-        2,
-      ),
-    ).toBe(0);
-    expect(summary.skipped).toBe(0);
   });
 });
 

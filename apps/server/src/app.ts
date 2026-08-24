@@ -13,7 +13,7 @@ import { createMediaElementRoutes } from "./routes/media-elements.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
-import type { RegisteredRnetRoute } from "./routes/rnet-router.ts";
+import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
 
@@ -84,7 +84,7 @@ export function createApp({ config, db, blobs }: AppDependencies) {
     { basePath: "/rnet/v0/origins", router: createOriginRoutes(db, blobs) },
     { basePath: "/rnet/v0/operations", router: createOperationRoutes(db) },
   ];
-  const openApiRoutes: RegisteredRnetRoute[] = [];
+  const openApiRoutes: RegisteredRhizomeRoute[] = [];
   for (const { basePath, router } of routeGroups) {
     app.route(basePath, router.hono);
     openApiRoutes.push(

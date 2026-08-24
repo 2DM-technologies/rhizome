@@ -15,7 +15,7 @@ import {
   rnetDocument,
 } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
-import { createRnetRouter } from "./rnet-router.ts";
+import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const OriginArtifactDocumentSchema = rnetDocument("origin-artifact");
 const OriginArtifactMimeSchema = jsonSchemaValue<OriginArtifact["mime"]>(
@@ -29,7 +29,7 @@ const OriginArtifactUploadHeadersSchema = jsonObjectSchema(
 );
 
 export function createOriginRoutes(db: Database, blobs: BlobStore) {
-  const router = createRnetRouter();
+  const router = createRhizomeRouter();
 
   router.post(
     "/",

@@ -22,7 +22,6 @@
     "check": "bun run format:check && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
-    "@rnet/conformance": "file:../rnet/packages/conformance",
     "@rnet/types": "file:../rnet/packages/types"
   },
   "devDependencies": {

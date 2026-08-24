@@ -25,6 +25,6 @@ bun check
 
 ## OpenAPI
 
-The server serves its OpenAPI 3.1 document at `/rnet/v0/openapi.json`. The document is derived from the same `rnetRoute` request and response schemas used for runtime validation.
+The server serves its OpenAPI 3.1 document at `/rnet/v0/openapi.json`. The document is derived from the same `rhizomeRoute` request and response schemas used for runtime validation.
 
 `bun check` verifies the document has no unresolved external schema references and that `openapi-typescript` can generate a typed client contract from it in memory. Frontend API types will be generated directly into `apps/host` when frontend implementation begins.

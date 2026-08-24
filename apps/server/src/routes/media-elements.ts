@@ -15,7 +15,7 @@ import {
   rnetDocument,
 } from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
-import { createRnetRouter } from "./rnet-router.ts";
+import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const MediaElementDocumentSchema = rnetDocument("media-element");
 const MediaElementMimeSchema = jsonSchemaValue<MediaElement["mime"]>(
@@ -29,7 +29,7 @@ const MediaElementUploadHeadersSchema = jsonObjectSchema(
 );
 
 export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
-  const router = createRnetRouter();
+  const router = createRhizomeRouter();
 
   router.post(
     "/",

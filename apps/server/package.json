@@ -22,7 +22,6 @@
     "uuid": "14.0.2"
   },
   "devDependencies": {
-    "@rnet/conformance": "file:../../../rnet/packages/conformance",
     "@types/s3rver": "3.7.4",
     "drizzle-kit": "0.31.10",
     "s3rver": "3.7.1"

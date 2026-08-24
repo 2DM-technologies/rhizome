@@ -111,7 +111,7 @@ export type RouteEnvironment<Auth extends RouteAuth | undefined> = {
   Variables: Omit<AppVariables, "actor"> & { actor: RouteActor<Auth> };
 };
 
-export type RnetRouteHandler<
+export type RhizomeRouteHandler<
   Auth extends RouteAuth | undefined,
   Request extends ContractRequest | undefined,
   Path extends string,
@@ -312,7 +312,7 @@ export type OpenApiRouteContract = RouteContract<
   ContractResponses
 >;
 
-export function rnetRoute<
+export function rhizomeRoute<
   Request extends ContractRequest | undefined,
   const Responses extends ContractResponses,
   const Auth extends RouteAuth | undefined = undefined,

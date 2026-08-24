@@ -5,7 +5,6 @@
     "": {
       "name": "rhizome",
       "dependencies": {
-        "@rnet/conformance": "file:../rnet/packages/conformance",
         "@rnet/types": "file:../rnet/packages/types",
       },
       "devDependencies": {
@@ -32,7 +31,6 @@
         "uuid": "14.0.2",
       },
       "devDependencies": {
-        "@rnet/conformance": "file:../../../rnet/packages/conformance",
         "@types/s3rver": "3.7.4",
         "drizzle-kit": "0.31.10",
         "s3rver": "3.7.1",
@@ -155,8 +153,6 @@
     "@redocly/openapi-core": ["@redocly/openapi-core@1.34.19", "", { "dependencies": { "@redocly/ajv": "8.11.2", "@redocly/config": "0.22.0", "colorette": "1.4.0", "https-proxy-agent": "7.0.6", "js-levenshtein": "1.1.6", "js-yaml": "4.3.1", "minimatch": "5.1.9", "pluralize": "8.0.0", "yaml-ast-parser": "0.0.43" } }, "sha512-o/0VgsBXgwcY1lyeqcVtSGdTQAPnVggo0fbFVPlxl5XVDKUcVH0OLRqt3CbkwByT5FU305E0iE0O7MzThjDblw=="],
 
     "@rhizome/server": ["@rhizome/server@workspace:apps/server"],
-
-    "@rnet/conformance": ["@rnet/conformance@file:../rnet/packages/conformance", { "peerDependencies": { "@rnet/types": "0.1.0" }, "optionalPeers": ["@rnet/types"], "bin": { "rnet-conformance": "./src/cli.ts" } }],
 
     "@rnet/types": ["@rnet/types@file:../rnet/packages/types", { "dependencies": { "ajv": "^8.20.0", "ajv-formats": "^3.0.1", "json-schema-to-ts": "^3.1.1" } }],
 
@@ -482,11 +478,7 @@
 
     "@esbuild-kit/core-utils/esbuild": ["esbuild@0.18.20", "", { "optionalDependencies": { "@esbuild/android-arm": "0.18.20", "@esbuild/android-arm64": "0.18.20", "@esbuild/android-x64": "0.18.20", "@esbuild/darwin-arm64": "0.18.20", "@esbuild/darwin-x64": "0.18.20", "@esbuild/freebsd-arm64": "0.18.20", "@esbuild/freebsd-x64": "0.18.20", "@esbuild/linux-arm": "0.18.20", "@esbuild/linux-arm64": "0.18.20", "@esbuild/linux-ia32": "0.18.20", "@esbuild/linux-loong64": "0.18.20", "@esbuild/linux-mips64el": "0.18.20", "@esbuild/linux-ppc64": "0.18.20", "@esbuild/linux-riscv64": "0.18.20", "@esbuild/linux-s390x": "0.18.20", "@esbuild/linux-x64": "0.18.20", "@esbuild/netbsd-x64": "0.18.20", "@esbuild/openbsd-x64": "0.18.20", "@esbuild/sunos-x64": "0.18.20", "@esbuild/win32-arm64": "0.18.20", "@esbuild/win32-ia32": "0.18.20", "@esbuild/win32-x64": "0.18.20" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-ceqxoedUrcayh7Y7ZX6NdbbDzGROiyVBgC4PriJThBKSVPWnnFHZAkfI1lJT8QFkOwH4qOS2SJkS4wvpGl8BpA=="],
 
-    "@rhizome/server/@rnet/conformance": ["@rnet/conformance@file:../rnet/packages/conformance", { "peerDependencies": { "@rnet/types": "0.1.0" }, "optionalPeers": ["@rnet/types"], "bin": { "rnet-conformance": "./src/cli.ts" } }],
-
     "@rhizome/server/@rnet/types": ["@rnet/types@file:../rnet/packages/types", { "dependencies": { "ajv": "^8.20.0", "ajv-formats": "^3.0.1", "json-schema-to-ts": "^3.1.1" } }],
-
-    "@rnet/conformance/@rnet/types": ["@rnet/types@file:../rnet/packages/types", { "dependencies": { "ajv": "^8.20.0", "ajv-formats": "^3.0.1", "json-schema-to-ts": "^3.1.1" } }],
 
     "chalk/supports-color": ["supports-color@5.5.0", "", { "dependencies": { "has-flag": "^3.0.0" } }, "sha512-QjVjwdXIt408MIiAqCX4oUKsgU2EqAGzs2Ppkm4aQYbjm+ZEWEcW4SfFNTr4uMNZma0ey4f5lgLrkB0aX0QMow=="],
 
@@ -545,8 +537,6 @@
     "@esbuild-kit/core-utils/esbuild/@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.18.20", "", { "os": "win32", "cpu": "ia32" }, "sha512-Wv7QBi3ID/rROT08SABTS7eV4hX26sVduqDOTe1MvGMjNd3EjOz4b7zeexIR62GTIEKrfJXKL9LFxTYgkyeu7g=="],
 
     "@esbuild-kit/core-utils/esbuild/@esbuild/win32-x64": ["@esbuild/win32-x64@0.18.20", "", { "os": "win32", "cpu": "x64" }, "sha512-kTdfRcSiDfQca/y9QIkng02avJ+NCaQvrMejlsB3RRv5sE9rRoeBPISaZpKxHELzRxZyLvNts1P27W3wV+8geQ=="],
-
-    "@rhizome/server/@rnet/conformance/@rnet/types": ["@rnet/types@file:../rnet/packages/types", { "dependencies": { "ajv": "^8.20.0", "ajv-formats": "^3.0.1", "json-schema-to-ts": "^3.1.1" } }],
 
     "color/color-convert/color-name": ["color-name@2.1.1", "", {}, "sha512-p2FdgwVx1a9yWBHP2wI0VgShkDpgN4kZISkxdNipGBJWpa5G6b04OINlVWCyJj0JmfvcPrgqt95E9k8yvaOJFg=="],
 
