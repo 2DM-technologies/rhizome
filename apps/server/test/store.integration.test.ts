@@ -376,6 +376,40 @@ describe("rNet M1 store", () => {
     ).toBe("coffee");
   });
 
+  test("creates a shared upload once across batched media objects", async () => {
+    const response = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            elements: [{ upload: "shared", kind: "text", mime: "text/plain" }],
+            properties: { title: "First reference" },
+          },
+          {
+            type: "note",
+            elements: [{ upload: "shared", kind: "text", mime: "text/plain" }],
+            properties: { title: "Second reference" },
+          },
+        ],
+      },
+      uploads: { shared: { bytes: "Shared element", mime: "text/plain" } },
+    });
+
+    expect(response.status).toBe(201);
+    const mediaObjects = (await response.json()).mediaObjects;
+    expect(mediaObjects).toHaveLength(2);
+    expect(mediaObjects[0].elements[0]).toBe(mediaObjects[1].elements[0]);
+    const mediaElementUuid = mediaObjects[0].elements[0].split("/").at(-1);
+    const [stored] = await client.unsafe(
+      "select count(*)::int as elements from media_elements where uuid = $1",
+      [mediaElementUuid],
+    );
+    expect(stored?.elements).toBe(1);
+  });
+
   test("does not treat same-owner record identifiers as dMachine capabilities", async () => {
     const privateVibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
