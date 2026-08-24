@@ -105,6 +105,20 @@ describe("rNet M1 store", () => {
     const invalidPath = await request("/rnet/v0/elements/not-a-uuid", { headers: owner });
     expect(invalidPath.status).toBe(422);
     expect(invalidPath.headers.get("Content-Type")).toContain("application/problem+json");
+
+    const invalidUploadKind = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Kind": "executable" },
+      body: "echo nope",
+    });
+    expect(invalidUploadKind.status).toBe(422);
+
+    const missingUploadKind = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain" },
+      body: "missing kind",
+    });
+    expect(missingUploadKind.status).toBe(422);
   });
 
   test("creates a Vibe with a real dMachine grant", async () => {

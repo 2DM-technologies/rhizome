@@ -1,4 +1,3 @@
-import { validateSchema, type MediaElement } from "@rnet/types";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -25,15 +24,17 @@ export interface PendingMediaElementUpload {
   mime?: string;
 }
 
-export interface CreateMediaElementUpload extends PendingMediaElementUpload {
+export interface CreateMediaElementUpload {
+  bytes: Uint8Array;
+  mime: string;
+  kind: MediaElementKind;
   uuid?: string;
   contentHash?: string;
-  kind?: string;
 }
 
 interface CreatedMediaElementUpload {
   uuid: string;
-  kind: MediaElement["kind"];
+  kind: MediaElementKind;
   mime: string;
 }
 
@@ -47,7 +48,6 @@ export interface CreateMediaElementInput {
   ownerUuid: string;
   mediaElementUpload: CreateMediaElementUpload;
   transaction?: DatabaseTransaction;
-  validationPath?: string;
 }
 
 export class MediaElementsService {
@@ -176,15 +176,13 @@ export class MediaElementsService {
           mime,
         },
         transaction,
-        validationPath: pointer,
       });
-      const mediaElementUuid = uriId(mediaElement.uri);
       mediaElementUploads.createdMediaElementUploads.set(mediaElementReference.upload, {
-        uuid: mediaElementUuid,
+        uuid: mediaElement.uuid,
         kind: mediaElement.kind,
         mime: mediaElement.mime,
       });
-      mediaElementUuids.push(mediaElementUuid);
+      mediaElementUuids.push(mediaElement.uuid);
     }
 
     return mediaElementUuids;
@@ -207,37 +205,17 @@ export class MediaElementsService {
     ownerUuid,
     mediaElementUpload,
     transaction,
-    validationPath,
-  }: CreateMediaElementInput): Promise<MediaElement> {
+  }: CreateMediaElementInput): Promise<DbMediaElement> {
     if (!this.blobs) throw new Error("Blob storage is required to create a media element");
     const mediaElementUuid = mediaElementUpload.uuid ?? uuidv7();
     const contentHashValue =
       mediaElementUpload.contentHash ?? (await contentHash(mediaElementUpload.bytes));
     const createdAt = new Date();
-    const candidateMediaElement = {
-      rnet_schema: RNET_SCHEMA_VERSION,
-      uri: `rnet://element/${mediaElementUuid}`,
-      owner: `rnet://id/${ownerUuid}`,
-      content_hash: contentHashValue,
-      kind: mediaElementUpload.kind,
-      mime: mediaElementUpload.mime,
-      bytes: await this.blobs.signedUrl("elements", contentHashValue),
-      byte_size: mediaElementUpload.bytes.byteLength,
-      created_at: createdAt.toISOString(),
-    };
-    const validation = validateSchema("media-element", candidateMediaElement);
-    if (!validation.ok) throw schemaProblem(validation.issues, validationPath);
-    const mediaElement = {
-      ...candidateMediaElement,
-      rnet_schema: validation.value.rnet_schema,
-      kind: validation.value.kind,
-      mime: validation.value.mime,
-    } satisfies MediaElement;
     await this.blobs.put(
       "elements",
-      mediaElement.content_hash,
+      contentHashValue,
       mediaElementUpload.bytes,
-      mediaElement.mime,
+      mediaElementUpload.mime,
     );
 
     const database = transaction ?? this.db;
@@ -245,14 +223,15 @@ export class MediaElementsService {
       uuid: mediaElementUuid,
       ownerUuid,
       contentHash: contentHashValue,
-      kind: mediaElement.kind as MediaElementKind,
-      mime: mediaElement.mime,
+      kind: mediaElementUpload.kind,
+      mime: mediaElementUpload.mime,
       byteSize: mediaElementUpload.bytes.byteLength,
       rnetSchema: RNET_SCHEMA_VERSION,
       createdAt,
       createdBy: this.actor.subject,
     };
-    await database.insert(mediaElements).values(newMediaElement);
+    const [mediaElement] = await database.insert(mediaElements).values(newMediaElement).returning();
+    if (!mediaElement) throw new Error("Media element insert did not return a row");
     return mediaElement;
   }
 

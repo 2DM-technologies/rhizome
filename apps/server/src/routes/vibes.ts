@@ -6,6 +6,8 @@ import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
 import { VibesService } from "../services/vibe-service.ts";
+import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
+import { serializeVibe } from "../serializers/vibe-serializer.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -65,7 +67,8 @@ export function createVibeRoutes(db: Database) {
     rnetRoute({ operationId: "listVibes", responses: { 200: VibeCollectionSchema } }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
-      const vibes = await vibesService.listVibes();
+      const vibeAggregates = await vibesService.listVibes();
+      const vibes = vibeAggregates.map(serializeVibe);
       return context.json({ vibes });
     },
   );
@@ -84,7 +87,8 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
-      const vibe = await vibesService.createVibe(context.req.valid("json"));
+      const vibeAggregate = await vibesService.createVibe(context.req.valid("json"));
+      const vibe = serializeVibe(vibeAggregate);
       return context.json(vibe, 201);
     },
   );
@@ -97,7 +101,8 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
-      const vibe = await vibesService.getVibe(context.req.valid("param").id);
+      const vibeAggregate = await vibesService.getVibe(context.req.valid("param").id);
+      const vibe = serializeVibe(vibeAggregate);
       return context.json(vibe);
     },
   );
@@ -116,10 +121,11 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
-      const vibe = await vibesService.updateVibe(
+      const vibeAggregate = await vibesService.updateVibe(
         context.req.valid("param").id,
         context.req.valid("json"),
       );
+      const vibe = serializeVibe(vibeAggregate);
       return context.json(vibe);
     },
   );
@@ -146,7 +152,10 @@ export function createVibeRoutes(db: Database) {
     }),
     async (context) => {
       const vibesService = new VibesService({ db, actor: context.get("actor") });
-      const mediaObjects = await vibesService.listMediaObjects(context.req.valid("param").id);
+      const mediaObjectAggregates = await vibesService.listMediaObjects(
+        context.req.valid("param").id,
+      );
+      const mediaObjects = mediaObjectAggregates.map(serializeMediaObject);
       return context.json({ mediaObjects });
     },
   );

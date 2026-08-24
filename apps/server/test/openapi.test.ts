@@ -41,6 +41,8 @@ describe("OpenAPI", () => {
     expect(serialized).toContain('"operationId":"createMediaObjects"');
     expect(serialized).toContain('"/rnet/v0/elements/{id}/bytes"');
     expect(serialized).toContain('"BearerAuth":{"type":"http","scheme":"bearer"}');
+    expect(serialized).toContain('"name":"x-rnet-kind","in":"header","required":true');
+    expect(serialized).toContain('"name":"x-rnet-label","in":"header","required":false');
     expect(serialized).not.toContain("https://rnet.network/schemas/0.1/");
   });
 

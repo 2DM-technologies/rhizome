@@ -6,6 +6,7 @@ import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
 import type { PendingMediaElementUpload } from "../services/media-element-service.ts";
 import { MediaObjectsService } from "../services/media-object-service.ts";
+import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -67,11 +68,12 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
         actor: context.get("actor"),
         blobs,
       });
-      const mediaObjects = await mediaObjectsService.createMediaObjects(
+      const mediaObjectAggregates = await mediaObjectsService.createMediaObjects(
         input.metadata.vibe,
         input.metadata.objects,
         pendingMediaElementUploads,
       );
+      const mediaObjects = mediaObjectAggregates.map(serializeMediaObject);
       return context.json({ mediaObjects }, 201);
     },
   );
@@ -85,7 +87,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     async (context) => {
       const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
       const result = await mediaObjectsService.getMediaObject(context.req.valid("param").id);
-      const mediaObject = result.document;
+      const mediaObject = serializeMediaObject(result.mediaObject);
       context.header("ETag", `"${result.userRev}"`);
       return context.json(mediaObject);
     },
@@ -125,7 +127,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
         expectedRevision,
         input.properties,
       );
-      const mediaObject = result.document;
+      const mediaObject = serializeMediaObject(result.mediaObject);
       context.header("ETag", `"${result.userRev}"`);
       return context.json(mediaObject);
     },
@@ -146,11 +148,12 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     async (context) => {
       const input = context.req.valid("json");
       const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
-      const mediaObject = await mediaObjectsService.setInferred(
+      const mediaObjectAggregate = await mediaObjectsService.setInferred(
         context.req.valid("param").id,
         input.task,
         input.entry,
       );
+      const mediaObject = serializeMediaObject(mediaObjectAggregate);
       return context.json(mediaObject);
     },
   );

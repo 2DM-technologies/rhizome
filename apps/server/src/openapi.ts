@@ -77,7 +77,10 @@ export function createOpenApiDocument(routes: readonly RegisteredRoute[]) {
 }
 
 function operation(contract: NonNullable<ReturnType<typeof routeContract>>): JsonObject {
-  const parameters = pathParameters(contract.request?.param);
+  const parameters = [
+    ...parametersFor(contract.request?.param, "path"),
+    ...parametersFor(contract.request?.header, "header"),
+  ];
   const requestBody = contract.request ? requestBodyFor(contract.request) : undefined;
   const responses: Record<string, unknown> = {};
 
@@ -104,7 +107,10 @@ function operation(contract: NonNullable<ReturnType<typeof routeContract>>): Jso
   };
 }
 
-function pathParameters(schema: ContractSchema<object> | undefined): JsonObject[] {
+function parametersFor(
+  schema: ContractSchema<object> | undefined,
+  location: "header" | "path",
+): JsonObject[] {
   if (!schema || typeof schema.document !== "object") return [];
   const document = schema.document as JsonObject;
   const properties = document.properties;
@@ -112,8 +118,9 @@ function pathParameters(schema: ContractSchema<object> | undefined): JsonObject[
 
   return Object.entries(properties).map(([name, property]) => ({
     name,
-    in: "path",
-    required: true,
+    in: location,
+    required:
+      location === "path" || (Array.isArray(document.required) && document.required.includes(name)),
     schema: schemaFor(property as JSONSchema),
   }));
 }

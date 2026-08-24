@@ -1,4 +1,4 @@
-import { validateMediaObject, type MediaObject } from "@rnet/types";
+import type { MediaObject } from "@rnet/types";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -23,6 +23,7 @@ import type { DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
+import type { MediaObjectAggregate } from "../serializers/media-object-serializer.ts";
 import { AccessService } from "./access-service.ts";
 import { MediaElementsService, type PendingMediaElementUpload } from "./media-element-service.ts";
 import { schemaProblem } from "./problems.ts";
@@ -37,7 +38,6 @@ type MediaObjectBlockSnapshot =
 interface MediaObjectBlockUpdate<Snapshot extends MediaObjectBlockSnapshot> {
   block: Exclude<MediaObjectRevisionBlock, "source">;
   buildSnapshot(currentMediaObject: DbMediaObject): Snapshot;
-  buildCandidate(currentMediaObject: DbMediaObject, snapshot: Snapshot): DbMediaObject;
   persist(
     transaction: DatabaseTransaction,
     currentMediaObject: DbMediaObject,
@@ -73,12 +73,14 @@ export class MediaObjectsService {
     return matchingMediaObjects;
   }
 
-  async getMediaObject(uuid: string): Promise<{ document: MediaObject; userRev: number }> {
+  async getMediaObject(
+    uuid: string,
+  ): Promise<{ mediaObject: MediaObjectAggregate; userRev: number }> {
     const mediaObjectRecord = await this.findById(uuid);
     if (!mediaObjectRecord) throw notFound("Object");
     await this.access.assertMediaObjectScope(mediaObjectRecord, GRANT_SCOPE.READ);
     return {
-      document: await this.toDocument(mediaObjectRecord),
+      mediaObject: await this.loadAggregate(mediaObjectRecord),
       userRev: mediaObjectRecord.userRev,
     };
   }
@@ -87,7 +89,7 @@ export class MediaObjectsService {
     vibe: string | undefined,
     mediaObjectInputs: CreateMediaObjectInput[],
     pendingMediaElementUploads: ReadonlyMap<string, PendingMediaElementUpload> = new Map(),
-  ): Promise<MediaObject[]> {
+  ): Promise<MediaObjectAggregate[]> {
     const vibeUuid = vibe ? uriId(vibe) : undefined;
     let targetVibe: DbVibe | undefined;
     if (this.actor.kind === "client") {
@@ -105,7 +107,7 @@ export class MediaObjectsService {
     );
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
-      const createdMediaObjects: MediaObject[] = [];
+      const createdMediaObjects: MediaObjectAggregate[] = [];
       if (vibeUuid) {
         await this.access.lockVibeScopeForWrite({
           transaction,
@@ -132,25 +134,36 @@ export class MediaObjectsService {
           transaction,
           validationPath: `/objects/${mediaObjectIndex}/elements`,
         });
-        const mediaObjectDocument = this.buildNewMediaObjectDocument({
+        const mediaObjectUuid = uuidv7();
+        const source = this.sourceForMediaObject(mediaObjectInput, mediaObjectIndex);
+        this.assertM1IngestPolicy(source);
+        const extensions = Object.fromEntries(
+          Object.entries(mediaObjectInput).filter(([key]) => key.startsWith("x-")),
+        );
+        const newMediaObject: NewDbMediaObject = {
+          uuid: mediaObjectUuid,
           ownerUuid,
-          input: mediaObjectInput,
-          index: mediaObjectIndex,
-          mediaElementUris: mediaElementUuids.map((uuid) => `rnet://element/${uuid}`),
-        });
-        await this.createMediaObject({
+          createdBy: this.actor.subject,
+          type: mediaObjectInput.type,
+          keys: mediaObjectInput.keys ?? {},
+          source,
+          inferred: {},
+          extensions,
+          rnetSchema: RNET_SCHEMA_VERSION,
+        };
+        const mediaObjectRecord = await this.createMediaObject({
           transaction,
-          mediaObjectDocument,
+          newMediaObject,
           vibeUuid,
           vibePosition:
             nextVibePosition === undefined ? undefined : nextVibePosition + mediaObjectIndex,
         });
         await this.setMediaObjectElements({
           transaction,
-          mediaObjectUuid: uriId(mediaObjectDocument.uri),
+          mediaObjectUuid,
           mediaElementUuids,
         });
-        createdMediaObjects.push(mediaObjectDocument);
+        createdMediaObjects.push({ mediaObject: mediaObjectRecord, mediaElementUuids });
       }
       this.mediaElementsService.assertAllUploadsUsed(mediaElementUploads);
       return createdMediaObjects;
@@ -161,7 +174,7 @@ export class MediaObjectsService {
     mediaObjectUuid: string,
     expectedRev: number,
     properties: Record<string, unknown>,
-  ): Promise<{ document: MediaObject; userRev: number }> {
+  ): Promise<{ mediaObject: MediaObjectAggregate; userRev: number }> {
     await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_USER);
     const updatedMediaObject = await this.updateMediaObjectBlock(
       mediaObjectUuid,
@@ -172,7 +185,6 @@ export class MediaObjectsService {
           properties,
           updated_at: new Date().toISOString(),
         }),
-        buildCandidate: (currentMediaObject, user) => ({ ...currentMediaObject, user }),
         persist: async (transaction, currentMediaObject, user) => {
           if (currentMediaObject.userRev !== expectedRev) {
             throw new Problem(
@@ -203,7 +215,7 @@ export class MediaObjectsService {
       },
     );
     return {
-      document: await this.toDocument(updatedMediaObject),
+      mediaObject: await this.loadAggregate(updatedMediaObject),
       userRev: updatedMediaObject.userRev,
     };
   }
@@ -212,7 +224,7 @@ export class MediaObjectsService {
     mediaObjectUuid: string,
     task: string,
     entry: NonNullable<MediaObject["inferred"]>[string],
-  ): Promise<MediaObject> {
+  ): Promise<MediaObjectAggregate> {
     await this.access.assertMediaObjectScope(mediaObjectUuid, GRANT_SCOPE.WRITE_INFERRED);
     if (task.includes(":")) {
       throw new Problem(
@@ -242,7 +254,6 @@ export class MediaObjectsService {
           ...currentMediaObject.inferred,
           [key]: entry,
         }),
-        buildCandidate: (currentMediaObject, inferred) => ({ ...currentMediaObject, inferred }),
         persist: async (transaction, _currentMediaObject, inferred) => {
           const [maxRevision] = await transaction
             .select({ max: sql<number>`coalesce(max(${mediaObjectRevisions.rev}), 0)::int` })
@@ -263,7 +274,7 @@ export class MediaObjectsService {
         },
       },
     );
-    return this.toDocument(updatedMediaObject);
+    return this.loadAggregate(updatedMediaObject);
   }
 
   private async updateMediaObjectBlock<Snapshot extends MediaObjectBlockSnapshot>(
@@ -279,95 +290,79 @@ export class MediaObjectsService {
       });
 
       const snapshot = update.buildSnapshot(currentMediaObject);
-      const candidateMediaObject = await this.toDocument(
-        update.buildCandidate(currentMediaObject, snapshot),
-        transaction,
-      );
-      const validation = validateMediaObject(candidateMediaObject);
-      if (!validation.ok) throw schemaProblem(validation.issues);
-      const validatedSnapshot = validation.value[update.block] as Snapshot | undefined;
-      if (!validatedSnapshot) throw new Error(`Validated object is missing ${update.block}`);
-
-      const persisted = await update.persist(transaction, currentMediaObject, validatedSnapshot);
+      const persisted = await update.persist(transaction, currentMediaObject, snapshot);
       await transaction.insert(mediaObjectRevisions).values({
         mediaObjectUuid,
         block: update.block,
         rev: persisted.revision,
-        snapshot: validatedSnapshot,
+        snapshot,
         actor: this.actor.subject,
       });
       return persisted.mediaObject;
     });
   }
 
-  async toDocument(
+  async loadAggregate(
     mediaObjectRecord: DbMediaObject,
     database: Database | DatabaseTransaction = this.db,
-  ): Promise<MediaObject> {
+  ): Promise<MediaObjectAggregate> {
     const mediaElementReferences: MediaElementReferenceRow[] = await database
       .select({ uuid: mediaObjectElements.mediaElementUuid })
       .from(mediaObjectElements)
       .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectRecord.uuid))
       .orderBy(asc(mediaObjectElements.position));
-    return this.toDocumentFromMediaElementUuids(
-      mediaObjectRecord,
-      mediaElementReferences.map((reference) => reference.uuid),
-    );
+    return {
+      mediaObject: mediaObjectRecord,
+      mediaElementUuids: mediaElementReferences.map((reference) => reference.uuid),
+    };
   }
 
   private async createMediaObject({
     transaction,
-    mediaObjectDocument,
+    newMediaObject,
     vibeUuid,
     vibePosition,
   }: {
     transaction: DatabaseTransaction;
-    mediaObjectDocument: MediaObject;
+    newMediaObject: NewDbMediaObject;
     vibeUuid?: string;
     vibePosition?: number;
-  }): Promise<void> {
-    await this.assertMediaObjectOrigins(transaction, mediaObjectDocument);
-
-    const mediaObjectUuid = uriId(mediaObjectDocument.uri);
-    const extensions = Object.fromEntries(
-      Object.entries(mediaObjectDocument).filter(([key]) => key.startsWith("x-")),
+  }): Promise<DbMediaObject> {
+    if (!newMediaObject.uuid) throw new Error("Media object UUID is required before persistence");
+    if (!newMediaObject.ownerUuid) throw new Error("Media object owner is required");
+    if (!newMediaObject.source) throw new Error("Media object source is required");
+    await this.assertMediaObjectOrigins(
+      transaction,
+      newMediaObject.ownerUuid,
+      newMediaObject.source,
     );
-    const newMediaObject: NewDbMediaObject = {
-      uuid: mediaObjectUuid,
-      ownerUuid: uriId(mediaObjectDocument.owner),
-      createdBy: this.actor.subject,
-      type: mediaObjectDocument.type,
-      keys: mediaObjectDocument.keys ?? {},
-      source: mediaObjectDocument.source,
-      user: mediaObjectDocument.user,
-      inferred: mediaObjectDocument.inferred ?? {},
-      extensions,
-      rnetSchema: mediaObjectDocument.rnet_schema,
-    };
-    await transaction.insert(mediaObjects).values(newMediaObject);
+
+    const [mediaObject] = await transaction.insert(mediaObjects).values(newMediaObject).returning();
+    if (!mediaObject) throw new Error("Media object insert did not return a row");
     await transaction
       .insert(mediaObjectOrigins)
       .values(
-        mediaObjectDocument.source.origins.map((uri) =>
+        newMediaObject.source.origins.map((uri) =>
           uri.startsWith("rnet://origin/")
-            ? { mediaObjectUuid, originArtifactUuid: uriId(uri) }
-            : { mediaObjectUuid, dmachineUuid: uriId(uri) },
+            ? { mediaObjectUuid: mediaObject.uuid, originArtifactUuid: uriId(uri) }
+            : { mediaObjectUuid: mediaObject.uuid, dmachineUuid: uriId(uri) },
         ),
       );
     await transaction.insert(mediaObjectRevisions).values({
-      mediaObjectUuid,
+      mediaObjectUuid: mediaObject.uuid,
       block: "source",
       rev: 1,
-      snapshot: mediaObjectDocument.source,
+      snapshot: newMediaObject.source,
       actor: this.actor.subject,
     });
     if (vibeUuid !== undefined && vibePosition !== undefined) {
       await transaction.insert(vibeMediaObjects).values({
         vibeUuid,
-        mediaObjectUuid,
+        mediaObjectUuid: mediaObject.uuid,
         position: vibePosition,
       });
     }
+    return mediaObject;
   }
 
   private async setMediaObjectElements({
@@ -389,56 +384,28 @@ export class MediaObjectsService {
     );
   }
 
-  private buildNewMediaObjectDocument({
-    ownerUuid,
-    input,
-    index,
-    mediaElementUris,
-  }: {
-    ownerUuid: string;
-    input: CreateMediaObjectInput;
-    index: number;
-    mediaElementUris: string[];
-  }): MediaObject {
-    const mediaObjectUuid = uuidv7();
-    const owner = `rnet://id/${ownerUuid}`;
-    const extensions = Object.fromEntries(
-      Object.entries(input).filter(([key]) => key.startsWith("x-")),
-    );
-    const candidateMediaObject = {
-      ...(this.actor.kind === "client"
-        ? {
-            type: input.type,
-            ...(input.keys === undefined ? {} : { keys: input.keys }),
-            ...extensions,
-          }
-        : input),
-      rnet_schema: RNET_SCHEMA_VERSION,
-      uri: `rnet://object/${mediaObjectUuid}`,
-      owner,
-      elements: mediaElementUris,
-      source:
-        this.actor.kind === "client"
-          ? {
-              ingest: { method: "authored", reproducible: false },
-              origins: [`rnet://client/${this.actor.uuid}`],
-              properties: "properties" in input ? (input.properties ?? {}) : {},
-            }
-          : "source" in input
-            ? input.source
-            : undefined,
-    };
-    const validation = validateMediaObject(candidateMediaObject);
-    if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}`);
-    if (
-      validation.value.user !== undefined ||
-      Object.keys(validation.value.inferred ?? {}).length
-    ) {
-      throw schemaProblem([
-        { instancePath: `/objects/${index}`, message: "creation cannot write user or inferred" },
-      ]);
+  private sourceForMediaObject(
+    input: CreateMediaObjectInput,
+    index: number,
+  ): MediaObject["source"] {
+    if (this.actor.kind === "client") {
+      if ("source" in input) {
+        throw schemaProblem([
+          { instancePath: `/objects/${index}/source`, message: "is store-authored for clients" },
+        ]);
+      }
+      return {
+        ingest: { method: "authored", reproducible: false },
+        origins: [`rnet://client/${this.actor.uuid}`],
+        properties: "properties" in input ? (input.properties ?? {}) : {},
+      };
     }
-    const ingest = validation.value.source.ingest;
+    if (this.actor.kind === "user" && "source" in input) return input.source;
+    throw grantMissing("owner");
+  }
+
+  private assertM1IngestPolicy(source: MediaObject["source"]): void {
+    const ingest = source.ingest;
     const allowedStamp =
       (ingest.method === "parser" && ingest.reproducible === true) ||
       (ingest.method === "authored" && ingest.reproducible === false);
@@ -450,18 +417,17 @@ export class MediaObjectsService {
         "M1 accepts parser/reproducible or authored/non-reproducible creation stamps",
       );
     }
-    return validation.value;
   }
 
   private async assertMediaObjectOrigins(
     transaction: DatabaseTransaction,
-    mediaObjectDocument: MediaObject,
+    ownerUuid: string,
+    source: MediaObject["source"],
   ): Promise<void> {
-    const ownerUuid = uriId(mediaObjectDocument.owner);
-    const originArtifactUuids = mediaObjectDocument.source.origins
+    const originArtifactUuids = source.origins
       .filter((uri) => uri.startsWith("rnet://origin/"))
       .map(uriId);
-    const dmachineUuids = mediaObjectDocument.source.origins
+    const dmachineUuids = source.origins
       .filter((uri) => !uri.startsWith("rnet://origin/"))
       .map(uriId);
     const originArtifactRows: { uuid: string; ownerUuid: string }[] = originArtifactUuids.length
@@ -488,7 +454,7 @@ export class MediaObjectsService {
     );
     const existingDmachineUuids = new Set(dmachineRows.map((dmachine) => dmachine.uuid));
 
-    for (const uri of mediaObjectDocument.source.origins) {
+    for (const uri of source.origins) {
       if (uri.startsWith("rnet://origin/")) {
         const originArtifact = originArtifactsByUuid.get(uriId(uri));
         if (!originArtifact) {
@@ -505,25 +471,5 @@ export class MediaObjectsService {
         }
       }
     }
-  }
-
-  private toDocumentFromMediaElementUuids(
-    mediaObjectRecord: DbMediaObject,
-    mediaElementUuids: string[],
-  ): MediaObject {
-    return {
-      rnet_schema: RNET_SCHEMA_VERSION,
-      uri: `rnet://object/${mediaObjectRecord.uuid}`,
-      owner: `rnet://id/${mediaObjectRecord.ownerUuid}`,
-      type: mediaObjectRecord.type,
-      elements: mediaElementUuids.map((uuid) => `rnet://element/${uuid}`),
-      ...(Object.keys(mediaObjectRecord.keys).length ? { keys: mediaObjectRecord.keys } : {}),
-      source: mediaObjectRecord.source,
-      ...(mediaObjectRecord.user ? { user: mediaObjectRecord.user } : {}),
-      ...(Object.keys(mediaObjectRecord.inferred).length
-        ? { inferred: mediaObjectRecord.inferred }
-        : {}),
-      ...mediaObjectRecord.extensions,
-    } as MediaObject;
   }
 }

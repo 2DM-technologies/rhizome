@@ -43,6 +43,7 @@ type ContractRequest = Readonly<{
     contentType: string;
     document: JsonSchemaDocument;
   }>;
+  header?: ContractSchema<object>;
   json?: ContractSchema<object>;
   multipart?: ContractSchema<object>;
   param?: ContractSchema<object>;
@@ -62,6 +63,13 @@ export type RouteContract<
 
 export type ContractValue<Schema> = Schema extends ContractSchema<infer Value> ? Value : never;
 
+type ObjectContractValue<
+  Properties extends Readonly<Record<string, ContractSchema<unknown>>>,
+  Required extends readonly (keyof Properties)[],
+> = { [Key in Required[number]]: ContractValue<Properties[Key]> } & {
+  [Key in Exclude<keyof Properties, Required[number]>]?: ContractValue<Properties[Key]>;
+};
+
 type ContractTargets<Request extends ContractRequest> = (Request extends { json: infer Schema }
   ? { json: ContractValue<Schema> }
   : object) &
@@ -73,6 +81,7 @@ type ContractTargets<Request extends ContractRequest> = (Request extends { json:
         };
       }
     : object) &
+  (Request extends { header: infer Schema } ? { header: ContractValue<Schema> } : object) &
   (Request extends { param: infer Schema } ? { param: ContractValue<Schema> } : object);
 
 type ContractInput<Request extends ContractRequest | undefined> = Request extends ContractRequest
@@ -137,6 +146,10 @@ export function jsonSchema<const Schema extends JSONSchema>(
   document: Schema,
 ): ContractSchema<JsonSchemaValue<Schema>>;
 export function jsonSchema(document: JSONSchema): ContractSchema<unknown> {
+  return compileJsonSchema(document);
+}
+
+function compileJsonSchema(document: JsonSchemaDocument): ContractSchema<unknown> {
   const validate = ajv.compile(document);
   return {
     document,
@@ -144,6 +157,53 @@ export function jsonSchema(document: JSONSchema): ContractSchema<unknown> {
       return validate(value)
         ? { ok: true, value }
         : { ok: false, issues: validationIssues(validate.errors) };
+    },
+  };
+}
+
+export function jsonSchemaValue<Value>(document: JsonSchemaDocument): ContractSchema<Value> {
+  return compileJsonSchema(document) as ContractSchema<Value>;
+}
+
+export function jsonObjectSchema<
+  const Properties extends Readonly<Record<string, ContractSchema<unknown>>>,
+  const Required extends readonly (keyof Properties)[],
+>(
+  properties: Properties,
+  required: Required,
+): ContractSchema<ObjectContractValue<Properties, Required>> {
+  const document: JsonSchemaDocument = {
+    type: "object",
+    required: required as readonly string[],
+    properties: Object.fromEntries(
+      Object.entries(properties).map(([name, property]) => [name, property.document]),
+    ),
+    additionalProperties: false,
+  };
+  return compileJsonSchema(document) as ContractSchema<ObjectContractValue<Properties, Required>>;
+}
+
+export function transformSchema<Value>(
+  schema: ContractSchema<Value>,
+  transform: (value: unknown) => unknown,
+): ContractSchema<Value> {
+  return {
+    document: schema.document,
+    validate(value, actor) {
+      return schema.validate(transform(value), actor);
+    },
+  };
+}
+
+export function refineSchema<Value>(
+  schema: ContractSchema<Value>,
+  refine: (value: Value, actor?: Actor) => ValidationResult<Value>,
+): ContractSchema<Value> {
+  return {
+    document: schema.document,
+    validate(value, actor) {
+      const validation = schema.validate(value, actor);
+      return validation.ok ? refine(validation.value, actor) : validation;
     },
   };
 }
@@ -296,6 +356,12 @@ export function rnetRoute<
         if (!validation.ok) throw schemaProblem(validation.issues);
         context.req.addValidatedData("param", validation.value);
       }
+      if (contract.request?.header) {
+        const headerValues = contractHeaderValues(context.req.header(), contract.request.header);
+        const validation = contract.request.header.validate(headerValues, actor);
+        if (!validation.ok) throw schemaProblem(validation.issues);
+        context.req.addValidatedData("header", validation.value);
+      }
       if (contract.request?.json) {
         const body = await context.req.json().catch(() => {
           throw new Problem(
@@ -376,6 +442,21 @@ export function rnetRoute<
     value: contract as OpenApiRouteContract,
   });
   return middleware;
+}
+
+function contractHeaderValues(
+  requestHeaders: Record<string, string>,
+  schema: ContractSchema<object>,
+): Record<string, string> {
+  if (typeof schema.document !== "object") return {};
+  const properties = schema.document.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return {};
+  const values: Record<string, string> = {};
+  for (const name of Object.keys(properties)) {
+    const value = requestHeaders[name.toLowerCase()];
+    if (value !== undefined) values[name] = value;
+  }
+  return values;
 }
 
 function validationIssues(errors: ErrorObject[] | null | undefined): ValidationIssue[] {

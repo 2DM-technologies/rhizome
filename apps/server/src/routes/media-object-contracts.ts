@@ -1,6 +1,40 @@
-import { mediaElementSchema, mediaObjectSchema, vibeSchema } from "@rnet/types";
+import {
+  mediaElementSchema,
+  mediaObjectSchema,
+  validateMediaObjectProperties,
+  vibeSchema,
+  type MediaElement,
+  type MediaObject,
+  type ValidationIssue,
+} from "@rnet/types";
 
-import { jsonSchema, jsonSchemaByActor, type ContractValue } from "./contracts.ts";
+import {
+  jsonSchemaByActor,
+  jsonSchemaValue,
+  refineSchema,
+  type ContractValue,
+} from "./contracts.ts";
+
+type MediaElementUploadReference = {
+  upload: string;
+  kind: MediaElement["kind"];
+  mime: MediaElement["mime"];
+};
+type CreateMediaObjectBase = Pick<MediaObject, "keys" | "type"> & {
+  elements?: (MediaObject["elements"][number] | MediaElementUploadReference)[];
+};
+type OwnerCreateMediaObjectInput = CreateMediaObjectBase & Pick<MediaObject, "source">;
+type ClientCreateMediaObjectInput = CreateMediaObjectBase & {
+  properties?: MediaObject["source"]["properties"];
+};
+interface OwnerCreateMediaObjectsRequest {
+  vibe?: string;
+  objects: OwnerCreateMediaObjectInput[];
+}
+interface ClientCreateMediaObjectsRequest {
+  vibe: string;
+  objects: ClientCreateMediaObjectInput[];
+}
 
 const MediaElementUploadReferenceSchema = {
   type: "object",
@@ -45,7 +79,7 @@ const ClientCreateMediaObjectInputSchema = {
   additionalProperties: false,
 } as const;
 
-const OwnerCreateMediaObjectsRequestSchema = jsonSchema({
+const OwnerCreateMediaObjectsRequestSchema = jsonSchemaValue<OwnerCreateMediaObjectsRequest>({
   type: "object",
   required: ["objects"],
   properties: {
@@ -59,7 +93,7 @@ const OwnerCreateMediaObjectsRequestSchema = jsonSchema({
   additionalProperties: false,
 });
 
-const ClientCreateMediaObjectsRequestSchema = jsonSchema({
+const ClientCreateMediaObjectsRequestSchema = jsonSchemaValue<ClientCreateMediaObjectsRequest>({
   type: "object",
   required: ["vibe", "objects"],
   properties: {
@@ -73,10 +107,30 @@ const ClientCreateMediaObjectsRequestSchema = jsonSchema({
   additionalProperties: false,
 });
 
-export const CreateMediaObjectsRequestSchema = jsonSchemaByActor({
-  user: OwnerCreateMediaObjectsRequestSchema,
-  client: ClientCreateMediaObjectsRequestSchema,
-});
+export const CreateMediaObjectsRequestSchema = refineSchema(
+  jsonSchemaByActor({
+    user: OwnerCreateMediaObjectsRequestSchema,
+    client: ClientCreateMediaObjectsRequestSchema,
+  }),
+  (request) => {
+    const issues: ValidationIssue[] = [];
+    for (const [index, mediaObject] of request.objects.entries()) {
+      const properties =
+        "source" in mediaObject
+          ? mediaObject.source.properties
+          : "properties" in mediaObject
+            ? (mediaObject.properties ?? {})
+            : {};
+      const validation = validateMediaObjectProperties(
+        mediaObject.type,
+        properties,
+        `/objects/${index}/${"source" in mediaObject ? "source/" : ""}properties`,
+      );
+      if (!validation.ok) issues.push(...validation.issues);
+    }
+    return issues.length ? { ok: false, issues } : { ok: true, value: request };
+  },
+);
 
 export type CreateMediaObjectsRequest = ContractValue<typeof CreateMediaObjectsRequestSchema>;
 export type CreateMediaObjectInput = CreateMediaObjectsRequest["objects"][number];
