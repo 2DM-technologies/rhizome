@@ -1,7 +1,10 @@
-import { sql } from "drizzle-orm";
 import { bigint, check, index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
+import { textEnumCheck } from "./shared.ts";
 import { users } from "./user.ts";
+
+export const MediaElementKindEnum = ["text", "image", "audio", "video", "document"] as const;
+export type MediaElementKind = (typeof MediaElementKindEnum)[number];
 
 export const mediaElements = pgTable(
   "media_elements",
@@ -11,7 +14,7 @@ export const mediaElements = pgTable(
       .notNull()
       .references(() => users.uuid),
     contentHash: text("content_hash").notNull(),
-    kind: text("kind").notNull(),
+    kind: text("kind", { enum: MediaElementKindEnum }).notNull(),
     mime: text("mime").notNull(),
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),
     rnetSchema: text("rnet_schema").notNull(),
@@ -20,10 +23,7 @@ export const mediaElements = pgTable(
     tombstonedAt: timestamp("tombstoned_at", { withTimezone: true }),
   },
   (mediaElement) => [
-    check(
-      "media_elements_kind_check",
-      sql`${mediaElement.kind} IN ('text', 'image', 'audio', 'video', 'document')`,
-    ),
+    check("media_elements_kind_check", textEnumCheck(mediaElement.kind, MediaElementKindEnum)),
     index("media_elements_content_hash_idx").on(mediaElement.contentHash),
   ],
 );

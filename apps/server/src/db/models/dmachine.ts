@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
@@ -10,8 +9,11 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-import type { JsonObject } from "./shared.ts";
+import { textEnumCheck, type JsonObject } from "./shared.ts";
 import { users } from "./user.ts";
+
+export const DmachineTrustEnum = ["system", "standard"] as const;
+export type DmachineTrust = (typeof DmachineTrustEnum)[number];
 
 export const dmachines = pgTable(
   "dmachines",
@@ -19,7 +21,7 @@ export const dmachines = pgTable(
     uuid: uuid("uuid").primaryKey(),
     name: text("name").notNull(),
     ownerUuid: uuid("owner_uuid").references(() => users.uuid),
-    trust: text("trust").notNull().default("standard"),
+    trust: text("trust", { enum: DmachineTrustEnum }).notNull().default("standard"),
     generated: boolean("generated").notNull().default(false),
     codeHash: text("code_hash").notNull(),
     manifest: jsonb("manifest").$type<JsonObject>().notNull().default({}),
@@ -28,6 +30,6 @@ export const dmachines = pgTable(
   },
   (dmachine) => [
     uniqueIndex("dmachines_name_idx").on(dmachine.name),
-    check("dmachines_trust_check", sql`${dmachine.trust} IN ('system', 'standard')`),
+    check("dmachines_trust_check", textEnumCheck(dmachine.trust, DmachineTrustEnum)),
   ],
 );

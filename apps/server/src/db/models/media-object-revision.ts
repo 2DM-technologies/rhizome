@@ -1,4 +1,3 @@
-import { sql } from "drizzle-orm";
 import {
   check,
   integer,
@@ -12,7 +11,10 @@ import {
 
 import { mediaObjects } from "./media-object.ts";
 import { operations } from "./operation.ts";
-import type { JsonObject } from "./shared.ts";
+import { textEnumCheck, type JsonObject } from "./shared.ts";
+
+export const MediaObjectRevisionBlockEnum = ["source", "user", "inferred"] as const;
+export type MediaObjectRevisionBlock = (typeof MediaObjectRevisionBlockEnum)[number];
 
 export const mediaObjectRevisions = pgTable(
   "media_object_revisions",
@@ -20,7 +22,7 @@ export const mediaObjectRevisions = pgTable(
     mediaObjectUuid: uuid("media_object_uuid")
       .notNull()
       .references(() => mediaObjects.uuid, { onDelete: "cascade" }),
-    block: text("block").notNull(),
+    block: text("block", { enum: MediaObjectRevisionBlockEnum }).notNull(),
     rev: integer("rev").notNull(),
     snapshot: jsonb("snapshot").$type<JsonObject | null>(),
     actor: text("actor").notNull(),
@@ -37,7 +39,7 @@ export const mediaObjectRevisions = pgTable(
     }),
     check(
       "media_object_revisions_block_check",
-      sql`${mediaObjectRevision.block} IN ('source', 'user', 'inferred')`,
+      textEnumCheck(mediaObjectRevision.block, MediaObjectRevisionBlockEnum),
     ),
   ],
 );

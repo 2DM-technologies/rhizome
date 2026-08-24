@@ -2,7 +2,7 @@ import { RNET_SCHEMA_VERSION } from "@rnet/types";
 import { eq } from "drizzle-orm";
 
 import type { Database } from "../db/index.ts";
-import { mediaElements } from "../db/models/media-element.ts";
+import { mediaElements, type MediaElementKind } from "../db/models/media-element.ts";
 import { grantMissing, notFound } from "../errors.ts";
 import { AccessService } from "./access.ts";
 import type { ServiceContext } from "./types.ts";
@@ -13,7 +13,7 @@ export interface CreateMediaElementInput {
   uuid: string;
   ownerUuid: string;
   contentHash: string;
-  kind: string;
+  kind: MediaElementKind;
   mime: string;
   byteSize: number;
   createdBy: string;

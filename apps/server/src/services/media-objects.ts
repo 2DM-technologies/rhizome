@@ -16,7 +16,10 @@ import { dmachines } from "../db/models/dmachine.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
-import { mediaObjectRevisions } from "../db/models/media-object-revision.ts";
+import {
+  mediaObjectRevisions,
+  type MediaObjectRevisionBlock,
+} from "../db/models/media-object-revision.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
@@ -49,7 +52,7 @@ type MediaObjectBlockSnapshot =
   NonNullable<MediaObject["user"]> | NonNullable<MediaObject["inferred"]>;
 
 interface MediaObjectBlockUpdate<Snapshot extends MediaObjectBlockSnapshot> {
-  block: "user" | "inferred";
+  block: Exclude<MediaObjectRevisionBlock, "source">;
   buildSnapshot(currentMediaObject: DbMediaObject): Snapshot;
   buildCandidate(currentMediaObject: DbMediaObject, snapshot: Snapshot): DbMediaObject;
   persist(
