@@ -1,4 +1,4 @@
-import { mediaElementSchema, mediaObjectSchema, vibeSchema } from "@rnet/types";
+import { mediaObjectSchema } from "@rnet/types";
 import { Hono } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
@@ -15,46 +15,11 @@ import {
   rnetRoute,
 } from "./contracts.ts";
 import { requestMime } from "./http.ts";
+import { CreateMediaObjectsRequestSchema } from "./media-object-contracts.ts";
 import type { AppEnvironment } from "./types.ts";
 
 const MediaObjectDocumentSchema = rnetDocument("media-object");
 const MediaObjectCollectionSchema = collectionOf(MediaObjectDocumentSchema, "mediaObjects");
-const MediaElementUploadReferenceSchema = {
-  type: "object",
-  required: ["upload", "kind", "mime"],
-  properties: {
-    upload: { type: "string", minLength: 1 },
-    kind: mediaElementSchema.properties.kind,
-    mime: mediaElementSchema.properties.mime,
-  },
-  additionalProperties: false,
-} as const;
-const CreateMediaObjectsRequestSchema = jsonSchema({
-  type: "object",
-  required: ["objects"],
-  properties: {
-    vibe: vibeSchema.properties.uri,
-    objects: {
-      type: "array",
-      minItems: 1,
-      items: {
-        type: "object",
-        properties: {
-          elements: {
-            type: "array",
-            items: {
-              anyOf: [
-                mediaObjectSchema.properties.elements.items,
-                MediaElementUploadReferenceSchema,
-              ],
-            },
-          },
-        },
-      },
-    },
-  },
-  additionalProperties: false,
-});
 const SetMediaObjectUserRequestSchema = jsonSchema({
   type: "object",
   required: ["properties"],

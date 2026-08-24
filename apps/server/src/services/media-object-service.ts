@@ -24,6 +24,7 @@ import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
+import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
 import { AccessService, type DbVibe } from "./access-service.ts";
 import {
   MediaElementService,
@@ -91,7 +92,7 @@ export class MediaObjectService {
 
   async createMediaObjects(
     vibe: string | undefined,
-    mediaObjectInputs: unknown[],
+    mediaObjectInputs: CreateMediaObjectInput[],
     pendingUploads: ReadonlyMap<string, PendingMediaElementUpload> = new Map(),
   ): Promise<MediaObject[]> {
     const vibeUuid = vibe ? uriId(vibe) : undefined;
@@ -412,42 +413,28 @@ export class MediaObjectService {
     uploads,
   }: {
     ownerUuid: string;
-    input: unknown;
+    input: CreateMediaObjectInput;
     index: number;
     uploads: Map<string, PreparedMediaElementUpload>;
   }): MediaObject {
-    if (!input || typeof input !== "object" || Array.isArray(input)) {
-      throw schemaProblem([{ instancePath: `/objects/${index}`, message: "must be an object" }]);
-    }
-    const rawMediaObject = input as Record<string, unknown>;
-    for (const field of ["rnet_schema", "uri", "owner"] as const) {
-      if (rawMediaObject[field] !== undefined) {
-        throw schemaProblem([
-          {
-            instancePath: `/objects/${index}/${field}`,
-            message: "is assigned by the store and must be omitted",
-          },
-        ]);
-      }
-    }
     const mediaObjectUuid = uuidv7();
     const owner = `rnet://id/${ownerUuid}`;
     const elements = this.resolveMediaElementReferences({
-      input: rawMediaObject.elements,
+      input: input.elements,
       mediaObjectIndex: index,
       uploads,
     });
     const extensions = Object.fromEntries(
-      Object.entries(rawMediaObject).filter(([key]) => key.startsWith("x-")),
+      Object.entries(input).filter(([key]) => key.startsWith("x-")),
     );
     const candidateMediaObject = {
       ...(this.actor.kind === "client"
         ? {
-            type: rawMediaObject.type,
-            ...(rawMediaObject.keys === undefined ? {} : { keys: rawMediaObject.keys }),
+            type: input.type,
+            ...(input.keys === undefined ? {} : { keys: input.keys }),
             ...extensions,
           }
-        : rawMediaObject),
+        : input),
       rnet_schema: RNET_SCHEMA_VERSION,
       uri: `rnet://object/${mediaObjectUuid}`,
       owner,
@@ -457,9 +444,11 @@ export class MediaObjectService {
           ? {
               ingest: { method: "authored", reproducible: false },
               origins: [`rnet://client/${this.actor.uuid}`],
-              properties: rawMediaObject.properties ?? {},
+              properties: "properties" in input ? (input.properties ?? {}) : {},
             }
-          : rawMediaObject.source,
+          : "source" in input
+            ? input.source
+            : undefined,
     };
     const validation = validateMediaObject(candidateMediaObject);
     if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}`);
@@ -491,54 +480,28 @@ export class MediaObjectService {
     mediaObjectIndex,
     uploads,
   }: {
-    input: unknown;
+    input: CreateMediaObjectInput["elements"];
     mediaObjectIndex: number;
     uploads: Map<string, PreparedMediaElementUpload>;
-  }): unknown[] {
+  }): string[] {
     if (input === undefined) return [];
-    if (!Array.isArray(input)) {
-      throw schemaProblem([
-        { instancePath: `/objects/${mediaObjectIndex}/elements`, message: "must be an array" },
-      ]);
-    }
     return input.map((element, elementIndex) => {
       if (typeof element === "string") return element;
       const pointer = `/objects/${mediaObjectIndex}/elements/${elementIndex}`;
-      if (!element || typeof element !== "object" || Array.isArray(element)) {
-        throw schemaProblem([
-          { instancePath: pointer, message: "must be an element URI or upload" },
-        ]);
-      }
-      const descriptor = element as Record<string, unknown>;
-      if (
-        typeof descriptor.upload !== "string" ||
-        typeof descriptor.kind !== "string" ||
-        typeof descriptor.mime !== "string"
-      ) {
-        throw schemaProblem([
-          { instancePath: pointer, message: "upload references require upload, kind, and mime" },
-        ]);
-      }
-      const descriptorMime = descriptor.mime.split(";", 1)[0]?.trim();
+      const descriptorMime = element.mime.split(";", 1)[0]?.trim();
       if (!descriptorMime) {
         throw schemaProblem([{ instancePath: `${pointer}/mime`, message: "must not be empty" }]);
       }
-      const extra = Object.keys(descriptor).find(
-        (key) => !["upload", "kind", "mime"].includes(key),
-      );
-      if (extra) {
-        throw schemaProblem([{ instancePath: `${pointer}/${extra}`, message: "is not allowed" }]);
-      }
-      const upload = uploads.get(descriptor.upload);
+      const upload = uploads.get(element.upload);
       if (!upload) {
         throw schemaProblem([
           {
             instancePath: `${pointer}/upload`,
-            message: `has no file part named ${descriptor.upload}`,
+            message: `has no file part named ${element.upload}`,
           },
         ]);
       }
-      if (upload.kind && upload.kind !== descriptor.kind) {
+      if (upload.kind && upload.kind !== element.kind) {
         throw schemaProblem([
           { instancePath: `${pointer}/kind`, message: "conflicts with another reference" },
         ]);
@@ -551,7 +514,7 @@ export class MediaObjectService {
           },
         ]);
       }
-      upload.kind = descriptor.kind;
+      upload.kind = element.kind;
       upload.mime = descriptorMime;
       return `rnet://element/${upload.uuid}`;
     });

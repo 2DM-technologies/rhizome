@@ -60,7 +60,7 @@ export type RouteContract<
   ? { readonly request: Request }
   : { readonly request?: never });
 
-type ContractValue<Schema> = Schema extends ContractSchema<infer Value> ? Value : never;
+export type ContractValue<Schema> = Schema extends ContractSchema<infer Value> ? Value : never;
 
 type ContractTargets<Request extends ContractRequest> = (Request extends { json: infer Schema }
   ? { json: ContractValue<Schema> }

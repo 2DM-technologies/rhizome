@@ -506,37 +506,143 @@
                           "type": "array",
                           "minItems": 1,
                           "items": {
-                            "type": "object",
-                            "properties": {
-                              "elements": {
-                                "type": "array",
-                                "items": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string",
-                                      "pattern": "^rnet://element/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-                                    },
-                                    {
-                                      "type": "object",
-                                      "required": ["upload", "kind", "mime"],
-                                      "properties": {
-                                        "upload": { "type": "string", "minLength": 1 },
-                                        "kind": {
-                                          "description": "Consumption strategy. Closed set — new kinds only by protocol revision.",
-                                          "enum": ["text", "image", "audio", "video", "document"]
-                                        },
-                                        "mime": {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "required": ["type", "source"],
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "description": "Open vocabulary. The registered core vocabulary currently includes transaction and track; unregistered types such as post, photo, note, contact, event, book, article, and receipt remain legal.",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^[a-z][a-z0-9_.-]*$"
+                                  },
+                                  "elements": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
                                           "type": "string",
-                                          "description": "IANA media type. mime is truth; kind is the consumption hint.",
-                                          "pattern": "^[a-z]+/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*$"
+                                          "pattern": "^rnet://element/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                                        },
+                                        {
+                                          "type": "object",
+                                          "required": ["upload", "kind", "mime"],
+                                          "properties": {
+                                            "upload": { "type": "string", "minLength": 1 },
+                                            "kind": {
+                                              "description": "Consumption strategy. Closed set — new kinds only by protocol revision.",
+                                              "enum": [
+                                                "text",
+                                                "image",
+                                                "audio",
+                                                "video",
+                                                "document"
+                                              ]
+                                            },
+                                            "mime": {
+                                              "type": "string",
+                                              "description": "IANA media type. mime is truth; kind is the consumption hint.",
+                                              "pattern": "^[a-z]+/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*$"
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "keys": {
+                                    "type": "object",
+                                    "description": "External global identifiers for cross-service joins: isrc, isbn, fitid, url, ean, etc.",
+                                    "additionalProperties": { "type": "string", "maxLength": 512 }
+                                  },
+                                  "source": {
+                                    "type": "object",
+                                    "description": "Written by ingestion runtimes only. Immutable after ingest — re-ingestion creates a new revision, never edits in place.",
+                                    "required": ["ingest", "origins", "properties"],
+                                    "properties": {
+                                      "ingest": { "$ref": "#/components/schemas/IngestRecord" },
+                                      "origins": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "description": "What this object was derived from — at least one, always. Either an origin artifact (rnet://origin/{uuid}) for ingested objects, or a client (rnet://client/{uuid}) for objects authored directly in an application. A filename string is not provenance.",
+                                        "items": {
+                                          "type": "string",
+                                          "pattern": "^rnet://(origin|client)/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
                                         }
                                       },
-                                      "additionalProperties": false
+                                      "retrieved_at": { "type": "string", "format": "date-time" },
+                                      "properties": {
+                                        "type": "object",
+                                        "description": "Facts the source format defines. Validated against the registered type vocabulary when one exists."
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "patternProperties": { "^x-": {} },
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "required": ["type"],
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "description": "Open vocabulary. The registered core vocabulary currently includes transaction and track; unregistered types such as post, photo, note, contact, event, book, article, and receipt remain legal.",
+                                    "minLength": 1,
+                                    "maxLength": 128,
+                                    "pattern": "^[a-z][a-z0-9_.-]*$"
+                                  },
+                                  "elements": {
+                                    "type": "array",
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string",
+                                          "pattern": "^rnet://element/[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                                        },
+                                        {
+                                          "type": "object",
+                                          "required": ["upload", "kind", "mime"],
+                                          "properties": {
+                                            "upload": { "type": "string", "minLength": 1 },
+                                            "kind": {
+                                              "description": "Consumption strategy. Closed set — new kinds only by protocol revision.",
+                                              "enum": [
+                                                "text",
+                                                "image",
+                                                "audio",
+                                                "video",
+                                                "document"
+                                              ]
+                                            },
+                                            "mime": {
+                                              "type": "string",
+                                              "description": "IANA media type. mime is truth; kind is the consumption hint.",
+                                              "pattern": "^[a-z]+/[a-zA-Z0-9][a-zA-Z0-9!#$&^_.+-]*$"
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        }
+                                      ]
                                     }
-                                  ]
-                                }
+                                  },
+                                  "keys": {
+                                    "type": "object",
+                                    "description": "External global identifiers for cross-service joins: isrc, isbn, fitid, url, ean, etc.",
+                                    "additionalProperties": { "type": "string", "maxLength": 512 }
+                                  },
+                                  "properties": {
+                                    "type": "object",
+                                    "description": "Facts the source format defines. Validated against the registered type vocabulary when one exists."
+                                  }
+                                },
+                                "patternProperties": { "^x-": {} },
+                                "additionalProperties": false
                               }
-                            }
+                            ]
                           }
                         }
                       },
