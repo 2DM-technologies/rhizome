@@ -31,7 +31,7 @@ const COMPONENT_NAMES = {
 const SCHEMA_COMPONENTS = Object.fromEntries(
   Object.entries(RNET_DOCUMENTS).map(([name, document]) => [
     COMPONENT_NAMES[name as keyof typeof COMPONENT_NAMES],
-    rewriteSchema(document),
+    localizeSchemaForOpenApi(document),
   ]),
 );
 
@@ -70,7 +70,7 @@ export function createOpenApiDocument(routes: readonly RegisteredRoute[]) {
       },
       schemas: {
         ...SCHEMA_COMPONENTS,
-        Problem: rewriteSchema(ProblemSchema.document),
+        Problem: localizeSchemaForOpenApi(ProblemSchema.document),
       },
     },
   } as const;
@@ -185,10 +185,10 @@ function schemaFor(document: JSONSchema): OpenApiSchema {
     const component = componentForId(document.$id);
     if (component) return { $ref: `#/components/schemas/${component}` };
   }
-  return rewriteSchema(document);
+  return localizeSchemaForOpenApi(document);
 }
 
-function rewriteSchema(value: JSONSchema | unknown): OpenApiSchema {
+function localizeSchemaForOpenApi(value: JSONSchema | unknown): OpenApiSchema {
   if (typeof value === "boolean") return value;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return value as OpenApiSchema;
@@ -203,9 +203,9 @@ function rewriteSchema(value: JSONSchema | unknown): OpenApiSchema {
       continue;
     }
     rewritten[key] = Array.isArray(child)
-      ? child.map((entry) => rewriteSchema(entry))
+      ? child.map((entry) => localizeSchemaForOpenApi(entry))
       : child && typeof child === "object"
-        ? rewriteSchema(child)
+        ? localizeSchemaForOpenApi(child)
         : child;
   }
   return rewritten;
