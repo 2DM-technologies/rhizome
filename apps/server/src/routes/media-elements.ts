@@ -29,7 +29,6 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
     }),
     async (context) => {
       const actor = context.get("actor");
-      if (actor.kind !== "user") throw new Error("User middleware did not narrow the actor");
       const mediaElementService = new MediaElementService({ db, actor });
       const ownerUuid = actor.uuid;
       const bytes = new Uint8Array(await context.req.arrayBuffer());

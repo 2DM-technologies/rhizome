@@ -76,7 +76,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   router.post(
     "/",
     rnetRoute({
-      auth: "authenticated",
+      auth: "user_or_client",
       request: { multipart: CreateMediaObjectsRequestSchema },
       responses: {
         201: MediaObjectCollectionSchema,

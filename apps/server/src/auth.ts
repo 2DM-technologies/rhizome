@@ -4,10 +4,11 @@ export const DEV_USER_UUID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 export const DEV_DMACHINE_UUID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48";
 export const DEV_OTHER_USER_UUID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b49";
 
-export type Actor =
-  | { kind: "user"; uuid: string; subject: string }
-  | { kind: "client"; uuid: string; name: string; subject: string }
-  | { kind: "public"; subject: "public" };
+export type UserActor = { kind: "user"; uuid: string; subject: string };
+export type ClientActor = { kind: "client"; uuid: string; name: string; subject: string };
+export type PublicActor = { kind: "public"; subject: "public" };
+export type AuthenticatedActor = UserActor | ClientActor;
+export type Actor = AuthenticatedActor | PublicActor;
 
 export interface AppVariables {
   actor: Actor;

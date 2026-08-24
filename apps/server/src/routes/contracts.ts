@@ -19,9 +19,9 @@ import addFormats from "ajv-formats";
 import type { Input, MiddlewareHandler } from "hono";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
+import type { Actor, AppVariables, AuthenticatedActor, ClientActor, UserActor } from "../auth.ts";
 import { authenticationRequired, grantMissing, Problem, problemResponse } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
-import type { AppEnvironment } from "./types.ts";
 
 export type JsonSchemaDocument = JSONSchema;
 
@@ -38,10 +38,11 @@ type ContractRequest = Readonly<{
 }>;
 
 export type RouteContract<
+  Auth extends RouteAuth | undefined,
   Request extends ContractRequest | undefined,
   Responses extends ContractResponses,
 > = {
-  readonly auth?: "authenticated" | "user";
+  readonly auth?: Auth;
   readonly responses: Responses;
 } & (Request extends ContractRequest
   ? { readonly request: Request }
@@ -68,6 +69,20 @@ type ContractInput<Request extends ContractRequest | undefined> = Request extend
       out: ContractTargets<Request>;
     }
   : Input;
+
+export type RouteAuth = "user" | "client" | "user_or_client";
+
+type RouteActor<Auth extends RouteAuth | undefined> = Auth extends "user"
+  ? UserActor
+  : Auth extends "client"
+    ? ClientActor
+    : Auth extends "user_or_client"
+      ? AuthenticatedActor
+      : Actor;
+
+type RouteEnvironment<Auth extends RouteAuth | undefined> = {
+  Variables: Omit<AppVariables, "actor"> & { actor: RouteActor<Auth> };
+};
 
 type RnetSchemaReferences = [
   typeof grantSchema,
@@ -199,16 +214,17 @@ export const RecordIdParamsSchema = jsonSchema({
 export function rnetRoute<
   Request extends ContractRequest | undefined,
   const Responses extends ContractResponses,
+  const Auth extends RouteAuth | undefined = undefined,
 >(
-  contract: RouteContract<Request, Responses>,
-): MiddlewareHandler<AppEnvironment, string, ContractInput<Request>> {
+  contract: RouteContract<Auth, Request, Responses>,
+): MiddlewareHandler<RouteEnvironment<Auth>, string, ContractInput<Request>> {
   return async (context, next) => {
     try {
       const actor = context.get("actor");
-      if (contract.auth && actor.kind === "public") {
-        throw authenticationRequired();
+      if (contract.auth && actor.kind === "public") throw authenticationRequired();
+      if (contract.auth && contract.auth !== "user_or_client" && actor.kind !== contract.auth) {
+        throw grantMissing(contract.auth === "user" ? "owner" : "client");
       }
-      if (contract.auth === "user" && actor.kind !== "user") throw grantMissing("owner");
       if (contract.request?.param) {
         const validation = contract.request.param.validate(context.req.param());
         if (!validation.ok) throw schemaProblem(validation.issues);

@@ -29,7 +29,6 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
     async (context) => {
       const actor = context.get("actor");
       const originArtifactService = new OriginArtifactService({ db, actor });
-      if (actor.kind !== "user") throw new Error("User middleware did not narrow the actor");
       const bytes = new Uint8Array(await context.req.arrayBuffer());
       const mime = requestMime(context.req.header("Content-Type"));
       const contentHashValue = await contentHash(bytes);
