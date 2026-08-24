@@ -121,10 +121,6 @@ export class VibesService {
     await this.assertGrantSubjects(candidateGrants);
 
     const vibeRecord = await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      await this.access.lockVibeOwnerForWrite({
-        transaction,
-        vibeUuid,
-      });
       const [vibeRecord] = await transaction
         .update(vibes)
         .set({
@@ -185,7 +181,6 @@ export class VibesService {
   async deleteVibe(vibeUuid: string): Promise<void> {
     await this.access.assertVibeOwner(vibeUuid);
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      await this.access.lockVibeOwnerForWrite({ transaction, vibeUuid });
       await transaction.delete(vibes).where(eq(vibes.uuid, vibeUuid));
     });
   }
@@ -240,7 +235,6 @@ export class VibesService {
       ]);
     }
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      await this.access.lockVibeOwnerForWrite({ transaction, vibeUuid });
       const [maxPosition] = await transaction
         .select({ max: sql<number>`coalesce(max(${vibeMediaObjects.position}), -1)::int` })
         .from(vibeMediaObjects)
@@ -264,7 +258,6 @@ export class VibesService {
     await this.access.assertVibeOwner(vibeUuid);
     const mediaObjectUuids = references.map(uriId);
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      await this.access.lockVibeOwnerForWrite({ transaction, vibeUuid });
       if (mediaObjectUuids.length) {
         await transaction
           .delete(vibeMediaObjects)

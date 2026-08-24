@@ -41,21 +41,6 @@ export class AccessService {
     return this.assertVibeScopeWithDatabase(this.db, vibeUuid, scope);
   }
 
-  async lockVibeOwnerForWrite({
-    transaction,
-    vibeUuid,
-  }: {
-    transaction: DatabaseTransaction;
-    vibeUuid: string;
-  }): Promise<DbVibe> {
-    const vibe = await this.findVibe(transaction, vibeUuid);
-    this.assertOwner(vibe);
-
-    const lockedVibe = await this.lockVibe(transaction, vibeUuid, "update");
-    this.assertOwner(lockedVibe);
-    return lockedVibe;
-  }
-
   async assertMediaObjectScope(
     mediaObject: string | DbMediaObject,
     scope: Scope,
@@ -174,20 +159,5 @@ export class AccessService {
     if (this.actor.kind !== "user" || this.actor.uuid !== vibe.ownerUuid) {
       throw grantMissing("owner");
     }
-  }
-
-  private async lockVibe(
-    transaction: DatabaseTransaction,
-    vibeUuid: string,
-    lock: "share" | "update",
-  ): Promise<DbVibe> {
-    const vibeRows: DbVibe[] = await transaction
-      .select()
-      .from(vibes)
-      .where(eq(vibes.uuid, vibeUuid))
-      .for(lock);
-    const [vibe] = vibeRows;
-    if (!vibe) throw notFound("Vibe");
-    return vibe;
   }
 }
