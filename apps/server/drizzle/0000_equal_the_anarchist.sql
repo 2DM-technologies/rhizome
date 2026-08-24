@@ -7,7 +7,7 @@ CREATE TABLE "grants" (
 	CONSTRAINT "grants_vibe_uuid_subject_pk" PRIMARY KEY("vibe_uuid","subject")
 );
 --> statement-breakpoint
-CREATE TABLE "machines" (
+CREATE TABLE "dmachines" (
 	"uuid" uuid PRIMARY KEY NOT NULL,
 	"name" text NOT NULL,
 	"owner_uuid" uuid,
@@ -17,7 +17,7 @@ CREATE TABLE "machines" (
 	"manifest" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "machines_trust_check" CHECK ("machines"."trust" IN ('system', 'standard'))
+	CONSTRAINT "dmachines_trust_check" CHECK ("dmachines"."trust" IN ('system', 'standard'))
 );
 --> statement-breakpoint
 CREATE TABLE "media_elements" (
@@ -44,8 +44,8 @@ CREATE TABLE "media_object_elements" (
 CREATE TABLE "media_object_origins" (
 	"media_object_uuid" uuid NOT NULL,
 	"artifact_uuid" uuid,
-	"machine_uuid" uuid,
-	CONSTRAINT "media_object_origins_exactly_one_check" CHECK (num_nonnulls("media_object_origins"."artifact_uuid", "media_object_origins"."machine_uuid") = 1)
+	"dmachine_uuid" uuid,
+	CONSTRAINT "media_object_origins_exactly_one_check" CHECK (num_nonnulls("media_object_origins"."artifact_uuid", "media_object_origins"."dmachine_uuid") = 1)
 );
 --> statement-breakpoint
 CREATE TABLE "media_object_revisions" (
@@ -159,13 +159,13 @@ CREATE TABLE "vibes" (
 );
 --> statement-breakpoint
 ALTER TABLE "grants" ADD CONSTRAINT "grants_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "machines" ADD CONSTRAINT "machines_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "dmachines" ADD CONSTRAINT "dmachines_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_elements" ADD CONSTRAINT "media_elements_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_elements" ADD CONSTRAINT "media_object_elements_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_elements" ADD CONSTRAINT "media_object_elements_media_element_uuid_media_elements_uuid_fk" FOREIGN KEY ("media_element_uuid") REFERENCES "public"."media_elements"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_artifact_uuid_origins_uuid_fk" FOREIGN KEY ("artifact_uuid") REFERENCES "public"."origins"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_machine_uuid_machines_uuid_fk" FOREIGN KEY ("machine_uuid") REFERENCES "public"."machines"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "media_object_origins" ADD CONSTRAINT "media_object_origins_dmachine_uuid_dmachines_uuid_fk" FOREIGN KEY ("dmachine_uuid") REFERENCES "public"."dmachines"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_revisions" ADD CONSTRAINT "media_object_revisions_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_object_revisions" ADD CONSTRAINT "media_object_revisions_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "media_objects" ADD CONSTRAINT "media_objects_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -176,10 +176,10 @@ ALTER TABLE "vibe_media_objects" ADD CONSTRAINT "vibe_media_objects_vibe_uuid_vi
 ALTER TABLE "vibe_media_objects" ADD CONSTRAINT "vibe_media_objects_media_object_uuid_media_objects_uuid_fk" FOREIGN KEY ("media_object_uuid") REFERENCES "public"."media_objects"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vibe_revisions" ADD CONSTRAINT "vibe_revisions_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vibes" ADD CONSTRAINT "vibes_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-CREATE UNIQUE INDEX "machines_name_idx" ON "machines" USING btree ("name");--> statement-breakpoint
+CREATE UNIQUE INDEX "dmachines_name_idx" ON "dmachines" USING btree ("name");--> statement-breakpoint
 CREATE INDEX "media_elements_content_hash_idx" ON "media_elements" USING btree ("content_hash");--> statement-breakpoint
-CREATE UNIQUE INDEX "media_object_origins_artifact_unique_idx" ON "media_object_origins" USING btree ("media_object_uuid","artifact_uuid") WHERE "media_object_origins"."machine_uuid" IS NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX "media_object_origins_machine_unique_idx" ON "media_object_origins" USING btree ("media_object_uuid","machine_uuid") WHERE "media_object_origins"."artifact_uuid" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "media_object_origins_artifact_unique_idx" ON "media_object_origins" USING btree ("media_object_uuid","artifact_uuid") WHERE "media_object_origins"."dmachine_uuid" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "media_object_origins_dmachine_unique_idx" ON "media_object_origins" USING btree ("media_object_uuid","dmachine_uuid") WHERE "media_object_origins"."artifact_uuid" IS NULL;--> statement-breakpoint
 CREATE INDEX "media_object_origins_object_idx" ON "media_object_origins" USING btree ("media_object_uuid");--> statement-breakpoint
 CREATE INDEX "media_objects_type_idx" ON "media_objects" USING btree ("type");--> statement-breakpoint
 CREATE INDEX "media_objects_keys_idx" ON "media_objects" USING gin ("keys");--> statement-breakpoint

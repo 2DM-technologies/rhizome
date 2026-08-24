@@ -6,7 +6,7 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "machines/*"
+    "dmachines/*"
   ],
   "scripts": {
     "dev": "bun --filter @rhizome/server --filter @rhizome/host dev",

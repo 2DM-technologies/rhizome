@@ -24,13 +24,13 @@ const buckets = {
 } as const;
 
 const owner = { Authorization: "Bearer dev:user" };
-const machine = { Authorization: "Bearer dev:client:rbudget" };
+const dmachine = { Authorization: "Bearer dev:client:rbudget" };
 
 beforeAll(async () => {
   await client.unsafe(`
     TRUNCATE TABLE
       meter, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
-      vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, machines, users
+      vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, dmachines, users
     CASCADE
   `);
   scratch = await mkdtemp(join(tmpdir(), "rhizome-s3-"));
@@ -106,7 +106,7 @@ describe("rNet M1 store", () => {
     expect(invalidPath.headers.get("Content-Type")).toContain("application/problem+json");
   });
 
-  test("creates a Vibe with a real machine grant", async () => {
+  test("creates a Vibe with a real dMachine grant", async () => {
     const response = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -214,24 +214,24 @@ describe("rNet M1 store", () => {
     expect(positions.map((row) => row.position)).toEqual([0, 1, 2]);
   });
 
-  test("lets a granted machine read but never exposes origins", async () => {
-    const vibe = await request(`/rnet/v0/vibes/${vibeId}`, { headers: machine });
+  test("lets a granted dMachine read but never exposes origins", async () => {
+    const vibe = await request(`/rnet/v0/vibes/${vibeId}`, { headers: dmachine });
     expect(vibe.status).toBe(200);
     const mediaObjectResponse = await request(`/rnet/v0/objects/${mediaObjectId}`, {
-      headers: machine,
+      headers: dmachine,
     });
     expect(mediaObjectResponse.status).toBe(200);
     expect(mediaObjectResponse.headers.get("ETag")).toBe('"0"');
     const origin = await request(`/rnet/v0/origins/${originUri.split("/").at(-1)}`, {
-      headers: machine,
+      headers: dmachine,
     });
     expect(origin.status).toBe(403);
   });
 
-  test("revision-protects machine writes and refuses source-shaped fields", async () => {
+  test("revision-protects dMachine writes and refuses source-shaped fields", async () => {
     const update = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
-      headers: { ...machine, "If-Match": "0" },
+      headers: { ...dmachine, "If-Match": "0" },
       json: { properties: { category: "coffee" } },
     });
     expect(update.status).toBe(200);
@@ -239,19 +239,19 @@ describe("rNet M1 store", () => {
 
     const stale = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
-      headers: { ...machine, "If-Match": "0" },
+      headers: { ...dmachine, "If-Match": "0" },
       json: { properties: { category: "food" } },
     });
     expect(stale.status).toBe(409);
 
     const corrupt = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
-      headers: { ...machine, "If-Match": "1" },
+      headers: { ...dmachine, "If-Match": "1" },
       json: { properties: {}, source: { properties: { amount: 0 } } },
     });
     expect(corrupt.status).toBe(422);
     const unchanged = await (
-      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine })
+      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: dmachine })
     ).json();
     expect(unchanged.source.properties.amount).toBe("-6.50");
   });
@@ -259,8 +259,8 @@ describe("rNet M1 store", () => {
   test("server-grounds client-authored objects and prefixes inference", async () => {
     const detachedUpload = await app.request("http://rhizome.test/rnet/v0/elements", {
       method: "POST",
-      headers: { ...machine, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
-      body: "Detached machine upload",
+      headers: { ...dmachine, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
+      body: "Detached dMachine upload",
     });
     expect(detachedUpload.status).toBe(403);
 
@@ -269,7 +269,7 @@ describe("rNet M1 store", () => {
     );
     const missingUpload = await request("/rnet/v0/objects", {
       method: "POST",
-      headers: machine,
+      headers: dmachine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
         objects: [
@@ -289,19 +289,19 @@ describe("rNet M1 store", () => {
 
     const created = await request("/rnet/v0/objects", {
       method: "POST",
-      headers: machine,
+      headers: dmachine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
         objects: [
           {
             type: "note",
             elements: [{ upload: "note", kind: "text", mime: "text/plain" }],
-            properties: { title: "Machine-authored" },
+            properties: { title: "dMachine-authored" },
           },
         ],
       },
       uploads: {
-        note: { bytes: "A machine-authored note", mime: "text/plain" },
+        note: { bytes: "A dMachine-authored note", mime: "text/plain" },
       },
     });
     expect(created.status).toBe(201);
@@ -313,7 +313,7 @@ describe("rNet M1 store", () => {
     expect(mediaElementUri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
     const mediaElementRead = await request(
       `/rnet/v0/elements/${mediaElementUri.split("/").at(-1)}`,
-      { headers: machine },
+      { headers: dmachine },
     );
     expect(mediaElementRead.status).toBe(200);
     const mediaElement = await mediaElementRead.json();
@@ -322,7 +322,7 @@ describe("rNet M1 store", () => {
 
     const inferred = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
-      headers: machine,
+      headers: dmachine,
       json: { task: "forecast", entry: { model: "test/model", properties: { next: 42 } } },
     });
     expect(inferred.status).toBe(200);
@@ -330,14 +330,14 @@ describe("rNet M1 store", () => {
 
     const spoof = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
-      headers: machine,
+      headers: dmachine,
       json: { task: "rhizome:forecast", entry: { model: "test/model", properties: {} } },
     });
     expect(spoof.status).toBe(403);
 
     const durableTask = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
-      headers: machine,
+      headers: dmachine,
       json: {
         task: "forecast",
         entry: { model: "test/model", durable: true, properties: {} },
@@ -360,7 +360,7 @@ describe("rNet M1 store", () => {
     ).toBe("coffee");
   });
 
-  test("does not treat same-owner record identifiers as machine capabilities", async () => {
+  test("does not treat same-owner record identifiers as dMachine capabilities", async () => {
     const privateVibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -388,7 +388,7 @@ describe("rNet M1 store", () => {
     const privateObject = (await privateObjectResponse.json()).mediaObjects[0];
     const attachKnownObject = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
       method: "POST",
-      headers: machine,
+      headers: dmachine,
       json: { objects: [privateObject.uri] },
     });
     expect(attachKnownObject.status).toBe(403);
@@ -401,7 +401,7 @@ describe("rNet M1 store", () => {
     const privateElement = await privateElementResponse.json();
     const attachKnownElement = await request("/rnet/v0/objects", {
       method: "POST",
-      headers: machine,
+      headers: dmachine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
         objects: [{ type: "note", elements: [privateElement.uri], properties: {} }],
@@ -410,7 +410,7 @@ describe("rNet M1 store", () => {
     expect(attachKnownElement.status).toBe(403);
   });
 
-  test("deletes a Vibe without deleting machine-created records", async () => {
+  test("deletes a Vibe without deleting dMachine-created records", async () => {
     const disposableVibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -424,7 +424,7 @@ describe("rNet M1 store", () => {
 
     const mediaObjectResponse = await request("/rnet/v0/objects", {
       method: "POST",
-      headers: machine,
+      headers: dmachine,
       json: {
         vibe: disposableVibe.uri,
         objects: [
@@ -465,7 +465,7 @@ describe("rNet M1 store", () => {
       json: { grants: [] },
     });
     expect(patched.status).toBe(200);
-    expect((await request(`/rnet/v0/vibes/${vibeId}`, { headers: machine })).status).toBe(403);
+    expect((await request(`/rnet/v0/vibes/${vibeId}`, { headers: dmachine })).status).toBe(403);
     const audit = await client.unsafe(
       `select revoked_at is not null as revoked from grants where vibe_uuid = $1 and subject = 'client:rbudget'`,
       [vibeId],

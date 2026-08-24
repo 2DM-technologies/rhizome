@@ -1,5 +1,5 @@
 {
-  "id": "dace3706-ceee-4714-8819-7e424d7c71c5",
+  "id": "ec6fb0a7-fa06-4910-85ef-cf9579a93daa",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -70,8 +70,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.machines": {
-      "name": "machines",
+    "public.dmachines": {
+      "name": "dmachines",
       "schema": "",
       "columns": {
         "uuid": {
@@ -135,8 +135,8 @@
         }
       },
       "indexes": {
-        "machines_name_idx": {
-          "name": "machines_name_idx",
+        "dmachines_name_idx": {
+          "name": "dmachines_name_idx",
           "columns": [
             {
               "expression": "name",
@@ -152,9 +152,9 @@
         }
       },
       "foreignKeys": {
-        "machines_owner_uuid_users_uuid_fk": {
-          "name": "machines_owner_uuid_users_uuid_fk",
-          "tableFrom": "machines",
+        "dmachines_owner_uuid_users_uuid_fk": {
+          "name": "dmachines_owner_uuid_users_uuid_fk",
+          "tableFrom": "dmachines",
           "tableTo": "users",
           "columnsFrom": [
             "owner_uuid"
@@ -170,9 +170,9 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "machines_trust_check": {
-          "name": "machines_trust_check",
-          "value": "\"machines\".\"trust\" IN ('system', 'standard')"
+        "dmachines_trust_check": {
+          "name": "dmachines_trust_check",
+          "value": "\"dmachines\".\"trust\" IN ('system', 'standard')"
         }
       },
       "isRLSEnabled": false
@@ -368,8 +368,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "machine_uuid": {
-          "name": "machine_uuid",
+        "dmachine_uuid": {
+          "name": "dmachine_uuid",
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
@@ -393,13 +393,13 @@
             }
           ],
           "isUnique": true,
-          "where": "\"media_object_origins\".\"machine_uuid\" IS NULL",
+          "where": "\"media_object_origins\".\"dmachine_uuid\" IS NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
         },
-        "media_object_origins_machine_unique_idx": {
-          "name": "media_object_origins_machine_unique_idx",
+        "media_object_origins_dmachine_unique_idx": {
+          "name": "media_object_origins_dmachine_unique_idx",
           "columns": [
             {
               "expression": "media_object_uuid",
@@ -408,7 +408,7 @@
               "nulls": "last"
             },
             {
-              "expression": "machine_uuid",
+              "expression": "dmachine_uuid",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -463,12 +463,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "media_object_origins_machine_uuid_machines_uuid_fk": {
-          "name": "media_object_origins_machine_uuid_machines_uuid_fk",
+        "media_object_origins_dmachine_uuid_dmachines_uuid_fk": {
+          "name": "media_object_origins_dmachine_uuid_dmachines_uuid_fk",
           "tableFrom": "media_object_origins",
-          "tableTo": "machines",
+          "tableTo": "dmachines",
           "columnsFrom": [
-            "machine_uuid"
+            "dmachine_uuid"
           ],
           "columnsTo": [
             "uuid"
@@ -483,7 +483,7 @@
       "checkConstraints": {
         "media_object_origins_exactly_one_check": {
           "name": "media_object_origins_exactly_one_check",
-          "value": "num_nonnulls(\"media_object_origins\".\"artifact_uuid\", \"media_object_origins\".\"machine_uuid\") = 1"
+          "value": "num_nonnulls(\"media_object_origins\".\"artifact_uuid\", \"media_object_origins\".\"dmachine_uuid\") = 1"
         }
       },
       "isRLSEnabled": false

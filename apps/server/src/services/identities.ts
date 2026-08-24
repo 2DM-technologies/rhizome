@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 
-import { DEV_MACHINE_UUID, DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../auth.ts";
+import { DEV_DMACHINE_UUID, DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../auth.ts";
 import type { Database } from "../db/index.ts";
-import { machines } from "../db/models/machine.ts";
+import { dmachines } from "../db/models/dmachine.ts";
 import { users } from "../db/models/user.ts";
 
 export class IdentityService {
@@ -17,9 +17,9 @@ export class IdentityService {
       ])
       .onConflictDoNothing();
     await this.db
-      .insert(machines)
+      .insert(dmachines)
       .values({
-        uuid: DEV_MACHINE_UUID,
+        uuid: DEV_DMACHINE_UUID,
         name: "rbudget",
         trust: "standard",
         codeHash: `sha256:${"0".repeat(64)}`,
@@ -28,20 +28,20 @@ export class IdentityService {
       .onConflictDoNothing();
   }
 
-  async hasMachineName(name: string): Promise<boolean> {
-    const [machine] = await this.db
-      .select({ uuid: machines.uuid })
-      .from(machines)
-      .where(eq(machines.name, name));
-    return Boolean(machine);
+  async hasDmachineName(name: string): Promise<boolean> {
+    const [dmachine] = await this.db
+      .select({ uuid: dmachines.uuid })
+      .from(dmachines)
+      .where(eq(dmachines.name, name));
+    return Boolean(dmachine);
   }
 
-  async hasMachineUuid(uuid: string): Promise<boolean> {
-    const [machine] = await this.db
-      .select({ uuid: machines.uuid })
-      .from(machines)
-      .where(eq(machines.uuid, uuid));
-    return Boolean(machine);
+  async hasDmachineUuid(uuid: string): Promise<boolean> {
+    const [dmachine] = await this.db
+      .select({ uuid: dmachines.uuid })
+      .from(dmachines)
+      .where(eq(dmachines.uuid, uuid));
+    return Boolean(dmachine);
   }
 
   async hasUserUuid(uuid: string): Promise<boolean> {

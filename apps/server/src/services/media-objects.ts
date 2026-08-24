@@ -12,7 +12,7 @@ import { contentHash } from "../blobs/content.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { grants } from "../db/models/grant.ts";
-import { machines } from "../db/models/machine.ts";
+import { dmachines } from "../db/models/dmachine.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
@@ -227,7 +227,7 @@ export class MediaObjectService {
             mediaObjectDocument.source.origins.map((uri) =>
               uri.startsWith("rnet://origin/")
                 ? { mediaObjectUuid, originArtifactUuid: uriId(uri) }
-                : { mediaObjectUuid, machineUuid: uriId(uri) },
+                : { mediaObjectUuid, dmachineUuid: uriId(uri) },
             ),
           );
         await transaction.insert(mediaObjectRevisions).values({
@@ -581,12 +581,12 @@ export class MediaObjectService {
         }
         if (originArtifact.ownerUuid !== ownerUuid) throw grantMissing("owner");
       } else {
-        const [machine] = await transaction
-          .select({ uuid: machines.uuid })
-          .from(machines)
-          .where(eq(machines.uuid, uriId(uri)))
+        const [dmachine] = await transaction
+          .select({ uuid: dmachines.uuid })
+          .from(dmachines)
+          .where(eq(dmachines.uuid, uriId(uri)))
           .for("share");
-        if (!machine) {
+        if (!dmachine) {
           throw schemaProblem([
             { instancePath: "/source/origins", message: `unknown client ${uri}` },
           ]);

@@ -1,5 +1,5 @@
 export * from "./models/grant.ts";
-export * from "./models/machine.ts";
+export * from "./models/dmachine.ts";
 export * from "./models/media-element.ts";
 export * from "./models/media-object-element.ts";
 export * from "./models/media-object-origin.ts";

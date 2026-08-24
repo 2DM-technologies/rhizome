@@ -294,7 +294,7 @@ export class VibeService {
       seenSubjects.add(grant.subject);
       if (grant.subject === "public") continue;
       if (grant.subject.startsWith("client:")) {
-        if (await this.identities.hasMachineName(grant.subject.slice("client:".length))) continue;
+        if (await this.identities.hasDmachineName(grant.subject.slice("client:".length))) continue;
       } else if (grant.subject.startsWith("id:rnet://id/")) {
         if (await this.identities.hasUserUuid(grant.subject.slice("id:rnet://id/".length)))
           continue;

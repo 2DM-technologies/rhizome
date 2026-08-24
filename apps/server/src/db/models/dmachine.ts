@@ -13,8 +13,8 @@ import {
 import type { JsonObject } from "./shared.ts";
 import { users } from "./user.ts";
 
-export const machines = pgTable(
-  "machines",
+export const dmachines = pgTable(
+  "dmachines",
   {
     uuid: uuid("uuid").primaryKey(),
     name: text("name").notNull(),
@@ -26,8 +26,8 @@ export const machines = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (machine) => [
-    uniqueIndex("machines_name_idx").on(machine.name),
-    check("machines_trust_check", sql`${machine.trust} IN ('system', 'standard')`),
+  (dmachine) => [
+    uniqueIndex("dmachines_name_idx").on(dmachine.name),
+    check("dmachines_trust_check", sql`${dmachine.trust} IN ('system', 'standard')`),
   ],
 );
