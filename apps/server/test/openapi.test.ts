@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import openapiTS, { astToString, type OpenAPI3 } from "openapi-typescript";
+import ts from "typescript";
 
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
@@ -46,5 +48,19 @@ describe("OpenAPI", () => {
     const response = await app.request("http://rhizome.test/rnet/v0/openapi.json");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(openApiDocument);
+  });
+
+  test("can generate a TypeScript client contract in memory", async () => {
+    const mutableOpenApiDocument = JSON.parse(JSON.stringify(openApiDocument)) as OpenAPI3;
+    const nodes = await openapiTS(mutableOpenApiDocument, {
+      transform(schema) {
+        if (schema.format === "binary") return ts.factory.createTypeReferenceNode("Blob");
+        return undefined;
+      },
+    });
+    const source = astToString(nodes);
+    expect(source).toContain("export interface paths");
+    expect(source).toContain('"/rnet/v0/vibes"');
+    expect(source).toContain("Blob");
   });
 });

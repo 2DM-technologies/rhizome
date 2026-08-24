@@ -14,14 +14,12 @@
     "dev:host": "bun --filter @rhizome/host dev",
     "db:migrate": "bun run apps/server/src/db/migrate.ts",
     "db:seed": "bun run apps/server/src/db/seedDb.ts",
-    "openapi:generate": "bun run scripts/generate-openapi.ts",
-    "openapi:check": "bun run scripts/generate-openapi.ts --check",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build": "bun --filter '*' build",
-    "check": "bun run format:check && bun run openapi:check && bun run typecheck && bun test && bun run build"
+    "check": "bun run format:check && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
     "@rnet/conformance": "file:../rnet/packages/conformance",

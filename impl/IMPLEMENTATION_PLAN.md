@@ -99,7 +99,6 @@ rhizome/                            # PRODUCT (closed).
 │   │                               # write edge) and the server's agent.* endpoints
 │   │                               # (dMachines, read edge). This is what makes "one runtime,
 │   │                               # two factories" structural rather than rhetorical.
-│   ├── client/                     # @rhizome/client — typed SDK over the rNet API
 │   └── dmachine-sdk/               # M4: @rhizome/dmachine-sdk — the dMachine contract (plan §7)
 │                                   # OPEN SOURCE (Apache-2.0), published to npm
 └── infra/                          # Railway (app + Postgres) + R2 buckets
@@ -554,7 +553,7 @@ System-only at launch: shipping skills (plan §5.2), tool-enabled agent runs (pl
 
 ### 6.2 Every dMachine, without exception
 
-1. **Sandboxed.** Locked iframe, CSP with no network egress, postMessage bridge to `@rhizome/client` only. A dMachine never holds credentials and never talks to the store directly.
+1. **Sandboxed.** Locked iframe, CSP with no network egress, postMessage bridge through `@rhizome/dmachine-sdk` only. A dMachine never holds credentials and never talks to the store directly.
 2. **Scoped by user-granted permission.** A dMachine declares required scopes in its manifest; the user grants them per-Vibe (`dmachine_grants`), and the **store** enforces them on every request. No grant, no data. A fully compromised dMachine reads exactly what was granted.
 3. **Registered and code-hashed.** Every dMachine — generated or committed — has a `dmachines` row carrying its code hash, so whatever is running is always identifiable.
 4. **Metered.** dMachine-invoked pushes, pulls, and agent runs bill to the dMachine's payer identity under its budget.
