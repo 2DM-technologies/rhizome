@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
+import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 
 import { devAuth } from "./auth.ts";
@@ -56,6 +57,12 @@ export function createApp({ config, db, blobs }: AppDependencies) {
 
   app.onError((error, context) => {
     if (error instanceof Problem) return problemResponse(context, error);
+    if (error instanceof HTTPException && error.status === 400) {
+      return problemResponse(
+        context,
+        new Problem(422, "schema_violation", "Invalid request", error.message),
+      );
+    }
     console.error(error);
     return problemResponse(
       context,

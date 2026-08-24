@@ -45,12 +45,11 @@ export function createRnetRouter(): RnetRouter {
   function register(method: string): RegisterRoute {
     return (path, contract, handler) => {
       routes.push({ method, path, contract: contract as OpenApiRouteContract });
-      hono.on(
-        method,
-        path,
-        rnetRoute(contract) as unknown as MiddlewareHandler<AppEnvironment>,
+      const handlers = [
+        ...(rnetRoute(contract) as unknown as MiddlewareHandler<AppEnvironment>[]),
         handler as unknown as Handler<AppEnvironment>,
-      );
+      ];
+      hono.on([method], [path], ...handlers);
     };
   }
 

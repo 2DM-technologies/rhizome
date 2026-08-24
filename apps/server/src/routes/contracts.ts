@@ -17,10 +17,11 @@ import {
 import Ajv2020, { type ErrorObject } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import type { Handler, Input, MiddlewareHandler } from "hono";
+import { validator } from "hono/validator";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
 import type { Actor, AppVariables, AuthenticatedActor, ClientActor, UserActor } from "../auth.ts";
-import { authenticationRequired, grantMissing, Problem, problemResponse } from "../errors.ts";
+import { authenticationRequired, grantMissing } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
 
 export type JsonSchemaDocument = JSONSchema;
@@ -28,6 +29,10 @@ export type JsonSchemaDocument = JSONSchema;
 export interface ContractSchema<Value> {
   readonly document: JsonSchemaDocument;
   validate(value: unknown, actor?: Actor): ValidationResult<Value>;
+}
+
+export interface ObjectContractSchema<Value extends object> extends ContractSchema<Value> {
+  readonly propertyNames: readonly string[];
 }
 
 export interface UnvalidatedContractResponse {
@@ -43,7 +48,7 @@ export type ContractRequest = Readonly<{
     contentType: string;
     document: JsonSchemaDocument;
   }>;
-  header?: ContractSchema<object>;
+  header?: ObjectContractSchema<object>;
   json?: ContractSchema<object>;
   multipart?: ContractSchema<object>;
   param?: ContractSchema<object>;
@@ -178,7 +183,7 @@ export function jsonObjectSchema<
 >(
   properties: Properties,
   required: Required,
-): ContractSchema<ObjectContractValue<Properties, Required>> {
+): ObjectContractSchema<ObjectContractValue<Properties, Required>> {
   const document: JsonSchemaDocument = {
     type: "object",
     required: required as readonly string[],
@@ -187,7 +192,10 @@ export function jsonObjectSchema<
     ),
     additionalProperties: false,
   };
-  return compileJsonSchema(document) as ContractSchema<ObjectContractValue<Properties, Required>>;
+  return {
+    ...compileJsonSchema(document),
+    propertyNames: Object.keys(properties),
+  } as ObjectContractSchema<ObjectContractValue<Properties, Required>>;
 }
 
 export function jsonSchemaByActor<UserValue extends object, ClientValue extends object>({
@@ -308,66 +316,59 @@ export function rnetRoute<
   Request extends ContractRequest | undefined,
   const Responses extends ContractResponses,
   const Auth extends RouteAuth | undefined = undefined,
->(
-  contract: RouteContract<Auth, Request, Responses>,
-): MiddlewareHandler<RouteEnvironment<Auth>, string, ContractInput<Request>> {
-  const middleware: MiddlewareHandler<
-    RouteEnvironment<Auth>,
-    string,
-    ContractInput<Request>
-  > = async (context, next) => {
-    try {
+>(contract: RouteContract<Auth, Request, Responses>): MiddlewareHandler<RouteEnvironment<Auth>>[] {
+  const middleware: MiddlewareHandler<RouteEnvironment<Auth>>[] = [];
+
+  if (contract.auth) {
+    middleware.push(async (context, next) => {
       const actor = context.get("actor");
-      if (contract.auth && actor.kind === "public") throw authenticationRequired();
-      if (contract.auth && contract.auth !== "user_or_client" && actor.kind !== contract.auth) {
+      if (actor.kind === "public") throw authenticationRequired();
+      if (contract.auth !== "user_or_client" && actor.kind !== contract.auth) {
         throw grantMissing(contract.auth === "user" ? "owner" : "client");
       }
-      if (contract.request?.param) {
-        const validation = contract.request.param.validate(context.req.param(), actor);
-        if (!validation.ok) throw schemaProblem(validation.issues);
-        context.req.addValidatedData("param", validation.value);
-      }
-      if (contract.request?.header) {
-        const headerDocument = contract.request.header.document;
-        const headerProperties =
-          typeof headerDocument === "object" ? headerDocument.properties : undefined;
-        const headerNames =
-          headerProperties &&
-          typeof headerProperties === "object" &&
-          !Array.isArray(headerProperties)
-            ? Object.keys(headerProperties)
-            : [];
-        const headerValues = pickContractHeaders(context.req.header(), headerNames);
-        const validation = contract.request.header.validate(headerValues, actor);
-        if (!validation.ok) throw schemaProblem(validation.issues);
-        context.req.addValidatedData("header", validation.value);
-      }
-      if (contract.request?.json) {
-        const body = await context.req.json().catch(() => {
-          throw new Problem(
-            422,
-            "schema_violation",
-            "Invalid JSON",
-            "The request body must be JSON",
-          );
-        });
-        const validation = contract.request.json.validate(body, actor);
-        if (!validation.ok) throw schemaProblem(validation.issues);
-        context.req.addValidatedData("json", validation.value);
-      }
-      if (contract.request?.multipart) {
-        const form = await context.req.formData().catch(() => {
-          throw new Problem(
-            422,
-            "schema_violation",
-            "Invalid multipart body",
-            "The request body must be multipart/form-data",
-          );
-        });
-        if (form.getAll("metadata").length !== 1) {
+      await next();
+    });
+  }
+
+  const paramSchema = contract.request?.param;
+  if (paramSchema) {
+    middleware.push(
+      validator("param", (params, context) =>
+        validatedValue(paramSchema, params, context.get("actor")),
+      ),
+    );
+  }
+
+  const headerSchema = contract.request?.header;
+  if (headerSchema) {
+    middleware.push(
+      validator("header", (headers, context) =>
+        validatedValue(
+          headerSchema,
+          pickContractHeaders(headers, headerSchema.propertyNames),
+          context.get("actor"),
+        ),
+      ),
+    );
+  }
+
+  const jsonRequestSchema = contract.request?.json;
+  if (jsonRequestSchema) {
+    middleware.push(
+      validator("json", (body, context) =>
+        validatedValue(jsonRequestSchema, body, context.get("actor")),
+      ),
+    );
+  }
+
+  const multipartSchema = contract.request?.multipart;
+  if (multipartSchema) {
+    middleware.push(
+      validator("form", (form, context) => {
+        const metadataPart = form.metadata;
+        if (metadataPart === undefined || Array.isArray(metadataPart)) {
           throw schemaProblem([{ instancePath: "/metadata", message: "must appear exactly once" }]);
         }
-        const metadataPart = form.get("metadata");
         if (typeof metadataPart !== "string") {
           throw schemaProblem([
             { instancePath: "/metadata", message: "must be a JSON string form field" },
@@ -379,30 +380,33 @@ export function rnetRoute<
         } catch {
           throw schemaProblem([{ instancePath: "/metadata", message: "must contain valid JSON" }]);
         }
-        const validation = contract.request.multipart.validate(metadata, actor);
-        if (!validation.ok) throw schemaProblem(validation.issues, "/metadata");
+        const validatedMetadata = validatedValue(
+          multipartSchema,
+          metadata,
+          context.get("actor"),
+          "/metadata",
+        );
 
         const uploads = new Map<string, File>();
-        for (const [name, value] of form.entries()) {
+        for (const [name, value] of Object.entries(form)) {
           if (name === "metadata") continue;
+          if (Array.isArray(value)) {
+            throw schemaProblem([{ instancePath: `/${name}`, message: "must be unique" }]);
+          }
           if (typeof value === "string") {
             throw schemaProblem([
               { instancePath: `/${name}`, message: "must be a binary file part" },
             ]);
           }
-          if (uploads.has(name)) {
-            throw schemaProblem([{ instancePath: `/${name}`, message: "must be unique" }]);
-          }
-          uploads.set(name, value as File);
+          uploads.set(name, value);
         }
-        context.req.addValidatedData("form", { metadata: validation.value, uploads });
-      }
-      await next();
-    } catch (error) {
-      if (!(error instanceof Problem)) throw error;
-      context.res = problemResponse(context, error);
-    }
+        return { metadata: validatedMetadata, uploads };
+      }),
+    );
+  }
 
+  middleware.push(async (context, next) => {
+    await next();
     const schema = contract.responses[context.res.status];
     if (!schema || !("validate" in schema)) return;
     const value = await context.res
@@ -417,8 +421,20 @@ export function rnetRoute<
         `Route produced an invalid ${context.res.status} response: ${JSON.stringify(validation.issues)}`,
       );
     }
-  };
+  });
+
   return middleware;
+}
+
+function validatedValue<Value>(
+  schema: ContractSchema<Value>,
+  value: unknown,
+  actor: Actor,
+  instancePath?: string,
+): Value {
+  const validation = schema.validate(value, actor);
+  if (!validation.ok) throw schemaProblem(validation.issues, instancePath);
+  return validation.value;
 }
 
 function pickContractHeaders(
