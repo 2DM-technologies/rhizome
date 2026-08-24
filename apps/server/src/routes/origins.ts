@@ -8,7 +8,14 @@ import type { Database } from "../db/index.ts";
 import { OriginArtifactService, type DbOriginArtifact } from "../services/origin-artifacts.ts";
 import { schemaProblem } from "../services/problems.ts";
 import { uriId } from "../services/uris.ts";
-import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
+import {
+  BinaryRequest,
+  ProblemSchema,
+  RecordIdParamsSchema,
+  binaryResponse,
+  rnetDocument,
+  rnetRoute,
+} from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
@@ -20,7 +27,9 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   router.post(
     "/",
     rnetRoute({
+      operationId: "createOriginArtifact",
       auth: "user",
+      request: { binary: BinaryRequest },
       responses: {
         201: OriginArtifactDocumentSchema,
         401: ProblemSchema,
@@ -77,6 +86,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   router.get(
     "/:id",
     rnetRoute({
+      operationId: "getOriginArtifact",
       request: { param: RecordIdParamsSchema },
       responses: { 200: OriginArtifactDocumentSchema, 422: ProblemSchema },
     }),
@@ -92,8 +102,9 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
   router.get(
     "/:id/bytes",
     rnetRoute({
+      operationId: "getOriginArtifactBytes",
       request: { param: RecordIdParamsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 200: binaryResponse("*/*"), 422: ProblemSchema },
     }),
     async (context) => {
       const originArtifactService = new OriginArtifactService({ db, actor: context.get("actor") });

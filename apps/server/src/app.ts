@@ -7,6 +7,7 @@ import type { BlobStore } from "./blobs/index.ts";
 import type { ServerConfig } from "./config.ts";
 import type { Database } from "./db/index.ts";
 import { notFound, Problem, problemResponse } from "./errors.ts";
+import { createOpenApiDocument } from "./openapi.ts";
 import { createMediaElementRoutes } from "./routes/media-elements.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
@@ -75,6 +76,8 @@ export function createApp({ config, db, blobs }: AppDependencies) {
   app.route("/rnet/v0/elements", createMediaElementRoutes(db, blobs));
   app.route("/rnet/v0/origins", createOriginRoutes(db, blobs));
   app.route("/rnet/v0/operations", createOperationRoutes(db));
+  const openApiDocument = createOpenApiDocument(app.routes);
+  app.get("/rnet/v0/openapi.json", (context) => context.json(openApiDocument));
 
-  return { app, identityService };
+  return { app, identityService, openApiDocument };
 }

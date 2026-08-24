@@ -10,6 +10,7 @@
     "build": "bun build src/index.ts --target=browser --outdir=dist"
   },
   "dependencies": {
-    "@rnet/types": "file:../../../rnet/packages/types"
+    "@rnet/types": "file:../../../rnet/packages/types",
+    "openapi-fetch": "0.17.0"
   }
 }

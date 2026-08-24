@@ -30,8 +30,19 @@ export interface ContractSchema<Value> {
   validate(value: unknown): ValidationResult<Value>;
 }
 
-type ContractResponses = Readonly<Record<number, ContractSchema<unknown>>>;
+export interface UnvalidatedContractResponse {
+  readonly contentType?: string;
+  readonly description: string;
+  readonly document?: JsonSchemaDocument;
+}
+
+type ContractResponse = ContractSchema<unknown> | UnvalidatedContractResponse | null;
+type ContractResponses = Readonly<Record<number, ContractResponse>>;
 type ContractRequest = Readonly<{
+  binary?: Readonly<{
+    contentType: string;
+    document: JsonSchemaDocument;
+  }>;
   json?: ContractSchema<object>;
   multipart?: ContractSchema<object>;
   param?: ContractSchema<object>;
@@ -42,6 +53,7 @@ export type RouteContract<
   Request extends ContractRequest | undefined,
   Responses extends ContractResponses,
 > = {
+  readonly operationId: string;
   readonly auth?: Auth;
   readonly responses: Responses;
 } & (Request extends ContractRequest
@@ -108,7 +120,7 @@ const ajv = new Ajv2020({
 });
 addFormats(ajv);
 
-const RNET_DOCUMENTS = {
+export const RNET_DOCUMENTS = {
   grant: grantSchema,
   "ingest-record": ingestRecordSchema,
   "media-element": mediaElementSchema,
@@ -211,6 +223,38 @@ export const RecordIdParamsSchema = jsonSchema({
   additionalProperties: false,
 });
 
+export const BinaryRequest = {
+  contentType: "*/*",
+  document: { type: "string", format: "binary" },
+} as const;
+
+export function binaryResponse(
+  contentType = "application/octet-stream",
+): UnvalidatedContractResponse {
+  return {
+    contentType,
+    description: "Binary content",
+    document: { type: "string", format: "binary" },
+  };
+}
+
+type OpenApiRouteContract = RouteContract<
+  RouteAuth | undefined,
+  ContractRequest | undefined,
+  ContractResponses
+>;
+
+const RNET_ROUTE_CONTRACT = Symbol("rnetRouteContract");
+
+type ContractMiddleware = ((...args: never[]) => unknown) & {
+  readonly [RNET_ROUTE_CONTRACT]: OpenApiRouteContract;
+};
+
+export function routeContract(handler: unknown): OpenApiRouteContract | undefined {
+  if (typeof handler !== "function") return undefined;
+  return (handler as Partial<ContractMiddleware>)[RNET_ROUTE_CONTRACT];
+}
+
 export function rnetRoute<
   Request extends ContractRequest | undefined,
   const Responses extends ContractResponses,
@@ -218,7 +262,11 @@ export function rnetRoute<
 >(
   contract: RouteContract<Auth, Request, Responses>,
 ): MiddlewareHandler<RouteEnvironment<Auth>, string, ContractInput<Request>> {
-  return async (context, next) => {
+  const middleware: MiddlewareHandler<
+    RouteEnvironment<Auth>,
+    string,
+    ContractInput<Request>
+  > = async (context, next) => {
     try {
       const actor = context.get("actor");
       if (contract.auth && actor.kind === "public") throw authenticationRequired();
@@ -292,7 +340,7 @@ export function rnetRoute<
     }
 
     const schema = contract.responses[context.res.status];
-    if (!schema) return;
+    if (!schema || !("validate" in schema)) return;
     const value = await context.res
       .clone()
       .json()
@@ -306,6 +354,10 @@ export function rnetRoute<
       );
     }
   };
+  Object.defineProperty(middleware, RNET_ROUTE_CONTRACT, {
+    value: contract as OpenApiRouteContract,
+  });
+  return middleware;
 }
 
 function validationIssues(errors: ErrorObject[] | null | undefined): ValidationIssue[] {

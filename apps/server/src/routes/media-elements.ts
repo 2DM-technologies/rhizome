@@ -8,7 +8,14 @@ import type { Database } from "../db/index.ts";
 import { Problem } from "../errors.ts";
 import { MediaElementService, type DbMediaElement } from "../services/media-elements.ts";
 import { uriId } from "../services/uris.ts";
-import { ProblemSchema, RecordIdParamsSchema, rnetDocument, rnetRoute } from "./contracts.ts";
+import {
+  BinaryRequest,
+  ProblemSchema,
+  RecordIdParamsSchema,
+  binaryResponse,
+  rnetDocument,
+  rnetRoute,
+} from "./contracts.ts";
 import { blobResponse, requestMime } from "./http.ts";
 import type { AppEnvironment } from "./types.ts";
 
@@ -20,7 +27,9 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   router.post(
     "/",
     rnetRoute({
+      operationId: "createMediaElement",
       auth: "user",
+      request: { binary: BinaryRequest },
       responses: {
         201: MediaElementDocumentSchema,
         401: ProblemSchema,
@@ -81,6 +90,7 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   router.get(
     "/:id",
     rnetRoute({
+      operationId: "getMediaElement",
       request: { param: RecordIdParamsSchema },
       responses: { 200: MediaElementDocumentSchema, 422: ProblemSchema },
     }),
@@ -94,8 +104,9 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
   router.get(
     "/:id/bytes",
     rnetRoute({
+      operationId: "getMediaElementBytes",
       request: { param: RecordIdParamsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 200: binaryResponse("*/*"), 422: ProblemSchema },
     }),
     async (context) => {
       const mediaElementService = new MediaElementService({ db, actor: context.get("actor") });

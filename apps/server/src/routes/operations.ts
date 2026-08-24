@@ -27,6 +27,7 @@ export function createOperationRoutes(db: Database) {
   router.get(
     "/:id",
     rnetRoute({
+      operationId: "getOperation",
       request: { param: RecordIdParamsSchema },
       responses: { 200: OperationDocumentSchema, 422: ProblemSchema },
     }),

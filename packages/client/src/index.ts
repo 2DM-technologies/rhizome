@@ -1,4 +1,11 @@
 import type { Grant, MediaElement, MediaObject, OriginArtifact, Vibe } from "@rnet/types";
+import createClient, { type Client } from "openapi-fetch";
+
+import type { paths } from "./generated/openapi.ts";
+
+export type { components, operations, paths } from "./generated/openapi.ts";
+
+export type RhizomeApiClient = Client<paths>;
 
 export interface CreateVibeInput {
   title: string;
@@ -65,6 +72,23 @@ export interface RhizomeClientOptions {
   baseUrl: string;
   token?: string | (() => string | Promise<string | undefined>);
   fetch?: typeof globalThis.fetch;
+}
+
+export function createRhizomeClient(options: RhizomeClientOptions): RhizomeApiClient {
+  const client = createClient<paths>({
+    baseUrl: options.baseUrl.replace(/\/$/, ""),
+    ...(options.fetch ? { fetch: (request) => options.fetch!(request) } : {}),
+    bodySerializer: serializeRequestBody,
+  });
+  if (options.token) {
+    client.use({
+      async onRequest({ request }) {
+        const token = typeof options.token === "function" ? await options.token() : options.token;
+        if (token) request.headers.set("Authorization", `Bearer ${token}`);
+      },
+    });
+  }
+  return client;
 }
 
 export class RhizomeClient {
@@ -212,4 +236,26 @@ export function idFromUri(uriOrId: string): string {
 function ownedBuffer(value: ArrayBuffer | Uint8Array): ArrayBuffer {
   if (value instanceof ArrayBuffer) return value;
   return value.slice().buffer as ArrayBuffer;
+}
+
+function serializeRequestBody(body: unknown): BodyInit {
+  if (body instanceof Blob || body instanceof FormData) return body;
+  if (isMultipartBody(body)) {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(body)) form.set(name, value);
+    return form;
+  }
+  return JSON.stringify(body);
+}
+
+function isMultipartBody(body: unknown): body is Record<string, string | Blob> & {
+  metadata: string;
+} {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "metadata" in body &&
+    typeof body.metadata === "string" &&
+    Object.values(body).every((value) => typeof value === "string" || value instanceof Blob)
+  );
 }

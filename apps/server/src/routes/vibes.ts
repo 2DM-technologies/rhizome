@@ -53,14 +53,19 @@ const MediaObjectRefsSchema = jsonSchema({
 export function createVibeRoutes(db: Database) {
   const router = new Hono<AppEnvironment>();
 
-  router.get("/", rnetRoute({ responses: { 200: VibeCollectionSchema } }), async (context) => {
-    const vibeService = new VibeService({ db, actor: context.get("actor") });
-    const vibes = await vibeService.listVibes();
-    return context.json({ vibes });
-  });
+  router.get(
+    "/",
+    rnetRoute({ operationId: "listVibes", responses: { 200: VibeCollectionSchema } }),
+    async (context) => {
+      const vibeService = new VibeService({ db, actor: context.get("actor") });
+      const vibes = await vibeService.listVibes();
+      return context.json({ vibes });
+    },
+  );
   router.post(
     "/",
     rnetRoute({
+      operationId: "createVibe",
       auth: "user",
       request: { json: CreateVibeRequestSchema },
       responses: {
@@ -79,6 +84,7 @@ export function createVibeRoutes(db: Database) {
   router.get(
     "/:id",
     rnetRoute({
+      operationId: "getVibe",
       request: { param: RecordIdParamsSchema },
       responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
     }),
@@ -91,6 +97,7 @@ export function createVibeRoutes(db: Database) {
   router.patch(
     "/:id",
     rnetRoute({
+      operationId: "updateVibe",
       request: { param: RecordIdParamsSchema, json: UpdateVibeRequestSchema },
       responses: { 200: VibeDocumentSchema, 422: ProblemSchema },
     }),
@@ -106,8 +113,9 @@ export function createVibeRoutes(db: Database) {
   router.delete(
     "/:id",
     rnetRoute({
+      operationId: "deleteVibe",
       request: { param: RecordIdParamsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 204: null, 422: ProblemSchema },
     }),
     async (context) => {
       const vibeService = new VibeService({ db, actor: context.get("actor") });
@@ -118,6 +126,7 @@ export function createVibeRoutes(db: Database) {
   router.get(
     "/:id/objects",
     rnetRoute({
+      operationId: "listVibeMediaObjects",
       request: { param: RecordIdParamsSchema },
       responses: { 200: MediaObjectCollectionSchema, 422: ProblemSchema },
     }),
@@ -130,9 +139,10 @@ export function createVibeRoutes(db: Database) {
   router.post(
     "/:id/objects",
     rnetRoute({
+      operationId: "addVibeMediaObjects",
       auth: "user",
       request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
-      responses: { 401: ProblemSchema, 403: ProblemSchema, 422: ProblemSchema },
+      responses: { 204: null, 401: ProblemSchema, 403: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const body = context.req.valid("json");
@@ -144,8 +154,9 @@ export function createVibeRoutes(db: Database) {
   router.delete(
     "/:id/objects",
     rnetRoute({
+      operationId: "removeVibeMediaObjects",
       request: { param: RecordIdParamsSchema, json: MediaObjectRefsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 204: null, 422: ProblemSchema },
     }),
     async (context) => {
       const body = context.req.valid("json");
@@ -157,8 +168,9 @@ export function createVibeRoutes(db: Database) {
   router.post(
     "/:id/push",
     rnetRoute({
+      operationId: "pushVibe",
       request: { param: RecordIdParamsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 501: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const accessService = new AccessService({ db, actor: context.get("actor") });
@@ -174,8 +186,9 @@ export function createVibeRoutes(db: Database) {
   router.post(
     "/:id/pull",
     rnetRoute({
+      operationId: "pullVibe",
       request: { param: RecordIdParamsSchema },
-      responses: { 422: ProblemSchema },
+      responses: { 501: ProblemSchema, 422: ProblemSchema },
     }),
     async (context) => {
       const accessService = new AccessService({ db, actor: context.get("actor") });

@@ -76,6 +76,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   router.post(
     "/",
     rnetRoute({
+      operationId: "createMediaObjects",
       auth: "user_or_client",
       request: { multipart: CreateMediaObjectsRequestSchema },
       responses: {
@@ -111,6 +112,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   router.get(
     "/:id",
     rnetRoute({
+      operationId: "getMediaObject",
       request: { param: RecordIdParamsSchema },
       responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
     }),
@@ -125,6 +127,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   router.patch(
     "/:id/user",
     rnetRoute({
+      operationId: "setMediaObjectUser",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectUserRequestSchema },
       responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
     }),
@@ -157,6 +160,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
   router.put(
     "/:id/inferred",
     rnetRoute({
+      operationId: "setMediaObjectInferred",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectInferredRequestSchema },
       responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
     }),
