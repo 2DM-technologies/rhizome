@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import S3rver from "s3rver";
 
-import { FileSystemBlobStore } from "../src/blobs/fs.ts";
 import { R2BlobStore } from "../src/blobs/r2.ts";
 
 const key = `sha256:${"a".repeat(64)}`;
@@ -35,17 +34,7 @@ afterAll(async () => {
 });
 
 describe("BlobStore contract", () => {
-  test("filesystem backend is content-addressed and idempotent", async () => {
-    const store = new FileSystemBlobStore(join(scratch, "fs"), "http://rhizome.test");
-    await store.put("elements", key, payload, "text/plain");
-    await store.put("elements", key, payload, "text/plain");
-    expect((await store.get("elements", key))?.bytes).toEqual(payload);
-    expect(await store.signedUrl("elements", key)).toContain(encodeURIComponent(key));
-    await store.delete("elements", key);
-    expect(await store.get("elements", key)).toBeNull();
-  });
-
-  test("R2 backend obeys the same contract through the S3 API", async () => {
+  test("R2/S3 storage is content-addressed and idempotent", async () => {
     const store = new R2BlobStore({
       endpoint,
       accessKeyId: "S3RVER",
@@ -53,6 +42,7 @@ describe("BlobStore contract", () => {
       forcePathStyle: true,
       buckets: { elements: "elements", origins: "origins", bundles: "bundles", assets: "assets" },
     });
+    await store.put("origins", key, payload, "text/plain");
     await store.put("origins", key, payload, "text/plain");
     const stored = await store.get("origins", key);
     expect(stored?.bytes).toEqual(payload);

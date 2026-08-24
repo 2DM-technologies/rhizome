@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 
-import { DEV_MACHINE_UUID, DEV_USER_UUID } from "../auth.ts";
+import { DEV_MACHINE_UUID, DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../auth.ts";
 import type { Database } from "../db/index.ts";
 import { machines } from "../db/models/machine.ts";
 import { users } from "../db/models/user.ts";
@@ -11,7 +11,10 @@ export class IdentityService {
   async seedDevelopmentIdentities(): Promise<void> {
     await this.db
       .insert(users)
-      .values({ uuid: DEV_USER_UUID, handle: "noah", name: "Development User" })
+      .values([
+        { uuid: DEV_USER_UUID, handle: "noah", name: "Development User" },
+        { uuid: DEV_OTHER_USER_UUID, handle: "other", name: "Other Development User" },
+      ])
       .onConflictDoNothing();
     await this.db
       .insert(machines)

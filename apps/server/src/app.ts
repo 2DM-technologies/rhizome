@@ -21,7 +21,7 @@ export interface AppDependencies {
   blobs: BlobStore;
 }
 
-export function createApp({ db, blobs }: AppDependencies) {
+export function createApp({ config, db, blobs }: AppDependencies) {
   const identityService = new IdentityService(db);
   const app = new Hono<AppEnvironment>();
 
@@ -29,8 +29,20 @@ export function createApp({ db, blobs }: AppDependencies) {
   app.use(
     "*",
     createMiddleware(async (context, next) => {
+      const contentLength = Number(context.req.header("Content-Length"));
+      if (Number.isFinite(contentLength) && contentLength > config.maxRequestBodySize) {
+        throw new Problem(
+          413,
+          "payload_too_large",
+          "Payload too large",
+          `Request bodies are limited to ${config.maxRequestBodySize} bytes`,
+        );
+      }
       await next();
-      context.header("Access-Control-Allow-Origin", context.req.header("Origin") ?? "*");
+      const origin = context.req.header("Origin");
+      if (origin && config.allowedOrigins.includes(origin)) {
+        context.header("Access-Control-Allow-Origin", origin);
+      }
       context.header(
         "Access-Control-Allow-Headers",
         "Authorization, Content-Type, If-Match, X-Rnet-Kind, X-Rnet-Label",
@@ -40,7 +52,7 @@ export function createApp({ db, blobs }: AppDependencies) {
     }),
   );
   app.options("*", (context) => context.body(null, 204));
-  app.use("/rnet/*", devAuth);
+  if (config.authMode === "dev") app.use("/rnet/*", devAuth);
 
   app.onError((error, context) => {
     if (error instanceof Problem) return problemResponse(context, error);

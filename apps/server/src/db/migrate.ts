@@ -1,9 +1,8 @@
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 
-import { loadConfig } from "../config.ts";
 import { createDatabase } from "./index.ts";
 
-const { databaseUrl } = loadConfig();
+const databaseUrl = process.env.DATABASE_URL ?? "postgres://localhost/rhizome";
 const { db, client } = createDatabase(databaseUrl, { max: 1 });
 
 try {

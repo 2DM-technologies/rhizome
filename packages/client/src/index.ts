@@ -8,11 +8,7 @@ export interface CreateVibeInput {
 
 export interface CreateObjectsInput {
   vibe?: string;
-  objects: Array<
-    Omit<MediaObject, "elements"> & {
-      elements: Array<string | { upload: string; kind: MediaElement["kind"] }>;
-    }
-  >;
+  objects: CreateMediaObjectInput[];
   uploads?: Record<
     string,
     {
@@ -21,6 +17,19 @@ export interface CreateObjectsInput {
     }
   >;
 }
+
+type MediaElementInput = string | { upload: string; kind: MediaElement["kind"] };
+
+export type CreateMediaObjectInput =
+  | (Omit<MediaObject, "rnet_schema" | "uri" | "owner" | "elements" | "user" | "inferred"> & {
+      elements?: MediaElementInput[];
+    })
+  | ({
+      type: string;
+      elements?: MediaElementInput[];
+      keys?: Record<string, string>;
+      properties?: Record<string, unknown>;
+    } & Partial<Record<`x-${string}`, unknown>>);
 
 export interface UploadElementInput {
   bytes: Blob | ArrayBuffer | Uint8Array;
@@ -125,7 +134,7 @@ export class RhizomeClient {
     const form = new FormData();
     const objects = input.objects.map((mediaObject) => ({
       ...mediaObject,
-      elements: mediaObject.elements.map((element) => {
+      elements: (mediaObject.elements ?? []).map((element) => {
         if (typeof element === "string") return element;
         const upload = input.uploads?.[element.upload];
         if (!upload) throw new Error(`Missing upload bytes for ${element.upload}`);

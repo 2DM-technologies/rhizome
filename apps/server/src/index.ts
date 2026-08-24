@@ -7,11 +7,12 @@ const config = loadConfig();
 const { db } = createDatabase(config.databaseUrl);
 const { app, identityService } = createApp({ config, db, blobs: createBlobStore(config) });
 
-await identityService.seedDevelopmentIdentities();
+if (config.authMode === "dev") await identityService.seedDevelopmentIdentities();
 
 console.log(`Rhizome listening on ${config.baseUrl}`);
 
 export default {
   port: config.port,
+  maxRequestBodySize: config.maxRequestBodySize,
   fetch: app.fetch,
 };

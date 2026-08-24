@@ -5,12 +5,14 @@ import {
   type MediaElement,
   type MediaObject,
 } from "@rnet/types";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import { contentHash } from "../blobs/content.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
+import { grants } from "../db/models/grant.ts";
+import { machines } from "../db/models/machine.ts";
 import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
@@ -21,7 +23,6 @@ import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { AccessService, type DbVibe } from "./access.ts";
-import { IdentityService } from "./identities.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
@@ -62,14 +63,12 @@ export class MediaObjectService {
   private readonly db: Database;
   private readonly actor: ServiceContext["actor"];
   private readonly access: AccessService;
-  private readonly identities: IdentityService;
   private readonly blobs?: BlobStore;
 
   constructor(context: ServiceContext & { blobs?: BlobStore }) {
     this.db = context.db;
     this.actor = context.actor;
     this.access = new AccessService(context);
-    this.identities = new IdentityService(context.db);
     this.blobs = context.blobs;
   }
 
@@ -131,14 +130,6 @@ export class MediaObjectService {
     const uploadedElementUuids = new Set(
       [...preparedUploads.values()].map((upload) => upload.uuid),
     );
-    for (const mediaObjectDocument of mediaObjectDocuments) {
-      await this.assertMediaObjectReferences(
-        vibeUuid,
-        ownerUuid,
-        mediaObjectDocument,
-        uploadedElementUuids,
-      );
-    }
     const readyUploads = new Map<string, ReadyMediaElementUpload>();
     if (preparedUploads.size) {
       if (!this.blobs) throw new Error("Blob storage is required for atomic element uploads");
@@ -173,6 +164,15 @@ export class MediaObjectService {
 
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
       const createdMediaObjects: MediaObject[] = [];
+      await this.assertTransactionalWriteAccess(transaction, vibeUuid, ownerUuid);
+      for (const mediaObjectDocument of mediaObjectDocuments) {
+        await this.assertMediaObjectReferences(
+          transaction,
+          ownerUuid,
+          mediaObjectDocument,
+          uploadedElementUuids,
+        );
+      }
       if (readyUploads.size) {
         await transaction.insert(mediaElements).values(
           [...readyUploads.values()].map((upload) => ({
@@ -189,9 +189,6 @@ export class MediaObjectService {
       }
       let nextVibePosition: number | undefined;
       if (vibeUuid) {
-        await transaction.execute(
-          sql`SELECT 1 FROM ${vibes} WHERE ${vibes.uuid} = ${vibeUuid}::uuid FOR UPDATE`,
-        );
         const [maxPosition] = await transaction
           .select({ max: sql<number>`coalesce(max(${vibeMediaObjects.position}), -1)::int` })
           .from(vibeMediaObjects)
@@ -305,8 +302,7 @@ export class MediaObjectService {
     entry: NonNullable<MediaObject["inferred"]>[string],
   ): Promise<MediaObject> {
     await this.access.assertMediaObjectScope(mediaObjectUuid, "write:inferred");
-    const key = this.actor.kind === "client" ? `${this.actor.name}:${task}` : task;
-    if (this.actor.kind === "client" && task.includes(":")) {
+    if (task.includes(":")) {
       throw new Problem(
         403,
         "writer_namespace_mismatch",
@@ -314,6 +310,17 @@ export class MediaObjectService {
         "Pass a bare task name",
       );
     }
+    if (this.actor.kind === "public") throw grantMissing("write:inferred");
+    if (this.actor.kind === "client" && entry.durable === true) {
+      throw schemaProblem([
+        {
+          instancePath: "/entry/durable",
+          message: "cannot be set by reproducible client task output",
+        },
+      ]);
+    }
+    const writer = this.actor.kind === "client" ? this.actor.name : `user/${this.actor.uuid}`;
+    const key = `${writer}:${task}`;
     const updatedMediaObject = await this.updateMediaObjectBlock(mediaObjectUuid, {
       block: "inferred",
       buildSnapshot: (currentMediaObject) => ({
@@ -404,18 +411,22 @@ export class MediaObjectService {
       throw schemaProblem([{ instancePath: `/objects/${index}`, message: "must be an object" }]);
     }
     const rawMediaObject = input as Record<string, unknown>;
-    const mediaObjectUuid =
-      typeof rawMediaObject.uri === "string" ? uriId(rawMediaObject.uri) : uuidv7();
-    const owner = `rnet://id/${ownerUuid}`;
-    if (rawMediaObject.owner !== undefined && rawMediaObject.owner !== owner) {
-      throw schemaProblem([
-        {
-          instancePath: `/objects/${index}/owner`,
-          message: "conflicts with the store-assigned owner",
-        },
-      ]);
+    for (const field of ["rnet_schema", "uri", "owner"] as const) {
+      if (rawMediaObject[field] !== undefined) {
+        throw schemaProblem([
+          {
+            instancePath: `/objects/${index}/${field}`,
+            message: "is assigned by the store and must be omitted",
+          },
+        ]);
+      }
     }
+    const mediaObjectUuid = uuidv7();
+    const owner = `rnet://id/${ownerUuid}`;
     const elements = this.resolveMediaElementInputs(rawMediaObject.elements, index, uploads);
+    const extensions = Object.fromEntries(
+      Object.entries(rawMediaObject).filter(([key]) => key.startsWith("x-")),
+    );
     const candidateMediaObject =
       this.actor.kind === "client"
         ? {
@@ -430,11 +441,14 @@ export class MediaObjectService {
               origins: [`rnet://client/${this.actor.uuid}`],
               properties: rawMediaObject.properties ?? {},
             },
+            ...extensions,
           }
         : {
             ...rawMediaObject,
+            rnet_schema: RNET_SCHEMA_VERSION,
+            uri: `rnet://object/${mediaObjectUuid}`,
             owner,
-            ...(elements === undefined ? {} : { elements }),
+            elements: elements ?? [],
           };
     const validation = validateMediaObject(candidateMediaObject);
     if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}`);
@@ -529,7 +543,7 @@ export class MediaObjectService {
   }
 
   private async assertMediaObjectReferences(
-    vibeUuid: string | undefined,
+    transaction: DatabaseTransaction,
     ownerUuid: string,
     mediaObjectDocument: MediaObject,
     uploadedElementUuids: ReadonlySet<string>,
@@ -537,69 +551,79 @@ export class MediaObjectService {
     for (const uri of mediaObjectDocument.elements) {
       const mediaElementUuid = uriId(uri);
       if (uploadedElementUuids.has(mediaElementUuid)) continue;
-      const [mediaElementRecord] = await this.db
+      const [mediaElementRecord] = await transaction
         .select({
           uuid: mediaElements.uuid,
           ownerUuid: mediaElements.ownerUuid,
         })
         .from(mediaElements)
-        .where(eq(mediaElements.uuid, mediaElementUuid));
+        .where(and(eq(mediaElements.uuid, mediaElementUuid), isNull(mediaElements.tombstonedAt)))
+        .for("share");
       if (!mediaElementRecord) {
         throw schemaProblem([{ instancePath: "/elements", message: `unknown element ${uri}` }]);
       }
       if (mediaElementRecord.ownerUuid !== ownerUuid) throw grantMissing("owner");
-      const actorOwnsRecord = this.actor.kind === "user" && this.actor.uuid === ownerUuid;
-      if (!actorOwnsRecord) {
-        const readableInTarget = vibeUuid
-          ? await this.canReadMediaElementInVibe(mediaElementUuid, vibeUuid)
-          : false;
-        if (!readableInTarget) throw grantMissing("read");
+      if (this.actor.kind !== "user" || this.actor.uuid !== ownerUuid) {
+        throw grantMissing("write:objects");
       }
     }
     for (const uri of mediaObjectDocument.source.origins) {
       if (uri.startsWith("rnet://origin/")) {
-        const [originArtifact] = await this.db
+        const [originArtifact] = await transaction
           .select({ uuid: originArtifacts.uuid, ownerUuid: originArtifacts.ownerUuid })
           .from(originArtifacts)
-          .where(eq(originArtifacts.uuid, uriId(uri)));
+          .where(and(eq(originArtifacts.uuid, uriId(uri)), isNull(originArtifacts.tombstonedAt)))
+          .for("share");
         if (!originArtifact) {
           throw schemaProblem([
             { instancePath: "/source/origins", message: `unknown origin ${uri}` },
           ]);
         }
         if (originArtifact.ownerUuid !== ownerUuid) throw grantMissing("owner");
-      } else if (!(await this.identities.hasMachineUuid(uriId(uri)))) {
-        throw schemaProblem([
-          { instancePath: "/source/origins", message: `unknown client ${uri}` },
-        ]);
+      } else {
+        const [machine] = await transaction
+          .select({ uuid: machines.uuid })
+          .from(machines)
+          .where(eq(machines.uuid, uriId(uri)))
+          .for("share");
+        if (!machine) {
+          throw schemaProblem([
+            { instancePath: "/source/origins", message: `unknown client ${uri}` },
+          ]);
+        }
       }
     }
   }
 
-  private async canReadMediaElementInVibe(
-    mediaElementUuid: string,
-    vibeUuid: string,
-  ): Promise<boolean> {
-    try {
-      await this.access.assertVibeScope(vibeUuid, "read");
-    } catch (error) {
-      if (error instanceof Problem && [403, 404].includes(error.status)) return false;
-      throw error;
+  private async assertTransactionalWriteAccess(
+    transaction: DatabaseTransaction,
+    vibeUuid: string | undefined,
+    ownerUuid: string,
+  ): Promise<void> {
+    if (!vibeUuid) {
+      if (this.actor.kind !== "user" || this.actor.uuid !== ownerUuid) throw grantMissing("owner");
+      return;
     }
-    const [membership] = await this.db
-      .select({ mediaObjectUuid: mediaObjectElements.mediaObjectUuid })
-      .from(mediaObjectElements)
-      .innerJoin(
-        vibeMediaObjects,
-        eq(vibeMediaObjects.mediaObjectUuid, mediaObjectElements.mediaObjectUuid),
-      )
+    const [vibe] = await transaction
+      .select()
+      .from(vibes)
+      .where(eq(vibes.uuid, vibeUuid))
+      .for("update");
+    if (!vibe) throw notFound("Vibe");
+    if (vibe.ownerUuid !== ownerUuid) throw grantMissing("owner");
+    if (this.actor.kind === "user" && this.actor.uuid === ownerUuid) return;
+    const [grant] = await transaction
+      .select({ scopes: grants.scopes })
+      .from(grants)
       .where(
         and(
-          eq(mediaObjectElements.mediaElementUuid, mediaElementUuid),
-          eq(vibeMediaObjects.vibeUuid, vibeUuid),
+          eq(grants.vibeUuid, vibeUuid),
+          eq(grants.subject, this.actor.subject),
+          isNull(grants.revokedAt),
         ),
-      );
-    return Boolean(membership);
+      )
+      .for("share");
+    if (!grant?.scopes.includes("write:objects")) throw grantMissing("write:objects");
   }
 
   private toDocumentFromMediaElementUuids(

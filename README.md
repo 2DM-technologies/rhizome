@@ -4,7 +4,7 @@ Rhizome is a new platform built on vibe-based computing. It gives people user-ow
 
 ## Local development
 
-Requirements: Bun 1.3.10+ and PostgreSQL 16+.
+Requirements: Bun 1.3.10+, PostgreSQL 16+, and an R2 or S3-compatible object store.
 
 ```sh
 cp .env.example .env
@@ -14,7 +14,7 @@ bun run db:migrate
 bun run dev
 ```
 
-The development auth mode recognizes `Bearer dev:user` for the seeded owner and `Bearer dev:client:rbudget` for the seeded standard machine. Development credentials are rejected when `NODE_ENV=production`.
+Configure the object-store endpoint, credentials, and buckets in `.env`; local S3 emulators should set `R2_FORCE_PATH_STYLE=true`. The development auth mode recognizes `Bearer dev:user` and `Bearer dev:user:other` for seeded owners and `Bearer dev:client:rbudget` for the seeded standard machine. Development credentials are rejected when `NODE_ENV=production`, including when the auth-mode variable is omitted.
 
 Run all checks with:
 

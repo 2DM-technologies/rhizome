@@ -3,7 +3,7 @@ import { HTTPException } from "hono/http-exception";
 
 export class Problem extends HTTPException {
   constructor(
-    status: 400 | 401 | 403 | 404 | 409 | 415 | 422 | 500 | 501,
+    status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500 | 501,
     readonly code: string,
     readonly title: string,
     readonly detail: string,

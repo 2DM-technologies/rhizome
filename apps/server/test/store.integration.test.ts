@@ -3,19 +3,25 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runStoreConformance } from "@rnet/conformance";
-import { RNET_SCHEMA_VERSION } from "@rnet/types";
 import S3rver from "s3rver";
 
 import { createApp } from "../src/app.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
-import { FileSystemBlobStore } from "../src/blobs/fs.ts";
 import type { ServerConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/index.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 1 });
-let blobRoot = "";
+let scratch = "";
+let s3: S3rver | undefined;
 let app: ReturnType<typeof createApp>["app"];
+
+const buckets = {
+  elements: "elements",
+  origins: "origins",
+  bundles: "bundles",
+  assets: "assets",
+} as const;
 
 const owner = { Authorization: "Bearer dev:user" };
 const machine = { Authorization: "Bearer dev:client:rbudget" };
@@ -27,26 +33,44 @@ beforeAll(async () => {
       vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, machines, users
     CASCADE
   `);
-  blobRoot = await mkdtemp(join(tmpdir(), "rhizome-blobs-"));
+  scratch = await mkdtemp(join(tmpdir(), "rhizome-s3-"));
+  s3 = new S3rver({
+    address: "127.0.0.1",
+    port: 0,
+    silent: true,
+    directory: join(scratch, "storage"),
+    configureBuckets: Object.values(buckets).map((name) => ({ name, configs: [] })),
+  });
+  const address = await s3.run();
   const config: ServerConfig = {
     port: 3000,
     databaseUrl,
     authMode: "dev",
     baseUrl: "http://rhizome.test",
-    blob: { driver: "fs", root: blobRoot },
+    allowedOrigins: ["http://rhizome.test"],
+    maxRequestBodySize: 52_428_800,
+    blob: {
+      driver: "r2",
+      endpoint: `http://${address.address}:${address.port}`,
+      accessKeyId: "S3RVER",
+      secretAccessKey: "S3RVER",
+      forcePathStyle: true,
+      buckets,
+    },
   };
   const created = createApp({
     config,
     db,
-    blobs: new FileSystemBlobStore(blobRoot, config.baseUrl),
+    blobs: createBlobStore(config),
   });
   app = created.app;
   await created.identityService.seedDevelopmentIdentities();
 });
 
 afterAll(async () => {
+  await s3?.close();
   await client.end();
-  if (blobRoot) await rm(blobRoot, { recursive: true, force: true });
+  if (scratch) await rm(scratch, { recursive: true, force: true });
 });
 
 describe("rNet M1 store", () => {
@@ -143,14 +167,12 @@ describe("rNet M1 store", () => {
         vibe: `rnet://vibe/${vibeId}`,
         objects: [
           {
-            rnet_schema: RNET_SCHEMA_VERSION,
-            uri: "rnet://object/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b50",
             type: "transaction",
             elements: [],
             source: {
               ingest: { method: "parser", reproducible: true },
               origins: [originUri],
-              properties: { amount: -6.5, currency: "USD", raw_description: "COFFEE SHOP" },
+              properties: { amount: "-6.50", currency: "USD", raw_description: "COFFEE SHOP" },
             },
           },
         ],
@@ -163,18 +185,12 @@ describe("rNet M1 store", () => {
   });
 
   test("preserves batch insertion order with unique Vibe positions", async () => {
-    const uris = [
-      "rnet://object/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b51",
-      "rnet://object/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b52",
-    ];
     const response = await request("/rnet/v0/objects", {
       method: "POST",
       headers: owner,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
-        objects: uris.map((uri, index) => ({
-          rnet_schema: RNET_SCHEMA_VERSION,
-          uri,
+        objects: [0, 1].map((index) => ({
           type: "note",
           elements: [],
           source: {
@@ -186,6 +202,7 @@ describe("rNet M1 store", () => {
       },
     });
     expect(response.status).toBe(201);
+    const uris = (await response.json()).mediaObjects.map((item: { uri: string }) => item.uri);
     const listed = await (
       await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
     ).json();
@@ -236,7 +253,7 @@ describe("rNet M1 store", () => {
     const unchanged = await (
       await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: machine })
     ).json();
-    expect(unchanged.source.properties.amount).toBe(-6.5);
+    expect(unchanged.source.properties.amount).toBe("-6.50");
   });
 
   test("server-grounds client-authored objects and prefixes inference", async () => {
@@ -317,6 +334,30 @@ describe("rNet M1 store", () => {
       json: { task: "rhizome:forecast", entry: { model: "test/model", properties: {} } },
     });
     expect(spoof.status).toBe(403);
+
+    const durableTask = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: machine,
+      json: {
+        task: "forecast",
+        entry: { model: "test/model", durable: true, properties: {} },
+      },
+    });
+    expect(durableTask.status).toBe(422);
+
+    const userInference = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: owner,
+      json: {
+        task: "correction",
+        entry: { model: "user/direct", durable: true, properties: { category: "coffee" } },
+      },
+    });
+    expect(userInference.status).toBe(200);
+    expect(
+      (await userInference.json()).inferred["user/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47:correction"]
+        .properties.category,
+    ).toBe("coffee");
   });
 
   test("does not treat same-owner record identifiers as machine capabilities", async () => {
@@ -333,8 +374,6 @@ describe("rNet M1 store", () => {
         vibe: privateVibe.uri,
         objects: [
           {
-            rnet_schema: RNET_SCHEMA_VERSION,
-            uri: "rnet://object/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b53",
             type: "note",
             elements: [],
             source: {
@@ -438,8 +477,10 @@ describe("rNet M1 store", () => {
     const summary = await runStoreConformance({
       target: "http://rhizome.test",
       ownerToken: "dev:user",
+      otherOwnerToken: "dev:user:other",
       clientToken: "dev:client:rbudget",
       fetch: async (input, init) => app.request(input, init),
+      payloadFetch: globalThis.fetch.bind(globalThis),
     });
     expect(
       summary.failed,
@@ -449,61 +490,7 @@ describe("rNet M1 store", () => {
         2,
       ),
     ).toBe(0);
-  });
-
-  test("passes the independent rNet HTTP conformance suite with R2 storage", async () => {
-    const buckets = {
-      elements: "elements",
-      origins: "origins",
-      bundles: "bundles",
-      assets: "assets",
-    } as const;
-    const s3 = new S3rver({
-      address: "127.0.0.1",
-      port: 0,
-      silent: true,
-      directory: join(blobRoot, "r2-conformance"),
-      configureBuckets: Object.values(buckets).map((name) => ({ name, configs: [] })),
-    });
-    const address = await s3.run();
-    const endpoint = `http://${address.address}:${address.port}`;
-    const config: ServerConfig = {
-      port: 3000,
-      databaseUrl,
-      authMode: "dev",
-      baseUrl: "http://rhizome-r2.test",
-      blob: {
-        driver: "r2",
-        endpoint,
-        accessKeyId: "S3RVER",
-        secretAccessKey: "S3RVER",
-        buckets,
-      },
-    };
-    const r2App = createApp({
-      config,
-      db,
-      blobs: createBlobStore(config),
-    }).app;
-
-    try {
-      const summary = await runStoreConformance({
-        target: config.baseUrl,
-        ownerToken: "dev:user",
-        clientToken: "dev:client:rbudget",
-        fetch: async (input, init) => r2App.request(input, init),
-      });
-      expect(
-        summary.failed,
-        JSON.stringify(
-          summary.checks.filter((check) => !check.passed),
-          null,
-          2,
-        ),
-      ).toBe(0);
-    } finally {
-      await s3.close();
-    }
+    expect(summary.skipped).toBe(0);
   });
 });
 
