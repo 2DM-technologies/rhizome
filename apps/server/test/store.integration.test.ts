@@ -1,0 +1,818 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import S3rver from "s3rver";
+
+import { createApp } from "../src/app.ts";
+import { createBlobStore } from "../src/blobs/index.ts";
+import type { ServerConfig } from "../src/config.ts";
+import { createDatabase } from "../src/db/index.ts";
+import { seedDb } from "../src/db/seedDb.ts";
+
+const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
+const { db, client } = createDatabase(databaseUrl, { max: 1 });
+let scratch = "";
+let s3: S3rver | undefined;
+let app: ReturnType<typeof createApp>["app"];
+
+const buckets = {
+  elements: "elements",
+  origins: "origins",
+  bundles: "bundles",
+  assets: "assets",
+} as const;
+
+const owner = { Authorization: "Bearer dev:user" };
+const otherOwner = { Authorization: "Bearer dev:user:other" };
+const dmachine = { Authorization: "Bearer dev:client:rbudget" };
+
+beforeAll(async () => {
+  await client.unsafe(`
+    TRUNCATE TABLE
+      meter_entry, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
+      vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, dmachines, users
+    CASCADE
+  `);
+  scratch = await mkdtemp(join(tmpdir(), "rhizome-s3-"));
+  s3 = new S3rver({
+    address: "127.0.0.1",
+    port: 0,
+    silent: true,
+    directory: join(scratch, "storage"),
+    configureBuckets: Object.values(buckets).map((name) => ({ name, configs: [] })),
+  });
+  const address = await s3.run();
+  const config: ServerConfig = {
+    port: 3000,
+    databaseUrl,
+    authMode: "dev",
+    baseUrl: "http://rhizome.test",
+    allowedOrigins: ["http://rhizome.test"],
+    maxRequestBodySize: 52_428_800,
+    blob: {
+      driver: "r2",
+      endpoint: `http://${address.address}:${address.port}`,
+      accessKeyId: "S3RVER",
+      secretAccessKey: "S3RVER",
+      forcePathStyle: true,
+      buckets,
+    },
+  };
+  const created = createApp({
+    config,
+    db,
+    blobs: createBlobStore(config),
+  });
+  app = created.app;
+  await seedDb(db);
+});
+
+afterAll(async () => {
+  await s3?.close();
+  await client.end();
+  if (scratch) await rm(scratch, { recursive: true, force: true });
+});
+
+describe("rNet M1 store", () => {
+  let vibeId = "";
+  let mediaObjectId = "";
+  let repeatableMediaObjectUri = "";
+  let originUri = "";
+  let originHash = "";
+
+  test("rejects anonymous Vibe creation", async () => {
+    const response = await request("/rnet/v0/vibes", { method: "POST", json: { title: "Nope" } });
+    expect(response.status).toBe(401);
+    expect(response.headers.get("Content-Type")).toContain("application/problem+json");
+  });
+
+  test("validates JSON request schemas at the route boundary", async () => {
+    const extraProperty = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Nope", source: {} },
+    });
+    expect(extraProperty.status).toBe(422);
+
+    const malformed = await app.request("http://rhizome.test/rnet/v0/vibes", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "application/json" },
+      body: "{",
+    });
+    expect(malformed.status).toBe(422);
+    expect(malformed.headers.get("Content-Type")).toContain("application/problem+json");
+
+    const invalidPath = await request("/rnet/v0/elements/not-a-uuid", { headers: owner });
+    expect(invalidPath.status).toBe(422);
+    expect(invalidPath.headers.get("Content-Type")).toContain("application/problem+json");
+
+    const invalidUploadKind = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Kind": "executable" },
+      body: "echo nope",
+    });
+    expect(invalidUploadKind.status).toBe(422);
+
+    const missingUploadKind = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain" },
+      body: "missing kind",
+    });
+    expect(missingUploadKind.status).toBe(422);
+  });
+
+  test("creates a Vibe with a real dMachine grant", async () => {
+    const response = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Spending",
+        grants: [
+          {
+            subject: "client:rbudget",
+            scope: ["read", "write:user", "write:objects", "write:inferred"],
+          },
+        ],
+      },
+    });
+    expect(response.status).toBe(201);
+    const vibe = await response.json();
+    expect(vibe.title).toBe("Spending");
+    expect(vibe.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+    vibeId = vibe.uri.split("/").at(-1);
+  });
+
+  test("rejects grant subjects the store cannot resolve", async () => {
+    const response = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Bad grant", grants: [{ subject: "x-ghost:anyone", scope: ["read"] }] },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  test("rejects non-UUIDv7 user grant subjects at the route boundary", async () => {
+    const response = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Bad user grant",
+        grants: [{ subject: "id:rnet://id/alice", scope: ["read"] }],
+      },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  test("creates distinct owned origin records while deduplicating payload bytes", async () => {
+    const first = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "application/json", "X-Rnet-Label": "bank.json" },
+      body: '{"transactions":[]}',
+    });
+    expect(first.status).toBe(201);
+    const origin = await first.json();
+    originUri = origin.uri;
+    originHash = origin.content_hash;
+    expect(origin.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+    expect(origin.uri).toMatch(/^rnet:\/\/origin\/[0-9a-f-]{36}$/);
+    const second = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "application/json" },
+      body: '{"transactions":[]}',
+    });
+    expect(second.status).toBe(201);
+    const duplicate = await second.json();
+    expect(duplicate.uri).not.toBe(originUri);
+    expect(duplicate.content_hash).toBe(originHash);
+  });
+
+  test("rejects provenance mismatches and malformed extensions before persistence", async () => {
+    const [before] = await client.unsafe("select count(*)::int as count from media_objects");
+    const authoredFromArtifact = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "authored", reproducible: false },
+              origins: [originUri],
+              properties: {},
+            },
+          },
+        ],
+      },
+    });
+    expect(authoredFromArtifact.status).toBe(422);
+
+    const parsedFromClient = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: ["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"],
+              properties: {},
+            },
+          },
+        ],
+      },
+    });
+    expect(parsedFromClient.status).toBe(422);
+
+    const malformedExtension = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: [originUri],
+              properties: {},
+            },
+            "x-": true,
+          },
+        ],
+      },
+    });
+    expect(malformedExtension.status).toBe(422);
+    const [after] = await client.unsafe("select count(*)::int as count from media_objects");
+    expect(after?.count).toBe(before?.count);
+  });
+
+  test("creates a conformant transaction and attaches it to the Vibe", async () => {
+    const response = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "transaction",
+            elements: [],
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: [originUri],
+              properties: { amount: "-6.50", currency: "USD", raw_description: "COFFEE SHOP" },
+            },
+          },
+        ],
+      },
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    mediaObjectId = body.mediaObjects[0].uri.split("/").at(-1);
+    expect(body.mediaObjects[0].owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+  });
+
+  test("rejects malformed task names before persistence", async () => {
+    const response = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: owner,
+      json: { task: "bad task", entry: { model: "test/model", properties: {} } },
+    });
+    expect(response.status).toBe(422);
+    const mediaObject = await (
+      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: owner })
+    ).json();
+    expect(mediaObject.inferred?.["user/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47:bad task"]).toBe(
+      undefined,
+    );
+  });
+
+  test("preserves batch insertion order with unique Vibe positions", async () => {
+    const response = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [0, 1].map((index) => ({
+          type: "note",
+          elements: [],
+          source: {
+            ingest: { method: "parser", reproducible: true },
+            origins: [originUri],
+            properties: { title: `Ordered ${index + 1}` },
+          },
+        })),
+      },
+    });
+    expect(response.status).toBe(201);
+    const uris = (await response.json()).mediaObjects.map((item: { uri: string }) => item.uri);
+    repeatableMediaObjectUri = uris[0]!;
+    const listed = await (
+      await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
+    ).json();
+    expect(listed.mediaObjects.slice(-2).map((item: { uri: string }) => item.uri)).toEqual(uris);
+    const positions = await client.unsafe(
+      "select position from vibe_media_objects where vibe_uuid = $1 order by position",
+      [vibeId],
+    );
+    expect(positions.map((row) => row.position)).toEqual([0, 1, 2]);
+  });
+
+  test("allows repeated placements and delete-by-URI removes every occurrence", async () => {
+    const add = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
+      method: "POST",
+      headers: owner,
+      json: { objects: [repeatableMediaObjectUri, repeatableMediaObjectUri] },
+    });
+    expect(add.status).toBe(204);
+
+    const listedAfterAdd = await (
+      await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
+    ).json();
+    expect(
+      listedAfterAdd.mediaObjects
+        .map((item: { uri: string }) => item.uri)
+        .filter((uri: string) => uri === repeatableMediaObjectUri),
+    ).toEqual([repeatableMediaObjectUri, repeatableMediaObjectUri, repeatableMediaObjectUri]);
+    const vibeAfterAdd = await (
+      await request(`/rnet/v0/vibes/${vibeId}`, { headers: owner })
+    ).json();
+    expect(vibeAfterAdd.objects.filter((uri: string) => uri === repeatableMediaObjectUri)).toEqual([
+      repeatableMediaObjectUri,
+      repeatableMediaObjectUri,
+      repeatableMediaObjectUri,
+    ]);
+
+    const remove = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
+      method: "DELETE",
+      headers: owner,
+      json: { objects: [repeatableMediaObjectUri] },
+    });
+    expect(remove.status).toBe(204);
+
+    const listedAfterRemove = await (
+      await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
+    ).json();
+    expect(
+      listedAfterRemove.mediaObjects.some(
+        (item: { uri: string }) => item.uri === repeatableMediaObjectUri,
+      ),
+    ).toBe(false);
+  });
+
+  test("lets a granted dMachine read but never exposes origins", async () => {
+    const vibe = await request(`/rnet/v0/vibes/${vibeId}`, { headers: dmachine });
+    expect(vibe.status).toBe(200);
+    const mediaObjectResponse = await request(`/rnet/v0/objects/${mediaObjectId}`, {
+      headers: dmachine,
+    });
+    expect(mediaObjectResponse.status).toBe(200);
+    expect(mediaObjectResponse.headers.get("ETag")).toBe('"0"');
+    const origin = await request(`/rnet/v0/origins/${originUri.split("/").at(-1)}`, {
+      headers: dmachine,
+    });
+    expect(origin.status).toBe(403);
+  });
+
+  test("revision-protects dMachine writes and refuses source-shaped fields", async () => {
+    const update = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
+      method: "PATCH",
+      headers: { ...dmachine, "If-Match": "0" },
+      json: { properties: { category: "coffee" } },
+    });
+    expect(update.status).toBe(200);
+    expect(update.headers.get("ETag")).toBe('"1"');
+
+    const stale = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
+      method: "PATCH",
+      headers: { ...dmachine, "If-Match": "0" },
+      json: { properties: { category: "food" } },
+    });
+    expect(stale.status).toBe(409);
+
+    const corrupt = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
+      method: "PATCH",
+      headers: { ...dmachine, "If-Match": "1" },
+      json: { properties: {}, source: { properties: { amount: 0 } } },
+    });
+    expect(corrupt.status).toBe(422);
+    const unchanged = await (
+      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: dmachine })
+    ).json();
+    expect(unchanged.source.properties.amount).toBe("-6.50");
+  });
+
+  test("server-grounds client-authored objects and prefixes inference", async () => {
+    const clientSuppliedSource = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "authored", reproducible: false },
+              origins: ["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"],
+              properties: { title: "Must not be silently discarded" },
+            },
+          },
+        ],
+      },
+    });
+    expect(clientSuppliedSource.status).toBe(422);
+
+    const ownerWithoutSource = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: { objects: [{ type: "note" }] },
+    });
+    expect(ownerWithoutSource.status).toBe(422);
+
+    const detachedUpload = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...dmachine, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
+      body: "Detached dMachine upload",
+    });
+    expect(detachedUpload.status).toBe(403);
+
+    const [beforeRejectedUpload] = await client.unsafe(
+      "select count(*)::int as elements from media_elements",
+    );
+    const missingUpload = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            elements: [{ upload: "missing", kind: "text", mime: "text/plain" }],
+            properties: { title: "Must not commit" },
+          },
+        ],
+      },
+    });
+    expect(missingUpload.status).toBe(422);
+    const [afterRejectedUpload] = await client.unsafe(
+      "select count(*)::int as elements from media_elements",
+    );
+    expect(afterRejectedUpload?.elements).toBe(beforeRejectedUpload?.elements);
+
+    const unreferencedUpload = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [{ type: "note", properties: { title: "Must reference its upload" } }],
+      },
+      uploads: { stray: { bytes: "Unreferenced bytes", mime: "text/plain" } },
+    });
+    expect(unreferencedUpload.status).toBe(422);
+    const [afterUnreferencedUpload] = await client.unsafe(
+      "select count(*)::int as elements from media_elements",
+    );
+    expect(afterUnreferencedUpload?.elements).toBe(beforeRejectedUpload?.elements);
+
+    const created = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            elements: [{ upload: "note", kind: "text", mime: "text/plain" }],
+            properties: { title: "dMachine-authored" },
+          },
+        ],
+      },
+      uploads: {
+        note: { bytes: "A dMachine-authored note", mime: "text/plain" },
+      },
+    });
+    expect(created.status).toBe(201);
+    const document = (await created.json()).mediaObjects[0];
+    expect(document.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+    expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
+    expect(document.source.origins).toEqual(["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"]);
+    const mediaElementUri = document.elements[0];
+    expect(mediaElementUri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
+    const mediaElementRead = await request(
+      `/rnet/v0/elements/${mediaElementUri.split("/").at(-1)}`,
+      { headers: dmachine },
+    );
+    expect(mediaElementRead.status).toBe(200);
+    const mediaElement = await mediaElementRead.json();
+    expect(mediaElement.owner).toBe(document.owner);
+    expect(mediaElement.content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+
+    const inferred = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: dmachine,
+      json: { task: "forecast", entry: { model: "test/model", properties: { next: 42 } } },
+    });
+    expect(inferred.status).toBe(200);
+    expect((await inferred.json()).inferred["rbudget:forecast"].properties.next).toBe(42);
+
+    const spoof = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: dmachine,
+      json: { task: "rhizome:forecast", entry: { model: "test/model", properties: {} } },
+    });
+    expect(spoof.status).toBe(422);
+
+    const durableTask = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: dmachine,
+      json: {
+        task: "forecast",
+        entry: { model: "test/model", durable: true, properties: {} },
+      },
+    });
+    expect(durableTask.status).toBe(422);
+
+    const userInference = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: owner,
+      json: {
+        task: "correction",
+        entry: { model: "user/direct", durable: true, properties: { category: "coffee" } },
+      },
+    });
+    expect(userInference.status).toBe(200);
+    expect(
+      (await userInference.json()).inferred["user/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47:correction"]
+        .properties.category,
+    ).toBe("coffee");
+  });
+
+  test("creates a shared upload once across batched media objects", async () => {
+    const response = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [
+          {
+            type: "note",
+            elements: [{ upload: "shared", kind: "text", mime: "text/plain" }],
+            properties: { title: "First reference" },
+          },
+          {
+            type: "note",
+            elements: [{ upload: "shared", kind: "text", mime: "text/plain" }],
+            properties: { title: "Second reference" },
+          },
+        ],
+      },
+      uploads: { shared: { bytes: "Shared element", mime: "text/plain" } },
+    });
+
+    expect(response.status).toBe(201);
+    const mediaObjects = (await response.json()).mediaObjects;
+    expect(mediaObjects).toHaveLength(2);
+    expect(mediaObjects[0].elements[0]).toBe(mediaObjects[1].elements[0]);
+    const mediaElementUuid = mediaObjects[0].elements[0].split("/").at(-1);
+    const [stored] = await client.unsafe(
+      "select count(*)::int as elements from media_elements where uuid = $1",
+      [mediaElementUuid],
+    );
+    expect(stored?.elements).toBe(1);
+  });
+
+  test("does not treat same-owner record identifiers as dMachine capabilities", async () => {
+    const privateVibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Private" },
+    });
+    const privateVibe = await privateVibeResponse.json();
+    const privateObjectResponse = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        vibe: privateVibe.uri,
+        objects: [
+          {
+            type: "note",
+            elements: [],
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: [originUri],
+              properties: { title: "Private note" },
+            },
+          },
+        ],
+      },
+    });
+    const privateObject = (await privateObjectResponse.json()).mediaObjects[0];
+    const attachKnownObject = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
+      method: "POST",
+      headers: dmachine,
+      json: { objects: [privateObject.uri] },
+    });
+    expect(attachKnownObject.status).toBe(403);
+
+    const privateElementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
+      body: "Owner-private payload",
+    });
+    const privateElement = await privateElementResponse.json();
+    const attachKnownElement = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: `rnet://vibe/${vibeId}`,
+        objects: [{ type: "note", elements: [privateElement.uri], properties: {} }],
+      },
+    });
+    expect(attachKnownElement.status).toBe(403);
+  });
+
+  test("owner tombstones preserve object references while metadata and bytes disappear", async () => {
+    const originResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain" },
+      body: "Disposable origin",
+    });
+    expect(originResponse.status).toBe(201);
+    const disposableOrigin = await originResponse.json();
+
+    const elementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
+      body: "Disposable element",
+    });
+    expect(elementResponse.status).toBe(201);
+    const disposableElement = await elementResponse.json();
+
+    expect(disposableOrigin.bytes).toBe(
+      `http://rhizome.test/rnet/v0/origins/${disposableOrigin.uri.split("/").at(-1)}/bytes`,
+    );
+    expect(disposableElement.bytes).toBe(
+      `http://rhizome.test/rnet/v0/elements/${disposableElement.uri.split("/").at(-1)}/bytes`,
+    );
+    const originBytes = await app.request(disposableOrigin.bytes, { headers: owner });
+    const elementBytes = await app.request(disposableElement.bytes, { headers: owner });
+    expect(originBytes.status).toBe(200);
+    expect(originBytes.headers.get("Content-Type")).toBe("text/plain");
+    expect(elementBytes.status).toBe(200);
+    expect(elementBytes.headers.get("Content-Type")).toBe("text/plain");
+
+    const mediaObjectResponse = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            elements: [disposableElement.uri],
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: [disposableOrigin.uri],
+              properties: {},
+            },
+          },
+        ],
+      },
+    });
+    expect(mediaObjectResponse.status).toBe(201);
+    const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
+    const elementId = disposableElement.uri.split("/").at(-1);
+    const originId = disposableOrigin.uri.split("/").at(-1);
+
+    expect(
+      (await request(`/rnet/v0/elements/${elementId}`, { method: "DELETE", headers: otherOwner }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(`/rnet/v0/origins/${originId}`, { method: "DELETE", headers: otherOwner }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(`/rnet/v0/elements/${elementId}`, { method: "DELETE", headers: owner }))
+        .status,
+    ).toBe(204);
+    expect(
+      (await request(`/rnet/v0/origins/${originId}`, { method: "DELETE", headers: owner })).status,
+    ).toBe(204);
+
+    expect((await request(`/rnet/v0/elements/${elementId}`, { headers: owner })).status).toBe(404);
+    expect((await request(`/rnet/v0/elements/${elementId}/bytes`, { headers: owner })).status).toBe(
+      404,
+    );
+    expect((await request(`/rnet/v0/origins/${originId}`, { headers: owner })).status).toBe(404);
+    expect((await request(`/rnet/v0/origins/${originId}/bytes`, { headers: owner })).status).toBe(
+      404,
+    );
+
+    const preservedObject = await request(`/rnet/v0/objects/${mediaObject.uri.split("/").at(-1)}`, {
+      headers: owner,
+    });
+    expect(preservedObject.status).toBe(200);
+    const preservedDocument = await preservedObject.json();
+    expect(preservedDocument.elements).toEqual([disposableElement.uri]);
+    expect(preservedDocument.source.origins).toEqual([disposableOrigin.uri]);
+  });
+
+  test("deletes a Vibe without deleting dMachine-created records", async () => {
+    const disposableVibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Disposable",
+        grants: [{ subject: "client:rbudget", scope: ["read", "write:objects"] }],
+      },
+    });
+    const disposableVibe = await disposableVibeResponse.json();
+    const disposableVibeId = disposableVibe.uri.split("/").at(-1);
+
+    const mediaObjectResponse = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: dmachine,
+      json: {
+        vibe: disposableVibe.uri,
+        objects: [
+          {
+            type: "note",
+            elements: [{ upload: "retained", kind: "text", mime: "text/plain" }],
+            properties: { title: "Retained" },
+          },
+        ],
+      },
+      uploads: {
+        retained: { bytes: "Retained after Vibe deletion", mime: "text/plain" },
+      },
+    });
+    expect(mediaObjectResponse.status).toBe(201);
+    const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
+    const retainedMediaElementUuid = mediaObject.elements[0].split("/").at(-1);
+    const retainedMediaObjectUuid = mediaObject.uri.split("/").at(-1);
+
+    expect(
+      (await request(`/rnet/v0/vibes/${disposableVibeId}`, { method: "DELETE", headers: owner }))
+        .status,
+    ).toBe(204);
+    const retained = await client.unsafe(
+      `select
+         exists(select 1 from media_elements where uuid = $1) as element_exists,
+         exists(select 1 from media_objects where uuid = $2) as object_exists`,
+      [retainedMediaElementUuid, retainedMediaObjectUuid],
+    );
+    expect(retained[0]?.element_exists).toBe(true);
+    expect(retained[0]?.object_exists).toBe(true);
+  });
+
+  test("revocation fails closed on the next request", async () => {
+    const patched = await request(`/rnet/v0/vibes/${vibeId}`, {
+      method: "PATCH",
+      headers: owner,
+      json: { grants: [] },
+    });
+    expect(patched.status).toBe(200);
+    expect((await request(`/rnet/v0/vibes/${vibeId}`, { headers: dmachine })).status).toBe(403);
+    const audit = await client.unsafe(
+      `select revoked_at is not null as revoked from grants where vibe_uuid = $1 and subject = 'client:rbudget'`,
+      [vibeId],
+    );
+    expect(audit[0]?.revoked).toBe(true);
+  });
+});
+
+async function request(
+  path: string,
+  options: {
+    method?: string;
+    headers?: Record<string, string>;
+    json?: unknown;
+    uploads?: Record<string, { bytes: string | Uint8Array; mime: string }>;
+  } = {},
+): Promise<Response> {
+  if (path === "/rnet/v0/objects" && options.json !== undefined) {
+    const form = new FormData();
+    form.set("metadata", JSON.stringify(options.json));
+    for (const [name, upload] of Object.entries(options.uploads ?? {})) {
+      const bytes =
+        typeof upload.bytes === "string"
+          ? upload.bytes
+          : (upload.bytes.slice().buffer as ArrayBuffer);
+      form.set(name, new Blob([bytes], { type: upload.mime }), name);
+    }
+    return app.request(`http://rhizome.test${path}`, {
+      method: options.method,
+      headers: options.headers,
+      body: form,
+    });
+  }
+  const headers = {
+    ...(options.json === undefined ? {} : { "Content-Type": "application/json" }),
+    ...options.headers,
+  };
+  return app.request(`http://rhizome.test${path}`, {
+    method: options.method,
+    headers,
+    body: options.json === undefined ? undefined : JSON.stringify(options.json),
+  });
+}
