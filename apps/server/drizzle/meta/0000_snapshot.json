@@ -1,5 +1,5 @@
 {
-  "id": "4c8c8990-e424-4b2d-bdac-1d8630dfe2e5",
+  "id": "9897fc4e-fd18-4823-86be-be74f3eb7537",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -1155,23 +1155,17 @@
         }
       },
       "indexes": {
-        "vibe_media_objects_position_idx": {
-          "name": "vibe_media_objects_position_idx",
+        "vibe_media_objects_media_object_idx": {
+          "name": "vibe_media_objects_media_object_idx",
           "columns": [
             {
-              "expression": "vibe_uuid",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "position",
+              "expression": "media_object_uuid",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": true,
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1206,11 +1200,11 @@
         }
       },
       "compositePrimaryKeys": {
-        "vibe_media_objects_vibe_uuid_media_object_uuid_pk": {
-          "name": "vibe_media_objects_vibe_uuid_media_object_uuid_pk",
+        "vibe_media_objects_vibe_uuid_position_pk": {
+          "name": "vibe_media_objects_vibe_uuid_position_pk",
           "columns": [
             "vibe_uuid",
-            "media_object_uuid"
+            "position"
           ]
         }
       },

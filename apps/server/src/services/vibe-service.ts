@@ -5,7 +5,7 @@ import { v7 as uuidv7 } from "uuid";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { grants, GRANT_SCOPE, type DbGrant } from "../db/models/grant.ts";
 import { mediaObjects, type DbMediaObject } from "../db/models/media-object.ts";
-import { vibeMediaObjects, type DbVibeMediaObject } from "../db/models/vibe-media-object.ts";
+import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes, type DbVibe, type NewDbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
@@ -205,11 +205,6 @@ export class VibesService {
     await this.access.assertVibeOwner(vibeUuid);
     if (this.actor.kind !== "user") throw new Error("Owner assertion did not narrow the actor");
     const mediaObjectUuids = references.map(uriId);
-    if (new Set(mediaObjectUuids).size !== mediaObjectUuids.length) {
-      throw schemaProblem([
-        { instancePath: "/objects", message: "must not contain duplicate object URIs" },
-      ]);
-    }
     const mediaObjectRecords = await this.mediaObjectsService.findByIds(mediaObjectUuids);
     const mediaObjectsByUuid = new Map(
       mediaObjectRecords.map((mediaObject) => [mediaObject.uuid, mediaObject]),
@@ -218,21 +213,6 @@ export class VibesService {
       const mediaObjectRecord = mediaObjectsByUuid.get(mediaObjectUuid);
       if (!mediaObjectRecord) throw notFound("Object");
       if (mediaObjectRecord.ownerUuid !== this.actor.uuid) throw grantMissing("owner");
-    }
-    const existingMemberships: DbVibeMediaObject[] = await this.db.query.vibeMediaObjects.findMany({
-      where: and(
-        eq(vibeMediaObjects.vibeUuid, vibeUuid),
-        inArray(vibeMediaObjects.mediaObjectUuid, mediaObjectUuids),
-      ),
-    });
-    const [existingMembership] = existingMemberships;
-    if (existingMembership) {
-      throw schemaProblem([
-        {
-          instancePath: "/objects",
-          message: `object is already in the Vibe: ${existingMembership.mediaObjectUuid}`,
-        },
-      ]);
     }
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
       const [maxPosition] = await transaction

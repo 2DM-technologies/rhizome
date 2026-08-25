@@ -1,13 +1,5 @@
 import { sql } from "drizzle-orm";
-import {
-  check,
-  integer,
-  pgTable,
-  primaryKey,
-  timestamp,
-  uniqueIndex,
-  uuid,
-} from "drizzle-orm/pg-core";
+import { check, index, integer, pgTable, primaryKey, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import { mediaObjects } from "./media-object.ts";
 import { vibes } from "./vibe.ts";
@@ -25,11 +17,8 @@ export const vibeMediaObjects = pgTable(
     position: integer("position").notNull(),
   },
   (vibeMediaObject) => [
-    primaryKey({ columns: [vibeMediaObject.vibeUuid, vibeMediaObject.mediaObjectUuid] }),
-    uniqueIndex("vibe_media_objects_position_idx").on(
-      vibeMediaObject.vibeUuid,
-      vibeMediaObject.position,
-    ),
+    primaryKey({ columns: [vibeMediaObject.vibeUuid, vibeMediaObject.position] }),
+    index("vibe_media_objects_media_object_idx").on(vibeMediaObject.mediaObjectUuid),
     check("vibe_media_objects_position_check", sql`${vibeMediaObject.position} >= 0`),
   ],
 );

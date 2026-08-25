@@ -43,7 +43,6 @@ export const MediaObjectRefsRequestSchema = jsonSchema({
     objects: {
       type: "array",
       minItems: 1,
-      uniqueItems: true,
       items: vibeSchema.properties.objects.items,
     },
   },

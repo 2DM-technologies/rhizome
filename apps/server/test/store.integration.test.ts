@@ -76,6 +76,7 @@ afterAll(async () => {
 describe("rNet M1 store", () => {
   let vibeId = "";
   let mediaObjectId = "";
+  let repeatableMediaObjectUri = "";
   let originUri = "";
   let originHash = "";
 
@@ -217,6 +218,7 @@ describe("rNet M1 store", () => {
     });
     expect(response.status).toBe(201);
     const uris = (await response.json()).mediaObjects.map((item: { uri: string }) => item.uri);
+    repeatableMediaObjectUri = uris[0]!;
     const listed = await (
       await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
     ).json();
@@ -226,6 +228,48 @@ describe("rNet M1 store", () => {
       [vibeId],
     );
     expect(positions.map((row) => row.position)).toEqual([0, 1, 2]);
+  });
+
+  test("allows repeated placements and delete-by-URI removes every occurrence", async () => {
+    const add = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
+      method: "POST",
+      headers: owner,
+      json: { objects: [repeatableMediaObjectUri, repeatableMediaObjectUri] },
+    });
+    expect(add.status).toBe(204);
+
+    const listedAfterAdd = await (
+      await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
+    ).json();
+    expect(
+      listedAfterAdd.mediaObjects
+        .map((item: { uri: string }) => item.uri)
+        .filter((uri: string) => uri === repeatableMediaObjectUri),
+    ).toEqual([repeatableMediaObjectUri, repeatableMediaObjectUri, repeatableMediaObjectUri]);
+    const vibeAfterAdd = await (
+      await request(`/rnet/v0/vibes/${vibeId}`, { headers: owner })
+    ).json();
+    expect(vibeAfterAdd.objects.filter((uri: string) => uri === repeatableMediaObjectUri)).toEqual([
+      repeatableMediaObjectUri,
+      repeatableMediaObjectUri,
+      repeatableMediaObjectUri,
+    ]);
+
+    const remove = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
+      method: "DELETE",
+      headers: owner,
+      json: { objects: [repeatableMediaObjectUri] },
+    });
+    expect(remove.status).toBe(204);
+
+    const listedAfterRemove = await (
+      await request(`/rnet/v0/vibes/${vibeId}/objects`, { headers: owner })
+    ).json();
+    expect(
+      listedAfterRemove.mediaObjects.some(
+        (item: { uri: string }) => item.uri === repeatableMediaObjectUri,
+      ),
+    ).toBe(false);
   });
 
   test("lets a granted dMachine read but never exposes origins", async () => {

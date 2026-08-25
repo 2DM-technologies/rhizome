@@ -132,7 +132,7 @@ CREATE TABLE "vibe_media_objects" (
 	"media_object_uuid" uuid NOT NULL,
 	"added_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"position" integer NOT NULL,
-	CONSTRAINT "vibe_media_objects_vibe_uuid_media_object_uuid_pk" PRIMARY KEY("vibe_uuid","media_object_uuid"),
+	CONSTRAINT "vibe_media_objects_vibe_uuid_position_pk" PRIMARY KEY("vibe_uuid","position"),
 	CONSTRAINT "vibe_media_objects_position_check" CHECK ("vibe_media_objects"."position" >= 0)
 );
 --> statement-breakpoint
@@ -187,4 +187,4 @@ CREATE INDEX "media_objects_inferred_idx" ON "media_objects" USING gin ("inferre
 CREATE INDEX "operations_status_idx" ON "operations" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "operations_invoked_by_idx" ON "operations" USING btree ("invoked_by");--> statement-breakpoint
 CREATE INDEX "origins_content_hash_idx" ON "origins" USING btree ("content_hash");--> statement-breakpoint
-CREATE UNIQUE INDEX "vibe_media_objects_position_idx" ON "vibe_media_objects" USING btree ("vibe_uuid","position");
+CREATE INDEX "vibe_media_objects_media_object_idx" ON "vibe_media_objects" USING btree ("media_object_uuid");
