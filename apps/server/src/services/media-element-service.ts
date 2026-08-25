@@ -13,7 +13,7 @@ import {
 } from "../db/models/media-element.ts";
 import { grantMissing, notFound } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
+import type { CreateMediaObjectInput } from "../routes/media-objects.ts";
 import { AccessService } from "./access-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";

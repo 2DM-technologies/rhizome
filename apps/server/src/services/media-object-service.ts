@@ -22,7 +22,7 @@ import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import type { DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import type { CreateMediaObjectInput } from "../routes/media-object-contracts.ts";
+import type { CreateMediaObjectInput } from "../routes/media-objects.ts";
 import type { MediaObjectAggregate } from "../serializers/media-object-serializer.ts";
 import { AccessService } from "./access-service.ts";
 import { MediaElementsService, type PendingMediaElementUpload } from "./media-element-service.ts";
