@@ -6,3 +6,5 @@ dist/
 coverage/
 .rhizome/
 *.tsbuildinfo
+dist-storybook/
+storybook-static/

@@ -23,6 +23,27 @@ Run all checks with:
 bun check
 ```
 
+## Host
+
+`apps/host` is the Rhizome shell: the desktop, the dock, the agent sidebar, and the window chrome a
+dMachine runs inside. It is a Vite + React SPA and is **not** a dMachine — it is the container.
+
+The design system is implemented as a component library with a Storybook:
+
+```sh
+bun --filter @rhizome/host storybook
+```
+
+Components live in `apps/host/src/ui`, tokens in `apps/host/src/styles/tokens.css`. Both are
+generated from the Figma file's `🪸 Design System` page; each component cites the Figma node id it
+came from. Read `impl/concepts/design-tiers.md` before changing a colour — the token set inverts by
+tier, and the `Tier` switch in the Storybook toolbar is how you check a component reads token names
+rather than literals.
+
+The frontend toolchain runs under Bun (`bunx --bun vite`, `bunx --bun storybook`) rather than the
+`node` on your `PATH`: Vite 8 and Storybook 10 both require Node 20.19+, and the bin shebangs would
+otherwise pick up whatever is installed.
+
 ## OpenAPI
 
 The server serves its OpenAPI 3.1 document at `/rnet/v0/openapi.json`. The document is derived from the same `rhizomeRoute` request and response schemas used for runtime validation.

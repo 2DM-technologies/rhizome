@@ -15,5 +15,12 @@
     "types": ["bun", "node"],
     "noEmit": true
   },
-  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "packages/**/*.tsx"]
+  "include": [
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "apps/*/.storybook/**/*.ts",
+    "apps/*/.storybook/**/*.tsx",
+    "packages/**/*.ts",
+    "packages/**/*.tsx"
+  ]
 }
