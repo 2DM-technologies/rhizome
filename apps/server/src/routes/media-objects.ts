@@ -15,7 +15,10 @@ import {
   rnetDocument,
 } from "./contracts.ts";
 import { requestMime } from "./http.ts";
-import { CreateMediaObjectsRequestSchema } from "./media-object-contracts.ts";
+import {
+  CreateMediaObjectsRequestSchema,
+  mediaObjectPropertiesInput,
+} from "./media-object-contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const MediaObjectDocumentSchema = rnetDocument("media-object");
@@ -56,14 +59,9 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     async (context) => {
       const input = context.req.valid("form");
       for (const [index, mediaObject] of input.metadata.objects.entries()) {
-        let properties = "properties" in mediaObject ? (mediaObject.properties ?? {}) : {};
-        let propertiesPath = `/objects/${index}/properties`;
-        if ("source" in mediaObject) {
-          properties = mediaObject.source.properties;
-          propertiesPath = `/objects/${index}/source/properties`;
-        }
+        const { properties, pointer } = mediaObjectPropertiesInput(mediaObject);
         const validation = validateMediaObjectProperties(mediaObject.type, properties);
-        if (!validation.ok) throw schemaProblem(validation.issues, propertiesPath);
+        if (!validation.ok) throw schemaProblem(validation.issues, `/objects/${index}/${pointer}`);
       }
       const pendingMediaElementUploads = new Map<string, PendingMediaElementUpload>();
       for (const [name, file] of input.uploads) {

@@ -1,33 +1,6 @@
-import {
-  mediaElementSchema,
-  mediaObjectSchema,
-  vibeSchema,
-  type MediaElement,
-  type MediaObject,
-} from "@rnet/types";
+import { mediaElementSchema, mediaObjectSchema, vibeSchema } from "@rnet/types";
 
-import { jsonSchemaByActor, jsonSchemaValue, type ContractValue } from "./contracts.ts";
-
-type MediaElementUploadReference = {
-  upload: string;
-  kind: MediaElement["kind"];
-  mime: MediaElement["mime"];
-};
-type CreateMediaObjectBase = Pick<MediaObject, "keys" | "type"> & {
-  elements?: (MediaObject["elements"][number] | MediaElementUploadReference)[];
-};
-type OwnerCreateMediaObjectInput = CreateMediaObjectBase & Pick<MediaObject, "source">;
-type ClientCreateMediaObjectInput = CreateMediaObjectBase & {
-  properties?: MediaObject["source"]["properties"];
-};
-interface OwnerCreateMediaObjectsRequest {
-  vibe?: string;
-  objects: OwnerCreateMediaObjectInput[];
-}
-interface ClientCreateMediaObjectsRequest {
-  vibe: string;
-  objects: ClientCreateMediaObjectInput[];
-}
+import { jsonSchema, jsonSchemaByActor, type ContractValue, type Namespaced } from "./contracts.ts";
 
 const MediaElementUploadReferenceSchema = {
   type: "object",
@@ -72,7 +45,7 @@ const ClientCreateMediaObjectInputSchema = {
   additionalProperties: false,
 } as const;
 
-const OwnerCreateMediaObjectsRequestSchema = jsonSchemaValue<OwnerCreateMediaObjectsRequest>({
+const OwnerCreateMediaObjectsRequestSchema = jsonSchema({
   type: "object",
   required: ["objects"],
   properties: {
@@ -86,7 +59,7 @@ const OwnerCreateMediaObjectsRequestSchema = jsonSchemaValue<OwnerCreateMediaObj
   additionalProperties: false,
 });
 
-const ClientCreateMediaObjectsRequestSchema = jsonSchemaValue<ClientCreateMediaObjectsRequest>({
+const ClientCreateMediaObjectsRequestSchema = jsonSchema({
   type: "object",
   required: ["vibe", "objects"],
   properties: {
@@ -106,4 +79,20 @@ export const CreateMediaObjectsRequestSchema = jsonSchemaByActor({
 });
 
 export type CreateMediaObjectsRequest = ContractValue<typeof CreateMediaObjectsRequestSchema>;
-export type CreateMediaObjectInput = CreateMediaObjectsRequest["objects"][number];
+export type CreateMediaObjectInput = Namespaced<CreateMediaObjectsRequest["objects"][number]>;
+
+/**
+ * Where a create request carries the properties to validate against the registered type
+ * vocabulary, and the JSON pointer to report against. Owners supply `source.properties`;
+ * clients supply a bare `properties` and the store authors the surrounding source block.
+ * Lives here so the two request shapes are only ever interpreted next to their schemas.
+ */
+export function mediaObjectPropertiesInput(input: CreateMediaObjectInput): {
+  properties: Record<string, unknown>;
+  pointer: string;
+} {
+  if ("source" in input) {
+    return { properties: input.source.properties, pointer: "source/properties" };
+  }
+  return { properties: input.properties ?? {}, pointer: "properties" };
+}

@@ -174,6 +174,17 @@ function compileJsonSchema(document: JsonSchemaDocument): ContractSchema<unknown
   };
 }
 
+/**
+ * Compile a schema under an explicitly supplied value type.
+ *
+ * This is an unchecked assertion — the type and the document are not related by the
+ * compiler — so it is only legitimate when both sides come from the same canonical
+ * source and therefore cannot drift, e.g. pairing `mediaElementSchema.properties.mime`
+ * with `MediaElement["mime"]`. Prefer `jsonSchema`, which derives the type from the
+ * document; reach for this only where derivation is impractical (deriving a leaf
+ * through the full rNet reference set exceeds TypeScript's instantiation depth).
+ * Never use it to restate a shape a schema already describes.
+ */
 export function jsonSchemaValue<Value>(document: JsonSchemaDocument): ContractSchema<Value> {
   return compileJsonSchema(document) as ContractSchema<Value>;
 }
@@ -198,6 +209,28 @@ export function jsonObjectSchema<
     propertyNames: Object.keys(properties),
   } as ObjectContractSchema<ObjectContractValue<Properties, Required>>;
 }
+
+/**
+ * `x-` namespaced extensions, as a template-literal index signature.
+ *
+ * A schema's `patternProperties` makes FromSchema emit `[x: string]: unknown`, which
+ * claims every key exists and so defeats `in`-narrowing across a union — `"source" in
+ * input` stops telling TypeScript anything. A template-literal index carries the same
+ * meaning for callers while leaving unrelated keys narrowable.
+ */
+type NamespacedExtensions = { [key: `x-${string}`]: unknown };
+
+type WithoutStringIndex<Value> = {
+  [Key in keyof Value as string extends Key ? never : Key]: Value[Key];
+};
+
+/**
+ * Restate a derived request type so its `x-` extensions do not swallow every key.
+ * Distributive, so it applies per member of an actor union.
+ */
+export type Namespaced<Value> = Value extends unknown
+  ? WithoutStringIndex<Value> & NamespacedExtensions
+  : never;
 
 export function jsonSchemaByActor<UserValue extends object, ClientValue extends object>({
   user,
