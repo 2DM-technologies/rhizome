@@ -26,10 +26,11 @@ export function blobResponse<
 >(
   context: Context<Environment, Path, Body>,
   blob: Awaited<ReturnType<BlobStore["get"]>>,
+  contentType: string,
 ): Response {
   if (!blob) throw notFound("Blob");
   return context.body(new Uint8Array(blob.bytes), 200, {
-    "Content-Type": blob.contentType ?? "application/octet-stream",
-    "Cache-Control": "private, max-age=900",
+    "Content-Type": contentType,
+    "Cache-Control": "private, no-store",
   });
 }

@@ -28,7 +28,7 @@ const MediaElementUploadHeadersSchema = jsonObjectSchema(
   ["x-rnet-kind"] as const,
 );
 
-export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
+export function createMediaElementRoutes(db: Database, blobs: BlobStore, baseUrl: string) {
   const router = createRhizomeRouter();
 
   router.post(
@@ -61,7 +61,7 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
           kind: headers["x-rnet-kind"],
         },
       });
-      const mediaElement = await serializeMediaElement(mediaElementRecord, blobs);
+      const mediaElement = serializeMediaElement(mediaElementRecord, baseUrl);
       return context.json(mediaElement, 201);
     },
   );
@@ -77,7 +77,7 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
       const mediaElement = await mediaElementsService.getMediaElement(
         context.req.valid("param").id,
       );
-      const document = await serializeMediaElement(mediaElement, blobs);
+      const document = serializeMediaElement(mediaElement, baseUrl);
       return context.json(document);
     },
   );
@@ -94,7 +94,27 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore) {
         context.req.valid("param").id,
       );
       const blob = await blobs.get("elements", mediaElement.contentHash);
-      return blobResponse(context, blob);
+      return blobResponse(context, blob, mediaElement.mime);
+    },
+  );
+  router.delete(
+    "/:id",
+    {
+      operationId: "deleteMediaElement",
+      auth: "user",
+      request: { param: RecordIdParamsSchema },
+      responses: {
+        204: null,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        404: ProblemSchema,
+        422: ProblemSchema,
+      },
+    },
+    async (context) => {
+      const mediaElementsService = new MediaElementsService({ db, actor: context.get("actor") });
+      await mediaElementsService.deleteMediaElement(context.req.valid("param").id);
+      return context.body(null, 204);
     },
   );
 

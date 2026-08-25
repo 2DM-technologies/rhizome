@@ -28,7 +28,7 @@ const OriginArtifactUploadHeadersSchema = jsonObjectSchema(
   [] as const,
 );
 
-export function createOriginRoutes(db: Database, blobs: BlobStore) {
+export function createOriginRoutes(db: Database, blobs: BlobStore, baseUrl: string) {
   const router = createRhizomeRouter();
 
   router.post(
@@ -61,7 +61,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
         mime,
         ...(headers["x-rnet-label"] ? { label: headers["x-rnet-label"] } : {}),
       });
-      const originArtifact = await serializeOriginArtifact(originArtifactRecord, blobs);
+      const originArtifact = serializeOriginArtifact(originArtifactRecord, baseUrl);
       return context.json(originArtifact, 201);
     },
   );
@@ -87,7 +87,7 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
       const originArtifactRecord = await originArtifactsService.getOriginArtifact(
         context.req.valid("param").id,
       );
-      const originArtifact = await serializeOriginArtifact(originArtifactRecord, blobs);
+      const originArtifact = serializeOriginArtifact(originArtifactRecord, baseUrl);
       return context.json(originArtifact);
     },
   );
@@ -114,7 +114,31 @@ export function createOriginRoutes(db: Database, blobs: BlobStore) {
         context.req.valid("param").id,
       );
       const blob = await blobs.get("origins", originArtifact.contentHash);
-      return blobResponse(context, blob);
+      return blobResponse(context, blob, originArtifact.mime);
+    },
+  );
+  router.delete(
+    "/:id",
+    {
+      operationId: "deleteOriginArtifact",
+      auth: "user",
+      request: { param: RecordIdParamsSchema },
+      responses: {
+        204: null,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        404: ProblemSchema,
+        422: ProblemSchema,
+      },
+    },
+    async (context) => {
+      const originArtifactsService = new OriginArtifactsService({
+        db,
+        actor: context.get("actor"),
+        blobs,
+      });
+      await originArtifactsService.deleteOriginArtifact(context.req.valid("param").id);
+      return context.body(null, 204);
     },
   );
 

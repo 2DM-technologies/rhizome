@@ -80,8 +80,14 @@ export function createApp({ config, db, blobs }: AppDependencies) {
   const routeGroups = [
     { basePath: "/rnet/v0/vibes", router: createVibeRoutes(db) },
     { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
-    { basePath: "/rnet/v0/elements", router: createMediaElementRoutes(db, blobs) },
-    { basePath: "/rnet/v0/origins", router: createOriginRoutes(db, blobs) },
+    {
+      basePath: "/rnet/v0/elements",
+      router: createMediaElementRoutes(db, blobs, config.baseUrl),
+    },
+    {
+      basePath: "/rnet/v0/origins",
+      router: createOriginRoutes(db, blobs, config.baseUrl),
+    },
     { basePath: "/rnet/v0/operations", router: createOperationRoutes(db) },
   ];
   const openApiRoutes: RegisteredRhizomeRoute[] = [];

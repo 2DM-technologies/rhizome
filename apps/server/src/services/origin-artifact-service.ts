@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import { contentHash } from "../blobs/content.ts";
@@ -33,6 +33,12 @@ export class OriginArtifactsService {
     this.blobs = context.blobs;
   }
 
+  async findById(uuid: string): Promise<DbOriginArtifact | undefined> {
+    return this.db.query.originArtifacts.findFirst({
+      where: eq(originArtifacts.uuid, uuid),
+    });
+  }
+
   async createOriginArtifact(input: CreateOriginArtifactInput): Promise<DbOriginArtifact> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
 
@@ -60,12 +66,21 @@ export class OriginArtifactsService {
   }
 
   async getOriginArtifact(uuid: string): Promise<DbOriginArtifact> {
-    const [originArtifact] = await this.db
-      .select()
-      .from(originArtifacts)
-      .where(eq(originArtifacts.uuid, uuid));
+    const originArtifact = await this.findById(uuid);
     if (!originArtifact || originArtifact.tombstonedAt) throw notFound("Origin");
     await this.access.assertRecordOwner(originArtifact.ownerUuid);
     return originArtifact;
+  }
+
+  async deleteOriginArtifact(uuid: string): Promise<void> {
+    const originArtifact = await this.findById(uuid);
+    if (!originArtifact || originArtifact.tombstonedAt) throw notFound("Origin");
+    await this.access.assertRecordOwner(originArtifact.ownerUuid);
+    const [tombstonedOriginArtifact] = await this.db
+      .update(originArtifacts)
+      .set({ tombstonedAt: new Date() })
+      .where(and(eq(originArtifacts.uuid, uuid), isNull(originArtifacts.tombstonedAt)))
+      .returning({ uuid: originArtifacts.uuid });
+    if (!tombstonedOriginArtifact) throw notFound("Origin");
   }
 }

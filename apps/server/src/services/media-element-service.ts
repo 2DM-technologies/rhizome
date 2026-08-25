@@ -63,6 +63,12 @@ export class MediaElementsService {
     this.blobs = context.blobs;
   }
 
+  async findById(uuid: string): Promise<DbMediaElement | undefined> {
+    return this.db.query.mediaElements.findFirst({
+      where: eq(mediaElements.uuid, uuid),
+    });
+  }
+
   createUploadContext(
     pendingMediaElementUploads: ReadonlyMap<string, PendingMediaElementUpload>,
   ): MediaElementUploadContext {
@@ -237,11 +243,20 @@ export class MediaElementsService {
 
   async getMediaElement(uuid: string): Promise<DbMediaElement> {
     if (!(await this.access.canReadMediaElement(uuid))) throw grantMissing(GRANT_SCOPE.READ);
-    const [mediaElementRecord] = await this.db
-      .select()
-      .from(mediaElements)
-      .where(eq(mediaElements.uuid, uuid));
+    const mediaElementRecord = await this.findById(uuid);
     if (!mediaElementRecord || mediaElementRecord.tombstonedAt) throw notFound("Element");
     return mediaElementRecord;
+  }
+
+  async deleteMediaElement(uuid: string): Promise<void> {
+    const mediaElement = await this.findById(uuid);
+    if (!mediaElement || mediaElement.tombstonedAt) throw notFound("Element");
+    await this.access.assertRecordOwner(mediaElement.ownerUuid);
+    const [tombstonedMediaElement] = await this.db
+      .update(mediaElements)
+      .set({ tombstonedAt: new Date() })
+      .where(and(eq(mediaElements.uuid, uuid), isNull(mediaElements.tombstonedAt)))
+      .returning({ uuid: mediaElements.uuid });
+    if (!tombstonedMediaElement) throw notFound("Element");
   }
 }

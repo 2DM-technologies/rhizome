@@ -1,6 +1,7 @@
 import {
   mediaElementSchema,
   mediaObjectSchema,
+  TASK_PATTERN,
   validateMediaObjectProperties,
   vibeSchema,
 } from "@rnet/types";
@@ -53,7 +54,7 @@ const OwnerCreateMediaObjectInputSchema = {
     ...CreateMediaObjectBaseProperties,
     source: mediaObjectSchema.properties.source,
   },
-  patternProperties: { "^x-": {} },
+  patternProperties: mediaObjectSchema.patternProperties,
   additionalProperties: false,
 } as const;
 
@@ -64,7 +65,7 @@ const ClientCreateMediaObjectInputSchema = {
     ...CreateMediaObjectBaseProperties,
     properties: mediaObjectSchema.properties.source.properties.properties,
   },
-  patternProperties: { "^x-": {} },
+  patternProperties: mediaObjectSchema.patternProperties,
   additionalProperties: false,
 } as const;
 
@@ -132,7 +133,7 @@ const SetMediaObjectInferredRequestSchema = jsonSchema({
   type: "object",
   required: ["task", "entry"],
   properties: {
-    task: { type: "string", minLength: 1 },
+    task: { type: "string", pattern: TASK_PATTERN },
     entry: mediaObjectSchema.properties.inferred.additionalProperties,
   },
   additionalProperties: false,

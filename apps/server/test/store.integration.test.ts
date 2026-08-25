@@ -24,6 +24,7 @@ const buckets = {
 } as const;
 
 const owner = { Authorization: "Bearer dev:user" };
+const otherOwner = { Authorization: "Bearer dev:user:other" };
 const dmachine = { Authorization: "Bearer dev:client:rbudget" };
 
 beforeAll(async () => {
@@ -186,6 +187,66 @@ describe("rNet M1 store", () => {
     expect(duplicate.content_hash).toBe(originHash);
   });
 
+  test("rejects provenance mismatches and malformed extensions before persistence", async () => {
+    const [before] = await client.unsafe("select count(*)::int as count from media_objects");
+    const authoredFromArtifact = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "authored", reproducible: false },
+              origins: [originUri],
+              properties: {},
+            },
+          },
+        ],
+      },
+    });
+    expect(authoredFromArtifact.status).toBe(422);
+
+    const parsedFromClient = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: ["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"],
+              properties: {},
+            },
+          },
+        ],
+      },
+    });
+    expect(parsedFromClient.status).toBe(422);
+
+    const malformedExtension = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: [originUri],
+              properties: {},
+            },
+            "x-": true,
+          },
+        ],
+      },
+    });
+    expect(malformedExtension.status).toBe(422);
+    const [after] = await client.unsafe("select count(*)::int as count from media_objects");
+    expect(after?.count).toBe(before?.count);
+  });
+
   test("creates a conformant transaction and attaches it to the Vibe", async () => {
     const response = await request("/rnet/v0/objects", {
       method: "POST",
@@ -209,6 +270,21 @@ describe("rNet M1 store", () => {
     const body = await response.json();
     mediaObjectId = body.mediaObjects[0].uri.split("/").at(-1);
     expect(body.mediaObjects[0].owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
+  });
+
+  test("rejects malformed task names before persistence", async () => {
+    const response = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+      method: "PUT",
+      headers: owner,
+      json: { task: "bad task", entry: { model: "test/model", properties: {} } },
+    });
+    expect(response.status).toBe(422);
+    const mediaObject = await (
+      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: owner })
+    ).json();
+    expect(mediaObject.inferred?.["user/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47:bad task"]).toBe(
+      undefined,
+    );
   });
 
   test("preserves batch insertion order with unique Vibe positions", async () => {
@@ -444,7 +520,7 @@ describe("rNet M1 store", () => {
       headers: dmachine,
       json: { task: "rhizome:forecast", entry: { model: "test/model", properties: {} } },
     });
-    expect(spoof.status).toBe(403);
+    expect(spoof.status).toBe(422);
 
     const durableTask = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
@@ -553,6 +629,92 @@ describe("rNet M1 store", () => {
       },
     });
     expect(attachKnownElement.status).toBe(403);
+  });
+
+  test("owner tombstones preserve object references while metadata and bytes disappear", async () => {
+    const originResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain" },
+      body: "Disposable origin",
+    });
+    expect(originResponse.status).toBe(201);
+    const disposableOrigin = await originResponse.json();
+
+    const elementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Kind": "text" },
+      body: "Disposable element",
+    });
+    expect(elementResponse.status).toBe(201);
+    const disposableElement = await elementResponse.json();
+
+    expect(disposableOrigin.bytes).toBe(
+      `http://rhizome.test/rnet/v0/origins/${disposableOrigin.uri.split("/").at(-1)}/bytes`,
+    );
+    expect(disposableElement.bytes).toBe(
+      `http://rhizome.test/rnet/v0/elements/${disposableElement.uri.split("/").at(-1)}/bytes`,
+    );
+    const originBytes = await app.request(disposableOrigin.bytes, { headers: owner });
+    const elementBytes = await app.request(disposableElement.bytes, { headers: owner });
+    expect(originBytes.status).toBe(200);
+    expect(originBytes.headers.get("Content-Type")).toBe("text/plain");
+    expect(elementBytes.status).toBe(200);
+    expect(elementBytes.headers.get("Content-Type")).toBe("text/plain");
+
+    const mediaObjectResponse = await request("/rnet/v0/objects", {
+      method: "POST",
+      headers: owner,
+      json: {
+        objects: [
+          {
+            type: "note",
+            elements: [disposableElement.uri],
+            source: {
+              ingest: { method: "parser", reproducible: true },
+              origins: [disposableOrigin.uri],
+              properties: {},
+            },
+          },
+        ],
+      },
+    });
+    expect(mediaObjectResponse.status).toBe(201);
+    const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
+    const elementId = disposableElement.uri.split("/").at(-1);
+    const originId = disposableOrigin.uri.split("/").at(-1);
+
+    expect(
+      (await request(`/rnet/v0/elements/${elementId}`, { method: "DELETE", headers: otherOwner }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(`/rnet/v0/origins/${originId}`, { method: "DELETE", headers: otherOwner }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(`/rnet/v0/elements/${elementId}`, { method: "DELETE", headers: owner }))
+        .status,
+    ).toBe(204);
+    expect(
+      (await request(`/rnet/v0/origins/${originId}`, { method: "DELETE", headers: owner })).status,
+    ).toBe(204);
+
+    expect((await request(`/rnet/v0/elements/${elementId}`, { headers: owner })).status).toBe(404);
+    expect((await request(`/rnet/v0/elements/${elementId}/bytes`, { headers: owner })).status).toBe(
+      404,
+    );
+    expect((await request(`/rnet/v0/origins/${originId}`, { headers: owner })).status).toBe(404);
+    expect((await request(`/rnet/v0/origins/${originId}/bytes`, { headers: owner })).status).toBe(
+      404,
+    );
+
+    const preservedObject = await request(`/rnet/v0/objects/${mediaObject.uri.split("/").at(-1)}`, {
+      headers: owner,
+    });
+    expect(preservedObject.status).toBe(200);
+    const preservedDocument = await preservedObject.json();
+    expect(preservedDocument.elements).toEqual([disposableElement.uri]);
+    expect(preservedDocument.source.origins).toEqual([disposableOrigin.uri]);
   });
 
   test("deletes a Vibe without deleting dMachine-created records", async () => {

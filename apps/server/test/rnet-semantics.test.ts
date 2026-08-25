@@ -58,6 +58,7 @@ let otherElement: { uri: string };
 let otherObject: MediaObject;
 let initialEtag = "0";
 let userWriteEtag = "1";
+let authoredElementBytesUrl = "";
 const authoredPayload = "atomic client payload";
 
 beforeAll(async () => {
@@ -256,8 +257,12 @@ describe("rNet semantics", () => {
     expect(elementResponse.status).toBe(200);
 
     const element = (await elementResponse.json()) as { bytes: string; content_hash: string };
-    const payload = await fetch(element.bytes);
+    authoredElementBytesUrl = element.bytes;
+    expect(authoredElementBytesUrl).toBe(`http://rhizome.test/rnet/v0/elements/${elementId}/bytes`);
+    const payload = await app.request(authoredElementBytesUrl, { headers: dmachine });
     expect(payload.ok).toBe(true);
+    expect(payload.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(payload.headers.get("Content-Type")).toBe("text/plain");
     expect(await payload.text()).toBe(authoredPayload);
     expect(element.content_hash).toBe(await sha256(new TextEncoder().encode(authoredPayload)));
   });
@@ -304,13 +309,13 @@ describe("rNet semantics", () => {
     expect(response.status).toBe(403);
   });
 
-  test("write:inferred cannot spoof another writer's namespace", async () => {
+  test("bare task validation prevents spoofing another writer's namespace", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}/inferred`, {
       method: "PUT",
       headers: dmachine,
       json: { task: "rhizome:spoof", entry: { model: "semantics/test", properties: {} } },
     });
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(422);
   });
 
   test("client task output cannot mark itself durable", async () => {
@@ -470,6 +475,8 @@ describe("rNet semantics", () => {
     expect(revoke.status).toBe(200);
     const read = await request(`/rnet/v0/vibes/${vibeId}`, { headers: dmachine });
     expect(read.status).toBe(403);
+    const bytes = await app.request(authoredElementBytesUrl, { headers: dmachine });
+    expect(bytes.status).toBe(403);
   });
 });
 
