@@ -151,6 +151,18 @@ describe("rNet M1 store", () => {
     expect(response.status).toBe(422);
   });
 
+  test("rejects non-UUIDv7 user grant subjects at the route boundary", async () => {
+    const response = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Bad user grant",
+        grants: [{ subject: "id:rnet://id/alice", scope: ["read"] }],
+      },
+    });
+    expect(response.status).toBe(422);
+  });
+
   test("creates distinct owned origin records while deduplicating payload bytes", async () => {
     const first = await app.request("http://rhizome.test/rnet/v0/origins", {
       method: "POST",
