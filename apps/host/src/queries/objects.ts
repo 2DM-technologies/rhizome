@@ -70,9 +70,7 @@ export function useSetMediaObjectUser(uuid: string) {
     mutationFn: async ({ properties, ifMatch }: SetUserInput) => {
       const result = await api.PATCH("/rnet/v0/objects/{id}/user", {
         params: { path: { id: uuid }, header: { "if-match": `"${ifMatch}"` } },
-        // See `PropertyBag`: the generated request type permits no keys, so the widening
-        // happens here, at the one boundary that documents why.
-        body: { properties: properties as never },
+        body: { properties },
       });
       return { object: unwrap(result), userRev: revisionOf(result.response) };
     },
@@ -94,7 +92,7 @@ export function useSetMediaObjectInferred(uuid: string) {
       unwrap(
         await api.PUT("/rnet/v0/objects/{id}/inferred", {
           params: { path: { id: uuid } },
-          body: { task, entry: entry as never },
+          body: { task, entry },
         }),
       ),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.objects.detail(uuid) }),

@@ -352,11 +352,11 @@ export interface components {
         /** Format: date-time */
         retrieved_at?: string;
         /** @description Facts the source format defines. Validated against the registered type vocabulary when one exists. */
-        properties: Record<string, never>;
+        properties: Record<string, unknown>;
       } & unknown;
       /** @description Written by the owner via clients holding write:user. Freely mutable; revision-protected. */
       user?: {
-        properties: Record<string, never>;
+        properties: Record<string, unknown>;
         /** Format: date-time */
         updated_at?: string;
       };
@@ -371,7 +371,7 @@ export interface components {
            * @default false
            */
           durable: boolean;
-          properties: Record<string, never>;
+          properties: Record<string, unknown>;
           confidence?: number;
         };
       };
@@ -481,7 +481,7 @@ export interface components {
            * @default false
            */
           durable: boolean;
-          properties: Record<string, never>;
+          properties: Record<string, unknown>;
           confidence?: number;
         };
       };
@@ -1207,7 +1207,7 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": {
-          properties: Record<string, never>;
+          properties: Record<string, unknown>;
         };
       };
     };
@@ -1292,7 +1292,7 @@ export interface operations {
              * @default false
              */
             durable?: boolean;
-            properties: Record<string, never>;
+            properties: Record<string, unknown>;
             confidence?: number;
           };
         };
@@ -1829,8 +1829,8 @@ export interface operations {
             kind: "push" | "pull" | "agent";
             /** @enum {unknown} */
             status: "queued" | "running" | "done" | "failed" | "aborted";
-            request: Record<string, never>;
-            result: Record<string, never> | null;
+            request: Record<string, unknown>;
+            result: Record<string, unknown> | null;
             error: string | null;
             /** Format: date-time */
             created_at: string;
