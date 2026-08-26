@@ -42,7 +42,19 @@ export interface UnvalidatedContractResponse {
   readonly document?: JsonSchemaDocument;
 }
 
-type ContractResponse = ContractSchema<unknown> | UnvalidatedContractResponse | null;
+/**
+ * A validated response that also declares the headers it sets. Response headers are part of
+ * the contract when a client has to read one to make its next request — `ETag` feeds the
+ * `If-Match` of a subsequent write — so they belong in the OpenAPI document rather than in
+ * a handler that sets them invisibly.
+ */
+export interface ContractResponseWithHeaders {
+  readonly schema: ContractSchema<unknown>;
+  readonly headers: Readonly<Record<string, JsonSchemaDocument>>;
+}
+
+type ContractResponse =
+  ContractSchema<unknown> | ContractResponseWithHeaders | UnvalidatedContractResponse | null;
 export type ContractResponses = Readonly<Record<number, ContractResponse>>;
 export type ContractRequest = Readonly<{
   binary?: Readonly<{
@@ -187,6 +199,14 @@ function compileJsonSchema(document: JsonSchemaDocument): ContractSchema<unknown
  */
 export function jsonSchemaValue<Value>(document: JsonSchemaDocument): ContractSchema<Value> {
   return compileJsonSchema(document) as ContractSchema<Value>;
+}
+
+/** Declare the headers a validated response sets, so they reach the OpenAPI document. */
+export function withResponseHeaders(
+  schema: ContractSchema<unknown>,
+  headers: Readonly<Record<string, JsonSchemaDocument>>,
+): ContractResponseWithHeaders {
+  return { schema, headers };
 }
 
 export function jsonObjectSchema<
@@ -430,7 +450,8 @@ export function rhizomeRoute<
 
   middleware.push(async (context, next) => {
     await next();
-    const schema = contract.responses[context.res.status];
+    const declared = contract.responses[context.res.status];
+    const schema = declared && "schema" in declared ? declared.schema : declared;
     if (!schema || !("validate" in schema)) return;
     const value = await context.res
       .clone()

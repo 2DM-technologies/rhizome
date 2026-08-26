@@ -17,9 +17,12 @@ import {
   ProblemSchema,
   RecordIdParamsSchema,
   collectionOf,
+  jsonObjectSchema,
   jsonSchema,
   jsonSchemaByActor,
+  jsonSchemaValue,
   rnetDocument,
+  withResponseHeaders,
   type ContractValue,
   type Namespaced,
 } from "./contracts.ts";
@@ -122,6 +125,20 @@ export function mediaObjectPropertiesInput(input: CreateMediaObjectInput): {
 }
 
 const MediaObjectDocumentSchema = rnetDocument("media-object");
+/**
+ * The `user` revision, quoted. A client reads it here and sends it back as `If-Match` on the
+ * next `user` write, so it is contract, not incidental transport.
+ */
+const MediaObjectEtagHeaders = {
+  etag: {
+    type: "string",
+    description: "Quoted `user` revision, for the `If-Match` of a subsequent write.",
+  },
+} as const;
+const MediaObjectDocumentWithEtag = withResponseHeaders(
+  MediaObjectDocumentSchema,
+  MediaObjectEtagHeaders,
+);
 const MediaObjectCollectionSchema = collectionOf(MediaObjectDocumentSchema, "mediaObjects");
 const SetMediaObjectUserRequestSchema = jsonSchema({
   type: "object",
@@ -129,6 +146,28 @@ const SetMediaObjectUserRequestSchema = jsonSchema({
   properties: { properties: { type: "object" } },
   additionalProperties: false,
 });
+/**
+ * `If-Match` carries the `user` revision a write is conditioned on. It is declared so that it
+ * reaches the OpenAPI document and generated clients, where it was previously invisible even
+ * though the store requires it.
+ *
+ * Declared optional on purpose. The handler rejects a missing or unparseable revision with
+ * 409 `revision_conflict`, which names what actually went wrong; making the header required
+ * here would pre-empt that with a 422 schema violation about the request shape instead.
+ */
+const SetMediaObjectUserHeadersSchema = jsonObjectSchema(
+  {
+    "if-match": jsonSchemaValue<string>({
+      type: "string",
+      description:
+        "Quoted `user` revision the write is conditioned on, as returned by the ETag of a " +
+        "prior GET. Required in practice: a request without it is rejected with 409 " +
+        "revision_conflict.",
+    }),
+  },
+  [] as const,
+);
+
 const SetMediaObjectInferredRequestSchema = jsonSchema({
   type: "object",
   required: ["task", "entry"],
@@ -189,7 +228,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     {
       operationId: "getMediaObject",
       request: { param: RecordIdParamsSchema },
-      responses: { 200: MediaObjectDocumentSchema, 422: ProblemSchema },
+      responses: { 200: MediaObjectDocumentWithEtag, 422: ProblemSchema },
     },
     async (context) => {
       const mediaObjectsService = new MediaObjectsService({ db, actor: context.get("actor") });
@@ -204,9 +243,13 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     {
       operationId: "setMediaObjectUser",
       auth: "user_or_client",
-      request: { param: RecordIdParamsSchema, json: SetMediaObjectUserRequestSchema },
+      request: {
+        param: RecordIdParamsSchema,
+        header: SetMediaObjectUserHeadersSchema,
+        json: SetMediaObjectUserRequestSchema,
+      },
       responses: {
-        200: MediaObjectDocumentSchema,
+        200: MediaObjectDocumentWithEtag,
         401: ProblemSchema,
         403: ProblemSchema,
         409: ProblemSchema,

@@ -49,6 +49,11 @@ export function createApp({ config, db, blobs }: AppDependencies) {
         "Authorization, Content-Type, If-Match, X-Rnet-Kind, X-Rnet-Label",
       );
       context.header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
+      // `ETag` is not CORS-safelisted, so without this a cross-origin client cannot read the
+      // revision it must send back as `If-Match` — revision-protected writes are impossible
+      // from a browser, and a client that assumes a default silently writes against the wrong
+      // revision.
+      context.header("Access-Control-Expose-Headers", "ETag");
       context.header("Vary", "Origin");
     }),
   );

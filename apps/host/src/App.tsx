@@ -1,39 +1,22 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { BrowserRouter } from "react-router";
 
-import marks from "./assets/brand/app-mark.png";
-import orb1 from "./assets/orbs/orb-1-44.png";
-import orb2 from "./assets/orbs/orb-2-44.png";
-import orbHome from "./assets/orbs/orb-home-48.png";
-import { Desktop, Dock, DockApp, DockDivider, DockTray, SearchField, VibeOrb } from "./ui/index.ts";
+import { createQueryClient } from "./queries/index.ts";
+import { ShellLayout } from "./shell/ShellLayout.tsx";
 
 /**
- * Placeholder shell. The dock, desktop, and window chrome are real components from the
- * design system; the surfaces they host arrive with the store-backed screens.
+ * Providers and nothing else. There is no route table: every route in this app renders the
+ * same persistent shell, and the URL is read for focus rather than dispatched on. `matchPath`
+ * in `shell/surfaces.ts` is the only place a path is interpreted.
  */
 export function App() {
-  const [query, setQuery] = useState("");
+  const [queryClient] = useState(createQueryClient);
   return (
-    <Desktop
-      dock={
-        <Dock
-          leading={<VibeOrb src={orbHome} size="lg" alt="Home" />}
-          apps={<DockApp name="Rhizome" src={marks} state="active" />}
-          tray={
-            <DockTray>
-              <div className="flex min-w-0 shrink items-center gap-5 overflow-hidden">
-                <DockApp name="Spending" src={orb1} />
-                <DockApp name="Library" src={orb2} />
-              </div>
-              <DockDivider />
-              <SearchField
-                className="shrink-0"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </DockTray>
-          }
-        />
-      }
-    />
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <ShellLayout />
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }

@@ -13,6 +13,7 @@
   "dependencies": {
     "@rnet/types": "file:../../../rnet/packages/types",
     "@tanstack/react-query": "5.102.4",
+    "openapi-fetch": "0.17.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-router": "8.3.0",

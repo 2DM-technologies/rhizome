@@ -1165,6 +1165,8 @@ export interface operations {
       /** @description Successful response */
       200: {
         headers: {
+          /** @description Quoted `user` revision, for the `If-Match` of a subsequent write. */
+          etag?: string;
           [name: string]: unknown;
         };
         content: {
@@ -1194,7 +1196,9 @@ export interface operations {
   setMediaObjectUser: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        "if-match"?: string;
+      };
       path: {
         id: string;
       };
@@ -1211,6 +1215,8 @@ export interface operations {
       /** @description Successful response */
       200: {
         headers: {
+          /** @description Quoted `user` revision, for the `If-Match` of a subsequent write. */
+          etag?: string;
           [name: string]: unknown;
         };
         content: {

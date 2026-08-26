@@ -3,6 +3,7 @@ import type { JSONSchema } from "json-schema-to-ts";
 import {
   ProblemSchema,
   RNET_DOCUMENTS,
+  type ContractResponseWithHeaders,
   type ContractSchema,
   type OpenApiRouteContract,
   type UnvalidatedContractResponse,
@@ -158,11 +159,27 @@ function requestBodyFor(
   return undefined;
 }
 
+function headersFor(headers: Readonly<Record<string, JSONSchema>>): JsonObject {
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, document]) => {
+      const description =
+        typeof document === "object" && typeof document.description === "string"
+          ? { description: document.description }
+          : {};
+      return [name, { ...description, schema: schemaFor(document) }];
+    }),
+  );
+}
+
 function responseFor(
   status: number,
-  response: ContractSchema<unknown> | UnvalidatedContractResponse | null,
+  response:
+    ContractSchema<unknown> | ContractResponseWithHeaders | UnvalidatedContractResponse | null,
 ): JsonObject {
   if (!response) return { description: statusDescription(status) };
+  if ("schema" in response) {
+    return { ...responseFor(status, response.schema), headers: headersFor(response.headers) };
+  }
   if ("validate" in response) {
     const contentType =
       response.document === ProblemSchema.document
