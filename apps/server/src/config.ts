@@ -15,7 +15,9 @@ export interface ServerConfig {
   };
 }
 
-export type BlobNamespace = "elements" | "origins" | "bundles" | "assets";
+/** The four buckets, enumerable so tooling can create them rather than restating the list. */
+export const BLOB_NAMESPACES = ["elements", "origins", "bundles", "assets"] as const;
+export type BlobNamespace = (typeof BLOB_NAMESPACES)[number];
 
 function required(name: string): string {
   const value = process.env[name];

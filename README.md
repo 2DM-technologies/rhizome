@@ -12,10 +12,15 @@ createdb rhizome
 bun install
 bun run db:migrate
 bun run db:seed
+bun run dev:s3   # in its own terminal; leave it running
 bun run dev
 ```
 
-Configure the object-store endpoint, credentials, and buckets in `.env`; local S3 emulators should set `R2_FORCE_PATH_STYLE=true`. The development auth mode recognizes `Bearer dev:user` and `Bearer dev:user:other` for seeded owners and `Bearer dev:client:rbudget` for the seeded standard dMachine. Development credentials are rejected when `NODE_ENV=production`, including when the auth-mode variable is omitted.
+The store requires object storage at startup, so `bun run dev:s3` runs a local S3 emulator with the four buckets already created, keeping its data in `.rhizome/s3`. The defaults in `.env.example` point at it. To run against real R2 instead, replace the endpoint and credentials and skip that step; `R2_FORCE_PATH_STYLE=true` is for emulators only.
+
+`.env` lives at the repository root and is read from there by both apps, even though `bun --filter` runs each with its own working directory — the server passes `--env-file` and Vite sets `envDir`.
+
+The development auth mode recognizes `Bearer dev:user` and `Bearer dev:user:other` for seeded owners and `Bearer dev:client:rbudget` for the seeded standard dMachine. Development credentials are rejected when `NODE_ENV=production`, including when the auth-mode variable is omitted.
 
 Run all checks with:
 
