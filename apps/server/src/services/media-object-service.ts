@@ -1,4 +1,5 @@
 import type { MediaObject } from "@rnet/types";
+import type { CreateMediaObjectInput } from "@rhizome/store-contract";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -22,7 +23,6 @@ import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import type { DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import type { CreateMediaObjectInput } from "../routes/media-objects.ts";
 import type { MediaObjectAggregate } from "../serializers/media-object-serializer.ts";
 import { AccessService } from "./access-service.ts";
 import { MediaElementsService, type PendingMediaElementUpload } from "./media-element-service.ts";
@@ -73,16 +73,11 @@ export class MediaObjectsService {
     return matchingMediaObjects;
   }
 
-  async getMediaObject(
-    uuid: string,
-  ): Promise<{ mediaObject: MediaObjectAggregate; userRev: number }> {
+  async getMediaObject(uuid: string): Promise<MediaObjectAggregate> {
     const mediaObjectRecord = await this.findById(uuid);
     if (!mediaObjectRecord) throw notFound("Object");
     await this.access.assertMediaObjectScope(mediaObjectRecord, GRANT_SCOPE.READ);
-    return {
-      mediaObject: await this.loadAggregate(mediaObjectRecord),
-      userRev: mediaObjectRecord.userRev,
-    };
+    return this.loadAggregate(mediaObjectRecord);
   }
 
   async createMediaObjects(
@@ -163,9 +158,8 @@ export class MediaObjectsService {
 
   async setUser(
     mediaObjectUuid: string,
-    expectedRev: number,
     properties: Record<string, unknown>,
-  ): Promise<{ mediaObject: MediaObjectAggregate; userRev: number }> {
+  ): Promise<MediaObjectAggregate> {
     const currentMediaObject = await this.access.assertMediaObjectScope(
       mediaObjectUuid,
       GRANT_SCOPE.WRITE_USER,
@@ -176,36 +170,17 @@ export class MediaObjectsService {
         properties,
         updated_at: new Date().toISOString(),
       }),
-      persist: async (transaction, currentMediaObject, user) => {
-        if (currentMediaObject.userRev !== expectedRev) {
-          throw new Problem(
-            409,
-            "revision_conflict",
-            "Revision conflict",
-            "The user block changed",
-            { expected: expectedRev, current: currentMediaObject.userRev },
-          );
-        }
+      persist: async (transaction, _currentMediaObject, user) => {
         const [nextMediaObject] = await transaction
           .update(mediaObjects)
           .set({ user, userRev: sql`${mediaObjects.userRev} + 1` })
-          .where(and(eq(mediaObjects.uuid, mediaObjectUuid), eq(mediaObjects.userRev, expectedRev)))
+          .where(eq(mediaObjects.uuid, mediaObjectUuid))
           .returning();
-        if (!nextMediaObject) {
-          throw new Problem(
-            409,
-            "revision_conflict",
-            "Revision conflict",
-            "The user block changed",
-          );
-        }
+        if (!nextMediaObject) throw notFound("Object");
         return { mediaObject: nextMediaObject, revision: nextMediaObject.userRev };
       },
     });
-    return {
-      mediaObject: await this.loadAggregate(updatedMediaObject),
-      userRev: updatedMediaObject.userRev,
-    };
+    return this.loadAggregate(updatedMediaObject);
   }
 
   async setInferred(
@@ -269,10 +244,17 @@ export class MediaObjectsService {
     update: MediaObjectBlockUpdate<Snapshot>,
   ): Promise<DbMediaObject> {
     return this.db.transaction(async (transaction: DatabaseTransaction) => {
-      const snapshot = update.buildSnapshot(currentMediaObject);
-      const persisted = await update.persist(transaction, currentMediaObject, snapshot);
+      const [lockedMediaObject] = await transaction
+        .select()
+        .from(mediaObjects)
+        .where(eq(mediaObjects.uuid, currentMediaObject.uuid))
+        .for("update");
+      if (!lockedMediaObject) throw notFound("Object");
+
+      const snapshot = update.buildSnapshot(lockedMediaObject);
+      const persisted = await update.persist(transaction, lockedMediaObject, snapshot);
       await transaction.insert(mediaObjectRevisions).values({
-        mediaObjectUuid: currentMediaObject.uuid,
+        mediaObjectUuid: lockedMediaObject.uuid,
         block: update.block,
         rev: persisted.revision,
         snapshot,

@@ -1,7 +1,8 @@
 import type { JSONSchema } from "json-schema-to-ts";
 
+import { STORE_SCHEMA_COMPONENTS } from "@rhizome/store-contract";
+
 import {
-  ProblemSchema,
   RNET_DOCUMENTS,
   type ContractResponseWithHeaders,
   type ContractSchema,
@@ -24,9 +25,29 @@ const COMPONENT_NAMES = {
   vibe: "Vibe",
 } as const;
 
-const SCHEMA_COMPONENTS = Object.fromEntries(
+const RNET_SCHEMA_COMPONENTS = Object.fromEntries(
   Object.entries(RNET_DOCUMENTS).map(([name, document]) => [
     COMPONENT_NAMES[name as keyof typeof COMPONENT_NAMES],
+    localizeSchemaForOpenApi(document),
+  ]),
+);
+
+const STORE_SCHEMA_COMPONENT_ENTRIES = Object.entries(STORE_SCHEMA_COMPONENTS).map(
+  ([name, document]) => {
+    if (typeof document !== "object" || document === null) {
+      throw new Error(`Shared OpenAPI component ${name} must be an object schema`);
+    }
+    return [name, document] as const;
+  },
+);
+
+const STORE_COMPONENT_FOR_SCHEMA = new Map<object, string>(
+  STORE_SCHEMA_COMPONENT_ENTRIES.map(([name, document]) => [document, name]),
+);
+
+const LOCALIZED_STORE_SCHEMA_COMPONENTS = Object.fromEntries(
+  STORE_SCHEMA_COMPONENT_ENTRIES.map(([name, document]) => [
+    name,
     localizeSchemaForOpenApi(document),
   ]),
 );
@@ -58,14 +79,17 @@ export function createOpenApiDocument(routes: readonly RegisteredRhizomeRoute[])
       description: "The rNet-compatible API exposed by the Rhizome store.",
     },
     servers: [{ url: "/", description: "Current Rhizome store" }],
+    // Every route accepts an identity when supplied, while public-readable routes also
+    // work anonymously. Routes with a required `auth` contract override this below.
+    security: [{ BearerAuth: [] }, {}],
     paths,
     components: {
       securitySchemes: {
         BearerAuth: { type: "http", scheme: "bearer" },
       },
       schemas: {
-        ...SCHEMA_COMPONENTS,
-        Problem: localizeSchemaForOpenApi(ProblemSchema.document),
+        ...RNET_SCHEMA_COMPONENTS,
+        ...LOCALIZED_STORE_SCHEMA_COMPONENTS,
       },
     },
   } as const;
@@ -81,6 +105,9 @@ function operation(contract: OpenApiRouteContract): JsonObject {
 
   for (const [status, response] of Object.entries(contract.responses)) {
     responses[status] = responseFor(Number(status), response);
+  }
+  for (const status of [413, 500] as const) {
+    responses[status] ??= problemResponseFor(status);
   }
   responses.default = {
     description: "Problem response",
@@ -99,6 +126,15 @@ function operation(contract: OpenApiRouteContract): JsonObject {
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses,
+  };
+}
+
+function problemResponseFor(status: number): JsonObject {
+  return {
+    description: statusDescription(status),
+    content: {
+      "application/problem+json": { schema: { $ref: "#/components/schemas/Problem" } },
+    },
   };
 }
 
@@ -136,6 +172,7 @@ function requestBodyFor(
         "multipart/form-data": {
           schema: {
             type: "object",
+            "x-rhizome-typescript-type": "FormData",
             required: ["metadata"],
             properties: {
               metadata: {
@@ -144,7 +181,9 @@ function requestBodyFor(
                 contentSchema: schemaFor(request.multipart.document),
               },
             },
-            additionalProperties: true,
+            // Every other named part is an upload. The multipart validator rejects text
+            // fields here, so the public document must describe binary values too.
+            additionalProperties: { type: "string", format: "binary" },
           },
         },
       },
@@ -182,7 +221,7 @@ function responseFor(
   }
   if ("validate" in response) {
     const contentType =
-      response.document === ProblemSchema.document
+      storeComponentForSchema(response.document) === "Problem"
         ? "application/problem+json"
         : "application/json";
     return {
@@ -198,12 +237,19 @@ function responseFor(
 }
 
 function schemaFor(document: JSONSchema): OpenApiSchema {
-  if (document === ProblemSchema.document) return { $ref: "#/components/schemas/Problem" };
+  const storeComponent = storeComponentForSchema(document);
+  if (storeComponent) return { $ref: `#/components/schemas/${storeComponent}` };
   if (typeof document === "object" && typeof document.$id === "string") {
     const component = componentForId(document.$id);
     if (component) return { $ref: `#/components/schemas/${component}` };
   }
   return localizeSchemaForOpenApi(document);
+}
+
+function storeComponentForSchema(document: JSONSchema): string | undefined {
+  return typeof document === "object" && document !== null
+    ? STORE_COMPONENT_FOR_SCHEMA.get(document)
+    : undefined;
 }
 
 function localizeSchemaForOpenApi(value: JSONSchema | unknown): OpenApiSchema {

@@ -1,26 +1,40 @@
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { api, unwrap } from "../api/client.ts";
-import type { MediaObject, Vibe } from "../api/types.ts";
+import { api } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
-import { keys } from "./keys.ts";
 
-type VibeWritable = Pick<Vibe, "title" | "pull" | "grants">;
+const vibePath = "/rnet/v0/vibes/{id}";
+const vibeObjectsPath = "/rnet/v0/vibes/{id}/objects";
 
-export function useVibes(): UseQueryResult<Vibe[]> {
-  return useQuery({
-    queryKey: keys.vibes.list(),
-    queryFn: async () => unwrap(await api.GET("/rnet/v0/vibes")).vibes,
+function vibeQuery(uuid: string) {
+  return api.queryOptions("get", vibePath, {
+    params: { path: { id: uuid } },
   });
 }
 
-export function useVibe(uuid: string | undefined): UseQueryResult<Vibe> {
-  return useQuery({
-    queryKey: keys.vibes.detail(uuid ?? ""),
-    enabled: Boolean(uuid),
-    queryFn: async () =>
-      unwrap(await api.GET("/rnet/v0/vibes/{id}", { params: { path: { id: uuid as string } } })),
+function vibeObjectsQuery(uuid: string) {
+  return api.queryOptions("get", vibeObjectsPath, {
+    params: { path: { id: uuid } },
   });
+}
+
+export function useVibes() {
+  return api.useQuery("get", "/rnet/v0/vibes", undefined, {
+    refetchOnWindowFocus: "always",
+    select: (response) => response.vibes,
+  });
+}
+
+export function useVibe(uuid: string | undefined) {
+  return api.useQuery(
+    "get",
+    vibePath,
+    { params: { path: { id: uuid ?? "" } } },
+    {
+      enabled: Boolean(uuid),
+      refetchOnWindowFocus: "always",
+    },
+  );
 }
 
 /**
@@ -28,73 +42,79 @@ export function useVibe(uuid: string | undefined): UseQueryResult<Vibe> {
  * collection. The SDK surface specifies a page here, so this is deliberately shaped to become
  * paginated without moving the call sites.
  */
-export function useVibeObjects(uuid: string | undefined): UseQueryResult<MediaObject[]> {
-  return useQuery({
-    queryKey: keys.vibes.objects(uuid ?? ""),
-    enabled: Boolean(uuid),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/rnet/v0/vibes/{id}/objects", {
-          params: { path: { id: uuid as string } },
-        }),
-      ).mediaObjects,
-  });
+export function useVibeObjects(uuid: string | undefined) {
+  return api.useQuery(
+    "get",
+    vibeObjectsPath,
+    { params: { path: { id: uuid ?? "" } } },
+    {
+      enabled: Boolean(uuid),
+      refetchOnWindowFocus: "always",
+      select: (response) => response.mediaObjects,
+    },
+  );
 }
 
 export function useCreateVibe() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: Pick<Vibe, "title"> & Partial<VibeWritable>) =>
-      unwrap(await api.POST("/rnet/v0/vibes", { body })),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.vibes.list() }),
+  return api.useMutation("post", "/rnet/v0/vibes", {
+    onSuccess: () =>
+      client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+      }),
   });
 }
 
-export function useUpdateVibe(uuid: string) {
+export function useUpdateVibe() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: Partial<VibeWritable>) =>
-      unwrap(await api.PATCH("/rnet/v0/vibes/{id}", { params: { path: { id: uuid } }, body })),
-    onSuccess: (vibe) => {
-      client.setQueryData(keys.vibes.detail(uuid), vibe);
-      void client.invalidateQueries({ queryKey: keys.vibes.list() });
+  return api.useMutation("patch", vibePath, {
+    onSuccess: (vibe, request) => {
+      client.setQueryData(vibeQuery(request.params.path.id).queryKey, vibe);
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+      });
     },
   });
 }
 
 export function useDeleteVibe() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (uuid: string) => {
-      await api.DELETE("/rnet/v0/vibes/{id}", { params: { path: { id: uuid } } });
-      return uuid;
-    },
-    onSuccess: (uuid) => {
-      client.removeQueries({ queryKey: keys.vibes.detail(uuid) });
-      void client.invalidateQueries({ queryKey: keys.vibes.list() });
+  return api.useMutation("delete", vibePath, {
+    onSuccess: (_response, { params }) => {
+      client.removeQueries({ queryKey: vibeQuery(params.path.id).queryKey });
+      client.removeQueries({ queryKey: vibeObjectsQuery(params.path.id).queryKey });
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+      });
     },
   });
 }
 
-/** Membership changes alter the Vibe document and its object list, so both are invalidated. */
-function useVibeMembership(uuid: string, method: "add" | "remove") {
+function useInvalidateVibeMembership() {
   const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (objects: string[]) => {
-      const request = { params: { path: { id: uuid } }, body: { objects } };
-      if (method === "add") await api.POST("/rnet/v0/vibes/{id}/objects", request);
-      else await api.DELETE("/rnet/v0/vibes/{id}/objects", request);
-      return objects;
-    },
-    onSuccess: (objects) => {
-      void client.invalidateQueries({ queryKey: keys.vibes.detail(uuid) });
-      void client.invalidateQueries({ queryKey: keys.vibes.objects(uuid) });
-      for (const uri of objects) {
-        void client.invalidateQueries({ queryKey: keys.objects.detail(uuidOf(uri)) });
-      }
-    },
+  return (uuid: string, objects: string[]) => {
+    void client.invalidateQueries({ queryKey: vibeQuery(uuid).queryKey });
+    void client.invalidateQueries({ queryKey: vibeObjectsQuery(uuid).queryKey });
+    for (const uri of objects) {
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/objects/{id}", {
+          params: { path: { id: uuidOf(uri) } },
+        }).queryKey,
+      });
+    }
+  };
+}
+
+export function useAddVibeObjects() {
+  const invalidate = useInvalidateVibeMembership();
+  return api.useMutation("post", vibeObjectsPath, {
+    onSuccess: (_response, { body, params }) => invalidate(params.path.id, body.objects),
   });
 }
 
-export const useAddVibeObjects = (uuid: string) => useVibeMembership(uuid, "add");
-export const useRemoveVibeObjects = (uuid: string) => useVibeMembership(uuid, "remove");
+export function useRemoveVibeObjects() {
+  const invalidate = useInvalidateVibeMembership();
+  return api.useMutation("delete", vibeObjectsPath, {
+    onSuccess: (_response, { body, params }) => invalidate(params.path.id, body.objects),
+  });
+}

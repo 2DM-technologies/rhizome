@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { isStoreError } from "../api/client.ts";
 import { StatusChip, cn } from "../ui/index.ts";
 
 /**
@@ -39,6 +40,10 @@ export function Pending({ label }: { label: string }) {
 }
 
 export function Failed({ error }: { error: unknown }) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = isStoreError(error)
+    ? error.detail
+    : error instanceof Error
+      ? error.message
+      : String(error);
   return <span className="text-body text-error">{message}</span>;
 }

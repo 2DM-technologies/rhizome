@@ -1,4 +1,9 @@
 import type { Grant } from "@rnet/types";
+import type {
+  CreateVibeRequest,
+  MediaObjectRefsRequest,
+  UpdateVibeRequest,
+} from "@rhizome/store-contract";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -10,11 +15,6 @@ import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes, type DbVibe, type NewDbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import type {
-  CreateVibeRequest,
-  MediaObjectRefsRequest,
-  UpdateVibeRequest,
-} from "../routes/vibes.ts";
 import type { MediaObjectAggregate } from "../serializers/media-object-serializer.ts";
 import type { VibeAggregate } from "../serializers/vibe-serializer.ts";
 import { AccessService } from "./access-service.ts";

@@ -42,12 +42,7 @@ export interface UnvalidatedContractResponse {
   readonly document?: JsonSchemaDocument;
 }
 
-/**
- * A validated response that also declares the headers it sets. Response headers are part of
- * the contract when a client has to read one to make its next request — `ETag` feeds the
- * `If-Match` of a subsequent write — so they belong in the OpenAPI document rather than in
- * a handler that sets them invisibly.
- */
+/** A validated response that also declares its protocol-visible headers. */
 export interface ContractResponseWithHeaders {
   readonly schema: ContractSchema<unknown>;
   readonly headers: Readonly<Record<string, JsonSchemaDocument>>;
@@ -230,36 +225,17 @@ export function jsonObjectSchema<
   } as ObjectContractSchema<ObjectContractValue<Properties, Required>>;
 }
 
-/**
- * `x-` namespaced extensions, as a template-literal index signature.
- *
- * A schema's `patternProperties` makes FromSchema emit `[x: string]: unknown`, which
- * claims every key exists and so defeats `in`-narrowing across a union — `"source" in
- * input` stops telling TypeScript anything. A template-literal index carries the same
- * meaning for callers while leaving unrelated keys narrowable.
- */
-type NamespacedExtensions = { [key: `x-${string}`]: unknown };
-
-type WithoutStringIndex<Value> = {
-  [Key in keyof Value as string extends Key ? never : Key]: Value[Key];
-};
-
-/**
- * Restate a derived request type so its `x-` extensions do not swallow every key.
- * Distributive, so it applies per member of an actor union.
- */
-export type Namespaced<Value> = Value extends unknown
-  ? WithoutStringIndex<Value> & NamespacedExtensions
-  : never;
-
 export function jsonSchemaByActor<UserValue extends object, ClientValue extends object>({
   user,
   client,
+  document,
 }: {
   user: ContractSchema<UserValue>;
   client: ContractSchema<ClientValue>;
+  /** Canonical public union document, when the contract lives in a shared package. */
+  document?: JsonSchemaDocument;
 }): ContractSchema<UserValue | ClientValue> {
-  const union = jsonSchema({ oneOf: [user.document, client.document] });
+  const union = jsonSchema(document ?? { oneOf: [user.document, client.document] });
   return {
     document: union.document,
     validate(value, actor) {
@@ -289,15 +265,18 @@ type Collection<Key extends string, Value> = { [Property in Key]: Value[] };
 export function collectionOf<Value, const Key extends string = "items">(
   item: ContractSchema<Value>,
   key: Key = "items" as Key,
+  document?: JsonSchemaDocument,
 ): ContractSchema<Collection<Key, Value>> {
   const id = typeof item.document === "object" ? item.document.$id : undefined;
   if (typeof id !== "string") throw new Error("Collection item schemas must have an $id");
-  const collection = jsonSchema({
-    type: "object",
-    required: [key],
-    properties: { [key]: { type: "array", items: { $ref: id } } },
-    additionalProperties: false,
-  });
+  const collection = jsonSchema(
+    document ?? {
+      type: "object",
+      required: [key],
+      properties: { [key]: { type: "array", items: { $ref: id } } },
+      additionalProperties: false,
+    },
+  );
   return {
     document: collection.document,
     validate(value) {

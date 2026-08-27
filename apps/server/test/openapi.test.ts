@@ -46,6 +46,34 @@ describe("OpenAPI", () => {
     expect(serialized).not.toContain("https://rnet.network/schemas/0.1/");
   });
 
+  test("documents optional identity and required authenticated operations", () => {
+    expect(openApiDocument.security).toEqual([{ BearerAuth: [] }, {}]);
+    const createVibe = openApiDocument.paths["/rnet/v0/vibes"]?.post as
+      { security?: unknown } | undefined;
+    expect(createVibe?.security).toEqual([{ BearerAuth: [] }]);
+
+    const getVibe = openApiDocument.paths["/rnet/v0/vibes/{id}"]?.get as
+      { security?: unknown } | undefined;
+    expect(getVibe?.security).toBeUndefined();
+  });
+
+  test("documents arbitrary named multipart parts as binary files", () => {
+    const createObjects = openApiDocument.paths["/rnet/v0/objects"]?.post as
+      | {
+          requestBody?: {
+            content?: {
+              "multipart/form-data"?: {
+                schema?: Record<string, unknown>;
+              };
+            };
+          };
+        }
+      | undefined;
+    const schema = createObjects?.requestBody?.content?.["multipart/form-data"]?.schema;
+    expect(schema?.additionalProperties).toEqual({ type: "string", format: "binary" });
+    expect(schema?.["x-rhizome-typescript-type"]).toBe("FormData");
+  });
+
   test("serves the generated document", async () => {
     const response = await app.request("http://rhizome.test/rnet/v0/openapi.json");
     expect(response.status).toBe(200);

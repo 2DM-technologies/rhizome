@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "3.1115.0",
     "@aws-sdk/s3-request-presigner": "3.1115.0",
+    "@rhizome/store-contract": "workspace:*",
     "@rnet/types": "file:../../../rnet/packages/types",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",

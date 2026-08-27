@@ -56,8 +56,6 @@ let otherVibe: Vibe;
 let otherOrigin: OriginArtifact;
 let otherElement: { uri: string };
 let otherObject: MediaObject;
-let initialEtag = "0";
-let userWriteEtag = "1";
 let authoredElementBytesUrl = "";
 const authoredPayload = "atomic client payload";
 
@@ -270,33 +268,33 @@ describe("rNet semantics", () => {
   test("a read grant reaches objects through Vibe membership", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}`, { headers: dmachine });
     expect(response.status).toBe(200);
-    initialEtag = response.headers.get("ETag") ?? "0";
+    expect(response.headers.get("ETag")).toBeNull();
   });
 
   test("write:user can update the user block", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}/user`, {
       method: "PATCH",
-      headers: { ...dmachine, "If-Match": initialEtag },
+      headers: dmachine,
       json: { properties: { reviewed: true } },
     });
     expect(response.status).toBe(200);
-    userWriteEtag = response.headers.get("ETag") ?? "1";
+    expect(response.headers.get("ETag")).toBeNull();
   });
 
-  test("a stale user write fails with revision_conflict", async () => {
+  test("a later user write becomes current while the earlier revision remains history", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}/user`, {
       method: "PATCH",
-      headers: { ...dmachine, "If-Match": initialEtag },
+      headers: dmachine,
       json: { properties: { reviewed: false } },
     });
-    expect(response.status).toBe(409);
-    expect(((await response.json()) as { code: string }).code).toBe("revision_conflict");
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as MediaObject).user?.properties).toEqual({ reviewed: false });
   });
 
   test("write:user cannot write source", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}/user`, {
       method: "PATCH",
-      headers: { ...dmachine, "If-Match": userWriteEtag },
+      headers: dmachine,
       json: { properties: {}, source: { properties: { corrupted: true } } },
     });
     expect(response.status).toBe(422);
