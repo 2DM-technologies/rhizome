@@ -21,6 +21,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:e2e": "bun --filter @rhizome/host test:e2e",
+    "check:m15": "bun run check && bun run test:e2e",
     "build": "bun --filter '*' build",
     "check": "bun run openapi:check && bun run format:check && bun run typecheck && bun test && bun run build"
   },

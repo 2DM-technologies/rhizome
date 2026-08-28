@@ -8,7 +8,9 @@
     "build": "bunx --bun vite build",
     "preview": "bunx --bun vite preview",
     "storybook": "bunx --bun storybook dev -p 6006",
-    "build:storybook": "bunx --bun storybook build -o dist-storybook"
+    "build:storybook": "bunx --bun storybook build -o dist-storybook",
+    "test:e2e": "playwright test --config=playwright.config.ts",
+    "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
     "@rhizome/store-contract": "workspace:*",
@@ -22,6 +24,7 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@storybook/addon-a11y": "10.5.10",
     "@storybook/addon-docs": "10.5.10",
     "@storybook/react-vite": "10.5.10",
