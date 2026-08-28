@@ -93,6 +93,9 @@ export function useDeleteVibe() {
 function useInvalidateVibeMembership() {
   const client = useQueryClient();
   return (uuid: string, objects: string[]) => {
+    void client.invalidateQueries({
+      queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+    });
     void client.invalidateQueries({ queryKey: vibeQuery(uuid).queryKey });
     void client.invalidateQueries({ queryKey: vibeObjectsQuery(uuid).queryKey });
     for (const uri of objects) {

@@ -20,7 +20,7 @@ mock.module("../src/api/client.ts", () => ({
 }));
 
 const { useMediaObject, useSetMediaObjectUser } = await import("../src/queries/mediaObjects.ts");
-const { useDeleteVibe } = await import("../src/queries/vibes.ts");
+const { useAddVibeObjects, useDeleteVibe } = await import("../src/queries/vibes.ts");
 
 beforeEach(() => {
   invalidateQueries.mockClear();
@@ -53,6 +53,9 @@ test("set-user success refetches the authoritative object instead of caching its
   expect(invalidateQueries).toHaveBeenCalledWith({
     queryKey: ["get", "/rnet/v0/objects/{id}", { params: { path: { id: "object-1" } } }],
   });
+  expect(invalidateQueries).toHaveBeenCalledWith({
+    queryKey: ["get", "/rnet/v0/vibes/{id}/objects"],
+  });
   expect(setQueryData).not.toHaveBeenCalled();
 });
 
@@ -78,4 +81,20 @@ test("deleting a Vibe clears both its document and object collection", () => {
   expect(removeQueries).toHaveBeenCalledWith({
     queryKey: ["get", "/rnet/v0/vibes/{id}/objects", { params: { path: { id: "vibe-1" } } }],
   });
+});
+
+test("membership changes refresh the global Vibe collection", () => {
+  const mutation = useAddVibeObjects() as unknown as {
+    onSuccess: (
+      data: unknown,
+      request: { params: { path: { id: string } }; body: { objects: string[] } },
+    ) => void;
+  };
+
+  mutation.onSuccess(null, {
+    params: { path: { id: "vibe-1" } },
+    body: { objects: ["rnet://object/0198f2a1-b19c-77bb-a6e9-0d6c66c52ae3"] },
+  });
+
+  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["get", "/rnet/v0/vibes"] });
 });

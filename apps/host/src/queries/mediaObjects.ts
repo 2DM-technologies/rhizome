@@ -26,14 +26,19 @@ export function useMediaObject(uuid: string | undefined) {
 /** Owner-mutable `user` properties. The MVP store applies writes last-write-wins. */
 export function useSetMediaObjectUser() {
   const client = useQueryClient();
-  const invalidateObject = (uuid: string) =>
-    client.invalidateQueries({ queryKey: mediaObjectQuery(uuid).queryKey });
+  const reconcileObject = (uuid: string) =>
+    Promise.all([
+      client.invalidateQueries({ queryKey: mediaObjectQuery(uuid).queryKey }),
+      // Vibe object collections contain expanded MediaObject documents, not only URI refs.
+      // Every mounted Vibe surface that may hold this object must therefore reconcile too.
+      client.invalidateQueries({ queryKey: ["get", "/rnet/v0/vibes/{id}/objects"] }),
+    ]);
 
   return api.useMutation("patch", "/rnet/v0/objects/{id}/user", {
     // The mutation response can arrive after a newer overlapping write. Refetch the
     // authoritative object instead of installing a response whose ordering is unknown.
-    onSuccess: (_response, { params }) => invalidateObject(params.path.id),
-    onError: (_error, { params }) => invalidateObject(params.path.id),
+    onSuccess: (_response, { params }) => reconcileObject(params.path.id),
+    onError: (_error, { params }) => reconcileObject(params.path.id),
   });
 }
 
@@ -41,9 +46,12 @@ export function useSetMediaObjectInferred() {
   const client = useQueryClient();
   return api.useMutation("put", "/rnet/v0/objects/{id}/inferred", {
     onSuccess: (_response, { params }) =>
-      client.invalidateQueries({
-        queryKey: mediaObjectQuery(params.path.id).queryKey,
-      }),
+      Promise.all([
+        client.invalidateQueries({
+          queryKey: mediaObjectQuery(params.path.id).queryKey,
+        }),
+        client.invalidateQueries({ queryKey: ["get", "/rnet/v0/vibes/{id}/objects"] }),
+      ]),
   });
 }
 

@@ -22,13 +22,41 @@ export function Provisional({
   className?: string;
 }) {
   return (
-    <div className={cn("flex min-h-0 flex-col gap-5", className)}>
+    <div className={cn("flex h-full min-h-0 flex-col gap-5", className)}>
       <div className="flex items-start gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="text-heading text-primary">{title}</span>
           {detail ? <span className="text-caption text-secondary">{detail}</span> : null}
         </div>
         <StatusChip status="neutral">provisional</StatusChip>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </div>
+  );
+}
+
+/** Store-backed host surface frame. Unlike a future-milestone placeholder, it carries no badge. */
+export function StoreSurface({
+  title,
+  detail,
+  children,
+  actions,
+  className,
+}: {
+  title: string;
+  detail?: string;
+  children?: ReactNode;
+  actions?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex h-full min-h-0 flex-col gap-5", className)}>
+      <div className="flex items-start gap-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h1 className="text-heading text-primary">{title}</h1>
+          {detail ? <span className="text-caption text-secondary">{detail}</span> : null}
+        </div>
+        {actions}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </div>
