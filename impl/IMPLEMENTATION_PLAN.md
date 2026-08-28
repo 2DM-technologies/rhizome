@@ -123,6 +123,8 @@ rhizome/                            # PRODUCT (closed).
 | Auth                   | **Phone OTP: Better Auth + Twilio Verify**, passkey enrolled on first session                                             | Phone is a credential, never an identity: `rnet://id/{uuid}`. The phone number must never appear in any URI, owner field, or grant; the users table has no phone column by construction. Use Twilio **Verify** (not raw SMS — avoids A2P 10DLC registration). Fraud Guard on, rate-limit sends per-number and per-IP, US/CA geo-fence at launch. Dev mode: magic code `000000`, Twilio stubbed.<br><br>**Usernames are a store feature, not a protocol one** — same category as the phone number. Identity is `rnet://id/{uuid}`, always, everywhere: `owner` columns, grant subjects, and revision actors store the uuid and never the handle, so a rename is a row update that breaks no references. The handle travels _alongside_ the id in API responses (`{ id, handle }`), never _as_ it — a URI that changes when someone renames would make two strings identify the same thing depending on when you looked. At registration: casefold, reject homoglyph-confusable variants (`n0ah` impersonating `noah` in a grant list is a real attack), and reserve `admin`, `api`, `root`, `rnet`, `rhizome`, `system`, `me`, `settings`, `new` before anyone takes them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Deploy                 | **Railway**, single deployable (server + ingest) + managed Postgres                                                       | Git-push deploys, no Docker authoring, Postgres in the same project, and a subprocess-spawning harness runs without special handling.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
+Here “plan for that shape from M1” means settle the shell topology and state boundaries while building the Store, not ship frontend behavior in M1. The real host implementation begins at M1.5 with the development-session adapter; Better Auth remains M7 and replaces that adapter without changing Query or shell ownership. M1.5 manages existing Store records but does not invent a client identity for the privileged host: new ingested objects arrive through the M2 import flow, while conformant authored objects originate in registered dMachines from M4.
+
 ### Data model (Postgres, via Drizzle)
 
 > **First draft.** These definitions will change, in places significantly, as implementation proceeds. Treat them as the intended shape, not a migration to run.
@@ -153,7 +155,8 @@ CREATE TABLE origins (                  -- provenance records: raw exports, API 
   label         TEXT,                    -- original filename or source label
   rnet_schema   TEXT NOT NULL,
   uploaded_at   TIMESTAMPTZ NOT NULL,
-  tombstoned_at TIMESTAMPTZ              -- non-null = record tombstoned (spec §6.3)
+  tombstoned_at TIMESTAMPTZ,             -- non-null = record tombstoned (spec §6.3)
+  UNIQUE (uuid, owner_uuid)               -- supports owner-preserving source FKs
 );
 CREATE INDEX origins_content_hash_idx ON origins(content_hash);
 
@@ -221,7 +224,9 @@ CREATE TABLE vibes (
   owner_uuid    UUID NOT NULL REFERENCES users(uuid),
   rnet_schema   TEXT NOT NULL,          -- protocol version this row was written under
   inferred      JSONB NOT NULL DEFAULT '{}'::jsonb,
-  pull_config   JSONB,                  -- {enabled, sources[], policy, last_pulled_at}
+  pull_config   JSONB,                  -- {enabled, sources:["source:{uuid}"], policy,
+                                        --  last_pulled_at}; IDs resolve through
+                                        --  ingestion_sources, never to credentials
   extensions    JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at    TIMESTAMPTZ NOT NULL,
   rev           INTEGER NOT NULL DEFAULT 1
@@ -306,7 +311,10 @@ CREATE TABLE operations (
                                         -- Always set — never null.
   vibe_uuid     UUID REFERENCES vibes(uuid),
   request       JSONB NOT NULL,
-  result        JSONB,
+  result        JSONB,                  -- import preview/dry-run pull: candidates +
+                                        -- VERIFY + source/parser digest; immutable when done
+  review_digest TEXT,                   -- reviewed operations only; hashes staged result
+  committed_at  TIMESTAMPTZ,            -- non-null once a staged import is consumed
   error         TEXT,
   created_at    TIMESTAMPTZ NOT NULL,
   finished_at   TIMESTAMPTZ
@@ -393,7 +401,32 @@ CREATE TABLE source_credentials (
   secret        BYTEA NOT NULL,         -- encrypted at rest
   metadata      JSONB,                  -- account ids, scopes, expiry
   connected_at  TIMESTAMPTZ NOT NULL,
-  revoked_at    TIMESTAMPTZ
+  revoked_at    TIMESTAMPTZ,
+  UNIQUE (uuid, user_uuid)                -- supports owner-preserving source FKs
+);
+
+-- Owner-only product bindings used by pull_config. File sources point at the
+-- immutable uploaded origin; connected sources point at an encrypted credential
+-- and mint a fresh OriginArtifact from every fetched response before parsing.
+-- Neither credentials nor provider configuration enter a Vibe document.
+CREATE TABLE ingestion_sources (
+  uuid          UUID PRIMARY KEY,       -- serialized as the opaque "source:{uuid}"
+  owner_uuid    UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
+  kind          TEXT NOT NULL CHECK (kind IN ('origin','credential')),
+  parser        TEXT NOT NULL,           -- 'csv' | 'ofx' | 'simplefin' | …
+  parser_version TEXT NOT NULL,          -- code/config digest pinned for review
+  origin_uuid   UUID,
+  credential_uuid UUID,
+  config        JSONB,                   -- non-secret account/parser configuration
+  created_at    TIMESTAMPTZ NOT NULL,
+  revoked_at    TIMESTAMPTZ,
+  CHECK (
+    (kind = 'origin' AND origin_uuid IS NOT NULL AND credential_uuid IS NULL) OR
+    (kind = 'credential' AND credential_uuid IS NOT NULL AND origin_uuid IS NULL)
+  ),
+  FOREIGN KEY (origin_uuid, owner_uuid) REFERENCES origins(uuid, owner_uuid),
+  FOREIGN KEY (credential_uuid, owner_uuid)
+    REFERENCES source_credentials(uuid, user_uuid)
 );
 
 CREATE TABLE sessions (                 -- Better Auth-managed
@@ -451,11 +484,22 @@ Semantics that must be real even in alpha:
 - `PATCH /objects/{id}/user` is last-write-wins and returns the updated object.
   `source` is never PATCHable. The store increments its internal revision and records the write,
   but neither value is part of the MVP HTTP contract.
-- `pull` with `dry_run: true` returns candidates without committing. Dry-run review is **required**, not optional, for any ingestion that is not `reproducible: true`.
-- Origins are owner-only: no scope exposes them, and dMachines reach ingestion only through host-rendered import flows.
+- `pull` with `dry_run: true` returns candidates without committing. Dry-run review is **required**, not optional, for any ingestion that is not `reproducible: true`. The M2 supported CSV/QFX host file flow also always performs a dry run and renders its candidates and VERIFY reconciliation before commit, even though its committed parser is reproducible.
+- Origins are owner-only: no scope exposes them, and dMachines reach ingestion only through host-rendered import flows. The first such flow ships in M2.
 - `owner` is required and store-assigned on origins, elements, objects, and Vibes. dMachine-created records inherit the authorizing Vibe's owner. Reject cross-owner object/Vibe, object/element, and object/origin references. A dMachine creates new elements only in the same atomic operation as their first object and Vibe membership; attaching an existing object is owner-only.
 - Objects are rejected at POST unless the `source` block passes **schema** validation — enforced from M1.
 - **Ingest-record conformance** (spec §2.3: `parser_hash` required when `generated_parser`, `reproducible: false` forced when `agent`) is enforced from **M5**, when the record first has more than one reachable value. Until then it is a constant stamp — `{method: "parser", reproducible: true}` for ingested objects, `{method: "authored", reproducible: false}` for authored ones — and POST does not reject on it. Log this in `CONFORMANCE.md`.
+
+**M2 source and reviewed-commit contract.** The owner-facing host creates an owner-only `ingestion_source` before starting a file import preview or connected-account preview. A file source pins an immutable OriginArtifact plus parser version; a connected source pins a credential reference and parser version, and every fetch first stores its response as a new immutable OriginArtifact. A Vibe's `pull_config.sources` contains only opaque `source:{uuid}` identifiers. Composite database constraints require a source and its referenced origin or credential to have the same owner; resolution also rejects revoked sources, revoked credentials, tombstoned origins, and any source whose owner differs from the target Vibe. Credentials never enter `pull_config` or an operation result. Canceling an import retains the owner-only source and origin for retry/audit but does not add the source to the Vibe's pull configuration.
+
+A reviewed import is two-step, and confirmation never reruns the parser. The completed preview operation stores immutable candidate documents, the VERIFY report, the source/parser digest, and a digest over that staged result. Confirmation supplies that preview operation ID. In one transaction the store locks it, verifies the actor and Vibe, checks that the review succeeded, that its source/parser digest is still current, and that it has not already been consumed, then commits exactly those staged objects and their Vibe membership, adds the source to `pull_config`, and marks the review committed. A wrong-Vibe, stale, failed, or already-consumed review is rejected without writes.
+
+This initial review is an **owner-only Rhizome import binding**, not the protocol's `pull` operation:
+
+- `POST /ingestion-sources` accepts either an owned OriginArtifact plus a registered parser name, or an owned source credential plus non-secret provider configuration. The store chooses and returns the pinned parser version and opaque source ID; callers cannot supply a code digest or credential owner.
+- `POST /vibes/{id}/imports` accepts `{ source }`, starts an asynchronous `kind: "pull"` operation with `request.mode: "import_preview"`, and returns that `Operation`. This reuses the ingestion job lifecycle without pretending the protocol pull route was invoked. Its completed result is `{ candidates, verify, review_digest }`; the ordinary operation polling route reports progress and completion.
+- `POST /vibes/{id}/imports/{operation_id}/confirm` has no request body. It synchronously consumes the staged result in the transaction described above and returns the updated Vibe. Confirmation is intentionally not a second parser job.
+- `POST /vibes/{id}/pull` remains the protocol operation: it asynchronously refreshes only sources already present in `pull_config.sources` and never changes that configuration.
 
 ---
 
@@ -499,7 +543,10 @@ skills/simplefin/                    # PRIMARY ingestion path
 └── scripts/
     └── fetch-simplefin.ts   # deterministic → method: "parser"
 
-skills/ofx/                          # file-origin fallback (proves the upload path)
+skills/csv/                          # M2: one supported, fixture-backed CSV dialect
+└── … same four files, parse-csv.ts
+
+skills/ofx/                          # M2: QFX/OFX file-origin fallback
 └── … same four files, parse-ofx.ts
 ```
 
@@ -510,10 +557,10 @@ skills/ofx/                          # file-origin fallback (proves the upload p
 Storing the body instead means **nothing downstream branches on how the bytes arrived**:
 
 ```
-file:  user uploads chase.qfx  → POST /origins → origin UUID + content_hash ┐
-                                                                            ├→ parser reads payload
-api:   store fetches SimpleFIN → POST /origins → origin UUID + content_hash ┘   → objects, each with
-                                                                                  source.origins = [origin UUID]
+file:  user uploads bank.csv or chase.qfx → POST /origins → origin UUID + content_hash ┐
+                                                                                         ├→ parser reads payload
+api:   store fetches SimpleFIN             → POST /origins → origin UUID + content_hash ┘   → objects, each with
+                                                                                               source.origins = [origin UUID]
 ```
 
 Only the first step differs. Same origins table, same endpoint, same conformance rule that every object references at least one origin, same VERIFY invariants, same re-ingestion path — resolve the origin UUID, load its payload by `content_hash`, parse again. A parser bug found six months from now is fixed the same way for both.
@@ -522,7 +569,9 @@ Only the first step differs. Same origins table, same endpoint, same conformance
 
 **Monthly pull actually works** — a re-fetch rather than asking the user to re-upload, which was hand-wavy when files were the only path.
 
-Keep the upload path alive as the fallback: it is the only thing exercising user-supplied origins, and some banks will never be reachable any other way.
+Keep the supported CSV/QFX upload path alive as the fallback: it exercises user-supplied origins, and some banks will never be reachable any other way. “Supported CSV” at M2 means one documented, fixture-backed transaction dialect handled by a committed deterministic parser; an unknown bank export fails closed and remains the M5 `generated_parser` path.
+
+**M2 host file flow:** from “start something new” or an existing Vibe, choose or create the target Vibe → select a supported CSV or QFX/OFX file → store its bytes as an owner-only OriginArtifact → create its source binding → run schema validation and VERIFY through an import-preview operation → show the candidate transactions and reconciliation → cancel or confirm the staged review. Before confirmation, no derived objects, Vibe membership, or pull configuration are committed. Confirmation atomically commits the reviewed result and adds the source to the target Vibe; cancellation or failed validation commits neither. The owner-only source and origin remain retained for audit, retry, or re-ingestion. Later refreshes of that configured source use ordinary `pull`.
 
 **Determinism ladder**, recorded in every object's `source.ingest`:
 
@@ -532,7 +581,7 @@ Keep the upload path alive as the fallback: it is the only thing exercising user
 
 **The fixture must never be the user's real data.** Sample origins are actual bank exports; the PR carries a synthetic or scrubbed fixture generated from the shape, never the file itself. This is a hard rule, because the default implementation is to attach what it has.
 
-**Pipeline:** the server's `pull/` calls `@rhizome/harness` (packages/), which spawns a Pi subprocess per job with the origin bytes and the skill; the runtime parses, runs VERIFY invariants, and returns candidate MediaObjects as JSON; the server applies the dry-run gate, the pull policy, and schema validation, then commits. Ingestion MUST fully populate `source`, MUST NOT write `user` or `inferred`, and SHOULD populate `keys` with every global identifier the format exposes.
+**Pipeline:** in M2, the server's shared import/pull runtime invokes the committed SimpleFIN, CSV, or QFX parser directly and runs VERIFY. From M5, the `agent` and `generated_parser` branches call `@rhizome/harness`, which spawns a Pi subprocess per job with the origin bytes and skill. Every branch returns candidate MediaObjects to the same schema-validation, review, pull-policy, and commit machinery. Ingestion MUST fully populate `source`, MUST NOT write `user` or `inferred`, and SHOULD populate `keys` with every global identifier the format exposes.
 
 ---
 
@@ -577,7 +626,7 @@ One rule specific to generation, on top of plan §6.1:
 
 > **First draft.** This surface will change, in places significantly, as implementation proceeds. It describes the intended shape and the constraints that must hold, not a frozen API.
 
-**Apache-2.0, published to npm, developed in `rhizome/packages/dmachine-sdk`. Implementation begins in M4 alongside rBudget, its first real consumer; before M4 this section is a design contract, not a package to maintain.**
+**Apache-2.0, published to npm, developed in `rhizome/packages/dmachine-sdk`. Implementation begins in M4 alongside rBudget, its first real consumer; before M4 this section is a design contract, not a package to maintain. The host-owned import workflow lands directly in `apps/host` at M2 and does not wait for the SDK; `ui.importToVibe` later exposes that same trusted surface to dMachines.**
 
 **Two layers.** The **core** is framework-agnostic — plain TS functions plus an event emitter — so the data layer never assumes React. The **React layer** ships hooks, `<AgentSurface>`, and a **UI kit**: buttons, inputs, cards, tables, lists, empty and loading states, dialogs. The kit is not decoration. It gives every dMachine a shared visual identity instead of whatever the model felt like that day, and it gives the Maker a component vocabulary to compose in rather than raw divs — which is the single biggest lever on generated dMachine quality.
 
@@ -730,8 +779,8 @@ Notes for implementers:
 | `defineDmachine`, `connect`, `session.grants`, `session.user` | M4                                                  |
 | Read surface (`vibes.*`, `objects.get`, `elements.url`)       | M4                                                  |
 | `objects.setUser`, `objects.create`, `objects.setInferred`    | M4                                                  |
-| `ops.push`, `ops.watch`, `ops.get`                            | M3                                                  |
-| `ops.pull`, `ui.importToVibe`                                 | M2                                                  |
+| `ops.push`, `ops.watch`, `ops.get`                            | M4 SDK bridge (server operations land in M3)        |
+| `ops.pull`, `ui.importToVibe`                                 | M4 SDK bridge (server pull and host import land M2) |
 | `usage.current`, `usage.onCost`, `ui.toast`, `ui.pickVibe`    | M4                                                  |
 | `objects.history`, `objects.revert`                           | M7 (store keeps revisions from M1; this is the UI)  |
 | `agent.*`, `<AgentSurface>`                                   | M5 (harness); the Maker at M6 is the first consumer |
@@ -743,22 +792,23 @@ Notes for implementers:
 
 **Success criteria, escalating:**
 
-1. A stranger connects a bank through SimpleFIN (or drops a QFX file) and gets a working, personalized rBudget in under three minutes, with conformant provenance throughout.
-2. A stranger with a weird credit-union CSV gets the same result via the generated-parser path.
+1. A stranger connects a bank through SimpleFIN (or uploads a supported CSV/QFX export) and gets a working, personalized rBudget in under three minutes, with conformant provenance throughout.
+2. A stranger with an unsupported, weird credit-union CSV gets the same result via the generated-parser path.
 3. **The next level:** a stranger describes an app and the Maker generates a working dMachine against their Vibe, sandboxed and scope-limited.
 
-| #   | Milestone            | Contents                                                                                                                                                                                                                                                                                                                                                                                             | Exit test                                                                                                                                                                                                   |
-| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M0  | Schemas compile      | **First task: the codegen spike.** Run the 8 schemas through `json-schema-to-zod`; write ~10 assertions from the plan §9 fixtures — does the generated Zod reject `generated`-without-`parser_hash`? reject unnamespaced extra fields? accept `x-plaid`? If conditionals are mangled, take the ajv fallback (§3). Then: rnet repo, codegen pipeline, `@rnet/types`, document fixtures for both edges | `bun test` green on round-trips and negative cases                                                                                                                                                          |
-| M1  | Store                | server: origins / elements / objects / vibes CRUD; Postgres; R2 via BlobStore; grant enforcement; auth (dev-bypass acceptable — real OTP at M7). Frontend work remains explicitly deferred until the UI wireframes are finalized.                                                                                                                                                                    | the rNet semantics suite passes against the R2/S3-compatible configuration except explicit `CONFORMANCE.md` milestone deferrals                                                                             |
-| M2  | Compiled ingestion   | **SimpleFIN** connect flow (token exchange, credential storage) + hardcoded response parser; CSV/QFX upload as the file-origin fallback; verify runner; dry-run flow                                                                                                                                                                                                                                 | connected account → conformant transaction objects, invariants green; a re-pull picks up new transactions                                                                                                   |
-| M3  | Push pipeline        | `ModelConnector` interface + OpenAI connector (`gpt-5.6-luna`, batch or flex); `push/tasks/categorize/` (prompt + output schema) and a Vibe-level `summarize` task; write-back under `rhizome:{task}`; metering rows                                                                                                                                                                                 | inferred blocks present, costs queryable, connector swappable, per-run cost visible in `meter_entry`                                                                                                        |
-| M4  | rBudget              | `dmachines/rbudget` on the SDK only, **inside the sandbox with granted scopes from day one**; upload → review → dashboard → user edits                                                                                                                                                                                                                                                               | the three-minute stranger test, with the dMachine holding no privilege a stranger's wouldn't                                                                                                                |
-| M5  | Agentic tail         | `@rhizome/harness` live (ceilings + usage reporting); skill-guided path; generated-parser path; VERIFY gauntlet; draft promotion                                                                                                                                                                                                                                                                     | a cursed credit-union CSV survives the gauntlet and opens a promotion PR; harness model chosen by measurement (`gpt-5.6-sol` vs `gpt-5.3-codex` vs a second provider) using the VERIFY gauntlet as the eval |
-| M6  | The Maker            | intent → generation from the rBudget template → sandbox preview → grant request → registered dMachine                                                                                                                                                                                                                                                                                                | success criterion 3: a stranger describes a dMachine and gets it, sandboxed                                                                                                                                 |
-| M7  | Polish for strangers | deploy; real phone auth; docs site; dMachine registry/provenance UI; object history/revert                                                                                                                                                                                                                                                                                                           | a stranger completes criteria 1 and 3                                                                                                                                                                       |
+| #    | Milestone                   | Contents                                                                                                                                                                                                                                                                                                                                                                                             | Exit test                                                                                                                                                                                                                                                                                                |
+| ---- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0   | Schemas compile             | **First task: the codegen spike.** Run the 8 schemas through `json-schema-to-zod`; write ~10 assertions from the plan §9 fixtures — does the generated Zod reject `generated`-without-`parser_hash`? reject unnamespaced extra fields? accept `x-plaid`? If conditionals are mangled, take the ajv fallback (§3). Then: rnet repo, codegen pipeline, `@rnet/types`, document fixtures for both edges | `bun test` green on round-trips and negative cases                                                                                                                                                                                                                                                       |
+| M1   | Store                       | server: origins / elements / objects / vibes CRUD; Postgres; R2 via BlobStore; grant enforcement; auth (dev-bypass acceptable — real OTP at M7). Frontend implementation is out of M1 and begins in M1.5.                                                                                                                                                                                            | the rNet semantics suite passes against the R2/S3-compatible configuration except explicit `CONFORMANCE.md` milestone deferrals                                                                                                                                                                          |
+| M1.5 | Host foundation             | the real `apps/host` application: persistent OS shell; functional home, dock, launcher, and search over commands, open surfaces, and loaded Vibe titles; URL-driven retained surfaces; Vibe CRUD and existing-object membership; object graph browsing and element payload display; last-write-wins user-property editing; development session; browser-level host/store tests                       | from `/`, home and launcher open Vibes, search finds a loaded Vibe, then create a Vibe → add an existing fixture object → edit it → navigate away and back → observe persisted state; remove/re-add membership, deep-link, cache-invalidation, and CRUD browser tests pass                               |
+| M2   | Compiled ingestion + import | **SimpleFIN** connect flow (token exchange and credential storage); owner-only ingestion-source bindings; committed parsers for SimpleFIN, one supported CSV dialect, and QFX/OFX; OriginArtifact upload; VERIFY; pull operation polling and staged reviewed-commit contract; host flow choose/create Vibe → upload file → dry-run candidate/reconciliation review → confirm                         | supported CSV and QFX fixtures follow the same reviewed path into a selected Vibe: raw origins are retained, nothing derived commits before confirmation, confirmation atomically adds conformant transactions and membership, and cancel changes neither; SimpleFIN connect and re-pull pass invariants |
+| M3   | Push pipeline               | `ModelConnector` interface + OpenAI connector (`gpt-5.6-luna`, batch or flex); `push/tasks/categorize/` (prompt + output schema) and a Vibe-level `summarize` task; write-back under `rhizome:{task}`; metering rows                                                                                                                                                                                 | inferred blocks present, costs queryable, connector swappable, per-run cost visible in `meter_entry`                                                                                                                                                                                                     |
+| M4   | rBudget                     | `dmachines/rbudget` on the SDK only, **inside the sandbox with granted scopes from day one**; reuse the M2 import/review flow → dashboard → user edits                                                                                                                                                                                                                                               | the three-minute stranger test, with the dMachine holding no privilege a stranger's wouldn't                                                                                                                                                                                                             |
+| M5   | Agentic tail                | `@rhizome/harness` live (ceilings + usage reporting); skill-guided path; generated-parser path; VERIFY gauntlet; draft promotion                                                                                                                                                                                                                                                                     | a cursed credit-union CSV survives the gauntlet and opens a promotion PR; harness model chosen by measurement (`gpt-5.6-sol` vs `gpt-5.3-codex` vs a second provider) using the VERIFY gauntlet as the eval                                                                                              |
+| M6   | The Maker                   | intent → generation from the rBudget template → sandbox preview → grant request → registered dMachine                                                                                                                                                                                                                                                                                                | success criterion 3: a stranger describes a dMachine and gets it, sandboxed                                                                                                                                                                                                                              |
+| M7   | Polish for strangers        | deploy; real phone auth; docs site; dMachine registry/provenance UI; object history/revert                                                                                                                                                                                                                                                                                                           | a stranger completes criteria 1 and 3                                                                                                                                                                                                                                                                    |
 
-**Ordering doctrine:** deterministic before generative, and generated _parsers_ (M5) before generated _dMachines_ (M6) — rBudget must exist as a hand-built template before the Maker can generate variations of it. _Variation before invention._ Nothing is thrown away: M2's hardcoded parser becomes M5's committed skill script; M4's rBudget becomes M6's template #1.
+**Ordering doctrine:** deterministic before generative, and generated _parsers_ (M5) before generated _dMachines_ (M6) — rBudget must exist as a hand-built template before the Maker can generate variations of it. _Variation before invention._ Nothing is thrown away: M1.5's shell hosts every later product flow; M2's import/review is reused by rBudget at M4; M2's committed parser and VERIFY assets are reused by M5's skill-guided and generated-parser promotion pipeline; M4's rBudget becomes M6's template #1.
 
 ---
 
