@@ -146,6 +146,39 @@ describe("rNet M1 store", () => {
     vibeId = vibe.uri.split("/").at(-1);
   });
 
+  test("lists Vibes granted to a user alongside their owned Vibes", async () => {
+    const created = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Shared with another user",
+        grants: [
+          {
+            subject: "id:rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b49",
+            scope: ["read"],
+          },
+        ],
+      },
+    });
+    expect(created.status).toBe(201);
+    const shared = await created.json();
+
+    const owned = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: otherOwner,
+      json: { title: "Owned by the granted user" },
+    });
+    expect(owned.status).toBe(201);
+    const ownedVibe = await owned.json();
+
+    const response = await request("/rnet/v0/vibes", { headers: otherOwner });
+    expect(response.status).toBe(200);
+    const collection = await response.json();
+    const uris = collection.vibes.map((vibe: { uri: string }) => vibe.uri);
+    expect(uris).toContain(shared.uri);
+    expect(uris).toContain(ownedVibe.uri);
+  });
+
   test("rejects grant subjects the store cannot resolve", async () => {
     const response = await request("/rnet/v0/vibes", {
       method: "POST",

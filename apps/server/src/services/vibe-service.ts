@@ -42,11 +42,35 @@ export class VibesService {
   async listVibes(): Promise<VibeAggregate[]> {
     let vibeRows: DbVibe[];
     if (this.actor.kind === "user") {
-      vibeRows = await this.db
-        .select()
-        .from(vibes)
-        .where(eq(vibes.ownerUuid, this.actor.uuid))
-        .orderBy(asc(vibes.createdAt));
+      const [ownedVibeRows, grantedVibeRows] = await Promise.all([
+        this.db
+          .select()
+          .from(vibes)
+          .where(eq(vibes.ownerUuid, this.actor.uuid))
+          .orderBy(asc(vibes.createdAt)),
+        this.db
+          .select({ vibe: vibes })
+          .from(vibes)
+          .innerJoin(grants, eq(grants.vibeUuid, vibes.uuid))
+          .where(
+            and(
+              eq(grants.subject, this.actor.subject),
+              isNull(grants.revokedAt),
+              sql`${grants.scopes} @> ${JSON.stringify([GRANT_SCOPE.READ])}::jsonb`,
+            ),
+          )
+          .orderBy(asc(vibes.createdAt)),
+      ]);
+      // Owners can also have an explicit grant. Keep the collection unique and preserve the
+      // chronological ordering promised by the previous owner-only query.
+      vibeRows = [
+        ...new Map(
+          [...ownedVibeRows, ...grantedVibeRows.map(({ vibe }) => vibe)].map((vibe) => [
+            vibe.uuid,
+            vibe,
+          ]),
+        ).values(),
+      ].sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
     } else {
       const grantedVibeRows: { vibe: DbVibe }[] = await this.db
         .select({ vibe: vibes })
