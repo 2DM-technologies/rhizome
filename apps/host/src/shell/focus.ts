@@ -37,12 +37,14 @@ export function useEnsureSurfaceOpen(surface: Surface | null): void {
 }
 
 export interface SurfaceNavigation {
+  /** Return to the bare desktop. */
+  home: () => void;
   /** Focus a surface, opening it if it is not already open. */
   open: (surface: Surface, mode?: ViewMode) => void;
   /** Close a surface. Navigates away only if it was the focused one. */
   close: (id: SurfaceId) => void;
-  /** Toggle full screen without spending a history entry. */
-  toggleFullScreen: () => void;
+  /** Toggle maximized presentation without spending a history entry. */
+  toggleMaximized: () => void;
 }
 
 export function useSurfaceNavigation(): SurfaceNavigation {
@@ -51,7 +53,9 @@ export function useSurfaceNavigation(): SurfaceNavigation {
   const { surface: focused, mode } = useFocusedSurface();
 
   return {
-    open: (surface, nextMode = "windowed") => navigate(locationOf(surface, nextMode)),
+    home: () => navigate("/"),
+
+    open: (surface, nextMode = "standard") => navigate(locationOf(surface, nextMode)),
 
     close: (id) => {
       closeSurface(id);
@@ -60,9 +64,9 @@ export function useSurfaceNavigation(): SurfaceNavigation {
       if (focused && surfaceId(focused) === id) navigate("/");
     },
 
-    toggleFullScreen: () => {
+    toggleMaximized: () => {
       if (!focused) return;
-      const next: ViewMode = mode === "full" ? "windowed" : "full";
+      const next: ViewMode = mode === "maximized" ? "standard" : "maximized";
       navigate(locationOf(focused, next), { replace: true });
     },
   };

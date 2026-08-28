@@ -64,33 +64,37 @@ export function surfaceFromPath(pathname: string): Surface | null {
   return null;
 }
 
-/** How a focused surface is presented. Windowed is the default; full fills the desktop. */
-export type ViewMode = "windowed" | "full";
+/** How a focused surface is presented. Standard is the default; maximized fills its work area. */
+export type ViewMode = "standard" | "maximized";
 
-export const VIEW_PARAM = "view";
+export const MODE_PARAM = "mode";
 
 export function viewModeOf(search: string): ViewMode {
-  return new URLSearchParams(search).get(VIEW_PARAM) === "full" ? "full" : "windowed";
+  return new URLSearchParams(search).get(MODE_PARAM) === "maximized" ? "maximized" : "standard";
 }
 
 /**
- * The location for a surface at a view mode. Full screen is a search param rather than a path
- * so it is deep-linkable, and callers navigate to it with `replace` so toggling never costs a
- * back press to unwind.
+ * The location for a surface at a view mode. Maximized is a search param rather than a path so
+ * it is deep-linkable, and callers navigate to it with `replace` so toggling never costs a back
+ * press to unwind.
  */
-export function locationOf(surface: Surface, mode: ViewMode = "windowed"): string {
+export function locationOf(surface: Surface, mode: ViewMode = "standard"): string {
   const path = pathOf(surface);
-  return mode === "full" ? `${path}?${VIEW_PARAM}=full` : path;
+  return mode === "maximized" ? `${path}?${MODE_PARAM}=maximized` : path;
 }
 
-export function labelOf(surface: Surface): string {
+/** A stable, human-readable label without copying server-owned titles into shell state. */
+export function labelOf(
+  surface: Surface,
+  vibeTitles: ReadonlyMap<string, string> = new Map(),
+): string {
   switch (surface.kind) {
     case "vibes":
       return "Vibes";
     case "vibe":
-      return "Vibe";
+      return vibeTitles.get(surface.uuid) ?? `Vibe …${surface.uuid.slice(-6)}`;
     case "object":
-      return "Object";
+      return `Object …${surface.uuid.slice(-6)}`;
     case "dmachine":
       return surface.name;
   }

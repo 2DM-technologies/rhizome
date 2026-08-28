@@ -1,45 +1,27 @@
-import createClient, { type Middleware } from "openapi-fetch";
+import type { ProblemDocument } from "@rhizome/store-contract";
+import createFetchClient, { type Middleware } from "openapi-fetch";
+import createQueryClient from "openapi-react-query";
 
 import { bearerToken } from "../session/session.ts";
-import type { components, paths } from "./generated/openapi.ts";
+import { serializeRequestBody, StoreRequest } from "./bodySerializer.ts";
+import type { paths } from "./generated/openapi.ts";
 
-/** RFC 9457 problem document. Generated from the store's own schema, codes and all. */
-export type ProblemDocument = components["schemas"]["Problem"];
-export type ProblemCode = ProblemDocument["code"];
+/** RFC 9457 problem document shared with the server's validating schema. */
+export type { ProblemCode, ProblemDocument } from "@rhizome/store-contract";
 
-/**
- * A problem response, raised. `openapi-fetch` reports failures as a returned `error` and
- * never throws; TanStack Query decides success by whether a function throws. Converting once
- * here keeps that four-line dance out of every hook.
- */
-export class StoreError extends Error {
-  constructor(readonly problem: ProblemDocument) {
-    super(problem.detail);
-    this.name = "StoreError";
-  }
-
-  /** Narrowed to the store's closed vocabulary, so callers can branch exhaustively. */
-  get code(): ProblemCode {
-    return this.problem.code;
-  }
-
-  get status(): number {
-    return this.problem.status;
-  }
-}
+/** A generated RFC 9457 response body, thrown by `openapi-react-query` on non-2xx responses. */
+export type StoreError = ProblemDocument;
 
 export function isStoreError(error: unknown): error is StoreError {
-  return error instanceof StoreError;
-}
-
-/**
- * The body of a response that must have one. Unreachable in practice — the middleware throws
- * before a caller sees a failure — but `openapi-fetch` types `data` as optional because it
- * cannot know that, and asserting it once here beats a non-null assertion in every hook.
- */
-export function unwrap<Value>(result: { data?: Value }): Value {
-  if (result.data === undefined) throw new Error("Store returned no body");
-  return result.data;
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as Partial<ProblemDocument>;
+  return (
+    typeof candidate.type === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.status === "number" &&
+    typeof candidate.detail === "string" &&
+    typeof candidate.code === "string"
+  );
 }
 
 const store: Middleware = {
@@ -47,17 +29,15 @@ const store: Middleware = {
     request.headers.set("Authorization", `Bearer ${bearerToken()}`);
     return request;
   },
-  async onResponse({ response }) {
-    if (response.ok) return response;
-    if (response.headers.get("Content-Type")?.includes("problem+json")) {
-      throw new StoreError((await response.clone().json()) as ProblemDocument);
-    }
-    throw new Error(`Store request failed: ${response.status} ${response.statusText}`);
-  },
 };
 
-export const api = createClient<paths>({
+const fetchClient = createFetchClient<paths>({
   baseUrl: import.meta.env.VITE_RHIZOME_API_URL ?? window.location.origin,
+  bodySerializer: serializeRequestBody,
+  Request: StoreRequest,
 });
 
-api.use(store);
+fetchClient.use(store);
+
+/** Typed TanStack Query integration over the generated OpenAPI paths. */
+export const api = createQueryClient(fetchClient);

@@ -30,6 +30,17 @@ export function createApp({ config, db, blobs }: AppDependencies) {
   app.use(
     "*",
     createMiddleware(async (context, next) => {
+      const origin = context.req.header("Origin");
+      if (origin && config.allowedOrigins.includes(origin)) {
+        context.header("Access-Control-Allow-Origin", origin);
+      }
+      context.header(
+        "Access-Control-Allow-Headers",
+        "Authorization, Content-Type, X-Rnet-Kind, X-Rnet-Label",
+      );
+      context.header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
+      context.header("Vary", "Origin");
+
       const contentLength = Number(context.req.header("Content-Length"));
       if (Number.isFinite(contentLength) && contentLength > config.maxRequestBodySize) {
         throw new Problem(
@@ -40,21 +51,6 @@ export function createApp({ config, db, blobs }: AppDependencies) {
         );
       }
       await next();
-      const origin = context.req.header("Origin");
-      if (origin && config.allowedOrigins.includes(origin)) {
-        context.header("Access-Control-Allow-Origin", origin);
-      }
-      context.header(
-        "Access-Control-Allow-Headers",
-        "Authorization, Content-Type, If-Match, X-Rnet-Kind, X-Rnet-Label",
-      );
-      context.header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS");
-      // `ETag` is not CORS-safelisted, so without this a cross-origin client cannot read the
-      // revision it must send back as `If-Match` — revision-protected writes are impossible
-      // from a browser, and a client that assumes a default silently writes against the wrong
-      // revision.
-      context.header("Access-Control-Expose-Headers", "ETag");
-      context.header("Vary", "Origin");
     }),
   );
   app.options("*", (context) => context.body(null, 204));

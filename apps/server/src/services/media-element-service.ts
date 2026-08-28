@@ -1,3 +1,4 @@
+import type { CreateMediaObjectInput } from "@rhizome/store-contract";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -13,7 +14,6 @@ import {
 } from "../db/models/media-element.ts";
 import { grantMissing, notFound } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
-import type { CreateMediaObjectInput } from "../routes/media-objects.ts";
 import { AccessService } from "./access-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";

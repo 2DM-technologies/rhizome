@@ -1,4 +1,10 @@
-import { vibeSchema } from "@rnet/types";
+import {
+  createVibeRequestSchema,
+  mediaObjectRefsRequestSchema,
+  mediaObjectsResponseSchema,
+  updateVibeRequestSchema,
+  vibesResponseSchema,
+} from "@rhizome/store-contract";
 
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
@@ -13,49 +19,20 @@ import {
   collectionOf,
   jsonSchema,
   rnetDocument,
-  type ContractValue,
 } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
-const VibeWritableProperties = {
-  title: vibeSchema.properties.title,
-  pull: vibeSchema.properties.pull,
-  grants: vibeSchema.properties.grants,
-} as const;
-
-export const CreateVibeRequestSchema = jsonSchema({
-  type: "object",
-  required: ["title"],
-  properties: VibeWritableProperties,
-  additionalProperties: false,
-});
-
-export const UpdateVibeRequestSchema = jsonSchema({
-  type: "object",
-  properties: VibeWritableProperties,
-  additionalProperties: false,
-});
-
-export const MediaObjectRefsRequestSchema = jsonSchema({
-  type: "object",
-  required: ["objects"],
-  properties: {
-    objects: {
-      type: "array",
-      minItems: 1,
-      items: vibeSchema.properties.objects.items,
-    },
-  },
-  additionalProperties: false,
-});
-
-export type CreateVibeRequest = ContractValue<typeof CreateVibeRequestSchema>;
-export type UpdateVibeRequest = ContractValue<typeof UpdateVibeRequestSchema>;
-export type MediaObjectRefsRequest = ContractValue<typeof MediaObjectRefsRequestSchema>;
+export const CreateVibeRequestSchema = jsonSchema(createVibeRequestSchema);
+export const UpdateVibeRequestSchema = jsonSchema(updateVibeRequestSchema);
+export const MediaObjectRefsRequestSchema = jsonSchema(mediaObjectRefsRequestSchema);
 
 const VibeDocumentSchema = rnetDocument("vibe");
-const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes");
-const MediaObjectCollectionSchema = collectionOf(rnetDocument("media-object"), "mediaObjects");
+const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes", vibesResponseSchema);
+const MediaObjectCollectionSchema = collectionOf(
+  rnetDocument("media-object"),
+  "mediaObjects",
+  mediaObjectsResponseSchema,
+);
 export function createVibeRoutes(db: Database) {
   const router = createRhizomeRouter();
 

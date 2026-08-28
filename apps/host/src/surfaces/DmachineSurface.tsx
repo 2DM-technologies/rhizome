@@ -6,7 +6,7 @@ import { Provisional } from "./provisional.tsx";
  * Nothing is loaded here yet, and nothing pretends to be: the SDK bridge, the hash-labelled
  * cross-site origin, and the capability table all arrive together with `@rhizome/dmachine-sdk`.
  * What is real today is everything around it — this surface is registered, focusable, listed
- * in the dock, survives being backgrounded, and can go full screen, which is what the iframe
+ * in the dock, survives being backgrounded, and can be maximized, which is what the iframe
  * will need on the day it exists.
  */
 export function DmachineSurface({ name }: { name: string }) {

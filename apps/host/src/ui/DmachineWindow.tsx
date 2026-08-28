@@ -29,7 +29,7 @@ export function DmachineWindow({ model, cost, children, className }: DmachineWin
       </div>
       <div
         className={cn(
-          "flex min-h-0 w-full flex-col gap-5 overflow-hidden bg-canvas px-9 pt-7 pb-6",
+          "flex min-h-0 w-full flex-1 flex-col gap-5 overflow-hidden bg-canvas px-9 pt-7 pb-6",
           "rounded-[20px_2px_20px_20px] shadow-[0px_0px_8px_0px_rgba(184,68,254,0.1)]",
         )}
       >

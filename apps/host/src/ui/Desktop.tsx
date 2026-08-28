@@ -34,7 +34,9 @@ export function Desktop({ children, dock, className }: DesktopProps) {
       className={cn("relative h-full w-full overflow-hidden", className)}
     >
       {children}
-      <div className="absolute right-12 bottom-9 left-12">{dock}</div>
+      <div data-shell-dock className="absolute right-12 bottom-9 left-12">
+        {dock}
+      </div>
     </div>
   );
 }

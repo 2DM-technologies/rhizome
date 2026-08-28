@@ -51,6 +51,16 @@ otherwise pick up whatever is installed.
 
 ## OpenAPI
 
-The server serves its OpenAPI 3.1 document at `/rnet/v0/openapi.json`. The document is derived from the same `rhizomeRoute` request and response schemas used for runtime validation.
+The server serves its OpenAPI 3.1 document at `/rnet/v0/openapi.json`. Contract ownership is split
+deliberately:
 
-`bun check` verifies the document has no unresolved external schema references and that `openapi-typescript` can generate a typed client contract from it in memory. Frontend API types will be generated directly into `apps/host` when frontend implementation begins.
+- `@rnet/types` owns canonical rNet documents.
+- `@rhizome/store-contract` owns Rhizome-specific JSON request and response schemas.
+- `rhizomeRoute` owns paths, methods, authentication, statuses, headers, and media types.
+
+The served document remains standalone for external clients. The in-repository
+`openapi-typescript` output generates the path/operation wiring but aliases schema components back
+to those two canonical packages, so it does not create a second structural copy of their types.
+Run `bun run openapi:generate` after changing a route contract; `bun check` fails if the generated
+host file is stale, a component has no canonical alias, or the document contains an unresolved
+external schema reference.

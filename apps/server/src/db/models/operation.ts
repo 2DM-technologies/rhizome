@@ -1,12 +1,13 @@
+import { OPERATION_KINDS, OPERATION_STATUSES } from "@rhizome/store-contract";
 import { check, index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 import { textEnumCheck, type JsonObject } from "./shared.ts";
 import { vibes } from "./vibe.ts";
 
-export const OperationKindEnum = ["push", "pull", "agent"] as const;
+export const OperationKindEnum = OPERATION_KINDS;
 export type OperationKind = (typeof OperationKindEnum)[number];
 
-export const OperationStatusEnum = ["queued", "running", "done", "failed", "aborted"] as const;
+export const OperationStatusEnum = OPERATION_STATUSES;
 export type OperationStatus = (typeof OperationStatusEnum)[number];
 
 export const operations = pgTable(

@@ -2,16 +2,19 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { MediaObject } from "@rnet/types";
+import { and, asc, eq } from "drizzle-orm";
 import S3rver from "s3rver";
 
 import { createApp } from "../src/app.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/index.ts";
+import { mediaObjectRevisions } from "../src/db/models/media-object-revision.ts";
 import { seedDb } from "../src/db/seedDb.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
-const { db, client } = createDatabase(databaseUrl, { max: 1 });
+const { db, client } = createDatabase(databaseUrl, { max: 4 });
 let scratch = "";
 let s3: S3rver | undefined;
 let app: ReturnType<typeof createApp>["app"];
@@ -141,6 +144,39 @@ describe("rNet M1 store", () => {
     expect(vibe.title).toBe("Spending");
     expect(vibe.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
     vibeId = vibe.uri.split("/").at(-1);
+  });
+
+  test("lists Vibes granted to a user alongside their owned Vibes", async () => {
+    const created = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Shared with another user",
+        grants: [
+          {
+            subject: "id:rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b49",
+            scope: ["read"],
+          },
+        ],
+      },
+    });
+    expect(created.status).toBe(201);
+    const shared = await created.json();
+
+    const owned = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: otherOwner,
+      json: { title: "Owned by the granted user" },
+    });
+    expect(owned.status).toBe(201);
+    const ownedVibe = await owned.json();
+
+    const response = await request("/rnet/v0/vibes", { headers: otherOwner });
+    expect(response.status).toBe(200);
+    const collection = await response.json();
+    const uris = collection.vibes.map((vibe: { uri: string }) => vibe.uri);
+    expect(uris).toContain(shared.uri);
+    expect(uris).toContain(ownedVibe.uri);
   });
 
   test("rejects grant subjects the store cannot resolve", async () => {
@@ -367,39 +403,103 @@ describe("rNet M1 store", () => {
       headers: dmachine,
     });
     expect(mediaObjectResponse.status).toBe(200);
-    expect(mediaObjectResponse.headers.get("ETag")).toBe('"0"');
+    expect(mediaObjectResponse.headers.get("ETag")).toBeNull();
     const origin = await request(`/rnet/v0/origins/${originUri.split("/").at(-1)}`, {
       headers: dmachine,
     });
     expect(origin.status).toBe(403);
   });
 
-  test("revision-protects dMachine writes and refuses source-shaped fields", async () => {
-    const update = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
-      method: "PATCH",
-      headers: { ...dmachine, "If-Match": "0" },
-      json: { properties: { category: "coffee" } },
+  test("serializes overlapping last-write-wins edits and retains both in history", async () => {
+    let startWrites!: () => void;
+    const start = new Promise<void>((resolve) => {
+      startWrites = resolve;
     });
-    expect(update.status).toBe(200);
-    expect(update.headers.get("ETag")).toBe('"1"');
-
-    const stale = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
-      method: "PATCH",
-      headers: { ...dmachine, "If-Match": "0" },
-      json: { properties: { category: "food" } },
-    });
-    expect(stale.status).toBe(409);
+    const write = async (category: string) => {
+      await start;
+      return request(`/rnet/v0/objects/${mediaObjectId}/user`, {
+        method: "PATCH",
+        headers: dmachine,
+        json: { properties: { category } },
+      });
+    };
+    const pendingWrites = [write("coffee"), write("food")];
+    startWrites();
+    const writes = await Promise.all(pendingWrites);
+    expect(writes.map(({ status }) => status)).toEqual([200, 200]);
+    expect(writes.every((response) => response.headers.get("ETag") === null)).toBe(true);
 
     const corrupt = await request(`/rnet/v0/objects/${mediaObjectId}/user`, {
       method: "PATCH",
-      headers: { ...dmachine, "If-Match": "1" },
+      headers: dmachine,
       json: { properties: {}, source: { properties: { amount: 0 } } },
     });
     expect(corrupt.status).toBe(422);
-    const unchanged = await (
+    const current = (await (
       await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: dmachine })
-    ).json();
-    expect(unchanged.source.properties.amount).toBe("-6.50");
+    ).json()) as MediaObject;
+    expect(current.source.properties.amount).toBe("-6.50");
+
+    const history = await db
+      .select({ revision: mediaObjectRevisions.rev, snapshot: mediaObjectRevisions.snapshot })
+      .from(mediaObjectRevisions)
+      .where(
+        and(
+          eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectId),
+          eq(mediaObjectRevisions.block, "user"),
+        ),
+      )
+      .orderBy(asc(mediaObjectRevisions.rev));
+    expect(history).toHaveLength(2);
+    expect(history.map(({ revision }) => revision)).toEqual([1, 2]);
+    expect(history.map(({ snapshot }) => snapshot?.properties)).toEqual(
+      expect.arrayContaining([{ category: "coffee" }, { category: "food" }]),
+    );
+    expect(history.at(-1)?.snapshot?.properties).toEqual(current.user?.properties);
+  });
+
+  test("serializes concurrent inferred writes without losing either task", async () => {
+    let startWrites!: () => void;
+    const start = new Promise<void>((resolve) => {
+      startWrites = resolve;
+    });
+    const write = async (task: string, value: string) => {
+      await start;
+      return request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+        method: "PUT",
+        headers: dmachine,
+        json: {
+          task,
+          entry: { model: "test/concurrent", properties: { value } },
+        },
+      });
+    };
+    const pendingWrites = [write("concurrent_alpha", "alpha"), write("concurrent_beta", "beta")];
+    startWrites();
+    const writes = await Promise.all(pendingWrites);
+    expect(writes.map(({ status }) => status)).toEqual([200, 200]);
+
+    const current = (await (
+      await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: dmachine })
+    ).json()) as MediaObject;
+    expect(current.inferred?.["rbudget:concurrent_alpha"]?.properties).toEqual({ value: "alpha" });
+    expect(current.inferred?.["rbudget:concurrent_beta"]?.properties).toEqual({ value: "beta" });
+
+    const history = await db
+      .select({ revision: mediaObjectRevisions.rev, snapshot: mediaObjectRevisions.snapshot })
+      .from(mediaObjectRevisions)
+      .where(
+        and(
+          eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectId),
+          eq(mediaObjectRevisions.block, "inferred"),
+        ),
+      )
+      .orderBy(asc(mediaObjectRevisions.rev));
+    expect(history.map(({ revision }) => revision)).toEqual([1, 2]);
+    expect(history.at(-1)?.snapshot).toMatchObject({
+      "rbudget:concurrent_alpha": { properties: { value: "alpha" } },
+      "rbudget:concurrent_beta": { properties: { value: "beta" } },
+    });
   });
 
   test("server-grounds client-authored objects and prefixes inference", async () => {

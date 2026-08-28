@@ -8,18 +8,23 @@
     "build": "bunx --bun vite build",
     "preview": "bunx --bun vite preview",
     "storybook": "bunx --bun storybook dev -p 6006",
-    "build:storybook": "bunx --bun storybook build -o dist-storybook"
+    "build:storybook": "bunx --bun storybook build -o dist-storybook",
+    "test:e2e": "playwright test --config=playwright.config.ts",
+    "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
+    "@rhizome/store-contract": "workspace:*",
     "@rnet/types": "file:../../../rnet/packages/types",
     "@tanstack/react-query": "5.102.4",
     "openapi-fetch": "0.17.0",
+    "openapi-react-query": "0.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-router": "8.3.0",
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@storybook/addon-a11y": "10.5.10",
     "@storybook/addon-docs": "10.5.10",
     "@storybook/react-vite": "10.5.10",

@@ -3,6 +3,62 @@ import openapiTS, { astToString } from "openapi-typescript";
 import { format, resolveConfig } from "prettier";
 import ts from "typescript";
 
+import type { STORE_SCHEMA_COMPONENTS } from "@rhizome/store-contract";
+
+const RNET_COMPONENT_TYPES = {
+  Grant: "RnetGrant",
+  IngestRecord: "RnetIngestRecord",
+  MediaElement: "RnetMediaElement",
+  MediaObject: "RnetMediaObject",
+  OriginArtifact: "RnetOriginArtifact",
+  TrackProperties: "RnetTrackProperties",
+  TransactionProperties: "RnetTransactionProperties",
+  Vibe: "RnetVibe",
+} as const;
+
+const STORE_COMPONENT_TYPES = {
+  Problem: "StoreProblemDocument",
+  Operation: "StoreOperationDocument",
+  CreateVibeRequest: "StoreCreateVibeRequest",
+  UpdateVibeRequest: "StoreUpdateVibeRequest",
+  MediaObjectRefsRequest: "StoreMediaObjectRefsRequest",
+  CreateMediaObjectsRequest: "StoreCreateMediaObjectsRequest",
+  SetMediaObjectUserRequest: "StoreSetMediaObjectUserRequest",
+  SetMediaObjectInferredRequest: "StoreSetMediaObjectInferredRequest",
+  VibesResponse: "StoreVibesResponse",
+  MediaObjectsResponse: "StoreMediaObjectsResponse",
+} as const satisfies Record<keyof typeof STORE_SCHEMA_COMPONENTS, string>;
+
+const KNOWN_COMPONENT_TYPES: Readonly<Record<string, string>> = {
+  ...RNET_COMPONENT_TYPES,
+  ...STORE_COMPONENT_TYPES,
+};
+
+const TYPE_IMPORTS = `
+import type {
+  Grant as RnetGrant,
+  IngestRecord as RnetIngestRecord,
+  MediaElement as RnetMediaElement,
+  MediaObject as RnetMediaObject,
+  OriginArtifact as RnetOriginArtifact,
+  TrackProperties as RnetTrackProperties,
+  TransactionProperties as RnetTransactionProperties,
+  Vibe as RnetVibe,
+} from "@rnet/types";
+import type {
+  ProblemDocument as StoreProblemDocument,
+  OperationDocument as StoreOperationDocument,
+  CreateVibeRequest as StoreCreateVibeRequest,
+  UpdateVibeRequest as StoreUpdateVibeRequest,
+  MediaObjectRefsRequest as StoreMediaObjectRefsRequest,
+  CreateMediaObjectsRequest as StoreCreateMediaObjectsRequest,
+  SetMediaObjectUserRequest as StoreSetMediaObjectUserRequest,
+  SetMediaObjectInferredRequest as StoreSetMediaObjectInferredRequest,
+  VibesResponse as StoreVibesResponse,
+  MediaObjectsResponse as StoreMediaObjectsResponse,
+} from "@rhizome/store-contract";
+`;
+
 const config: AppDependencies["config"] = {
   port: 3000,
   databaseUrl: "postgres://openapi.invalid/rhizome",
@@ -31,6 +87,28 @@ const { openApiDocument } = createApp({
   blobs: {} as AppDependencies["blobs"],
 });
 
+const emittedComponentNames = Object.keys(openApiDocument.components.schemas);
+const unaliasedComponentNames = emittedComponentNames.filter(
+  (name) => KNOWN_COMPONENT_TYPES[name] === undefined,
+);
+const missingComponentNames = Object.keys(KNOWN_COMPONENT_TYPES).filter(
+  (name) => !emittedComponentNames.includes(name),
+);
+if (unaliasedComponentNames.length > 0 || missingComponentNames.length > 0) {
+  throw new Error(
+    [
+      unaliasedComponentNames.length > 0
+        ? `OpenAPI components missing generated type aliases: ${unaliasedComponentNames.join(", ")}`
+        : undefined,
+      missingComponentNames.length > 0
+        ? `Known generated type aliases missing OpenAPI components: ${missingComponentNames.join(", ")}`
+        : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
 const prettierConfig =
   (await resolveConfig(new URL("../.prettierrc.json", import.meta.url).pathname)) ?? {};
 /**
@@ -56,7 +134,14 @@ function isFreeFormObject(schema: Record<string, unknown>): boolean {
 }
 
 const types = await openapiTS(openApiDocument, {
-  transform(schema) {
+  inject: TYPE_IMPORTS,
+  transform(schema, { path }) {
+    const componentName = path?.match(/^#\/components\/schemas\/([^/]+)$/)?.[1];
+    const aliasedType = componentName && KNOWN_COMPONENT_TYPES[componentName];
+    if (aliasedType) return ts.factory.createTypeReferenceNode(aliasedType);
+    if (schema["x-rhizome-typescript-type"] === "FormData") {
+      return ts.factory.createTypeReferenceNode("FormData");
+    }
     if (schema.format === "binary") return ts.factory.createTypeReferenceNode("Blob");
     if (isFreeFormObject(schema as Record<string, unknown>)) {
       return ts.factory.createTypeReferenceNode("Record", [

@@ -26,7 +26,10 @@ export function LauncherItem({ label, icon, onSelect, className }: LauncherItemP
         className,
       )}
     >
-      <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm bg-white/12 text-[22px] leading-none">
+      <span
+        aria-hidden
+        className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm bg-white/12 text-[22px] leading-none"
+      >
         {icon}
       </span>
       <span className="w-full text-center text-mono-label font-sans text-on-pill">{label}</span>

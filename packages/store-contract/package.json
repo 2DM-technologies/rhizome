@@ -1,0 +1,21 @@
+{
+  "name": "@rhizome/store-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./multipart": "./src/multipart.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@rnet/types": "file:../../../rnet/packages/types",
+    "json-schema-to-ts": "3.1.1"
+  }
+}
