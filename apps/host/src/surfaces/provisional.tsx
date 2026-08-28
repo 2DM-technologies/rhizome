@@ -22,7 +22,7 @@ export function Provisional({
   className?: string;
 }) {
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-5", className)}>
+    <div className={cn("flex min-h-full flex-col gap-5", className)}>
       <div className="flex items-start gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="text-heading text-primary">{title}</span>
@@ -30,7 +30,7 @@ export function Provisional({
         </div>
         <StatusChip status="neutral">provisional</StatusChip>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      <div className="flex-1">{children}</div>
     </div>
   );
 }
@@ -50,7 +50,7 @@ export function StoreSurface({
   className?: string;
 }) {
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-5", className)}>
+    <div className={cn("flex min-h-full flex-col gap-5", className)}>
       <div className="flex items-start gap-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <h1 className="text-heading text-primary">{title}</h1>
@@ -58,7 +58,7 @@ export function StoreSurface({
         </div>
         {actions}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+      <div className="flex-1">{children}</div>
     </div>
   );
 }

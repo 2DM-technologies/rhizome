@@ -5,31 +5,26 @@ import { labelOf, locationOf, pathOf, surfaceFromPath, viewModeOf } from "../src
 
 const VIBE_UUID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 
-test("search combines commands, retained surfaces, and loaded Vibe titles", () => {
-  const results = searchShell(
-    "",
-    [{ kind: "object", uuid: "0198f2a1-7c3d-7e4b-9f21-000000000123" }],
-    [{ uuid: VIBE_UUID, title: "Spending" }],
-  );
+test("search combines commands and loaded Vibe titles", () => {
+  const results = searchShell("", [{ uuid: VIBE_UUID, title: "Spending" }]);
 
   expect(results.map(({ group, label }) => [group, label])).toEqual([
     ["Commands", "Open Vibes"],
     ["Commands", "Show Desktop"],
-    ["Open surfaces", "Object …000123"],
     ["Vibes", "Spending"],
   ]);
-  expect(searchShell("spend", [], [{ uuid: VIBE_UUID, title: "Spending" }])[0]?.action).toEqual({
+  expect(searchShell("spend", [{ uuid: VIBE_UUID, title: "Spending" }])[0]?.action).toEqual({
     kind: "open",
     surface: { kind: "vibe", uuid: VIBE_UUID },
   });
 });
 
-test("an open Vibe uses its loaded title and is not duplicated", () => {
+test("a loaded Vibe appears once in the Vibes section", () => {
   const vibe = { kind: "vibe", uuid: VIBE_UUID } as const;
-  const results = searchShell("spending", [vibe], [{ uuid: VIBE_UUID, title: "Spending" }]);
+  const results = searchShell("spending", [{ uuid: VIBE_UUID, title: "Spending" }]);
 
   expect(results).toHaveLength(1);
-  expect(results[0]).toMatchObject({ group: "Open surfaces", label: "Spending" });
+  expect(results[0]).toMatchObject({ group: "Vibes", label: "Spending" });
   expect(labelOf(vibe, new Map([[VIBE_UUID, "Spending"]]))).toBe("Spending");
 });
 

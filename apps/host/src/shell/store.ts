@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { surfaceId, type Surface, type SurfaceId } from "./surfaces.ts";
+import { surfaceId, type Surface, type SurfaceId, type ViewMode } from "./surfaces.ts";
 
 /**
  * Shell state: what exists, not what is focused.
@@ -14,10 +14,13 @@ import { surfaceId, type Surface, type SurfaceId } from "./surfaces.ts";
 interface ShellState {
   /** Open surfaces in dock order. Survives navigation; a route change never clears it. */
   open: Surface[];
+  /** Presentation inherited by the next surface; focused presentation itself still lives in the URL. */
+  defaultViewMode: ViewMode;
   agentOpen: boolean;
   launcherOpen: boolean;
   openSurface: (surface: Surface) => void;
   closeSurface: (id: SurfaceId) => void;
+  setDefaultViewMode: (mode: ViewMode) => void;
   setAgentOpen: (open: boolean) => void;
   setLauncherOpen: (open: boolean) => void;
 }
@@ -26,6 +29,7 @@ export const useShellStore = create<ShellState>()(
   persist(
     (set) => ({
       open: [],
+      defaultViewMode: "standard",
       agentOpen: false,
       launcherOpen: false,
 
@@ -41,15 +45,16 @@ export const useShellStore = create<ShellState>()(
       closeSurface: (id) =>
         set((state) => ({ open: state.open.filter((surface) => surfaceId(surface) !== id) })),
 
+      setDefaultViewMode: (defaultViewMode) => set({ defaultViewMode }),
       setAgentOpen: (agentOpen) => set({ agentOpen }),
       setLauncherOpen: (launcherOpen) => set({ launcherOpen }),
     }),
     {
       name: "rhizome.shell",
       storage: createJSONStorage(() => sessionStorage),
-      // Only the open set is restorable. Bridge status and panel state would be lies after a
-      // reload — nothing is connected yet and no panel is really open.
-      partialize: (state) => ({ open: state.open }),
+      // Open windows and their shared presentation default are restorable. Bridge status and
+      // panel state would be lies after a reload — nothing is connected and no panel is open.
+      partialize: (state) => ({ open: state.open, defaultViewMode: state.defaultViewMode }),
     },
   ),
 );

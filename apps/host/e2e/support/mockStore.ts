@@ -54,6 +54,8 @@ export interface MockStore {
   readonly vibes: Vibe[];
   readonly objects: Map<string, MediaObject>;
   readonly elements: Map<string, MediaElement>;
+  /** Hold exactly the next user-property write until the returned release function is called. */
+  holdNextUserWrite: () => () => void;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -87,11 +89,20 @@ function noContent(route: Route) {
  * integration without sharing Postgres or object-storage state with the server suites.
  */
 export async function installMockStore(page: Page): Promise<MockStore> {
+  let pendingUserWrite: Promise<void> | null = null;
   const store: MockStore = {
     requests: [],
     vibes: [structuredClone(fixtureVibe)],
     objects: new Map([[OBJECT_ID, structuredClone(fixtureObject)]]),
     elements: new Map([[ELEMENT_ID, structuredClone(fixtureElement)]]),
+    holdNextUserWrite: () => {
+      if (pendingUserWrite) throw new Error("A user-property write is already held");
+      let release!: () => void;
+      pendingUserWrite = new Promise((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
   };
 
   await page.route("**/rnet/v0/**", async (route) => {
@@ -186,6 +197,9 @@ export async function installMockStore(page: Page): Promise<MockStore> {
 
     const setUser = path.match(/^\/rnet\/v0\/objects\/([^/]+)\/user$/);
     if (method === "PATCH" && setUser) {
+      const gate = pendingUserWrite;
+      pendingUserWrite = null;
+      if (gate) await gate;
       const id = setUser[1] ?? "";
       const object = store.objects.get(id);
       if (!object) return problem(route, 404, "not_found", "The object does not exist");

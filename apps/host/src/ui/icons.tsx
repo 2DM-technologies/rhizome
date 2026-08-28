@@ -77,3 +77,32 @@ export function CheckIcon({ width = 11.8, height = 9.3, ...props }: IconProps) {
     </svg>
   );
 }
+
+/** Window presentation controls. */
+export function MaximizeIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M8 8L3.5 3.5M3.5 7V3.5H7M10 10L14.5 14.5M11 14.5H14.5V11"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function RestoreIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M3.5 3.5L8 8M8 4.5V8H4.5M14.5 14.5L10 10M10 13.5V10H13.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

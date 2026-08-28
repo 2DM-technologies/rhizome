@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useViewTransitionState } from "react-router";
 
 import appMark from "../assets/brand/app-mark.png";
 import orb1 from "../assets/orbs/orb-1-44.png";
@@ -17,14 +18,18 @@ import {
   DockTray,
   LauncherItem,
   LauncherPanel,
-  SearchField,
   VibeOrb,
 } from "../ui/index.ts";
 import { SurfaceLayer } from "./SurfaceLayer.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
 import { useOpenSurfaces, useShellStore } from "./store.ts";
-import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import { labelOf, locationOf, surfaceId, type Surface, type ViewMode } from "./surfaces.ts";
+import {
+  isDockTransitionSource,
+  SURFACE_VIEW_TRANSITION_CLASS,
+  surfaceViewTransitionName,
+} from "./viewTransitions.ts";
 
 /**
  * There is no Figma spec for host surfaces in the dock — the mockups only show dMachine apps —
@@ -32,6 +37,9 @@ import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
  * same face across a session.
  */
 const STAND_IN_ORBS = [orb1, orb2, orb3, orb4];
+const RUNNING_APP_SIZE = 44;
+const RUNNING_APP_GAP = 20;
+const HOME_SURFACE = { kind: "vibes" } satisfies Surface;
 
 function markFor(surface: Surface): string {
   if (surface.kind === "dmachine") return appMark;
@@ -41,6 +49,35 @@ function markFor(surface: Surface): string {
   return STAND_IN_ORBS[hash % STAND_IN_ORBS.length] as string;
 }
 
+interface RunningSurfaceDockAppProps {
+  surface: Surface;
+  mode: ViewMode;
+  name: string;
+  src: string;
+  onOpen: () => void;
+}
+
+function RunningSurfaceDockApp({ surface, mode, name, src, onOpen }: RunningSurfaceDockAppProps) {
+  const transitioning = useViewTransitionState(locationOf(surface, mode));
+  const participates = transitioning && isDockTransitionSource(surface, "running");
+
+  return (
+    <DockApp
+      name={name}
+      src={src}
+      onOpen={onOpen}
+      style={
+        participates
+          ? {
+              viewTransitionName: surfaceViewTransitionName(surface),
+              viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
+            }
+          : undefined
+      }
+    />
+  );
+}
+
 /**
  * The persistent shell. Nothing here unmounts on navigation — that is the entire point. The
  * dock, the desktop, and the surface layer live above the router's control, and the URL only
@@ -48,19 +85,42 @@ function markFor(surface: Surface): string {
  */
 export function ShellLayout() {
   const { surface: focused, mode } = useFocusedSurface();
-  useEnsureSurfaceOpen(focused);
+  useEnsureSurfaceOpen(focused, mode);
 
   const open = useOpenSurfaces();
+  const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const launcherOpen = useShellStore((state) => state.launcherOpen);
   const setLauncherOpen = useShellStore((state) => state.setLauncherOpen);
   const navigation = useSurfaceNavigation();
   const session = useSession();
   const vibes = useVibes();
   const [query, setQuery] = useState("");
-  const launcherTrigger = useRef<HTMLButtonElement>(null);
+  const [launcherMotion, setLauncherMotion] = useState(true);
+  const [launcherTransitionTarget, setLauncherTransitionTarget] = useState<Surface | null>(null);
+  const launcherInput = useRef<HTMLInputElement>(null);
+  const launcherContainer = useRef<HTMLDivElement>(null);
 
   const focusedId = focused ? surfaceId(focused) : null;
+  const vibesTransitioning = useViewTransitionState(locationOf(HOME_SURFACE, defaultViewMode));
+  const homeParticipates =
+    vibesTransitioning &&
+    focusedId !== surfaceId(HOME_SURFACE) &&
+    isDockTransitionSource(HOME_SURFACE, "home");
+  const launcherTransitioning = useViewTransitionState(
+    locationOf(launcherTransitionTarget ?? HOME_SURFACE, defaultViewMode),
+  );
+  const launcherParticipates =
+    launcherTransitionTarget !== null &&
+    launcherTransitioning &&
+    focusedId !== surfaceId(launcherTransitionTarget) &&
+    isDockTransitionSource(launcherTransitionTarget, "launcher");
   const background = open.filter((surface) => surfaceId(surface) !== focusedId);
+  // Match the tray's active-app transition: intrinsic flex reflow would move the launcher in
+  // the opposite direction for one frame before the tray's 80px reserve starts moving.
+  const runningAppsWidth =
+    background.length === 0
+      ? 0
+      : background.length * RUNNING_APP_SIZE + (background.length - 1) * RUNNING_APP_GAP;
   const loadedVibes = useMemo(
     () =>
       (vibes.data ?? []).map((vibe) => ({
@@ -73,22 +133,62 @@ export function ShellLayout() {
     () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.title])),
     [loadedVibes],
   );
-  const results = useMemo(() => searchShell(query, open, loadedVibes), [loadedVibes, open, query]);
+  const results = useMemo(() => searchShell(query, loadedVibes), [loadedVibes, query]);
 
-  function dismissLauncher({ restoreFocus = false } = {}) {
+  function dismissLauncher({ blurFocus = false, animate = true } = {}) {
+    if (
+      blurFocus &&
+      document.activeElement instanceof HTMLElement &&
+      launcherContainer.current?.contains(document.activeElement)
+    ) {
+      document.activeElement.blur();
+    }
+    setLauncherMotion(animate);
     setLauncherOpen(false);
     setQuery("");
-    if (restoreFocus) queueMicrotask(() => launcherTrigger.current?.focus());
   }
 
+  function openLauncher() {
+    setLauncherMotion(true);
+    setLauncherOpen(true);
+  }
+
+  useEffect(() => {
+    if (!launcherOpen) return;
+
+    function dismissFromOutside(event: PointerEvent) {
+      if (event.target instanceof Node && launcherContainer.current?.contains(event.target)) return;
+      setLauncherOpen(false);
+      setQuery("");
+    }
+
+    document.addEventListener("pointerdown", dismissFromOutside, true);
+    return () => document.removeEventListener("pointerdown", dismissFromOutside, true);
+  }, [launcherOpen, setLauncherOpen]);
+
+  useEffect(() => {
+    if (
+      launcherTransitionTarget &&
+      !launcherTransitioning &&
+      focusedId === surfaceId(launcherTransitionTarget)
+    ) {
+      setLauncherTransitionTarget(null);
+    }
+  }, [focusedId, launcherTransitionTarget, launcherTransitioning]);
+
   function selectResult(result: ShellSearchResult) {
-    dismissLauncher();
-    if (result.action.kind === "home") navigation.home();
-    else navigation.open(result.action.surface);
+    dismissLauncher({ blurFocus: true, animate: false });
+    if (result.action.kind === "home") {
+      setLauncherTransitionTarget(null);
+      navigation.home();
+    } else {
+      setLauncherTransitionTarget(result.action.surface);
+      navigation.openFromDock(result.action.surface, { source: "launcher" });
+    }
   }
 
   function handleLauncherKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter" && results[0]) {
+    if (launcherOpen && event.key === "Enter" && results[0]) {
       event.preventDefault();
       selectResult(results[0]);
     }
@@ -121,7 +221,15 @@ export function ShellLayout() {
             <button
               type="button"
               aria-label="Home"
-              onClick={() => navigation.open({ kind: "vibes" })}
+              onClick={() => navigation.openFromDock(HOME_SURFACE, { source: "home" })}
+              style={
+                homeParticipates
+                  ? {
+                      viewTransitionName: surfaceViewTransitionName(HOME_SURFACE),
+                      viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
+                    }
+                  : undefined
+              }
               className="rounded-full transition-transform hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               <VibeOrb src={orbHome} size="lg" alt="" />
@@ -130,73 +238,67 @@ export function ShellLayout() {
           }
           apps={
             focused ? (
-              <DockApp
-                name={`${labelOf(focused, vibeTitles)} — ${mode === "maximized" ? "restore standard window" : "maximize window"}`}
-                src={markFor(focused)}
-                state="active"
-                onOpen={navigation.toggleMaximized}
-              />
+              <DockApp name={labelOf(focused, vibeTitles)} src={markFor(focused)} state="active" />
             ) : null
           }
           tray={
             <DockTray>
-              <div className="flex min-w-0 shrink items-center gap-5 overflow-hidden">
+              <div
+                data-dock-running-apps
+                data-count={background.length}
+                style={{ width: runningAppsWidth }}
+                className="flex min-w-0 shrink items-center gap-5 overflow-hidden transition-[width] duration-100 ease-out"
+              >
                 {background.map((surface) => (
-                  <DockApp
+                  <RunningSurfaceDockApp
                     key={surfaceId(surface)}
+                    surface={surface}
+                    mode={defaultViewMode}
                     name={labelOf(surface, vibeTitles)}
                     src={markFor(surface)}
-                    onOpen={() => navigation.open(surface)}
+                    onOpen={() => navigation.openFromDock(surface, { source: "running" })}
                   />
                 ))}
               </div>
               <DockDivider />
-              <button
-                ref={launcherTrigger}
-                type="button"
-                aria-label="Start something new"
-                aria-expanded={launcherOpen}
-                onClick={() => (launcherOpen ? dismissLauncher() : setLauncherOpen(true))}
-                className="grid size-11 shrink-0 place-items-center rounded-pill bg-pill text-2xl leading-none text-on-pill transition-colors hover:text-on-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                <span aria-hidden>+</span>
-              </button>
               <div
-                className="relative h-12 shrink-0 transition-[width] duration-300 ease-out"
-                style={{ width: launcherOpen ? 328 : 240 }}
-              >
-                {launcherOpen ? (
-                  <div className="absolute bottom-[-8px] left-0 w-82">
-                    <LauncherPanel
-                      query={query}
-                      onQueryChange={setQuery}
-                      onInputKeyDown={handleLauncherKeyDown}
-                      onDismiss={() => dismissLauncher({ restoreFocus: true })}
-                      sections={
-                        launcherSections.length > 0
-                          ? launcherSections
-                          : [
-                              {
-                                title: "No results",
-                                items: (
-                                  <span className="text-body text-on-pill">
-                                    Try a command, open surface, or Vibe title.
-                                  </span>
-                                ),
-                              },
-                            ]
+                ref={launcherContainer}
+                data-launcher-slot
+                data-surface-transition-source={launcherParticipates ? "launcher" : undefined}
+                style={
+                  launcherParticipates && launcherTransitionTarget
+                    ? {
+                        viewTransitionName: surfaceViewTransitionName(launcherTransitionTarget),
+                        viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
                       }
-                    />
-                  </div>
-                ) : (
-                  <SearchField
-                    className="w-full"
-                    aria-label="Search everything"
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    onFocus={() => setLauncherOpen(true)}
-                  />
-                )}
+                    : undefined
+                }
+                className="relative h-12 w-60 shrink-0"
+              >
+                <LauncherPanel
+                  ref={launcherInput}
+                  open={launcherOpen}
+                  animate={launcherMotion}
+                  query={query}
+                  onQueryChange={setQuery}
+                  onOpen={openLauncher}
+                  onInputKeyDown={handleLauncherKeyDown}
+                  onDismiss={() => dismissLauncher({ blurFocus: true })}
+                  sections={
+                    launcherSections.length > 0
+                      ? launcherSections
+                      : [
+                          {
+                            title: "No results",
+                            items: (
+                              <span className="shrink-0 text-body text-on-pill">
+                                Try a command or Vibe title.
+                              </span>
+                            ),
+                          },
+                        ]
+                  }
+                />
               </div>
             </DockTray>
           }

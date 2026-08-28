@@ -151,44 +151,36 @@ export const DockBento: Story = {
             <DockTray>
               <TrayContents
                 search={
-                  <div
-                    // Fixed height so the slot keeps the search field's box either way: the
-                    // panel anchors to the slot's bottom edge, which is the dock baseline.
-                    className="relative h-12 shrink-0 transition-[width] duration-300 ease-out"
-                    style={{ width: launcherOpen ? 328 : 240 }}
-                  >
-                    {launcherOpen ? (
-                      <div className="absolute bottom-[-8px] left-0 w-82">
-                        <LauncherPanel
-                          query={query}
-                          onQueryChange={setQuery}
-                          sections={[
-                            {
-                              title: "Start something new",
-                              items: (
-                                <>
-                                  <LauncherItem label="New Group" icon="🌐" />
-                                  <LauncherItem label="New Vibe" icon="⚪️" />
-                                  <LauncherItem label="New Person" icon="👸" />
-                                </>
-                              ),
-                            },
-                            {
-                              title: "Import Vibe",
-                              items: (
-                                <>
-                                  <LauncherItem label="are.na" icon="✳️" />
-                                  <LauncherItem label="Instagram" icon="📷" />
-                                  <LauncherItem label="Twitter" icon="🐦" />
-                                </>
-                              ),
-                            },
-                          ]}
-                        />
-                      </div>
-                    ) : (
-                      <SearchField className="w-full" onFocus={() => setLauncherOpen(true)} />
-                    )}
+                  <div className="relative h-12 w-60 shrink-0">
+                    <LauncherPanel
+                      open={launcherOpen}
+                      query={query}
+                      onQueryChange={setQuery}
+                      onOpen={() => setLauncherOpen(true)}
+                      onDismiss={() => setLauncherOpen(false)}
+                      sections={[
+                        {
+                          title: "Commands",
+                          items: (
+                            <>
+                              <LauncherItem label="Open Vibes" icon="⌘" />
+                              <LauncherItem label="Show Desktop" icon="⌘" />
+                            </>
+                          ),
+                        },
+                        {
+                          title: "Vibes",
+                          items: (
+                            <>
+                              <LauncherItem label="Spending" icon="◉" />
+                              <LauncherItem label="Library" icon="◉" />
+                              <LauncherItem label="Trip planning" icon="◉" />
+                              <LauncherItem label="Reading list" icon="◉" />
+                            </>
+                          ),
+                        },
+                      ]}
+                    />
                   </div>
                 }
               />
@@ -213,32 +205,34 @@ export const Launcher: Story = {
     const [query, setQuery] = useState("");
     return (
       <div className="p-8">
-        <LauncherPanel
-          query={query}
-          onQueryChange={setQuery}
-          sections={[
-            {
-              title: "Start something new",
-              items: (
-                <>
-                  <LauncherItem label="New Group" icon="🌐" />
-                  <LauncherItem label="New Vibe" icon="⚪️" />
-                  <LauncherItem label="New Person" icon="👸" />
-                </>
-              ),
-            },
-            {
-              title: "Import Vibe",
-              items: (
-                <>
-                  <LauncherItem label="are.na" icon="✳️" />
-                  <LauncherItem label="Instagram" icon="📷" />
-                  <LauncherItem label="Twitter" icon="🐦" />
-                </>
-              ),
-            },
-          ]}
-        />
+        <div className="relative h-[36rem] w-[308px]">
+          <LauncherPanel
+            query={query}
+            onQueryChange={setQuery}
+            sections={[
+              {
+                title: "Commands",
+                items: (
+                  <>
+                    <LauncherItem label="Open Vibes" icon="⌘" />
+                    <LauncherItem label="Show Desktop" icon="⌘" />
+                  </>
+                ),
+              },
+              {
+                title: "Vibes",
+                items: (
+                  <>
+                    <LauncherItem label="Spending" icon="◉" />
+                    <LauncherItem label="Library" icon="◉" />
+                    <LauncherItem label="Trip planning" icon="◉" />
+                    <LauncherItem label="Reading list" icon="◉" />
+                  </>
+                ),
+              },
+            ]}
+          />
+        </div>
       </div>
     );
   },

@@ -56,9 +56,11 @@
   --rz-text-on-accent: #ffffff;
   --rz-border-hairline: #7d59ff59;
 
-  /* Dock chrome. Raw values in the design — the dock is a fixed light-grey object that
-     does not follow tier, so these are named rather than tokenised into the tier sets. */
-  --rz-dock-tray: #dddddd;
+  /* Dock chrome. Raw values in the design — the dock does not follow tier, so these are
+     named rather than tokenised into the tier sets. The translucent fills stay in the
+     colour itself so backdrop-filter can sample the desktop behind them. */
+  --rz-dock-tray: rgb(221 221 221 / 50%);
+  --rz-dock-search: rgb(26 26 26 / 80%);
   --rz-dock-divider: #cccccc;
   --rz-dock-card: #ffffff;
   --rz-dock-glow: #7d59ff40;
@@ -96,6 +98,7 @@
   --color-error-tint: var(--rz-status-error-tint);
   --color-neutral-tint: var(--rz-status-neutral-tint);
   --color-dock-tray: var(--rz-dock-tray);
+  --color-dock-search: var(--rz-dock-search);
   --color-dock-divider: var(--rz-dock-divider);
   --color-dock-card: var(--rz-dock-card);
   --color-chart-1: var(--rz-chart-1);

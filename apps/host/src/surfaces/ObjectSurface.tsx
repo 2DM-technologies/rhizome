@@ -172,6 +172,7 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
   const session = useSession();
   const [draft, setDraft] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [submittedDraft, setSubmittedDraft] = useState<string | null>(null);
 
   const stored = object.data?.user?.properties ?? {};
   const text = draft ?? JSON.stringify(stored, null, 2);
@@ -194,13 +195,15 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
       setParseError(error instanceof Error ? error.message : "Invalid JSON.");
       return;
     }
+    const submitted = text;
+    setSubmittedDraft(submitted);
     save.mutate(
       {
         params: { path: { id: uuid } },
         body: { properties },
       },
-      // Drop the draft so the field re-syncs to whatever the store now holds.
-      { onSuccess: () => setDraft(null) },
+      // Re-sync only if the user has not typed a newer draft while this write was in flight.
+      { onSuccess: () => setDraft((current) => (current === submitted ? null : current)) },
     );
   }
 
@@ -248,7 +251,6 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                     onChange={(event) => {
                       setDraft(event.target.value);
                       setParseError(null);
-                      save.reset();
                     }}
                     spellCheck={false}
                     rows={14}
@@ -266,14 +268,15 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                         onClick={() => {
                           setDraft(null);
                           setParseError(null);
-                          save.reset();
                         }}
                       >
                         Discard
                       </Button>
                     ) : null}
                     {parseError ? <span className="text-body text-error">{parseError}</span> : null}
-                    {save.isError ? <Failed error={save.error} /> : null}
+                    {save.isError && draft === submittedDraft ? (
+                      <Failed error={save.error} />
+                    ) : null}
                   </div>
                 </>
               ) : (

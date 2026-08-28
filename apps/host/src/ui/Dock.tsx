@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "./cn.ts";
 
@@ -16,7 +16,42 @@ import { cn } from "./cn.ts";
  * transition rather than a jump.
  */
 
-const SEGMENT_TRANSITION = "transition-[flex-grow,flex-basis,height] duration-300 ease-out";
+const SEGMENT_TRANSITION = "transition-[flex-grow,flex-basis,height] duration-100 ease-out";
+
+function DockAppPresence({ children }: { children?: ReactNode }) {
+  const [retained, setRetained] = useState(children);
+  const present = children != null;
+
+  useEffect(() => {
+    if (children != null) {
+      setRetained(children);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setRetained(null), 100);
+    return () => window.clearTimeout(timeout);
+  }, [children]);
+
+  return (
+    <div
+      data-dock-app-slot
+      data-present={present ? "true" : "false"}
+      inert={!present}
+      aria-hidden={present ? undefined : true}
+      className={cn("absolute bottom-0 left-0 h-17 w-17", !present && "pointer-events-none")}
+    >
+      <div
+        data-dock-app-content
+        className={cn(
+          "absolute bottom-0 left-0 transition-[opacity,transform] duration-100 ease-out",
+          present ? "scale-100 opacity-100" : "scale-75 opacity-0",
+        )}
+      >
+        {children ?? retained}
+      </div>
+    </div>
+  );
+}
 
 export interface DockSegmentProps {
   /** Share of the free space this segment absorbs. 0 keeps it at its natural width. */
@@ -43,20 +78,27 @@ export interface DockTrayProps {
   className?: string;
 }
 
-/** The flat grey bar. Holds running apps, a divider, and search. Gives way to its siblings. */
+/** Figma 4916:337 — the translucent glass tray holding running apps, divider, and search. */
 export function DockTray({ children, className }: DockTrayProps) {
   return (
     <div
+      data-dock-tray
       className={cn(
-        "flex h-16 min-w-0 flex-1 items-center gap-5 rounded-md bg-dock-tray px-3",
+        "relative h-16 min-w-0 flex-1 self-end rounded-md",
         // Not clipped: an expanding segment (the launcher) grows upward out of the tray, and
         // the active app card overhangs it.
-        "backdrop-blur-[5px]",
         SEGMENT_TRANSITION,
         className,
       )}
     >
-      {children}
+      {/* Keep the tray's filter off the launcher ancestor. Otherwise the tray creates a
+          backdrop root and the launcher's own frost cannot sample the desktop behind it. */}
+      <div
+        data-dock-tray-backdrop
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-md bg-dock-tray backdrop-blur-[10px]"
+      />
+      <div className="relative z-10 flex h-full min-w-0 items-center gap-5 px-3">{children}</div>
     </div>
   );
 }
@@ -82,13 +124,23 @@ export interface DockProps {
  * then the tray itself.
  */
 export function Dock({ leading, apps, tray, trailing, className }: DockProps) {
+  const appPresent = apps != null;
+
   return (
     <div className={cn("flex w-full items-end gap-[30px]", className)}>
       <DockSegment className="min-h-16">{leading}</DockSegment>
-      <DockSegment grow={1} className="min-h-16 gap-3">
-        {apps}
-        {tray}
-        {trailing}
+      <DockSegment grow={1} className="relative min-h-16">
+        <DockAppPresence>{apps}</DockAppPresence>
+        <div
+          data-dock-tray-slot
+          className={cn(
+            "min-w-0 flex-1 transition-[margin-left] duration-100 ease-out",
+            appPresent ? "ml-20" : "ml-0",
+          )}
+        >
+          {tray}
+        </div>
+        {trailing ? <div className="ml-3 shrink-0">{trailing}</div> : null}
       </DockSegment>
     </div>
   );

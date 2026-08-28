@@ -1,6 +1,6 @@
-import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import type { Surface } from "./surfaces.ts";
 
-export const SHELL_SEARCH_GROUPS = ["Commands", "Open surfaces", "Vibes"] as const;
+export const SHELL_SEARCH_GROUPS = ["Commands", "Vibes"] as const;
 
 export type ShellSearchGroup = (typeof SHELL_SEARCH_GROUPS)[number];
 
@@ -38,36 +38,23 @@ const STATIC_COMMANDS: readonly ShellSearchResult[] = [
 ];
 
 /**
- * Build the launcher's transient view over shell state and already-loaded server state.
- * Vibe titles are input data on purpose: they remain in TanStack Query rather than being copied
- * into Zustand merely so the launcher can display them.
+ * Build the launcher's transient view over already-loaded server state. Vibe titles remain in
+ * TanStack Query rather than being copied into Zustand merely so the launcher can display them.
  */
 export function searchShell(
   query: string,
-  openSurfaces: readonly Surface[],
   loadedVibes: readonly LoadedVibe[],
 ): ShellSearchResult[] {
-  const vibeTitles = new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.title]));
-  const openIds = new Set(openSurfaces.map(surfaceId));
-  const openResults = openSurfaces.map((surface): ShellSearchResult => ({
-    id: `open:${surfaceId(surface)}`,
-    group: "Open surfaces",
-    label: labelOf(surface, vibeTitles),
-    keywords: [surface.kind, surfaceId(surface)],
-    action: { kind: "open", surface },
+  const vibeResults = loadedVibes.map((vibe): ShellSearchResult => ({
+    id: `vibe:${vibe.uuid}`,
+    group: "Vibes",
+    label: vibe.title,
+    keywords: ["vibe", vibe.uuid],
+    action: { kind: "open", surface: { kind: "vibe", uuid: vibe.uuid } },
   }));
-  const vibeResults = loadedVibes
-    .filter((vibe) => !openIds.has(surfaceId({ kind: "vibe", uuid: vibe.uuid })))
-    .map((vibe): ShellSearchResult => ({
-      id: `vibe:${vibe.uuid}`,
-      group: "Vibes",
-      label: vibe.title,
-      keywords: ["vibe", vibe.uuid],
-      action: { kind: "open", surface: { kind: "vibe", uuid: vibe.uuid } },
-    }));
 
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  return [...STATIC_COMMANDS, ...openResults, ...vibeResults].filter((result) => {
+  return [...STATIC_COMMANDS, ...vibeResults].filter((result) => {
     if (terms.length === 0) return true;
     const searchable = [result.label, ...result.keywords].join(" ").toLocaleLowerCase();
     return terms.every((term) => searchable.includes(term));

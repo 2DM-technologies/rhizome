@@ -16,3 +16,116 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+@property --rz-launcher-expanded-alpha {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+/*
+ * One physical glass layer backs both launcher states. The full-panel mask fades while a
+ * fixed 240 × 48 bottom capsule remains opaque, so closing never animates a vertical edge or
+ * doubles the translucent fill behind the search input.
+ */
+.launcher-surface-mask {
+  -webkit-mask-image:
+    linear-gradient(
+      rgb(0 0 0 / var(--rz-launcher-expanded-alpha)),
+      rgb(0 0 0 / var(--rz-launcher-expanded-alpha))
+    ),
+    linear-gradient(#000, #000), radial-gradient(circle closest-side, #000 98%, transparent 100%),
+    radial-gradient(circle closest-side, #000 98%, transparent 100%);
+  -webkit-mask-position:
+    0 0,
+    24px bottom,
+    left bottom,
+    192px bottom;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size:
+    100% 100%,
+    192px 48px,
+    48px 48px,
+    48px 48px;
+  mask-image:
+    linear-gradient(
+      rgb(0 0 0 / var(--rz-launcher-expanded-alpha)),
+      rgb(0 0 0 / var(--rz-launcher-expanded-alpha))
+    ),
+    linear-gradient(#000, #000), radial-gradient(circle closest-side, #000 98%, transparent 100%),
+    radial-gradient(circle closest-side, #000 98%, transparent 100%);
+  mask-position:
+    0 0,
+    24px bottom,
+    left bottom,
+    192px bottom;
+  mask-repeat: no-repeat;
+  mask-size:
+    100% 100%,
+    192px 48px,
+    48px 48px,
+    48px 48px;
+}
+
+@keyframes surface-window-clip-open {
+  from {
+    border-radius: 999px;
+  }
+  to {
+    border-radius: 20px;
+  }
+}
+
+@keyframes surface-window-content-in {
+  0%,
+  18% {
+    opacity: 0;
+  }
+  55% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+:root {
+  view-transition-name: none;
+}
+
+::view-transition-group(*.rz-dock-surface) {
+  z-index: 1;
+  animation-duration: 200ms;
+  animation-timing-function: cubic-bezier(0.2, 0.9, 0.2, 1.04);
+}
+
+::view-transition-image-pair(*.rz-dock-surface) {
+  overflow: clip;
+  background: var(--rz-bg-canvas);
+  animation: surface-window-clip-open 200ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+::view-transition-old(*.rz-dock-surface),
+::view-transition-new(*.rz-dock-surface) {
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(*.rz-dock-surface) {
+  opacity: 0;
+  animation: none;
+}
+
+::view-transition-new(*.rz-dock-surface) {
+  object-fit: cover;
+  animation: surface-window-content-in 180ms 12ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

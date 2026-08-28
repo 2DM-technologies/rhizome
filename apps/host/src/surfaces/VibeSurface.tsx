@@ -103,7 +103,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
 
       {vibe.data && isOwner ? (
         <div className="mb-7 flex flex-col gap-4 border-b border-hairline pb-7">
-          <form onSubmit={rename} className="flex max-w-2xl items-center gap-3">
+          <form onSubmit={rename} className="flex max-w-[42rem] items-center gap-3">
             <label className="min-w-0 flex-1">
               <span className="sr-only">Vibe title</span>
               <input
@@ -124,7 +124,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           </form>
           {update.isError ? <Failed error={update.error} /> : null}
 
-          <form onSubmit={addObject} className="flex max-w-2xl items-center gap-3">
+          <form onSubmit={addObject} className="flex max-w-[42rem] items-center gap-3">
             <label className="min-w-0 flex-1">
               <span className="sr-only">Object URI</span>
               <input

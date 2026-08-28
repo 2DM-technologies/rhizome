@@ -29,7 +29,7 @@ export function VibesSurface() {
 
   return (
     <StoreSurface title="Vibes" detail="Every Vibe you own or have been granted">
-      <form onSubmit={submit} className="mb-6 flex max-w-xl items-center gap-3">
+      <form onSubmit={submit} className="mb-6 flex max-w-[36rem] items-center gap-3">
         <label className="min-w-0 flex-1">
           <span className="sr-only">New Vibe title</span>
           <input
