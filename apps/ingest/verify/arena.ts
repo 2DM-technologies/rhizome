@@ -66,6 +66,7 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
       block.keys.arena_block_id === block.blockId &&
       block.keys.arena_channel_id === parsed.channelId &&
       block.sourceProperties.arena_block_type === block.blockType &&
+      block.sourceProperties.title === block.title &&
       block.sourceProperties.connection_position === block.position;
     previousBlockPosition = block.position;
 
@@ -187,38 +188,51 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
 }
 
 function hasExpectedElements(block: ParsedArenaBlock): boolean {
+  const [title, ...payload] = block.elements;
+  if (
+    !title ||
+    title.role !== "title" ||
+    title.kind !== "text" ||
+    title.mime !== "text/plain" ||
+    !equalBytes(title.bytes, new TextEncoder().encode(block.title))
+  ) {
+    return false;
+  }
   if (block.blockType === "Text") {
     return (
-      block.elements.length === 1 &&
-      block.elements[0]?.role === "content" &&
-      block.elements[0].kind === "text" &&
-      block.elements[0].mime === "text/markdown"
+      payload.length === 1 &&
+      payload[0]?.role === "content" &&
+      payload[0].kind === "text" &&
+      payload[0].mime === "text/markdown"
     );
   }
   if (block.blockType === "Image") {
-    return (
-      block.elements.length === 1 &&
-      block.elements[0]?.role === "content" &&
-      block.elements[0].kind === "image"
-    );
+    return payload.length === 1 && payload[0]?.role === "content" && payload[0].kind === "image";
   }
   if (block.blockType === "Attachment") {
     return (
-      block.elements.length === 1 &&
-      block.elements[0]?.role === "content" &&
-      block.elements[0].mime === block.sourceProperties.attachment_content_type
+      payload.length === 1 &&
+      payload[0]?.role === "content" &&
+      payload[0].mime === block.sourceProperties.attachment_content_type
     );
   }
   return (
-    block.elements.length === 0 ||
-    (block.elements.length === 1 &&
-      block.elements[0]?.role === "preview" &&
-      block.elements[0].kind === "image")
+    payload.length === 0 ||
+    (payload.length === 1 && payload[0]?.role === "preview" && payload[0].kind === "image")
   );
 }
 
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
 function mimeMatchesKind(element: ParsedArenaElement): boolean {
-  if (element.kind === "text") return element.mime === "text/markdown";
+  if (element.kind === "text") {
+    return (
+      (element.role === "title" && element.mime === "text/plain") ||
+      (element.role === "content" && element.mime === "text/markdown")
+    );
+  }
   if (element.kind === "image") return element.mime.startsWith("image/");
   if (element.kind === "audio") return element.mime.startsWith("audio/");
   if (element.kind === "video") return element.mime.startsWith("video/");

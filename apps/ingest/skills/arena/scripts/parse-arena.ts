@@ -4,11 +4,12 @@ import { ARENA_CHANNEL_SLUG_MAX_LENGTH } from "../../../../../packages/store-con
 
 export const ARENA_CAPTURE_VERSION = "arena-capture@1" as const;
 export const ARENA_PARSER_NAME = "arena" as const;
-export const ARENA_PARSER_VERSION = "arena@1.0.0" as const;
+export const ARENA_PARSER_VERSION = "arena@1.1.0" as const;
 
 export type ArenaBlockType = "Text" | "Image" | "Attachment" | "Link" | "Embed";
 export type ArenaElementKind = "text" | "image" | "audio" | "video" | "document";
-export type ArenaElementRole = "content" | "preview";
+export type ArenaAssetRole = "content" | "preview";
+export type ArenaElementRole = "title" | ArenaAssetRole;
 
 export interface CapturedArenaResponse {
   url: string;
@@ -27,7 +28,7 @@ export interface CapturedArenaAsset extends CapturedArenaResponse {
   block_id: number;
   redirects: CapturedArenaRedirect[];
   requested_url: string;
-  role: ArenaElementRole;
+  role: ArenaAssetRole;
 }
 
 /**
@@ -359,7 +360,15 @@ function parseBlock(
     ...(sourceTitle ? { source_title: sourceTitle } : {}),
     ...(sourceProvider ? { source_provider: sourceProvider } : {}),
   };
-  const elements: ParsedArenaElement[] = [];
+  // The canonical block title is always the first element. Are.na titles are optional, so the
+  // same deterministic fallback used by the object property becomes the renderable title when
+  // the provider did not supply one.
+  const titleBytes = new TextEncoder().encode(title);
+  const elements: ParsedArenaElement[] = [
+    elementFromBytes("title", "text", "text/plain", titleBytes, {
+      filename: `arena-${blockId}-title.txt`,
+    }),
+  ];
 
   if (blockType === "Text") {
     const markdown = requiredMarkdown(block.content, `${label} content`);
@@ -781,7 +790,7 @@ function elementFromBytes(
 function takeRequiredAsset(
   assets: Map<string, AssetEntry>,
   blockId: number,
-  role: ArenaElementRole,
+  role: ArenaAssetRole,
   label: string,
 ): AssetEntry {
   const key = assetKey(blockId, role);
@@ -803,7 +812,7 @@ function rejectUnexpectedAssets(
   }
 }
 
-function assetKey(blockId: number, role: ArenaElementRole): string {
+function assetKey(blockId: number, role: ArenaAssetRole): string {
   return `${blockId}:${role}`;
 }
 

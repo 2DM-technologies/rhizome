@@ -1,14 +1,11 @@
-import { makeOwnerCreateMediaObjectsFormData } from "@rhizome/store-contract/multipart";
-import type { OwnerCreateMediaObjectsRequest } from "@rhizome/store-contract";
-
 const API_BASE = (process.env.RHIZOME_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const AUTHORIZATION = "Bearer dev:user";
 const ARENA_API_ORIGIN = "https://api.are.na";
-const MAX_API_BYTES = 5 * 1024 * 1024;
-const MAX_ASSET_BYTES = 10 * 1024 * 1024;
-const MAX_TOTAL_ASSET_BYTES = 40 * 1024 * 1024;
-const MAX_BLOCKS = 200;
-const MAX_CONTENT_PAGES = 25;
+const OPERATION_TIMEOUT_MS = 60_000;
+
+export {};
+
+type JsonRecord = Record<string, unknown>;
 
 const storeUrl = new URL(API_BASE);
 if (
@@ -17,36 +14,6 @@ if (
 ) {
   throw new Error("The fixture importer only sends development auth to a loopback Rhizome API");
 }
-
-interface CapturedResponse {
-  body_base64: string;
-  content_type: string;
-  url: string;
-}
-
-interface CapturedAsset extends CapturedResponse {
-  block_id: number;
-  redirects: [];
-  requested_url: string;
-  role: "content";
-}
-
-interface ArenaCapture {
-  version: "arena-capture@1";
-  channel_url: string;
-  retrieved_at: string;
-  channel: CapturedResponse;
-  contents_pages: CapturedResponse[];
-  assets: CapturedAsset[];
-}
-
-interface FetchedBytes {
-  bytes: Uint8Array;
-  contentType: string;
-  url: string;
-}
-
-type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown, label: string): JsonRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -63,10 +30,6 @@ function text(value: unknown, label: string): string {
 function integer(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value)) throw new Error(`${label} is not an integer`);
   return value as number;
-}
-
-function base64(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
 }
 
 function normalizeChannelUrl(value: string): { channelUrl: string; slug: string } {
@@ -90,58 +53,20 @@ function normalizeChannelUrl(value: string): { channelUrl: string; slug: string 
   return { channelUrl: `https://www.are.na/${segments[0]}/${slug}`, slug };
 }
 
-async function fetchBounded(url: URL, maxBytes: number, accept: string): Promise<FetchedBytes> {
+async function arenaChannel(slug: string): Promise<{ id: number; title: string }> {
+  const url = new URL(`/v3/channels/${encodeURIComponent(slug)}`, ARENA_API_ORIGIN);
   const response = await fetch(url, {
-    headers: { Accept: accept },
+    headers: { Accept: "application/json" },
     redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
   if (!response.ok) throw new Error(`Are.na returned HTTP ${response.status} for ${url}`);
-  const declaredLength = Number(response.headers.get("Content-Length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    throw new Error(`Are.na response exceeded ${maxBytes} bytes for ${url}`);
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) {
-    throw new Error(`Are.na response had an invalid size for ${url}`);
-  }
+  const envelope = record((await response.json()) as unknown, "Are.na channel response");
+  const channel = record(envelope.data ?? envelope, "Are.na channel");
   return {
-    bytes,
-    contentType: response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() || "",
-    url: response.url || url.toString(),
+    id: integer(channel.id, "Are.na channel id"),
+    title: text(channel.title, "Are.na channel title"),
   };
-}
-
-function parseJson(response: FetchedBytes, label: string): JsonRecord {
-  let decoded: string;
-  try {
-    decoded = new TextDecoder("utf-8", { fatal: true }).decode(response.bytes);
-  } catch {
-    throw new Error(`${label} was not valid UTF-8`);
-  }
-  return record(JSON.parse(decoded) as unknown, label);
-}
-
-function captured(response: FetchedBytes): CapturedResponse {
-  return {
-    body_base64: base64(response.bytes),
-    content_type: response.contentType,
-    url: response.url,
-  };
-}
-
-function approvedAssetUrl(value: unknown): URL {
-  const url = new URL(text(value, "Are.na processed image URL"));
-  if (
-    url.protocol !== "https:" ||
-    url.hostname !== "images.are.na" ||
-    url.username ||
-    url.password ||
-    url.port
-  ) {
-    throw new Error(`Are.na supplied an unapproved asset URL: ${url}`);
-  }
-  return url;
 }
 
 async function storeJson(path: string, init: RequestInit = {}): Promise<JsonRecord> {
@@ -153,99 +78,45 @@ async function storeJson(path: string, init: RequestInit = {}): Promise<JsonReco
   return body ? record(JSON.parse(body) as unknown, `${path} response`) : {};
 }
 
-function uuidOf(uri: unknown, kind: "vibe" | "origin"): string {
+async function postJson(path: string, body: JsonRecord): Promise<JsonRecord> {
+  return storeJson(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function uuidOf(uri: unknown, kind: "vibe"): string {
   const value = text(uri, `${kind} URI`);
   const prefix = `rnet://${kind}/`;
   if (!value.startsWith(prefix)) throw new Error(`Unexpected ${kind} URI: ${value}`);
   return value.slice(prefix.length);
 }
 
+async function waitForOperation(operationId: string): Promise<JsonRecord> {
+  const deadline = Date.now() + OPERATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const operation = await storeJson(`/rnet/v0/operations/${operationId}`);
+    const status = text(operation.status, "Operation status");
+    if (status === "done") return operation;
+    if (["failed", "aborted"].includes(status)) {
+      throw new Error(`Are.na import ${status}: ${String(operation.error ?? "unknown error")}`);
+    }
+    await Bun.sleep(250);
+  }
+  throw new Error(`Are.na import did not finish within ${OPERATION_TIMEOUT_MS} ms`);
+}
+
 const input = process.argv[2];
-if (!input) throw new Error("Usage: bun apps/server/scripts/import-arena-fixture.ts <channel-url>");
+if (!input) throw new Error("Usage: bun run import:arena-fixture <channel-url>");
 
 const { channelUrl, slug } = normalizeChannelUrl(input);
-const retrievedAt = new Date().toISOString();
-const channelResponse = await fetchBounded(
-  new URL(`/v3/channels/${encodeURIComponent(slug)}`, ARENA_API_ORIGIN),
-  MAX_API_BYTES,
-  "application/json",
-);
-const channelEnvelope = parseJson(channelResponse, "Are.na channel response");
-const channel = record(channelEnvelope.data ?? channelEnvelope, "Are.na channel");
-const channelId = integer(channel.id, "Are.na channel id");
-const channelTitle = text(channel.title, "Are.na channel title");
-
-const contentsPages: FetchedBytes[] = [];
-const blocks: JsonRecord[] = [];
-for (let page = 1; page <= MAX_CONTENT_PAGES; page += 1) {
-  const contentsUrl = new URL(
-    `/v3/channels/${encodeURIComponent(slug)}/contents`,
-    ARENA_API_ORIGIN,
-  );
-  contentsUrl.searchParams.set("per", "100");
-  contentsUrl.searchParams.set("page", String(page));
-  contentsUrl.searchParams.set("sort", "position_asc");
-  const response = await fetchBounded(contentsUrl, MAX_API_BYTES, "application/json");
-  const envelope = parseJson(response, `Are.na contents page ${page}`);
-  const data = envelope.data;
-  if (!Array.isArray(data)) throw new Error(`Are.na contents page ${page} has no data array`);
-  for (const value of data) blocks.push(record(value, `Are.na contents page ${page} item`));
-  contentsPages.push(response);
-  const meta = record(envelope.meta, `Are.na contents page ${page} metadata`);
-  if (meta.has_more_pages !== true) break;
-  if (page === MAX_CONTENT_PAGES) throw new Error("Are.na channel exceeded the page limit");
-}
-
-const seenBlockIds = new Set<number>();
-const imported: Array<{ block: JsonRecord; asset: FetchedBytes; blockId: number; mime: string }> =
-  [];
-if (blocks.length > MAX_BLOCKS)
-  throw new Error(`Are.na channel exceeded the ${MAX_BLOCKS} block limit`);
-let totalAssetBytes = 0;
-for (const block of blocks) {
-  if (block.base_type !== "Block") throw new Error("Nested Are.na channels are not supported yet");
-  if (block.state !== "available")
-    throw new Error(`Are.na block ${String(block.id)} is unavailable`);
-  if (block.type !== "Image") {
-    throw new Error(`Are.na block ${String(block.id)} has unsupported type ${String(block.type)}`);
-  }
-  const blockId = integer(block.id, "Are.na block id");
-  if (seenBlockIds.has(blockId)) throw new Error(`Are.na block ${blockId} appeared twice`);
-  seenBlockIds.add(blockId);
-  const image = record(block.image, `Are.na block ${blockId} image`);
-  const large = record(image.large, `Are.na block ${blockId} large image`);
-  const asset = await fetchBounded(approvedAssetUrl(large.src), MAX_ASSET_BYTES, "image/*");
-  if (!asset.contentType.startsWith("image/")) {
-    throw new Error(`Are.na block ${blockId} returned ${asset.contentType || "no content type"}`);
-  }
-  totalAssetBytes += asset.bytes.byteLength;
-  if (totalAssetBytes > MAX_TOTAL_ASSET_BYTES) {
-    throw new Error(`Are.na channel assets exceeded ${MAX_TOTAL_ASSET_BYTES} bytes`);
-  }
-  imported.push({ block, asset, blockId, mime: asset.contentType });
-}
-if (imported.length === 0) throw new Error("The Are.na channel contained no importable images");
-
-const capture: ArenaCapture = {
-  version: "arena-capture@1",
-  channel_url: channelUrl,
-  retrieved_at: retrievedAt,
-  channel: captured(channelResponse),
-  contents_pages: contentsPages.map(captured),
-  assets: imported.map(({ asset, blockId }) => ({
-    ...captured(asset),
-    block_id: blockId,
-    redirects: [],
-    requested_url: asset.url,
-    role: "content",
-  })),
-};
-
+const channel = await arenaChannel(slug);
 const listed = await storeJson("/rnet/v0/vibes");
 const vibes = Array.isArray(listed.vibes) ? listed.vibes.map((value) => record(value, "Vibe")) : [];
 let vibe: JsonRecord | undefined;
-let currentObjects: JsonRecord[] = [];
-for (const candidate of vibes.filter((candidate) => candidate.title === channelTitle)) {
+let existingChannel = false;
+for (const candidate of vibes.filter((value) => value.title === channel.title)) {
   const candidateUuid = uuidOf(candidate.uri, "vibe");
   const candidateResult = await storeJson(`/rnet/v0/vibes/${candidateUuid}/objects`);
   const candidateObjects = Array.isArray(candidateResult.mediaObjects)
@@ -253,116 +124,65 @@ for (const candidate of vibes.filter((candidate) => candidate.title === channelT
     : [];
   const matchesChannel = candidateObjects.some(
     (object) =>
-      record(object.keys ?? {}, "MediaObject keys").arena_channel_id === String(channelId),
+      record(object.keys ?? {}, "MediaObject keys").arena_channel_id === String(channel.id),
   );
   if (candidateObjects.length === 0 || matchesChannel) {
     vibe = candidate;
-    currentObjects = candidateObjects;
+    existingChannel = matchesChannel;
     break;
   }
 }
-if (!vibe) {
-  vibe = await storeJson("/rnet/v0/vibes", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title: channelTitle }),
-  });
-}
+if (!vibe) vibe = await postJson("/rnet/v0/vibes", { title: channel.title });
+
 const vibeUuid = uuidOf(vibe.uri, "vibe");
-const existingBlockIds = new Set(
-  currentObjects
-    .map(
-      (object) =>
-        record(object.keys ?? {}, "MediaObject keys").arena_block_id as string | undefined,
-    )
-    .filter((value): value is string => typeof value === "string"),
-);
-const missing = imported.filter(({ blockId }) => !existingBlockIds.has(String(blockId)));
+let report: JsonRecord;
+if (existingChannel) {
+  const pull = record(vibe.pull, "Existing Are.na Vibe pull configuration");
+  // This helper owns a single-source fixture Vibe. Refuse an ambiguous mixed-source refresh.
+  if (pull.enabled !== true || !Array.isArray(pull.sources) || pull.sources.length !== 1) {
+    throw new Error(
+      "This channel already exists without exactly one configured source; refusing an ambiguous refresh",
+    );
+  }
+  const refresh = await postJson(`/rnet/v0/vibes/${vibeUuid}/pull`, {});
+  const operationId = text(refresh.operation_id, "Refresh operation ID");
+  await waitForOperation(operationId);
+  report = {
+    channel: channelUrl,
+    refreshed: true,
+    operation_id: operationId,
+    vibe_title: channel.title,
+    vibe_uuid: vibeUuid,
+    vibe_url: `http://localhost:5173/vibes/${vibeUuid}`,
+  };
+} else {
+  const source = await postJson("/rnet/v0/ingestion-sources", {
+    provider: "arena",
+    channel_url: channelUrl,
+  });
+  const preview = await postJson(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+    source: text(source.source, "Ingestion source"),
+  });
+  const operationId = text(preview.operation_id, "Operation ID");
+  const operation = await waitForOperation(operationId);
+  const result = record(operation.result, "Import preview result");
+  const verify = record(result.verify, "Import VERIFY result");
+  if (verify.ok !== true) throw new Error("VERIFY rejected the Are.na fixture import");
+  const candidateCount = integer(verify.candidate_count, "VERIFY candidate count");
+  const elementCount = integer(verify.element_count, "VERIFY element count");
 
-if (missing.length > 0) {
-  const captureBytes = new TextEncoder().encode(JSON.stringify(capture));
-  const origin = await storeJson("/rnet/v0/origins", {
+  await storeJson(`/rnet/v0/vibes/${vibeUuid}/imports/${operationId}/confirm`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Rnet-Label": `arena-${slug}-capture.json`,
-    },
-    body: captureBytes,
   });
-  const originUri = text(origin.uri, "Origin URI");
-  const uploads: Record<string, Blob> = {};
-  const objects: OwnerCreateMediaObjectsRequest["objects"] = missing.map(
-    ({ block, asset, blockId, mime }) => {
-      const upload = `block-${blockId}`;
-      const extension = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
-      uploads[upload] = new File(
-        [asset.bytes.slice().buffer as ArrayBuffer],
-        `arena-${blockId}.${extension}`,
-        { type: mime },
-      );
-      const image = record(block.image, `Are.na block ${blockId} image`);
-      const connection = record(block.connection, `Are.na block ${blockId} connection`);
-      const author = record(block.user, `Are.na block ${blockId} author`);
-      const source =
-        block.source && typeof block.source === "object"
-          ? record(block.source, "source")
-          : undefined;
-      return {
-        type: "arena.block",
-        elements: [{ upload, kind: "image", mime }],
-        keys: {
-          arena_block_id: String(blockId),
-          arena_channel_id: String(channelId),
-        },
-        source: {
-          ingest: { method: "parser", reproducible: true, skill: "arena@0.1.0" },
-          origins: [originUri],
-          retrieved_at: retrievedAt,
-          properties: {
-            arena_block_type: block.type,
-            arena_channel_slug: slug,
-            arena_channel_title: channelTitle,
-            title: typeof block.title === "string" ? block.title : `Are.na image ${blockId}`,
-            ...(typeof block.description === "string" ? { description: block.description } : {}),
-            created_at: block.created_at,
-            updated_at: block.updated_at,
-            connection_position: connection.position,
-            author: {
-              id: author.id,
-              name: author.name,
-              slug: author.slug,
-            },
-            original_asset_url: image.src,
-            imported_asset_url: asset.url,
-            original_content_type: image.content_type,
-            original_file_size: image.file_size,
-            width: image.width,
-            height: image.height,
-            ...(source && typeof source.url === "string" ? { source_url: source.url } : {}),
-          },
-        },
-      };
-    },
-  );
-  const form = makeOwnerCreateMediaObjectsFormData({
-    vibe: text(vibe.uri, "Vibe URI"),
-    objects,
-    uploads,
-  });
-  await storeJson("/rnet/v0/objects", { method: "POST", body: form });
+  report = {
+    channel: channelUrl,
+    imported: candidateCount,
+    media_elements: elementCount,
+    parser: text(source.parser_version, "Ingestion parser version"),
+    vibe_title: channel.title,
+    vibe_uuid: vibeUuid,
+    vibe_url: `http://localhost:5173/vibes/${vibeUuid}`,
+  };
 }
 
-console.log(
-  JSON.stringify(
-    {
-      channel: channelUrl,
-      imported: missing.length,
-      total: imported.length,
-      vibe_title: channelTitle,
-      vibe_uuid: vibeUuid,
-      vibe_url: `http://localhost:5173/vibes/${vibeUuid}`,
-    },
-    null,
-    2,
-  ),
-);
+console.log(JSON.stringify(report, null, 2));

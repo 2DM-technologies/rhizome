@@ -78,6 +78,7 @@ describe("pull candidate identity", () => {
     const manifest = {
       uri: first.elements[0]!,
       object_uri: first.uri,
+      role: "content" as const,
       kind: "image" as const,
       mime: "image/png",
       byte_size: 4,
@@ -97,6 +98,11 @@ describe("pull candidate identity", () => {
     expect(
       await candidateSemanticDigest(recaptured, [
         { ...recapturedManifest, content_hash: `sha256:${"b".repeat(64)}` },
+      ]),
+    ).not.toBe(await candidateSemanticDigest(first, [manifest]));
+    expect(
+      await candidateSemanticDigest(recaptured, [
+        { ...recapturedManifest, role: "preview" as const },
       ]),
     ).not.toBe(await candidateSemanticDigest(first, [manifest]));
   });

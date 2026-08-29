@@ -146,6 +146,10 @@ function arenaPayload(block: MockArenaBlock & { kind: string; payload: string })
   return Buffer.from(block.payload, block.kind === "image" ? "base64" : "utf8");
 }
 
+function arenaTitleElementId(index: number): string {
+  return `0198f2a1-0f01-7f01-8f01-${String(index + 1).padStart(12, "0")}`;
+}
+
 function importCandidates(parser: MockParser, origin: string): MediaObject[] {
   if (parser === "arena") {
     return ARENA_BLOCKS.map((block, index): MediaObject => ({
@@ -153,7 +157,10 @@ function importCandidates(parser: MockParser, origin: string): MediaObject[] {
       uri: `rnet://object/${block.objectId}`,
       owner: `rnet://id/${OWNER_ID}`,
       type: "arena.block",
-      elements: hasArenaElement(block) ? [`rnet://element/${block.elementId}`] : [],
+      elements: [
+        `rnet://element/${arenaTitleElementId(index)}`,
+        ...(hasArenaElement(block) ? [`rnet://element/${block.elementId}`] : []),
+      ],
       keys: { arena_block_id: block.blockId },
       source: {
         ingest: { method: "parser", reproducible: true, skill: "arena@test" },
@@ -216,18 +223,18 @@ function verifyFor(parser: MockParser) {
   const candidateCount = parser === "arena" ? ARENA_BLOCKS.length : parser === "csv" ? 3 : 2;
   if (parser === "arena") {
     const elementBlocks = ARENA_BLOCKS.filter(hasArenaElement);
+    const elementCount = ARENA_BLOCKS.length + elementBlocks.length;
     return {
       ok: true,
       source_record_count: candidateCount,
       candidate_count: candidateCount,
       nested_channel_count: 0,
-      element_count: elementBlocks.length,
-      total_element_bytes: elementBlocks.reduce(
-        (total, block) => total + arenaPayload(block).byteLength,
-        0,
-      ),
+      element_count: elementCount,
+      total_element_bytes:
+        ARENA_BLOCKS.reduce((total, block) => total + Buffer.byteLength(block.title), 0) +
+        elementBlocks.reduce((total, block) => total + arenaPayload(block).byteLength, 0),
       counts_by_block_type: { Attachment: 1, Image: 1, Link: 2, Text: 1 },
-      counts_by_element_kind: { document: 1, image: 2, text: 1 },
+      counts_by_element_kind: { document: 1, image: 2, text: 6 },
       totals_by_currency: {} as Record<string, string>,
       checks: [
         {
@@ -263,12 +270,12 @@ function verifyFor(parser: MockParser) {
         {
           name: "element_accounting",
           ok: true,
-          detail: `${elementBlocks.length} elements match their block types and roles`,
+          detail: `${elementCount} elements match their block types and roles`,
         },
         {
           name: "element_integrity",
           ok: true,
-          detail: `${elementBlocks.length} element payloads have matching MIME, size, and SHA-256`,
+          detail: `${elementCount} element payloads have matching MIME, size, and SHA-256`,
         },
       ],
     };
@@ -332,28 +339,54 @@ interface MockStagedElement {
   document: MediaElement;
   object_uri: string;
   preview_url: string;
+  role: "title" | "content" | "preview";
   payload: Buffer;
 }
 
 function arenaStagedElements(): MockStagedElement[] {
-  return ARENA_BLOCKS.filter(hasArenaElement).map((block, index) => {
-    const payload = arenaPayload(block);
-    return {
+  return ARENA_BLOCKS.flatMap((block, index) => {
+    const titleElementId = arenaTitleElementId(index);
+    const titlePayload = Buffer.from(block.title, "utf8");
+    const titleElement: MockStagedElement = {
       document: {
         rnet_schema: "0.1",
-        kind: block.kind,
-        uri: `rnet://element/${block.elementId}`,
+        kind: "text",
+        uri: `rnet://element/${titleElementId}`,
         owner: `rnet://id/${OWNER_ID}`,
-        content_hash: `sha256:${String(index + 1).repeat(64)}`,
-        mime: block.mime,
-        bytes: `http://127.0.0.1/rnet/v0/elements/${block.elementId}/bytes`,
-        byte_size: payload.byteLength,
+        content_hash: `sha256:${(index + 10).toString(16).repeat(64)}`,
+        mime: "text/plain",
+        bytes: `http://127.0.0.1/rnet/v0/elements/${titleElementId}/bytes`,
+        byte_size: titlePayload.byteLength,
         created_at: "2026-08-28T12:00:02.000Z",
       },
       object_uri: `rnet://object/${block.objectId}`,
-      preview_url: `/rnet/v0/operations/${ARENA_IMPORT_OPERATION_ID}/elements/${block.elementId}/bytes`,
-      payload,
+      preview_url: `/rnet/v0/operations/${ARENA_IMPORT_OPERATION_ID}/elements/${titleElementId}/bytes`,
+      role: "title",
+      payload: titlePayload,
     };
+    if (!hasArenaElement(block)) return [titleElement];
+
+    const payload = arenaPayload(block);
+    return [
+      titleElement,
+      {
+        document: {
+          rnet_schema: "0.1",
+          kind: block.kind,
+          uri: `rnet://element/${block.elementId}`,
+          owner: `rnet://id/${OWNER_ID}`,
+          content_hash: `sha256:${String(index + 1).repeat(64)}`,
+          mime: block.mime,
+          bytes: `http://127.0.0.1/rnet/v0/elements/${block.elementId}/bytes`,
+          byte_size: payload.byteLength,
+          created_at: "2026-08-28T12:00:02.000Z",
+        },
+        object_uri: `rnet://object/${block.objectId}`,
+        preview_url: `/rnet/v0/operations/${ARENA_IMPORT_OPERATION_ID}/elements/${block.elementId}/bytes`,
+        role: block.blockType === "Link" ? "preview" : "content",
+        payload,
+      },
+    ];
   });
 }
 
@@ -362,6 +395,7 @@ export interface MockStore {
   readonly vibes: Vibe[];
   readonly objects: Map<string, MediaObject>;
   readonly elements: Map<string, MediaElement>;
+  readonly elementPayloads: Map<string, Buffer<ArrayBufferLike>>;
   readonly origins: Map<string, MockOriginUpload>;
   readonly ingestionSources: Map<string, IngestionSourceDocument>;
   readonly sourceCredentials: Map<string, SourceCredentialDocument>;
@@ -427,6 +461,7 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     vibes: [structuredClone(fixtureVibe)],
     objects: new Map([[OBJECT_ID, structuredClone(fixtureObject)]]),
     elements: new Map([[ELEMENT_ID, structuredClone(fixtureElement)]]),
+    elementPayloads,
     origins: new Map(),
     ingestionSources: new Map(),
     sourceCredentials: new Map(),
@@ -609,7 +644,7 @@ export async function installMockStore(page: Page): Promise<MockStore> {
           kind: "remote",
           provider: "arena",
           parser: "arena",
-          parser_version: "arena@1.0.0",
+          parser_version: "arena@1.1.0",
           config: { channel_slug: channelSlug },
           created_at: "2026-08-28T12:00:01.000Z",
         } satisfies IngestionSourceDocument;
@@ -810,6 +845,7 @@ export async function installMockStore(page: Page): Promise<MockStore> {
               content_hash: element.document.content_hash,
               preview_url: element.preview_url,
               object_uri: element.object_uri,
+              role: element.role,
             })),
             verify: staged.verify,
             source_digest: `sha256:${"d".repeat(64)}`,

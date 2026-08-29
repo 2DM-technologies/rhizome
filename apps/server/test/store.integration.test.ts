@@ -1360,9 +1360,9 @@ describe("rNet M1 store", () => {
         source_record_count: 5,
         candidate_count: 4,
         nested_channel_count: 1,
-        element_count: 4,
+        element_count: 8,
         counts_by_block_type: { Attachment: 1, Image: 1, Link: 1, Text: 1 },
-        counts_by_element_kind: { document: 1, image: 2, text: 1 },
+        counts_by_element_kind: { document: 1, image: 2, text: 5 },
       },
     });
     const review = preview.result as {
@@ -1370,6 +1370,7 @@ describe("rNet M1 store", () => {
       elements: Array<{
         uri: string;
         object_uri: string;
+        role: "title" | "content" | "preview";
         kind: string;
         mime: string;
         byte_size: number;
@@ -1383,9 +1384,22 @@ describe("rNet M1 store", () => {
       "103",
       "104",
     ]);
-    expect(review.elements).toHaveLength(4);
+    expect(review.elements).toHaveLength(8);
     expect(await mediaObjectCount()).toBe(beforeObjects);
     expect(await mediaElementCount()).toBe(beforeElements);
+
+    const textCandidate = review.candidates[0]!;
+    const titleElement = review.elements.find(({ uri }) => uri === textCandidate.elements[0]);
+    const contentElement = review.elements.find(({ uri }) => uri === textCandidate.elements[1]);
+    expect(titleElement).toMatchObject({ role: "title", kind: "text", mime: "text/plain" });
+    expect(contentElement).toMatchObject({
+      role: "content",
+      kind: "text",
+      mime: "text/markdown",
+    });
+    expect(await (await app.request(titleElement!.preview_url, { headers: owner })).text()).toBe(
+      "Manifesto",
+    );
 
     for (const element of review.elements) {
       const parent = review.candidates.find(({ elements }) => elements.includes(element.uri));
@@ -1414,7 +1428,7 @@ describe("rNet M1 store", () => {
     expect(confirmedVibe.objects).toHaveLength(4);
     expect(confirmedVibe.pull.sources).toContain(source.source);
     expect(await mediaObjectCount()).toBe(beforeObjects + 4);
-    expect(await mediaElementCount()).toBe(beforeElements + 4);
+    expect(await mediaElementCount()).toBe(beforeElements + 8);
 
     const objectsResponse = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
       headers: owner,
@@ -1460,7 +1474,7 @@ describe("rNet M1 store", () => {
     const canceledPreview = await waitForOperation(await canceledPreviewResponse.json(), owner);
     expect(canceledPreview.status).toBe("done");
     expect(await mediaObjectCount()).toBe(beforeObjects + 4);
-    expect(await mediaElementCount()).toBe(beforeElements + 4);
+    expect(await mediaElementCount()).toBe(beforeElements + 8);
     expect(
       (await (await request(`/rnet/v0/vibes/${canceledVibeId}`, { headers: owner })).json())
         .objects,
@@ -1480,7 +1494,7 @@ describe("rNet M1 store", () => {
       created_count: 0,
       added_count: 0,
     });
-    expect((pull.result as { elements: unknown[] }).elements).toHaveLength(4);
+    expect((pull.result as { elements: unknown[] }).elements).toHaveLength(8);
 
     const delegatedPullResponse = await request(`/rnet/v0/operations/${pull.operation_id}`, {
       headers: dmachine,
@@ -1492,7 +1506,7 @@ describe("rNet M1 store", () => {
     expect((delegatedPull.result as { source_results: unknown[] }).source_results).toEqual([]);
     expect(JSON.stringify(delegatedPull)).not.toContain("/elements/");
     expect(await mediaObjectCount()).toBe(beforeObjects + 4);
-    expect(await mediaElementCount()).toBe(beforeElements + 4);
+    expect(await mediaElementCount()).toBe(beforeElements + 8);
   });
 
   test("only reviewed confirmation can introduce a source and cancellation leaves no derived state", async () => {

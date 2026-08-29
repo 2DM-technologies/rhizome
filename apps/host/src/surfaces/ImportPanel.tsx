@@ -31,11 +31,66 @@ interface CandidateSummary {
 interface PreviewElementSummary {
   uri: string;
   objectUri: string;
+  role?: "title" | "content" | "preview";
   kind: string;
   mime: string;
   byteSize: number;
   contentHash: string;
   previewUrl?: string;
+}
+
+function primaryPreviewElement(
+  elements: PreviewElementSummary[],
+): PreviewElementSummary | undefined {
+  return (
+    elements.find((element) => element.role === "content") ??
+    elements.find((element) => element.role === "preview") ??
+    elements.find((element) => element.role !== "title")
+  );
+}
+
+function ArenaCandidateReview({
+  candidate,
+  operationId,
+}: {
+  candidate: CandidateSummary;
+  operationId: string | undefined;
+}) {
+  const primaryElement = primaryPreviewElement(candidate.elements);
+  const metadataElement = primaryElement ?? candidate.elements[0];
+
+  return (
+    <li
+      data-import-candidate
+      className="flex items-center gap-4 border-b border-hairline py-3 last:border-b-0"
+    >
+      <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-card bg-surface">
+        {primaryElement?.previewUrl && primaryElement.kind === "image" ? (
+          <ImportPreviewImage
+            element={primaryElement}
+            operationId={operationId}
+            title={candidate.title}
+          />
+        ) : (
+          <span aria-hidden className="text-mono-label text-tertiary">
+            {primaryElement?.kind ?? "block"}
+          </span>
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-body text-primary">{candidate.title}</span>
+        <span className="mt-1 block text-caption text-tertiary">
+          {candidate.type} · {candidate.elementCount}{" "}
+          {candidate.elementCount === 1 ? "element" : "elements"}
+          {metadataElement
+            ? ` · ${metadataElement.mime} · ${formatByteSize(
+                candidate.elements.reduce((total, element) => total + element.byteSize, 0),
+              )}`
+            : ""}
+        </span>
+      </span>
+    </li>
+  );
 }
 
 interface VerifyCheckSummary {
@@ -516,40 +571,11 @@ export function ImportPanel({
           >
             {preview.candidates.map((candidate) =>
               arenaReview ? (
-                <li
+                <ArenaCandidateReview
                   key={candidate.uri}
-                  data-import-candidate
-                  className="flex items-center gap-4 border-b border-hairline py-3 last:border-b-0"
-                >
-                  <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-card bg-surface">
-                    {candidate.elements[0]?.previewUrl && candidate.elements[0].kind === "image" ? (
-                      <ImportPreviewImage
-                        element={candidate.elements[0]}
-                        operationId={operationId}
-                        title={candidate.title}
-                      />
-                    ) : (
-                      <span aria-hidden className="text-mono-label text-tertiary">
-                        {candidate.elements[0]?.kind ?? "block"}
-                      </span>
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-body text-primary">{candidate.title}</span>
-                    <span className="mt-1 block text-caption text-tertiary">
-                      {candidate.type} · {candidate.elementCount}{" "}
-                      {candidate.elementCount === 1 ? "element" : "elements"}
-                      {candidate.elements[0]
-                        ? ` · ${candidate.elements[0].mime} · ${formatByteSize(
-                            candidate.elements.reduce(
-                              (total, element) => total + element.byteSize,
-                              0,
-                            ),
-                          )}`
-                        : ""}
-                    </span>
-                  </span>
-                </li>
+                  candidate={candidate}
+                  operationId={operationId}
+                />
               ) : (
                 <li
                   key={candidate.uri}
@@ -784,6 +810,9 @@ function parsePreviewElement(value: unknown): PreviewElementSummary[] {
       mime: element.mime,
       byteSize: element.byte_size,
       contentHash: element.content_hash,
+      ...(element.role === "title" || element.role === "content" || element.role === "preview"
+        ? { role: element.role }
+        : {}),
       ...(typeof element.preview_url === "string" ? { previewUrl: element.preview_url } : {}),
     },
   ];

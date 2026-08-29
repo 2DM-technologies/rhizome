@@ -23,7 +23,7 @@ describe("M2 committed Are.na v3 parser", () => {
     expect(first).toEqual(second);
     expect(ARENA_CAPTURE_VERSION).toBe("arena-capture@1");
     expect(ARENA_PARSER_NAME).toBe("arena");
-    expect(ARENA_PARSER_VERSION).toBe("arena@1.0.0");
+    expect(ARENA_PARSER_VERSION).toBe("arena@1.1.0");
     expect(parserFor("arena")).toBe(arenaParser);
     expect(first).toMatchObject({
       channelId: "7001",
@@ -45,37 +45,46 @@ describe("M2 committed Are.na v3 parser", () => {
     ]);
 
     const [text, image, link, attachment, embed] = first.blocks;
-    expect(new TextDecoder().decode(text?.elements[0]?.bytes)).toBe(
+    for (const block of first.blocks) {
+      expect(block.elements[0]).toMatchObject({
+        role: "title",
+        kind: "text",
+        mime: "text/plain",
+        filename: `arena-${block.blockId}-title.txt`,
+      });
+      expect(new TextDecoder().decode(block.elements[0]!.bytes)).toBe(block.title);
+    }
+    expect(new TextDecoder().decode(text?.elements[1]?.bytes)).toBe(
       "## Notice what connects\n\nA **synthetic** note with [context](https://example.test/context).",
     );
-    expect(text?.elements[0]).toMatchObject({
+    expect(text?.elements[1]).toMatchObject({
       role: "content",
       kind: "text",
       mime: "text/markdown",
       byteSize: 91,
       filename: "arena-1101.md",
     });
-    expect(image?.elements[0]).toMatchObject({
+    expect(image?.elements[1]).toMatchObject({
       role: "content",
       kind: "image",
       mime: "image/png",
       byteSize: 68,
       sourceUrl: "https://images.are.na/synthetic/primary/large.png",
     });
-    expect(link?.elements[0]).toMatchObject({ role: "preview", kind: "image" });
+    expect(link?.elements[1]).toMatchObject({ role: "preview", kind: "image" });
     expect(link?.sourceProperties).toMatchObject({
       source_url: "https://example.test/article",
       connection_position: 3,
       author: { id: 70001, name: "Synthetic Author", slug: "synthetic-author" },
     });
-    expect(attachment?.elements[0]).toMatchObject({
+    expect(attachment?.elements[1]).toMatchObject({
       role: "content",
       kind: "document",
       mime: "application/pdf",
       byteSize: 76,
       filename: "synthetic-field-notes.pdf",
     });
-    expect(embed?.elements).toEqual([]);
+    expect(embed?.elements).toHaveLength(1);
     expect(embed?.sourceProperties).toMatchObject({
       source_url: "https://video.example.test/watch/synthetic",
       embed_url: "https://video.example.test/embed/synthetic",
@@ -97,10 +106,10 @@ describe("M2 committed Are.na v3 parser", () => {
       source_record_count: 5,
       candidate_count: 5,
       nested_channel_count: 0,
-      element_count: 4,
-      total_element_bytes: 303,
+      element_count: 9,
+      total_element_bytes: 407,
       counts_by_block_type: { Attachment: 1, Embed: 1, Image: 1, Link: 1, Text: 1 },
-      counts_by_element_kind: { document: 1, image: 2, text: 1 },
+      counts_by_element_kind: { document: 1, image: 2, text: 6 },
       checks: expect.arrayContaining([
         expect.objectContaining({ name: "record_count", ok: true }),
         expect.objectContaining({ name: "connection_order", ok: true }),
@@ -146,6 +155,19 @@ describe("M2 committed Are.na v3 parser", () => {
     });
     expect(parsed.blocks).toHaveLength(5);
     expect(verifyArena(parsed)).toMatchObject({ ok: true, nested_channel_count: 1 });
+  });
+
+  test("emits the deterministic fallback title as the first text/plain element", async () => {
+    const capture = await fixtureCapture();
+    mutatePage(capture, (page) => {
+      delete record(array(page.data, "data")[2], "block").title;
+    });
+
+    const block = parseArenaCapture(captureBytes(capture)).blocks[2]!;
+    expect(block.title).toBe("Are.na link 1103");
+    expect(block.elements[0]).toMatchObject({ role: "title", kind: "text", mime: "text/plain" });
+    expect(new TextDecoder().decode(block.elements[0]!.bytes)).toBe("Are.na link 1103");
+    expect(verifyArena(parseArenaCapture(captureBytes(capture))).ok).toBe(true);
   });
 
   test("rejects unavailable and duplicate blocks before candidate emission", async () => {
@@ -220,7 +242,7 @@ describe("M2 committed Are.na v3 parser", () => {
     ];
 
     const parsed = parseArenaCapture(captureBytes(redirected));
-    expect(parsed.blocks[1]?.elements[0]?.sourceUrl).toBe(finalUrl);
+    expect(parsed.blocks[1]?.elements[1]?.sourceUrl).toBe(finalUrl);
     expect(parsed.blocks[1]?.sourceProperties.imported_asset_url).toBe(finalUrl);
 
     const brokenChain = structuredClone(redirected);
@@ -282,13 +304,19 @@ describe("M2 committed Are.na v3 parser", () => {
   test("VERIFY fails closed if staged element or object evidence changes after parsing", async () => {
     const parsed = parseArenaCapture(await fixtureBytes());
     parsed.blocks[0]!.elements[0]!.contentHash = `sha256:${"0".repeat(64)}`;
+    parsed.blocks[0]!.elements[0]!.role = "content";
     parsed.blocks[1]!.position = 1;
     parsed.blocks[1]!.blockId = parsed.blocks[0]!.blockId;
     parsed.blocks[1]!.keys.arena_block_id = parsed.blocks[0]!.blockId;
     const report = verifyArena(parsed);
 
     expect(report.ok).toBe(false);
-    for (const name of ["required_fields", "unique_block_ids", "element_integrity"] as const) {
+    for (const name of [
+      "required_fields",
+      "unique_block_ids",
+      "element_accounting",
+      "element_integrity",
+    ] as const) {
       expect(report.checks).toContainEqual(expect.objectContaining({ name, ok: false }));
     }
   });

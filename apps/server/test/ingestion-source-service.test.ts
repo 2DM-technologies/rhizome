@@ -82,7 +82,7 @@ describe("Are.na remote ingestion source", () => {
       kind: "remote",
       provider: ARENA_PROVIDER,
       parser: ARENA_PARSER_NAME,
-      parser_version: "arena@1.0.0",
+      parser_version: "arena@1.1.0",
       config: { channel_slug: "love-always-wins" },
       created_at: "2026-08-29T12:00:00.000Z",
     });
@@ -115,7 +115,7 @@ function remoteSource(overrides: Partial<DbIngestionSource> = {}): DbIngestionSo
     kind: "remote",
     provider: ARENA_PROVIDER,
     parser: ARENA_PARSER_NAME,
-    parserVersion: "arena@1.0.0",
+    parserVersion: "arena@1.1.0",
     originUuid: null,
     credentialUuid: null,
     config: { channel_slug: "love-always-wins" },

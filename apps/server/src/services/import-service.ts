@@ -126,6 +126,7 @@ type SourceVerifyReport = VerifyReport | ArenaVerifyReport;
 export interface StagedElement {
   uri: string;
   object_uri: string;
+  role: ParsedArenaElement["role"];
   kind: MediaElementKind;
   mime: string;
   byte_size: number;
@@ -1850,6 +1851,7 @@ async function arenaCandidatesFromParsed(
       elements.push({
         uri: `rnet://element/${elementUuid}`,
         object_uri: objectUri,
+        role: element.role,
         kind: element.kind,
         mime: element.mime,
         byte_size: element.byteSize,
@@ -1947,7 +1949,8 @@ export function candidateSemanticDigest(
 ): Promise<string> {
   const { uri: _uri, source, elements: _elementUris, ...content } = candidate;
   const { origins: _origins, retrieved_at: _retrievedAt, ...semanticSource } = source;
-  const semanticElements = elements.map(({ kind, mime, byte_size, content_hash }) => ({
+  const semanticElements = elements.map(({ role, kind, mime, byte_size, content_hash }) => ({
+    role,
     kind,
     mime,
     byte_size,
@@ -2006,6 +2009,7 @@ function assertCandidate(
   for (const element of elements) {
     if (
       element.object_uri !== candidate.uri ||
+      !["title", "content", "preview"].includes(element.role) ||
       !ELEMENT_URI_PATTERN.test(element.uri) ||
       !/^sha256:[a-f0-9]{64}$/.test(element.content_hash) ||
       !Number.isSafeInteger(element.byte_size) ||

@@ -170,10 +170,30 @@ function ArenaBlockPayload({
 }
 
 function ArenaBlockCard({ object, openObject }: { object: MediaObject; openObject: () => void }) {
-  const elementUri = object.elements[0];
-  const elementUuid = elementUri ? uuidOf(elementUri) : undefined;
-  const element = useMediaElement(elementUuid);
-  const payload = usePayloadUrl("elements", element.data ? elementUuid : undefined);
+  const firstElementUri = object.elements[0];
+  const secondElementUri = object.elements[1];
+  const firstElementUuid = firstElementUri ? uuidOf(firstElementUri) : undefined;
+  const secondElementUuid = secondElementUri ? uuidOf(secondElementUri) : undefined;
+  const firstElement = useMediaElement(firstElementUuid);
+  const secondElement = useMediaElement(secondElementUuid);
+  const primaryElement = [
+    {
+      query: firstElement,
+      title: firstElement.data?.kind === "text" && firstElement.data.mime === "text/plain",
+      uuid: firstElementUuid,
+    },
+    { query: secondElement, title: false, uuid: secondElementUuid },
+  ].find(({ query, title: titleElement }) => query.data && !titleElement);
+  const payload = usePayloadUrl(
+    "elements",
+    primaryElement?.query.data ? primaryElement.uuid : undefined,
+  );
+  const elementPending = Boolean(
+    (firstElementUri && firstElement.isPending) || (secondElementUri && secondElement.isPending),
+  );
+  const elementError = Boolean(
+    (firstElementUri && firstElement.isError) || (secondElementUri && secondElement.isError),
+  );
   const title = sourceTitle(object);
   const blockType = arenaBlockType(object);
   const destination = arenaDestination(object);
@@ -185,9 +205,9 @@ function ArenaBlockCard({ object, openObject }: { object: MediaObject; openObjec
           <ArenaBlockPayload
             blockType={blockType}
             destination={destination}
-            element={element.data}
-            isError={elementUri ? element.isError || payload.isError : false}
-            isPending={elementUri ? element.isPending : false}
+            element={primaryElement?.query.data}
+            isError={elementError || payload.isError}
+            isPending={elementPending}
             payloadUrl={payload.data}
             title={title}
           />
@@ -195,7 +215,9 @@ function ArenaBlockCard({ object, openObject }: { object: MediaObject; openObjec
         <span className="flex min-h-20 flex-col gap-1 px-4 py-3">
           <span className="flex items-center justify-between gap-3 text-mono-label text-tertiary">
             <span>{blockType}</span>
-            {element.data ? <span className="truncate">{element.data.mime}</span> : null}
+            {primaryElement?.query.data ? (
+              <span className="truncate">{primaryElement.query.data.mime}</span>
+            ) : null}
           </span>
           <button
             type="button"

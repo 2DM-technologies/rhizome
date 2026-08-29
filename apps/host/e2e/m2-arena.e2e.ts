@@ -33,7 +33,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(reconciliation).toBeVisible();
   await expect(reconciliation).toContainText("5 Are.na blocks passed VERIFY");
   await expect(reconciliation).toContainText("5 source blocks → 5 candidates");
-  await expect(reconciliation).toContainText("4 media elements staged");
+  await expect(reconciliation).toContainText("9 media elements staged");
   await expect(page.getByRole("list", { name: "VERIFY checks" }).getByRole("listitem")).toHaveCount(
     8,
   );
@@ -44,8 +44,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(candidates).toContainText("Manifesto");
   await expect(candidates).toContainText("A saved link without a preview");
   await expect(candidates).toContainText("Planning notes");
+  await expect(candidates).toContainText("arena.block · 2 elements");
   await expect(candidates).toContainText("arena.block · 1 element");
-  await expect(candidates).toContainText("arena.block · 0 elements");
+  await expect(candidates).toContainText("text/plain");
   await expect(candidates).toContainText("text/markdown");
   await expect(candidates).toContainText("image/png");
   await expect(candidates).toContainText("application/pdf");
@@ -101,7 +102,21 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(page.getByText("Loading image…")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toHaveLength(initialMembership.length + 5);
   expect(mockStore.objects.size).toBe(initialObjectCount + 5);
-  expect(mockStore.elements.size).toBe(initialElementCount + 4);
+  expect(mockStore.elements.size).toBe(initialElementCount + 9);
+  const importedObjects = [...mockStore.objects.values()].filter(
+    (object) => object.type === "arena.block",
+  );
+  for (const object of importedObjects) {
+    const titleUri = object.elements[0];
+    const titleElementId = titleUri?.split("/").at(-1) ?? "";
+    expect(mockStore.elements.get(titleElementId)).toMatchObject({
+      kind: "text",
+      mime: "text/plain",
+    });
+    expect(mockStore.elementPayloads.get(titleElementId)?.toString("utf8")).toBe(
+      object.source.properties.title,
+    );
+  }
   expect(mockStore.vibes[0]?.pull?.sources).toContain(`source:${ARENA_IMPORT_SOURCE_ID}`);
 });
 

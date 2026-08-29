@@ -131,7 +131,7 @@ describe("Are.na capture HTTP client", () => {
     expect(verifyArena(parsed)).toMatchObject({
       ok: true,
       candidate_count: 5,
-      element_count: 4,
+      element_count: 9,
     });
   });
 

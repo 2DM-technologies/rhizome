@@ -1,6 +1,6 @@
 # Are.na v3 channel ingestion
 
-Version: `arena@1.0.0`
+Version: `arena@1.1.0`
 
 The parser accepts one UTF-8 JSON `arena-capture@1` OriginArtifact. The capture is a framed,
 self-contained record of a public Are.na v3 channel fetch: exact channel-response bytes, ordered
@@ -17,6 +17,9 @@ author, destination/source attribution, and relevant provider file/image metadat
 
 Payload mapping is closed and deterministic:
 
+- Every Block starts with one `text` / `text/plain` title element whose UTF-8 bytes exactly equal
+  the canonical block title. If Are.na omits the title, the parser's deterministic fallback title
+  is used. Its role is `title`, and it is always first.
 - `Text`: original Markdown UTF-8 bytes → one `text` / `text/markdown` content element.
 - `Image`: captured original or declared Are.na rendition → one `image` content element.
 - `Attachment`: captured attachment URL → one content element; validated MIME selects
@@ -26,6 +29,7 @@ Payload mapping is closed and deterministic:
   element.
 
 Provider HTML and extracted Link content are not elements and are not copied into source
-properties. The importer does not crawl link/embed destinations. Element metadata includes role,
-kind, MIME, exact byte size, `sha256:` content identity, filename, and final captured asset URL;
-bytes remain available for reviewed staging by the server.
+properties. The importer does not crawl link/embed destinations. Element roles are the closed set
+`title`, `content`, and `preview`; captured network assets remain restricted to `content` and
+`preview`. Element metadata includes role, kind, MIME, exact byte size, `sha256:` content identity,
+filename, and final captured asset URL; bytes remain available for reviewed staging by the server.

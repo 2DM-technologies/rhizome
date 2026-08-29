@@ -18,7 +18,8 @@ Implemented in M2:
   sources; exact API pages and approved assets are captured before deterministic parsing and
   VERIFY. Reviewed candidates carry previewable staged MediaElements, confirmation atomically
   creates object-plus-element bundles and membership, cancellation creates no derived records,
-  and unchanged pulls deduplicate by block identity plus semantic fields and element hashes.
+  each imported Block starts with its canonical title as a `text/plain` element, and unchanged
+  pulls deduplicate by block identity plus semantic fields, element roles, and element hashes.
 
 Milestone-scheduled gaps:
 
