@@ -6,6 +6,7 @@ import { matchPath } from "react-router";
  * they share one registry, one geometry, and one focus mechanism.
  */
 export type Surface =
+  | { readonly kind: "import" }
   | { readonly kind: "vibes" }
   | { readonly kind: "vibe"; readonly uuid: string }
   | { readonly kind: "object"; readonly uuid: string }
@@ -16,6 +17,8 @@ export type SurfaceId = string;
 
 export function surfaceId(surface: Surface): SurfaceId {
   switch (surface.kind) {
+    case "import":
+      return "import";
     case "vibes":
       return "vibes";
     case "vibe":
@@ -29,6 +32,8 @@ export function surfaceId(surface: Surface): SurfaceId {
 
 export function pathOf(surface: Surface): string {
   switch (surface.kind) {
+    case "import":
+      return "/imports";
     case "vibes":
       return "/vibes";
     case "vibe":
@@ -49,6 +54,7 @@ const PATTERNS: readonly {
   pattern: string;
   surface: (params: Record<string, string>) => Surface;
 }[] = [
+  { pattern: "/imports", surface: () => ({ kind: "import" }) },
   { pattern: "/vibes", surface: () => ({ kind: "vibes" }) },
   { pattern: "/vibes/:uuid", surface: (p) => ({ kind: "vibe", uuid: p.uuid ?? "" }) },
   { pattern: "/objects/:uuid", surface: (p) => ({ kind: "object", uuid: p.uuid ?? "" }) },
@@ -89,6 +95,8 @@ export function labelOf(
   vibeTitles: ReadonlyMap<string, string> = new Map(),
 ): string {
   switch (surface.kind) {
+    case "import":
+      return "Import transactions";
     case "vibes":
       return "Vibes";
     case "vibe":

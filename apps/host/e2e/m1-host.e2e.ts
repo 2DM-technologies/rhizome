@@ -63,99 +63,104 @@ function expectMonotonicMotion(samples: number[], direction: "increasing" | "dec
   }
 }
 
-async function installViewTransitionProbe(page: Page) {
-  await page.addInitScript(() => {
-    const nativeStartViewTransition = document.startViewTransition.bind(document);
-    const records: Array<{
-      before: Array<{
-        ariaLabel: string | null;
-        name: string;
-        source: string | null;
-        surfaceId: string | null;
-        tagName: string;
-        target: boolean;
-      }>;
-      after: Array<{
-        ariaLabel: string | null;
-        name: string;
-        source: string | null;
-        surfaceId: string | null;
-        tagName: string;
-        target: boolean;
-      }>;
-      animations: Array<{ duration: number | string | null; pseudoElement: string | null }>;
-      oldOpacity: string | null;
-      ready: boolean;
-      readyError: string | null;
-      finished: boolean;
-    }> = [];
+interface DockOpenAnimationRecord {
+  finished: boolean;
+  keyframes: Array<{
+    clipPath: number | string | null;
+    offset: number | string | null;
+    opacity: number | string | null;
+    transform: number | string | null;
+  }>;
+  origin: {
+    height: number;
+    left: number;
+    top: number;
+    width: number;
+  } | null;
+  source: string | null;
+  surfaceId: string | null;
+  target: "content" | "surface";
+  targetRect: {
+    height: number;
+    left: number;
+    top: number;
+    width: number;
+  };
+  timing: {
+    delay: number | string | null;
+    duration: number | string | null;
+    easing: string | null;
+    fill: string | null;
+  };
+}
 
-    function participants() {
-      return [...document.querySelectorAll<HTMLElement>('[style*="view-transition-name"]')]
-        .map((element) => ({ element, name: getComputedStyle(element).viewTransitionName }))
-        .filter(({ name }) => name.startsWith("rz-surface-"))
-        .map(({ element, name }) => ({
-          ariaLabel: element.getAttribute("aria-label"),
-          name,
-          source: element.dataset.surfaceTransitionSource ?? null,
-          surfaceId: element.dataset.surfaceId ?? null,
-          tagName: element.tagName,
-          target: element.hasAttribute("data-surface-transition-target"),
-        }));
+async function installDockOpenAnimationProbe(page: Page) {
+  await page.addInitScript(() => {
+    const nativeAnimate = Element.prototype.animate;
+    const records: DockOpenAnimationRecord[] = [];
+
+    function serialize(value: unknown): number | string | null {
+      if (typeof value === "number" || typeof value === "string") return value;
+      return value == null ? null : String(value);
     }
 
-    document.startViewTransition = ((callbackOptions) => {
-      const update =
-        typeof callbackOptions === "function" ? callbackOptions : callbackOptions?.update;
-      const record: (typeof records)[number] = {
-        before: participants(),
-        after: [],
-        animations: [],
-        oldOpacity: null,
-        ready: false,
-        readyError: null,
+    Element.prototype.animate = function (keyframes, options) {
+      const element = this as HTMLElement;
+      const surface = element.matches("[data-surface-opening]")
+        ? element
+        : element.closest<HTMLElement>("[data-surface-opening]");
+      const target = element === surface ? "surface" : "content";
+      const rect = element.getBoundingClientRect();
+      const animation = nativeAnimate.call(this, keyframes, options);
+      if (!surface || (target === "content" && !element.matches("[data-surface-window]"))) {
+        return animation;
+      }
+
+      const serializedKeyframes = Array.isArray(keyframes)
+        ? keyframes.map((keyframe) => {
+            const frame = keyframe as unknown as Record<string, unknown>;
+            return {
+              clipPath: serialize(frame.clipPath),
+              offset: serialize(frame.offset),
+              opacity: serialize(frame.opacity),
+              transform: serialize(frame.transform),
+            };
+          })
+        : [];
+      const firstTransform = serializedKeyframes[0]?.transform;
+      let origin: DockOpenAnimationRecord["origin"] = null;
+      if (target === "surface" && typeof firstTransform === "string") {
+        const matrix = new DOMMatrixReadOnly(firstTransform);
+        origin = {
+          height: rect.height * Math.abs(matrix.d),
+          left: rect.left + matrix.m41,
+          top: rect.top + matrix.m42,
+          width: rect.width * Math.abs(matrix.a),
+        };
+      }
+      const timing = typeof options === "number" ? { duration: options } : options;
+      const record: DockOpenAnimationRecord = {
         finished: false,
+        keyframes: serializedKeyframes,
+        origin,
+        source: surface.dataset.surfaceOpeningSource ?? null,
+        surfaceId: surface.dataset.surfaceId ?? null,
+        target,
+        targetRect: {
+          height: rect.height,
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+        },
+        timing: {
+          delay: serialize(timing?.delay),
+          duration: serialize(timing?.duration),
+          easing: typeof timing?.easing === "string" ? timing.easing : null,
+          fill: typeof timing?.fill === "string" ? timing.fill : null,
+        },
       };
       records.push(record);
-
-      const wrappedUpdate = async () => {
-        await update?.();
-        record.after = participants();
-      };
-      const transition = nativeStartViewTransition(
-        typeof callbackOptions === "function"
-          ? wrappedUpdate
-          : { ...callbackOptions, update: wrappedUpdate },
-      );
-
-      void transition.ready.then(
-        () => {
-          record.ready = true;
-          const transitionName = record.before[0]?.name;
-          record.oldOpacity = transitionName
-            ? getComputedStyle(document.documentElement, `::view-transition-old(${transitionName})`)
-                .opacity
-            : null;
-          record.animations = document.getAnimations().flatMap((animation) => {
-            const effect = animation.effect;
-            if (!(effect instanceof KeyframeEffect)) return [];
-            const duration = effect.getTiming().duration;
-            return [
-              {
-                duration:
-                  typeof duration === "number" || typeof duration === "string"
-                    ? duration
-                    : (duration?.toString() ?? null),
-                pseudoElement: effect.pseudoElement,
-              },
-            ];
-          });
-        },
-        (error: unknown) => {
-          record.readyError = String(error);
-        },
-      );
-      void transition.finished.then(
+      void animation.finished.then(
         () => {
           record.finished = true;
         },
@@ -163,44 +168,33 @@ async function installViewTransitionProbe(page: Page) {
           record.finished = true;
         },
       );
-      return transition;
-    }) as Document["startViewTransition"];
+      return animation;
+    };
 
-    Object.defineProperty(window, "__rhizomeViewTransitions", { value: records });
+    Object.defineProperty(window, "__rhizomeDockOpenAnimations", { value: records });
   });
 }
 
-function readViewTransitionProbe(page: Page) {
+function readDockOpenAnimationProbe(page: Page) {
   return page.evaluate(
     () =>
       (
         window as typeof window & {
-          __rhizomeViewTransitions: Array<{
-            before: Array<{
-              ariaLabel: string | null;
-              name: string;
-              source: string | null;
-              surfaceId: string | null;
-              tagName: string;
-              target: boolean;
-            }>;
-            after: Array<{
-              ariaLabel: string | null;
-              name: string;
-              source: string | null;
-              surfaceId: string | null;
-              tagName: string;
-              target: boolean;
-            }>;
-            animations: Array<{ duration: number | string | null; pseudoElement: string | null }>;
-            oldOpacity: string | null;
-            ready: boolean;
-            readyError: string | null;
-            finished: boolean;
-          }>;
+          __rhizomeDockOpenAnimations: DockOpenAnimationRecord[];
         }
-      ).__rhizomeViewTransitions,
+      ).__rhizomeDockOpenAnimations,
   );
+}
+
+function expectOriginToMatch(
+  actual: DockOpenAnimationRecord["origin"],
+  expected: { height: number; width: number; x: number; y: number },
+) {
+  expect(actual).not.toBeNull();
+  expect(Math.abs((actual?.left ?? 0) - expected.x)).toBeLessThan(0.75);
+  expect(Math.abs((actual?.top ?? 0) - expected.y)).toBeLessThan(0.75);
+  expect(Math.abs((actual?.width ?? 0) - expected.width)).toBeLessThan(0.75);
+  expect(Math.abs((actual?.height ?? 0) - expected.height)).toBeLessThan(0.75);
 }
 
 test("an object deep link resolves through the real shell and Store client", async ({ page }) => {
@@ -216,6 +210,54 @@ test("an object deep link resolves through the real shell and Store client", asy
   await expect(favicon).toHaveAttribute("type", "image/png");
   await expect(favicon).toHaveAttribute("sizes", "96x96");
   await expect(favicon).toHaveAttribute("href", /orb-home-48\.png$/);
+});
+
+test("the dock stays dark while its search field stays light", async ({ page }) => {
+  await page.goto("/");
+
+  expect(
+    await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      return Object.fromEntries(
+        [50, 100, 200, 300, 400, 500, 600, 700, 800, 900].map((step) => [
+          step,
+          root.getPropertyValue(`--rz-gray-${step}`).trim(),
+        ]),
+      );
+    }),
+  ).toEqual({
+    50: "#fafafa",
+    100: "#f5f5f5",
+    200: "#e5e5e5",
+    300: "#d4d4d4",
+    400: "#a3a3a3",
+    500: "#737373",
+    600: "#525252",
+    700: "#3f3f3f",
+    800: "#252525",
+    900: "#1a1a1a",
+  });
+
+  const tray = page.locator("[data-dock-tray-backdrop]");
+  const searchBlur = page.locator("[data-launcher-blur]");
+  const searchSurface = page.locator("[data-launcher-surface]");
+  const searchIcon = page.locator("[data-launcher-input-row] svg");
+  const search = page.getByRole("searchbox", { name: "Search everything" });
+  await expect(tray).toHaveCSS("background-color", "color(srgb 0.101961 0.101961 0.101961 / 0.8)");
+  await expect(searchSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
+  await expect(searchSurface).toHaveCSS("opacity", "0.8");
+  await expect(searchBlur).toHaveCSS("backdrop-filter", "blur(20px)");
+  await expect(search).toHaveCSS("color", "rgb(20, 21, 26)");
+  await expect(search).toHaveCSS("font-size", "14px");
+  await expect(searchIcon).toHaveCSS("width", "16px");
+  await expect(searchIcon).toHaveCSS("height", "16px");
+
+  await search.click();
+  await expect(page.getByRole("dialog", { name: "Start something new" })).toBeVisible();
+  await expect(searchSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
+  await expect(searchSurface).toHaveCSS("opacity", "0.8");
+  await expect(searchBlur).toHaveCSS("backdrop-filter", "blur(24px)");
+  await expect(searchBlur).toHaveCSS("opacity", "1");
 });
 
 test("standard and maximized windows preserve breathing room above the dock", async ({ page }) => {
@@ -282,7 +324,10 @@ test("standard and maximized windows preserve breathing room above the dock", as
   expect(dockBox!.y + dockBox!.height).toBe(976);
   expect(dockBox!.y).toBeLessThan(windowBox!.y + windowBox!.height);
   await expect(dockTray).toHaveCSS("border-radius", "12px");
-  await expect(dockTrayBackdrop).toHaveCSS("background-color", "rgba(221, 221, 221, 0.5)");
+  await expect(dockTrayBackdrop).toHaveCSS(
+    "background-color",
+    "color(srgb 0.101961 0.101961 0.101961 / 0.8)",
+  );
   await expect(dockTrayBackdrop).toHaveCSS("backdrop-filter", "blur(10px)");
   expect(await contentTitle.boundingBox()).toEqual(contentBox);
 
@@ -545,6 +590,22 @@ test("a granted Vibe is browseable without exposing owner-only controls", async 
   await expect(page.getByText('"reviewed": false')).toBeVisible();
 });
 
+test("an owner can refresh configured sources and see the deduplication result", async ({
+  page,
+}) => {
+  await page.goto(`/vibes/${VIBE_ID}`);
+
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+  await expect(page.getByRole("status")).toContainText("Checked 1 transactions · added 0");
+  await expect(page.getByRole("status")).toContainText("1 already known · 0 new records");
+
+  const pullRequest = mockStore.requests.find(
+    (request) =>
+      request.method() === "POST" && request.url().endsWith(`/rnet/v0/vibes/${VIBE_ID}/pull`),
+  );
+  expect(pullRequest?.postDataJSON()).toEqual({});
+});
+
 test("user-property edits survive a reload", async ({ page }) => {
   await page.goto(`/objects/${OBJECT_ID}`);
 
@@ -613,58 +674,106 @@ test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Vibes", exact: true }).locator("[data-dock-app-label]"),
   ).toHaveText("Vibes");
+  const activeAppSurface = page
+    .getByRole("button", { name: "Vibes", exact: true })
+    .locator("[data-dock-app-surface]");
+  await expect(activeAppSurface).toHaveCSS(
+    "background-color",
+    "color(srgb 0.101961 0.101961 0.101961 / 0.8)",
+  );
+  await expect(activeAppSurface).toHaveCSS("backdrop-filter", "blur(10px)");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
 });
 
 test("opening a surface grows its dock icon into the window", async ({ page }) => {
-  await installViewTransitionProbe(page);
+  await installDockOpenAnimationProbe(page);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "Home", exact: true }).click();
+  const home = page.getByRole("button", { name: "Home", exact: true });
+  await home.hover();
+  await expect
+    .poll(() => home.evaluate((element) => getComputedStyle(element).translate))
+    .toBe("0px -2px");
+  const sourceRect = await home.boundingBox();
+  expect(sourceRect).not.toBeNull();
+  await home.click();
   await expect(page).toHaveURL(/\/vibes$/);
-  await expect.poll(async () => (await readViewTransitionProbe(page))[0]?.ready).toBe(true);
+  await expect
+    .poll(async () => (await readDockOpenAnimationProbe(page)).length)
+    .toBeGreaterThanOrEqual(2);
 
-  const [record] = await readViewTransitionProbe(page);
-  expect(record?.readyError).toBeNull();
-  expect(record?.before).toHaveLength(1);
-  expect(record?.before[0]).toMatchObject({
-    ariaLabel: "Home",
-    tagName: "BUTTON",
-    target: false,
-  });
-  expect(record?.after).toHaveLength(1);
-  expect(record?.after[0]).toMatchObject({
+  const animationCount = (await readDockOpenAnimationProbe(page)).length;
+  const records = (await readDockOpenAnimationProbe(page)).slice(-2);
+  const surface = records.find((record) => record.target === "surface");
+  const content = records.find((record) => record.target === "content");
+  expect(surface).toMatchObject({
+    source: "home",
     surfaceId: "vibes",
-    tagName: "DIV",
-    target: true,
+    target: "surface",
+    timing: {
+      delay: null,
+      duration: 200,
+      easing: "cubic-bezier(0.2, 0.9, 0.2, 1.04)",
+      fill: "both",
+    },
   });
-  expect(record?.after[0]?.name).toBe(record?.before[0]?.name);
-  expect(
-    record?.animations.some(
-      ({ duration, pseudoElement }) =>
-        duration === 200 && pseudoElement === `::view-transition-group(${record.before[0]?.name})`,
-    ),
-  ).toBe(true);
-  expect(record?.oldOpacity).toBe("0");
-  await expect.poll(async () => (await readViewTransitionProbe(page))[0]?.finished).toBe(true);
+  expect(surface?.keyframes).toHaveLength(2);
+  expect(surface?.keyframes[0]).toMatchObject({
+    clipPath: "inset(0 round 999px)",
+    offset: null,
+    opacity: null,
+  });
+  expect(surface?.keyframes[0]?.transform).toMatch(/^translate3d\(.+\) scale\(.+\)$/);
+  expect(surface?.keyframes[1]).toEqual({
+    clipPath: "inset(0 round 20px)",
+    offset: null,
+    opacity: null,
+    transform: "translate3d(0, 0, 0) scale(1, 1)",
+  });
+  if (sourceRect) expectOriginToMatch(surface?.origin ?? null, sourceRect);
+  expect(surface?.targetRect.width).toBeGreaterThan(sourceRect?.width ?? 0);
+  expect(surface?.targetRect.height).toBeGreaterThan(sourceRect?.height ?? 0);
+
+  expect(content).toMatchObject({
+    source: "home",
+    surfaceId: "vibes",
+    target: "content",
+    timing: {
+      delay: 12,
+      duration: 180,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+      fill: "both",
+    },
+  });
+  expect(content?.keyframes).toEqual([
+    { clipPath: null, offset: 0, opacity: 0, transform: null },
+    { clipPath: null, offset: 0.18, opacity: 0, transform: null },
+    { clipPath: null, offset: 0.55, opacity: 0.35, transform: null },
+    { clipPath: null, offset: 1, opacity: 1, transform: null },
+  ]);
+  await expect
+    .poll(async () => (await readDockOpenAnimationProbe(page)).every((record) => record.finished))
+    .toBe(true);
 
   await page.goBack();
   await expect(page).toHaveURL(/\/$/);
-  await expect.poll(async () => (await readViewTransitionProbe(page)).length).toBe(2);
-  const [, historyRecord] = await readViewTransitionProbe(page);
-  expect(historyRecord?.before).toEqual([]);
-  expect(historyRecord?.after).toEqual([]);
+  await expect(page.locator('[data-surface-id="vibes"][data-view-mode]')).toBeHidden();
+  await page.goForward();
+  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page.locator('[data-surface-id="vibes"][data-view-mode]')).toBeVisible();
+  expect(await readDockOpenAnimationProbe(page)).toHaveLength(animationCount);
 });
 
 test("dock opening skips shared motion when reduced motion is requested", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await installViewTransitionProbe(page);
+  await installDockOpenAnimationProbe(page);
   await page.goto("/");
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/\/vibes$/);
   await expect(page.locator('[data-surface-id="vibes"][data-view-mode]')).toBeVisible();
-  expect(await readViewTransitionProbe(page)).toEqual([]);
+  await expect(page.locator("[data-surface-opening]")).toHaveCount(0);
+  expect(await readDockOpenAnimationProbe(page)).toEqual([]);
 });
 
 for (const launcherCase of [
@@ -684,40 +793,46 @@ for (const launcherCase of [
   },
 ] as const) {
   test(`${launcherCase.label} grows from the launcher into its window`, async ({ page }) => {
-    await installViewTransitionProbe(page);
+    await installDockOpenAnimationProbe(page);
     await page.goto("/");
 
     const search = page.getByRole("searchbox", { name: /search everything/i });
     await search.click();
     if (launcherCase.query) await search.fill(launcherCase.query);
+    const sourceRect = await page.locator("[data-launcher-slot]").boundingBox();
+    expect(sourceRect).not.toBeNull();
     await page
       .locator(`[data-launcher-section="${launcherCase.section}"]`)
       .getByRole("button", { name: launcherCase.label, exact: true })
       .click();
 
     await expect(page).toHaveURL(launcherCase.url);
-    await expect.poll(async () => (await readViewTransitionProbe(page))[0]?.ready).toBe(true);
-    const [record] = await readViewTransitionProbe(page);
-    expect(record?.before).toHaveLength(1);
-    expect(record?.before[0]).toMatchObject({
+    await expect
+      .poll(async () => (await readDockOpenAnimationProbe(page)).length)
+      .toBeGreaterThanOrEqual(2);
+    const records = (await readDockOpenAnimationProbe(page)).slice(-2);
+    const surface = records.find((record) => record.target === "surface");
+    expect(surface).toMatchObject({
       source: "launcher",
-      tagName: "DIV",
-      target: false,
-    });
-    expect(record?.after).toHaveLength(1);
-    expect(record?.after[0]).toMatchObject({
       surfaceId: launcherCase.surfaceId,
-      tagName: "DIV",
-      target: true,
+      target: "surface",
+      timing: {
+        duration: 200,
+        easing: "cubic-bezier(0.2, 0.9, 0.2, 1.04)",
+        fill: "both",
+      },
     });
-    expect(record?.after[0]?.name).toBe(record?.before[0]?.name);
-    expect(record?.oldOpacity).toBe("0");
-    await expect.poll(async () => (await readViewTransitionProbe(page))[0]?.finished).toBe(true);
+    if (sourceRect) expectOriginToMatch(surface?.origin ?? null, sourceRect);
+    expect(surface?.keyframes[0]?.clipPath).toBe("inset(0 round 999px)");
+    expect(surface?.keyframes[1]?.transform).toBe("translate3d(0, 0, 0) scale(1, 1)");
+    await expect
+      .poll(async () => (await readDockOpenAnimationProbe(page)).every((record) => record.finished))
+      .toBe(true);
   });
 }
 
 test("selecting the already-focused window does not animate", async ({ page }) => {
-  await installViewTransitionProbe(page);
+  await installDockOpenAnimationProbe(page);
   await page.goto(`/vibes/${VIBE_ID}`);
 
   const search = page.getByRole("searchbox", { name: /search everything/i });
@@ -730,16 +845,22 @@ test("selecting the already-focused window does not animate", async ({ page }) =
 
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
   await expect(page.getByRole("dialog", { name: /start something new/i })).toHaveCount(0);
-  expect(await readViewTransitionProbe(page)).toEqual([]);
+  expect(await readDockOpenAnimationProbe(page)).toEqual([]);
 });
 
 test("a running surface becomes active without reversing the dock motion", async ({ page }) => {
+  await installDockOpenAnimationProbe(page);
   await page.goto("/");
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/\/vibes$/);
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
-  await expect(page.locator('[data-surface-transition-target="true"]')).toHaveCount(1);
-  await expect(page.locator('[data-surface-transition-target="true"]')).toHaveCount(0);
+  await expect
+    .poll(async () => (await readDockOpenAnimationProbe(page)).length)
+    .toBeGreaterThanOrEqual(2);
+  await expect
+    .poll(async () => (await readDockOpenAnimationProbe(page)).every((record) => record.finished))
+    .toBe(true);
+  const initialAnimationCount = (await readDockOpenAnimationProbe(page)).length;
   await page.goBack();
   await expect(page).toHaveURL(/\/$/);
 
@@ -757,10 +878,25 @@ test("a running surface becomes active without reversing the dock motion", async
   await expect(runningLabel).toHaveCSS("opacity", "1");
   await expect(runningApp).toHaveCSS("translate", "0px -5px");
   await expect(runningLabel).toHaveCSS("font-weight", "600");
+  const sourceRect = await runningApp.boundingBox();
+  expect(sourceRect).not.toBeNull();
 
   const motion = await sampleLauncherXWhileClicking(page, "Vibes");
 
   await expect(page).toHaveURL(/\/vibes$/);
+  await expect
+    .poll(async () => (await readDockOpenAnimationProbe(page)).length)
+    .toBeGreaterThan(initialAnimationCount);
+  const runningSurface = (await readDockOpenAnimationProbe(page))
+    .slice(initialAnimationCount)
+    .find((record) => record.target === "surface");
+  expect(runningSurface).toMatchObject({
+    source: "running",
+    surfaceId: "vibes",
+    target: "surface",
+    timing: { duration: 200 },
+  });
+  if (sourceRect) expectOriginToMatch(runningSurface?.origin ?? null, sourceRect);
   expectMonotonicMotion(motion, "increasing");
   expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(36, 0);
   await expect(runningApps).toHaveAttribute("data-count", "0");
@@ -813,6 +949,7 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
   const launcher = page.getByRole("searchbox", { name: /search everything/i });
   const container = page.locator("[data-launcher-container]");
   const expandedContent = page.locator("[data-launcher-results]");
+  const launcherBlur = page.locator("[data-launcher-blur]");
   const launcherSurface = page.locator("[data-launcher-surface]");
   const launcherInputRow = page.locator("[data-launcher-input-row]");
   const itemRails = page.locator("[data-launcher-item-rail]");
@@ -833,8 +970,10 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
   await expect(itemRails.first()).toHaveCSS("overflow-x", "auto");
   await expect.poll(() => itemRails.first().boundingBox()).toMatchObject({ width: 260 });
   await expect(expandedContent).toHaveCSS("opacity", "0");
-  await expect(launcherSurface).toHaveCSS("background-color", "rgba(26, 26, 26, 0.8)");
-  await expect(launcherSurface).toHaveCSS("backdrop-filter", "blur(20px)");
+  await expect(launcherSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
+  await expect(launcherSurface).toHaveCSS("opacity", "0.8");
+  await expect(launcherBlur).toHaveCSS("backdrop-filter", "blur(20px)");
+  await expect(launcherBlur).toHaveCSS("opacity", "1");
   await expect(launcherSurface).toHaveCSS("clip-path", "none");
   await expect(launcherSurface).not.toHaveCSS("mask-image", "none");
   expect(
@@ -854,7 +993,7 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
   );
   await expect(launcherSurface).toHaveCSS(
     "transition-property",
-    "--rz-launcher-expanded-alpha, background-color",
+    "--rz-launcher-expanded-alpha, opacity",
   );
   await expect(launcherSurface).toHaveCSS("transition-duration", "0.1s");
   await expect(launcherSurface).toHaveCSS(
@@ -900,8 +1039,10 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
     "transition-timing-function",
     "cubic-bezier(0, 0, 0.2, 1)",
   );
-  await expect(launcherSurface).toHaveCSS("background-color", "rgba(26, 26, 26, 0.776)");
-  await expect(launcherSurface).toHaveCSS("backdrop-filter", "blur(20px)");
+  await expect(launcherSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
+  await expect(launcherSurface).toHaveCSS("opacity", "0.8");
+  await expect(launcherBlur).toHaveCSS("backdrop-filter", "blur(24px)");
+  await expect(launcherBlur).toHaveCSS("opacity", "1");
   await expect(launcherSurface).toHaveCSS(
     "transition-timing-function",
     "cubic-bezier(0, 0, 0.2, 1)",
@@ -938,7 +1079,7 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
     .toMatchObject({ x: inputBox!.x, y: inputBox!.y, height: inputBox!.height });
   await expect
     .poll(() => launcherSurface.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe("rgba(26, 26, 26, 0.776)");
+    .toBe("rgb(255, 255, 250)");
   await expect
     .poll(() => launcherSurface.evaluate((element) => getComputedStyle(element).borderRadius))
     .toBe(radius);

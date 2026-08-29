@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { useViewTransitionState } from "react-router";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEventHandler,
+} from "react";
 
 import appMark from "../assets/brand/app-mark.png";
 import orb1 from "../assets/orbs/orb-1-44.png";
@@ -24,12 +30,7 @@ import { SurfaceLayer } from "./SurfaceLayer.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
 import { useOpenSurfaces, useShellStore } from "./store.ts";
-import { labelOf, locationOf, surfaceId, type Surface, type ViewMode } from "./surfaces.ts";
-import {
-  isDockTransitionSource,
-  SURFACE_VIEW_TRANSITION_CLASS,
-  surfaceViewTransitionName,
-} from "./viewTransitions.ts";
+import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
 
 /**
  * There is no Figma spec for host surfaces in the dock — the mockups only show dMachine apps —
@@ -50,32 +51,13 @@ function markFor(surface: Surface): string {
 }
 
 interface RunningSurfaceDockAppProps {
-  surface: Surface;
-  mode: ViewMode;
   name: string;
   src: string;
-  onOpen: () => void;
+  onOpen: MouseEventHandler<HTMLButtonElement>;
 }
 
-function RunningSurfaceDockApp({ surface, mode, name, src, onOpen }: RunningSurfaceDockAppProps) {
-  const transitioning = useViewTransitionState(locationOf(surface, mode));
-  const participates = transitioning && isDockTransitionSource(surface, "running");
-
-  return (
-    <DockApp
-      name={name}
-      src={src}
-      onOpen={onOpen}
-      style={
-        participates
-          ? {
-              viewTransitionName: surfaceViewTransitionName(surface),
-              viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
-            }
-          : undefined
-      }
-    />
-  );
+function RunningSurfaceDockApp({ name, src, onOpen }: RunningSurfaceDockAppProps) {
+  return <DockApp name={name} src={src} onOpen={onOpen} />;
 }
 
 /**
@@ -96,24 +78,10 @@ export function ShellLayout() {
   const vibes = useVibes();
   const [query, setQuery] = useState("");
   const [launcherMotion, setLauncherMotion] = useState(true);
-  const [launcherTransitionTarget, setLauncherTransitionTarget] = useState<Surface | null>(null);
   const launcherInput = useRef<HTMLInputElement>(null);
   const launcherContainer = useRef<HTMLDivElement>(null);
 
   const focusedId = focused ? surfaceId(focused) : null;
-  const vibesTransitioning = useViewTransitionState(locationOf(HOME_SURFACE, defaultViewMode));
-  const homeParticipates =
-    vibesTransitioning &&
-    focusedId !== surfaceId(HOME_SURFACE) &&
-    isDockTransitionSource(HOME_SURFACE, "home");
-  const launcherTransitioning = useViewTransitionState(
-    locationOf(launcherTransitionTarget ?? HOME_SURFACE, defaultViewMode),
-  );
-  const launcherParticipates =
-    launcherTransitionTarget !== null &&
-    launcherTransitioning &&
-    focusedId !== surfaceId(launcherTransitionTarget) &&
-    isDockTransitionSource(launcherTransitionTarget, "launcher");
   const background = open.filter((surface) => surfaceId(surface) !== focusedId);
   // Match the tray's active-app transition: intrinsic flex reflow would move the launcher in
   // the opposite direction for one frame before the tray's 80px reserve starts moving.
@@ -166,24 +134,15 @@ export function ShellLayout() {
     return () => document.removeEventListener("pointerdown", dismissFromOutside, true);
   }, [launcherOpen, setLauncherOpen]);
 
-  useEffect(() => {
-    if (
-      launcherTransitionTarget &&
-      !launcherTransitioning &&
-      focusedId === surfaceId(launcherTransitionTarget)
-    ) {
-      setLauncherTransitionTarget(null);
-    }
-  }, [focusedId, launcherTransitionTarget, launcherTransitioning]);
-
   function selectResult(result: ShellSearchResult) {
     dismissLauncher({ blurFocus: true, animate: false });
     if (result.action.kind === "home") {
-      setLauncherTransitionTarget(null);
       navigation.home();
     } else {
-      setLauncherTransitionTarget(result.action.surface);
-      navigation.openFromDock(result.action.surface, { source: "launcher" });
+      navigation.openFromDock(result.action.surface, {
+        origin: launcherContainer.current,
+        source: "launcher",
+      });
     }
   }
 
@@ -221,14 +180,11 @@ export function ShellLayout() {
             <button
               type="button"
               aria-label="Home"
-              onClick={() => navigation.openFromDock(HOME_SURFACE, { source: "home" })}
-              style={
-                homeParticipates
-                  ? {
-                      viewTransitionName: surfaceViewTransitionName(HOME_SURFACE),
-                      viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
-                    }
-                  : undefined
+              onClick={(event) =>
+                navigation.openFromDock(HOME_SURFACE, {
+                  origin: event.currentTarget,
+                  source: "home",
+                })
               }
               className="rounded-full transition-transform hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
@@ -252,11 +208,14 @@ export function ShellLayout() {
                 {background.map((surface) => (
                   <RunningSurfaceDockApp
                     key={surfaceId(surface)}
-                    surface={surface}
-                    mode={defaultViewMode}
                     name={labelOf(surface, vibeTitles)}
                     src={markFor(surface)}
-                    onOpen={() => navigation.openFromDock(surface, { source: "running" })}
+                    onOpen={(event) =>
+                      navigation.openFromDock(surface, {
+                        origin: event.currentTarget,
+                        source: "running",
+                      })
+                    }
                   />
                 ))}
               </div>
@@ -264,15 +223,6 @@ export function ShellLayout() {
               <div
                 ref={launcherContainer}
                 data-launcher-slot
-                data-surface-transition-source={launcherParticipates ? "launcher" : undefined}
-                style={
-                  launcherParticipates && launcherTransitionTarget
-                    ? {
-                        viewTransitionName: surfaceViewTransitionName(launcherTransitionTarget),
-                        viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
-                      }
-                    : undefined
-                }
                 className="relative h-12 w-60 shrink-0"
               >
                 <LauncherPanel

@@ -3,15 +3,38 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { MediaObject } from "@rnet/types";
-import { and, asc, eq } from "drizzle-orm";
+import {
+  ARENA_PROVIDER,
+  SIMPLEFIN_PARSER_NAME,
+  SIMPLEFIN_PROVIDER,
+  type IngestionSourceDocument,
+  type OperationDocument,
+  type SourceCredentialDocument,
+} from "@rhizome/store-contract";
+import { and, asc, eq, sql } from "drizzle-orm";
 import S3rver from "s3rver";
+import { v7 as uuidv7 } from "uuid";
 
 import { createApp } from "../src/app.ts";
+import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../src/auth.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/index.ts";
+import { ingestionSourceFetches } from "../src/db/models/ingestion-source-fetch.ts";
+import { mediaElements } from "../src/db/models/media-element.ts";
 import { mediaObjectRevisions } from "../src/db/models/media-object-revision.ts";
+import { ingestionSources } from "../src/db/models/ingestion-source.ts";
+import { operations } from "../src/db/models/operation.ts";
+import { originArtifacts } from "../src/db/models/origin-artifact.ts";
+import { sourceCredentials } from "../src/db/models/source-credential.ts";
 import { seedDb } from "../src/db/seedDb.ts";
+import { SimpleFinClient } from "../src/services/simplefin-client.ts";
+import {
+  createCredentialKeyring,
+  credentialAssociatedData,
+  openCredentialSecret,
+  sealCredentialSecret,
+} from "../src/services/source-credential-crypto.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 4 });
@@ -29,12 +52,31 @@ const buckets = {
 const owner = { Authorization: "Bearer dev:user" };
 const otherOwner = { Authorization: "Bearer dev:user:other" };
 const dmachine = { Authorization: "Bearer dev:client:rbudget" };
+const credentialEncryptionKey = Uint8Array.from({ length: 32 }, (_, index) => index);
+const credentialEncryptionKeys = createCredentialKeyring("test", {
+  test: credentialEncryptionKey,
+});
+const simpleFinAccessUrl = "https://alice:very-secret@bridge.simplefin.test/simplefin";
+const simpleFinClaimUrl = "https://bridge.simplefin.test/claim/once";
+const simpleFinSetupToken = Buffer.from(simpleFinClaimUrl).toString("base64");
+const connectedPullSetupToken = Buffer.from(
+  "https://bridge.simplefin.test/claim/connected-pull",
+).toString("base64");
+const compromisedSetupToken = Buffer.from(
+  "https://bridge.simplefin.test/claim/compromised",
+).toString("base64");
+const simpleFinRequests: Request[] = [];
+const simpleFinAccountResponses: Uint8Array[] = [];
+const simpleFinAccountFetches: Array<() => Promise<Uint8Array>> = [];
+const arenaCaptureResponses: Uint8Array[] = [];
 
 beforeAll(async () => {
   await client.unsafe(`
     TRUNCATE TABLE
       meter_entry, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
-      vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, dmachines, users
+      vibe_media_objects, grants, operations, ingestion_source_objects, ingestion_sources,
+      source_credential_claim_attempts, source_credentials, media_objects,
+      media_elements, origins, vibes, dmachines, users
     CASCADE
   `);
   scratch = await mkdtemp(join(tmpdir(), "rhizome-s3-"));
@@ -53,6 +95,13 @@ beforeAll(async () => {
     baseUrl: "http://rhizome.test",
     allowedOrigins: ["http://rhizome.test"],
     maxRequestBodySize: 52_428_800,
+    sourceCredentials: {
+      keyProvider: {
+        driver: "local",
+        keyring: credentialEncryptionKeys,
+      },
+      simpleFinAllowedHosts: ["bridge.simplefin.test"],
+    },
     blob: {
       driver: "r2",
       endpoint: `http://${address.address}:${address.port}`,
@@ -66,6 +115,33 @@ beforeAll(async () => {
     config,
     db,
     blobs: createBlobStore(config),
+    arenaClient: {
+      async fetchChannelCapture() {
+        const bytes = arenaCaptureResponses.shift();
+        if (!bytes) throw new Error("No queued Are.na capture fixture");
+        return bytes;
+      },
+    },
+    simpleFinClient: new SimpleFinClient({
+      allowedHosts: config.sourceCredentials.simpleFinAllowedHosts,
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        simpleFinRequests.push(request);
+        if (request.url.endsWith("/claim/compromised")) {
+          return new Response(null, { status: 403 });
+        }
+        if (request.method === "GET") {
+          const fetch = simpleFinAccountFetches.shift();
+          const bytes = fetch ? await fetch() : simpleFinAccountResponses.shift();
+          return bytes
+            ? new Response(bytes.slice().buffer as ArrayBuffer, {
+                headers: { "Content-Type": "application/json" },
+              })
+            : new Response(null, { status: 503 });
+        }
+        return new Response(`${simpleFinAccessUrl}\n`);
+      },
+    }),
   });
   app = created.app;
   await seedDb(db);
@@ -123,6 +199,732 @@ describe("rNet M1 store", () => {
       body: "missing kind",
     });
     expect(missingUploadKind.status).toBe(422);
+  });
+
+  test("connects, owns, encrypts, uses, and revokes a SimpleFIN credential without leaking it", async () => {
+    const initialClaims = simpleFinRequests.length;
+    const clientAttempt = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: dmachine,
+      json: { setup_token: simpleFinSetupToken },
+    });
+    expect(clientAttempt.status).toBe(403);
+    expect(simpleFinRequests).toHaveLength(initialClaims);
+
+    const connectResponse = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: owner,
+      json: { setup_token: simpleFinSetupToken },
+    });
+    expect(connectResponse.status).toBe(201);
+    const credential = (await connectResponse.json()) as SourceCredentialDocument;
+    expect(credential.provider).toBe(SIMPLEFIN_PROVIDER);
+    expect(credential.status).toBe("active");
+    const credentialResponseText = JSON.stringify(credential);
+    expect(credentialResponseText).not.toContain(simpleFinAccessUrl);
+    expect(credentialResponseText).not.toContain("very-secret");
+    expect(credentialResponseText).not.toContain(simpleFinSetupToken);
+
+    const claimsAfterConnect = simpleFinRequests.length;
+    const replayResponse = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: owner,
+      json: { setup_token: simpleFinSetupToken },
+    });
+    expect(replayResponse.status).toBe(201);
+    expect((await replayResponse.json()).credential).toBe(credential.credential);
+    expect(simpleFinRequests).toHaveLength(claimsAfterConnect);
+    const otherOwnerReplay = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: otherOwner,
+      json: { setup_token: simpleFinSetupToken },
+    });
+    expect(otherOwnerReplay.status).toBe(422);
+    expect(simpleFinRequests).toHaveLength(claimsAfterConnect);
+
+    const credentialUuid = credential.credential.slice("credential:".length);
+    const storedCredential = await db.query.sourceCredentials.findFirst({
+      where: eq(sourceCredentials.uuid, credentialUuid),
+    });
+    expect(storedCredential).toBeDefined();
+    expect(storedCredential?.metadata).toBeNull();
+    expect(new TextDecoder().decode(storedCredential?.secret)).not.toContain("very-secret");
+    expect(
+      await openCredentialSecret(
+        storedCredential!.secret,
+        credentialEncryptionKeys,
+        credentialAssociatedData(credentialUuid, DEV_USER_UUID, SIMPLEFIN_PROVIDER),
+      ),
+    ).toBe(simpleFinAccessUrl);
+
+    const otherOwnerRead = await request(`/rnet/v0/source-credentials/${credentialUuid}`, {
+      headers: otherOwner,
+    });
+    expect(otherOwnerRead.status).toBe(404);
+
+    const otherOwnerSource = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: otherOwner,
+      json: { credential: credential.credential },
+    });
+    expect(otherOwnerSource.status).toBe(404);
+
+    const sourceResponse = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: {
+        credential: credential.credential,
+        config: {
+          accounts: [{ connection_id: "bank", account_id: "checking" }],
+          include_pending: true,
+        },
+      },
+    });
+    expect(sourceResponse.status).toBe(201);
+    const source = (await sourceResponse.json()) as IngestionSourceDocument;
+    expect(source.kind).toBe("credential");
+    expect(source.parser).toBe(SIMPLEFIN_PARSER_NAME);
+    expect(source.parser_version).toBe("simplefin@2.0.0");
+    if (source.kind === "credential") {
+      expect(source.config).toEqual({
+        accounts: [{ connection_id: "bank", account_id: "checking" }],
+        include_pending: true,
+      });
+    }
+    expect(JSON.stringify(source)).not.toContain(credentialUuid);
+    expect(JSON.stringify(source)).not.toContain("very-secret");
+
+    const unsupportedCredentialUuid = uuidv7();
+    await db.insert(sourceCredentials).values({
+      uuid: unsupportedCredentialUuid,
+      userUuid: DEV_USER_UUID,
+      provider: "unsupported-provider",
+      secret: Uint8Array.of(1),
+    });
+    const unsupportedSource = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: { credential: `credential:${unsupportedCredentialUuid}` },
+    });
+    expect(unsupportedSource.status).toBe(422);
+    expect((await unsupportedSource.json()).code).toBe("parser_unsupported");
+
+    const revokeResponse = await request(`/rnet/v0/source-credentials/${credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(revokeResponse.status).toBe(204);
+    const sourceUuid = source.source.slice("source:".length);
+    const storedSource = await db.query.ingestionSources.findFirst({
+      where: eq(ingestionSources.uuid, sourceUuid),
+    });
+    expect(storedSource?.revokedAt).toBeInstanceOf(Date);
+
+    const revokedCredentialResponse = await request(
+      `/rnet/v0/source-credentials/${credentialUuid}`,
+      { headers: owner },
+    );
+    expect(revokedCredentialResponse.status).toBe(200);
+    expect(((await revokedCredentialResponse.json()) as SourceCredentialDocument).status).toBe(
+      "revoked",
+    );
+    const revokedReplay = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: owner,
+      json: { setup_token: simpleFinSetupToken },
+    });
+    expect(revokedReplay.status).toBe(422);
+    expect(simpleFinRequests).toHaveLength(claimsAfterConnect);
+    const revokedSource = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: { credential: credential.credential },
+    });
+    expect(revokedSource.status).toBe(404);
+
+    const [credentialCountBefore] = await client.unsafe(
+      "select count(*)::int as count from source_credentials",
+    );
+    const compromisedResponse = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: owner,
+      json: { setup_token: compromisedSetupToken },
+    });
+    expect(compromisedResponse.status).toBe(422);
+    const compromisedProblem = await compromisedResponse.json();
+    expect(compromisedProblem.code).toBe("source_connection_failed");
+    expect(compromisedProblem.detail.toLowerCase()).toContain("compromised");
+    expect(compromisedProblem.detail.toLowerCase()).toContain("disable");
+    expect(JSON.stringify(compromisedProblem)).not.toContain(compromisedSetupToken);
+    const requestsAfterCompromisedClaim = simpleFinRequests.length;
+    const compromisedReplay = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: owner,
+      json: { setup_token: compromisedSetupToken },
+    });
+    expect(compromisedReplay.status).toBe(422);
+    expect(simpleFinRequests).toHaveLength(requestsAfterCompromisedClaim);
+    const [credentialCountAfter] = await client.unsafe(
+      "select count(*)::int as count from source_credentials",
+    );
+    expect(credentialCountAfter?.count).toBe(credentialCountBefore?.count);
+  });
+
+  test("stages immutable SimpleFIN captures and advances the verified baseline only on commit", async () => {
+    const connectResponse = await request("/rnet/v0/source-credentials/simplefin", {
+      method: "POST",
+      headers: owner,
+      json: { setup_token: connectedPullSetupToken },
+    });
+    expect(connectResponse.status).toBe(201);
+    const credential = (await connectResponse.json()) as SourceCredentialDocument;
+    const credentialUuid = credential.credential.slice("credential:".length);
+    const sourceConfig = {
+      accounts: [
+        { connection_id: "conn-alpha", account_id: "acct-shared" },
+        { connection_id: "conn-beta", account_id: "acct-shared" },
+      ],
+      include_pending: true,
+    };
+    const sourceResponse = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: { credential: credential.credential, config: sourceConfig },
+    });
+    expect(sourceResponse.status).toBe(201);
+    const source = (await sourceResponse.json()) as IngestionSourceDocument;
+    const sourceUuid = source.source.slice("source:".length);
+    expect(JSON.stringify(source)).not.toContain(credentialUuid);
+
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Connected SimpleFIN",
+        grants: [
+          { subject: "client:rbudget", scope: ["pull"] },
+          {
+            subject: `id:rnet://id/${DEV_OTHER_USER_UUID}`,
+            scope: ["pull"],
+          },
+        ],
+      },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibe = await vibeResponse.json();
+    const connectedVibeId = vibe.uri.split("/").at(-1);
+    const objectsBeforePreview = await mediaObjectCount();
+
+    const previousBytes = await simpleFinFixtureBytes("accounts-previous-v2.json");
+    simpleFinAccountResponses.push(previousBytes);
+    const previewResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+    const previewResult = preview.result as {
+      candidates: MediaObject[];
+      staged_origin: string;
+      verify: { ok: boolean; candidate_count: number };
+    };
+    expect(previewResult.verify).toMatchObject({ ok: true, candidate_count: 0 });
+    expect(previewResult.candidates).toEqual([]);
+    expect(previewResult.staged_origin).toMatch(/^rnet:\/\/origin\/[0-9a-f-]{36}$/);
+    expect(await mediaObjectCount()).toBe(objectsBeforePreview);
+    expect(await sourceBindingCount(source.source)).toBe(0);
+    const unconfirmedVibe = await request(`/rnet/v0/vibes/${connectedVibeId}`, {
+      headers: owner,
+    });
+    expect((await unconfirmedVibe.json()).pull?.sources ?? []).toEqual([]);
+
+    const [previewFetch] = await db
+      .select()
+      .from(ingestionSourceFetches)
+      .where(eq(ingestionSourceFetches.operationUuid, preview.operation_id));
+    expect(previewFetch).toMatchObject({
+      sourceUuid,
+      ownerUuid: DEV_USER_UUID,
+      credentialUuid,
+      parserVersion: "simplefin@2.0.0",
+      status: "verified",
+    });
+    expect(previewFetch?.originUuid).toBe(
+      previewResult.staged_origin.slice("rnet://origin/".length),
+    );
+    const stagedBytesResponse = await request(
+      `/rnet/v0/origins/${previewFetch?.originUuid}/bytes`,
+      { headers: owner },
+    );
+    expect(stagedBytesResponse.status).toBe(200);
+    expect(Array.from(new Uint8Array(await stagedBytesResponse.arrayBuffer()))).toEqual(
+      Array.from(previousBytes),
+    );
+
+    const accountRequest = [...simpleFinRequests]
+      .reverse()
+      .find((request) => request.method === "GET");
+    expect(accountRequest).toBeDefined();
+    const accountRequestUrl = new URL(accountRequest!.url);
+    expect(accountRequestUrl.searchParams.getAll("account")).toEqual(["acct-shared"]);
+    expect(accountRequestUrl.searchParams.get("pending")).toBe("1");
+    const startDateEpoch = Number(accountRequestUrl.searchParams.get("start-date"));
+    const endDateEpoch = Number(accountRequestUrl.searchParams.get("end-date"));
+    expect(Number.isSafeInteger(startDateEpoch)).toBe(true);
+    expect(Number.isSafeInteger(endDateEpoch)).toBe(true);
+    expect(endDateEpoch - startDateEpoch).toBe(45 * 24 * 60 * 60);
+
+    const confirmResponse = await request(
+      `/rnet/v0/vibes/${connectedVibeId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirmResponse.status).toBe(200);
+    expect((await confirmResponse.json()).pull.sources).toContain(source.source);
+    const committedPreviewFetch = await db.query.ingestionSourceFetches.findFirst({
+      where: eq(ingestionSourceFetches.uuid, previewFetch!.uuid),
+    });
+    expect(committedPreviewFetch?.status).toBe("committed");
+    expect(committedPreviewFetch?.committedAt).toBeInstanceOf(Date);
+    expect(await mediaObjectCount()).toBe(objectsBeforePreview);
+
+    const currentBytes = await simpleFinFixtureBytes("accounts-current-v2.json");
+    simpleFinAccountResponses.push(currentBytes);
+    const pullResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    const pull = await waitForOperation(await pullResponse.json(), owner);
+    expect(pull.status).toBe("done");
+    expect(pull.result).toMatchObject({
+      candidate_count: 4,
+      created_count: 4,
+      added_count: 4,
+      duplicate_count: 0,
+      source_results: [
+        {
+          source: source.source,
+          verify: {
+            ok: true,
+            balance_delta_reconciliations: expect.any(Array),
+          },
+        },
+      ],
+    });
+    const pullCandidates = (pull.result as { candidates: MediaObject[] }).candidates;
+    expect(pullCandidates).toHaveLength(4);
+    expect(pullCandidates[0]?.keys).toMatchObject({
+      simplefin_connection_id: "conn-alpha",
+      simplefin_account_id: "acct-shared",
+      simplefin_transaction_id: "shared-transaction",
+      fitid: "shared-transaction",
+      account_hash: expect.stringMatching(/^sha256:/),
+    });
+    const firstPullOrigin = pullCandidates[0]?.source.origins[0];
+    expect(firstPullOrigin).not.toBe(previewResult.staged_origin);
+    expect(
+      pullCandidates.every((candidate) => candidate.source.origins[0] === firstPullOrigin),
+    ).toBe(true);
+    const delegatedViewOfOwnerPull = await request(`/rnet/v0/operations/${pull.operation_id}`, {
+      headers: dmachine,
+    });
+    expect(delegatedViewOfOwnerPull.status).toBe(200);
+    const delegatedOwnerPull = await delegatedViewOfOwnerPull.json();
+    expect((delegatedOwnerPull.result as { candidates: unknown[] }).candidates).toEqual([]);
+    expect((delegatedOwnerPull.result as { source_results: unknown[] }).source_results).toEqual([]);
+    expect(JSON.stringify(delegatedOwnerPull)).not.toContain("rnet://origin/");
+    expect(JSON.stringify(delegatedOwnerPull)).not.toContain("totals_by_currency");
+    const otherUserViewOfOwnerPull = await request(`/rnet/v0/operations/${pull.operation_id}`, {
+      headers: otherOwner,
+    });
+    expect(otherUserViewOfOwnerPull.status).toBe(200);
+    const otherUserOwnerPull = await otherUserViewOfOwnerPull.json();
+    expect((otherUserOwnerPull.result as { candidates: unknown[] }).candidates).toEqual([]);
+    expect((otherUserOwnerPull.result as { source_results: unknown[] }).source_results).toEqual([]);
+    expect(JSON.stringify(otherUserOwnerPull)).not.toContain("totals_by_currency");
+    expect(JSON.stringify(otherUserOwnerPull)).not.toContain("rnet://origin/");
+    expect(await sourceBindingCount(source.source)).toBe(4);
+    expect(await mediaObjectCount()).toBe(objectsBeforePreview + 4);
+
+    const serializedPull = JSON.stringify(pull);
+    for (const secret of [
+      credentialUuid,
+      simpleFinAccessUrl,
+      "very-secret",
+      connectedPullSetupToken,
+    ]) {
+      expect(serializedPull).not.toContain(secret);
+    }
+
+    const objectCountBeforeRepeat = await mediaObjectCount();
+    simpleFinAccountResponses.push(currentBytes);
+    const repeatResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    const repeat = await waitForOperation(await repeatResponse.json(), owner);
+    expect(repeat.status).toBe("done");
+    expect(repeat.result).toMatchObject({
+      candidate_count: 4,
+      duplicate_count: 4,
+      created_count: 0,
+      added_count: 0,
+    });
+    expect(await mediaObjectCount()).toBe(objectCountBeforeRepeat);
+    const committedAfterRepeat = await connectedFetches(sourceUuid, "committed");
+    expect(committedAfterRepeat).toHaveLength(3);
+    expect(new Set(committedAfterRepeat.map(({ originUuid }) => originUuid)).size).toBe(3);
+
+    simpleFinAccountResponses.push(currentBytes);
+    const delegatedResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/pull`, {
+      method: "POST",
+      headers: dmachine,
+      json: {},
+    });
+    const delegated = await waitForOperation(await delegatedResponse.json(), dmachine);
+    expect(delegated.status).toBe("done");
+    expect((delegated.result as { candidates: unknown[] }).candidates).toEqual([]);
+    expect(JSON.stringify(delegated)).not.toContain("rnet://origin/");
+    expect(JSON.stringify(delegated)).not.toContain("very-secret");
+    expect(await connectedFetches(sourceUuid, "committed")).toHaveLength(4);
+
+    simpleFinAccountResponses.push(currentBytes);
+    const otherUserResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/pull`, {
+      method: "POST",
+      headers: otherOwner,
+      json: {},
+    });
+    const otherUserPull = await waitForOperation(await otherUserResponse.json(), otherOwner);
+    expect(otherUserPull.status).toBe("done");
+    expect((otherUserPull.result as { candidates: unknown[] }).candidates).toEqual([]);
+    expect(JSON.stringify(otherUserPull)).not.toContain("rnet://origin/");
+    expect(await connectedFetches(sourceUuid, "committed")).toHaveLength(5);
+
+    const objectsBeforeProviderError = await mediaObjectCount();
+    simpleFinAccountResponses.push(await simpleFinFixtureBytes("provider-errors-v2.json"));
+    const failedPullResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    const failedPull = await waitForOperation(await failedPullResponse.json(), owner);
+    expect(failedPull.status).toBe("failed");
+    expect(failedPull.result).toBeNull();
+    expect(failedPull.error).toContain("VERIFY rejected");
+    expect(failedPull.error).toContain("provider_errors");
+    expect(JSON.stringify(failedPull)).not.toContain("very-secret");
+    expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
+    const rejectedFetches = await connectedFetches(sourceUuid, "rejected");
+    expect(rejectedFetches.at(-1)).toMatchObject({
+      errorCode: "verify_failed",
+      originUuid: expect.any(String),
+    });
+    expect(await connectedFetches(sourceUuid, "committed")).toHaveLength(5);
+
+    simpleFinAccountResponses.push(currentBytes);
+    const configRaceResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    const configRace = await waitForOperation(await configRaceResponse.json(), owner);
+    expect(configRace.status).toBe("done");
+    await db
+      .update(ingestionSources)
+      .set({ config: { ...sourceConfig, include_pending: false } })
+      .where(eq(ingestionSources.uuid, sourceUuid));
+    const staleConfigConfirm = await request(
+      `/rnet/v0/vibes/${connectedVibeId}/imports/${configRace.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(staleConfigConfirm.status).toBe(422);
+    expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
+    await db
+      .update(ingestionSources)
+      .set({ config: sourceConfig })
+      .where(eq(ingestionSources.uuid, sourceUuid));
+
+    simpleFinAccountResponses.push(currentBytes);
+    const tombstoneResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    const tombstonePreview = await waitForOperation(await tombstoneResponse.json(), owner);
+    const tombstonedOriginUuid = (
+      tombstonePreview.result as { staged_origin: string }
+    ).staged_origin.slice("rnet://origin/".length);
+    await db
+      .update(originArtifacts)
+      .set({ tombstonedAt: new Date() })
+      .where(eq(originArtifacts.uuid, tombstonedOriginUuid));
+    const tombstonedConfirm = await request(
+      `/rnet/v0/vibes/${connectedVibeId}/imports/${tombstonePreview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(tombstonedConfirm.status).toBe(422);
+    expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
+
+    const zeroCurrentBytes = await simpleFinFixtureWithoutTransactions("accounts-current-v2.json");
+    simpleFinAccountResponses.push(zeroCurrentBytes);
+    const firstConcurrentResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    const firstConcurrent = await waitForOperation(await firstConcurrentResponse.json(), owner);
+    expect(firstConcurrent.status).toBe("done");
+    expect((firstConcurrent.result as { candidates: unknown[] }).candidates).toEqual([]);
+    simpleFinAccountResponses.push(zeroCurrentBytes);
+    const secondConcurrentResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    const secondConcurrent = await waitForOperation(await secondConcurrentResponse.json(), owner);
+    expect(secondConcurrent.status).toBe("done");
+    expect(
+      (
+        await request(
+          `/rnet/v0/vibes/${connectedVibeId}/imports/${firstConcurrent.operation_id}/confirm`,
+          { method: "POST", headers: owner },
+        )
+      ).status,
+    ).toBe(200);
+    const staleConcurrentConfirm = await request(
+      `/rnet/v0/vibes/${connectedVibeId}/imports/${secondConcurrent.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(staleConcurrentConfirm.status).toBe(422);
+    expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
+
+    simpleFinAccountResponses.push(currentBytes);
+    const revokeRaceResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    const revokeRace = await waitForOperation(await revokeRaceResponse.json(), owner);
+    expect(revokeRace.status).toBe("done");
+    expect(
+      (
+        await request(`/rnet/v0/source-credentials/${credentialUuid}`, {
+          method: "DELETE",
+          headers: owner,
+        })
+      ).status,
+    ).toBe(204);
+    const revokedConfirm = await request(
+      `/rnet/v0/vibes/${connectedVibeId}/imports/${revokeRace.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(revokedConfirm.status).toBe(404);
+    expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
+  });
+
+  test("does not count credential decryption failures as SimpleFIN fetch attempts", async () => {
+    const fixture = await createStoredSimpleFinCredential(1);
+    const source = fixture.sources[0]!;
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Credential decrypt failure" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+    const providerRequestsBefore = simpleFinRequests.filter(
+      (request) => request.method === "GET",
+    ).length;
+    const [fetchCountBefore] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(ingestionSourceFetches)
+      .where(eq(ingestionSourceFetches.credentialUuid, fixture.credentialUuid));
+
+    await db
+      .update(sourceCredentials)
+      .set({ secret: Uint8Array.of(2) })
+      .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+    const previewResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const failed = await waitForOperation(await previewResponse.json(), owner);
+
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toContain("Credential secret envelope is invalid");
+    expect(simpleFinRequests.filter((request) => request.method === "GET")).toHaveLength(
+      providerRequestsBefore,
+    );
+    expect(
+      await db
+        .select()
+        .from(ingestionSourceFetches)
+        .where(eq(ingestionSourceFetches.operationUuid, failed.operation_id)),
+    ).toHaveLength(0);
+    const [fetchCountAfter] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(ingestionSourceFetches)
+      .where(eq(ingestionSourceFetches.credentialUuid, fixture.credentialUuid));
+    expect(fetchCountAfter?.count).toBe(fetchCountBefore?.count ?? 0);
+  });
+
+  test("linearizes credential revocation after an in-flight SimpleFIN request", async () => {
+    const fixture = await createStoredSimpleFinCredential(1);
+    const source = fixture.sources[0]!;
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Revocation lease" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+
+    let signalStarted!: () => void;
+    let releaseProvider!: (bytes: Uint8Array) => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const providerResponse = new Promise<Uint8Array>((resolve) => {
+      releaseProvider = resolve;
+    });
+    simpleFinAccountFetches.push(async () => {
+      signalStarted();
+      return providerResponse;
+    });
+
+    const previewResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const accepted = (await previewResponse.json()) as OperationDocument;
+    await started;
+
+    const revoke = request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    const earlyOutcome = await Promise.race([
+      revoke.then(() => "revoked" as const),
+      Bun.sleep(50).then(() => "pending" as const),
+    ]);
+    expect(earlyOutcome).toBe("pending");
+
+    releaseProvider(await simpleFinFixtureBytes("accounts-current-v2.json"));
+    expect((await revoke).status).toBe(204);
+    const preview = await waitForOperation(accepted, owner);
+    expect(preview.status).toBe("done");
+    const [fetch] = await db
+      .select()
+      .from(ingestionSourceFetches)
+      .where(eq(ingestionSourceFetches.operationUuid, preview.operation_id));
+    expect(fetch).toMatchObject({
+      credentialUuid: fixture.credentialUuid,
+      sourceUuid: source.source.slice("source:".length),
+      status: "verified",
+    });
+  });
+
+  test("serializes and limits account fetches across every source sharing a credential", async () => {
+    const fixture = await createStoredSimpleFinCredential(2);
+    const firstSourceUuid = fixture.sources[0]!.source.slice("source:".length);
+    const seededOperations = Array.from({ length: 23 }, () => uuidv7());
+    await db.insert(operations).values(
+      seededOperations.map((uuid) => ({
+        uuid,
+        kind: "pull" as const,
+        status: "failed" as const,
+        invokedBy: `id:rnet://id/${DEV_USER_UUID}`,
+        request: { mode: "rate-limit-fixture" },
+        error: "seeded provider attempt",
+        finishedAt: new Date(),
+      })),
+    );
+    await db.insert(ingestionSourceFetches).values(
+      seededOperations.map((operationUuid) => ({
+        uuid: uuidv7(),
+        sourceUuid: firstSourceUuid,
+        ownerUuid: DEV_USER_UUID,
+        credentialUuid: fixture.credentialUuid,
+        operationUuid,
+        parserVersion: "simplefin@2.0.0",
+        sourceStateDigest: "sha256:rate-limit-fixture",
+        status: "rejected" as const,
+        errorCode: "fetch_failed",
+      })),
+    );
+
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Credential-wide provider limit" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+    const accountRequestsBefore = simpleFinRequests.filter(
+      (request) => request.method === "GET",
+    ).length;
+
+    let signalStarted!: () => void;
+    let releaseProvider!: (bytes: Uint8Array) => void;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const providerResponse = new Promise<Uint8Array>((resolve) => {
+      releaseProvider = resolve;
+    });
+    simpleFinAccountFetches.push(async () => {
+      signalStarted();
+      return providerResponse;
+    });
+    const activeResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.sources[0]!.source },
+    });
+    expect(activeResponse.status).toBe(202);
+    const active = (await activeResponse.json()) as OperationDocument;
+    await started;
+
+    const concurrentResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.sources[1]!.source },
+    });
+    expect(concurrentResponse.status).toBe(202);
+    const concurrent = await waitForOperation(await concurrentResponse.json(), owner);
+    expect(concurrent.status).toBe("failed");
+    expect(concurrent.error).toContain("active credential fetch");
+    expect(simpleFinRequests.filter((request) => request.method === "GET")).toHaveLength(
+      accountRequestsBefore + 1,
+    );
+
+    const [reservedCount] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(ingestionSourceFetches)
+      .where(eq(ingestionSourceFetches.credentialUuid, fixture.credentialUuid));
+    expect(reservedCount?.count).toBe(24);
+
+    releaseProvider(await simpleFinFixtureBytes("accounts-current-v2.json"));
+    expect((await waitForOperation(active, owner)).status).toBe("done");
+
+    const limitedResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.sources[1]!.source },
+    });
+    const limited = await waitForOperation(await limitedResponse.json(), owner);
+    expect(limited.status).toBe("failed");
+    expect(limited.error).toContain("24 account fetches");
+    expect(simpleFinRequests.filter((request) => request.method === "GET")).toHaveLength(
+      accountRequestsBefore + 1,
+    );
   });
 
   test("creates a Vibe with a real dMachine grant", async () => {
@@ -221,6 +1023,655 @@ describe("rNet M1 store", () => {
     const duplicate = await second.json();
     expect(duplicate.uri).not.toBe(originUri);
     expect(duplicate.content_hash).toBe(originHash);
+  });
+
+  test("stages, verifies, and atomically confirms supported CSV and QFX imports", async () => {
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Reviewed imports",
+        grants: [{ subject: "client:rbudget", scope: ["pull"] }],
+      },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const importVibe = await vibeResponse.json();
+    const importVibeId = importVibe.uri.split("/").at(-1);
+
+    const csvBytes = await Bun.file(
+      new URL("../../ingest/skills/csv/fixtures/rhizome-bank.csv", import.meta.url),
+    ).text();
+    const csvOriginResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/csv", "X-Rnet-Label": "rhizome-bank.csv" },
+      body: csvBytes,
+    });
+    expect(csvOriginResponse.status).toBe(201);
+    const csvOrigin = await csvOriginResponse.json();
+
+    expect(
+      (
+        await request("/rnet/v0/ingestion-sources", {
+          method: "POST",
+          headers: otherOwner,
+          json: { origin: csvOrigin.uri, parser: "csv" },
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await request("/rnet/v0/ingestion-sources", {
+          method: "POST",
+          headers: dmachine,
+          json: { origin: csvOrigin.uri, parser: "csv" },
+        })
+      ).status,
+    ).toBe(403);
+
+    const csvSourceResponse = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: { origin: csvOrigin.uri, parser: "csv" },
+    });
+    expect(csvSourceResponse.status).toBe(201);
+    const csvSource = await csvSourceResponse.json();
+    expect(csvSource).toMatchObject({
+      kind: "origin",
+      parser: "csv",
+      parser_version: "csv@1.1.0",
+      origin: csvOrigin.uri,
+    });
+
+    const [beforeCsv] = await client.unsafe("select count(*)::int as count from media_objects");
+    const csvPreviewResponse = await request(`/rnet/v0/vibes/${importVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: csvSource.source },
+    });
+    expect(csvPreviewResponse.status).toBe(202);
+    const csvPreview = await waitForOperation(await csvPreviewResponse.json(), owner);
+    expect(csvPreview.status).toBe("done");
+    expect(csvPreview.result).toMatchObject({
+      verify: {
+        ok: true,
+        source_record_count: 3,
+        candidate_count: 3,
+        totals_by_currency: { USD: "2410.25" },
+      },
+    });
+    expect((csvPreview.result as { candidates: unknown[] }).candidates).toHaveLength(3);
+    expect(
+      (csvPreview.result as { candidates: Array<{ source: { ingest: { skill?: string } } }> })
+        .candidates[0]?.source.ingest.skill,
+    ).toBe("csv@1.1.0");
+    const [afterPreview] = await client.unsafe("select count(*)::int as count from media_objects");
+    expect(afterPreview?.count).toBe(beforeCsv?.count);
+
+    const confirmedCsv = await request(
+      `/rnet/v0/vibes/${importVibeId}/imports/${csvPreview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirmedCsv.status).toBe(200);
+    const csvVibe = await confirmedCsv.json();
+    expect(csvVibe.objects).toHaveLength(3);
+    expect(csvVibe.pull.sources).toContain(csvSource.source);
+    const [afterConfirm] = await client.unsafe("select count(*)::int as count from media_objects");
+    expect(afterConfirm?.count).toBe((beforeCsv?.count ?? 0) + 3);
+    expect(
+      (
+        await request(`/rnet/v0/vibes/${importVibeId}/imports/${csvPreview.operation_id}/confirm`, {
+          method: "POST",
+          headers: owner,
+        })
+      ).status,
+    ).toBe(422);
+    expect(await mediaObjectCount()).toBe(afterConfirm?.count);
+
+    const canceledPreviewResponse = await request(`/rnet/v0/vibes/${importVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: csvSource.source },
+    });
+    const canceledPreview = await waitForOperation(await canceledPreviewResponse.json(), owner);
+    expect(canceledPreview.status).toBe("done");
+    const [afterCancel] = await client.unsafe("select count(*)::int as count from media_objects");
+    expect(afterCancel?.count).toBe(afterConfirm?.count);
+
+    const qfxBytes = await Bun.file(
+      new URL("../../ingest/skills/ofx/fixtures/checking.qfx", import.meta.url),
+    ).text();
+    const qfxOriginResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: {
+        ...owner,
+        "Content-Type": "application/x-ofx",
+        "X-Rnet-Label": "checking.qfx",
+      },
+      body: qfxBytes,
+    });
+    const qfxOrigin = await qfxOriginResponse.json();
+    const qfxSourceResponse = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: { origin: qfxOrigin.uri, parser: "ofx" },
+    });
+    const qfxSource = await qfxSourceResponse.json();
+    const qfxPreviewResponse = await request(`/rnet/v0/vibes/${importVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: qfxSource.source },
+    });
+    const qfxPreview = await waitForOperation(await qfxPreviewResponse.json(), owner);
+    expect(qfxPreview.result).toMatchObject({
+      verify: { ok: true, candidate_count: 2, totals_by_currency: { USD: "2493.50" } },
+    });
+    const confirmedQfx = await request(
+      `/rnet/v0/vibes/${importVibeId}/imports/${qfxPreview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirmedQfx.status).toBe(200);
+    expect((await confirmedQfx.json()).objects).toHaveLength(5);
+
+    const [beforePull] = await client.unsafe("select count(*)::int as count from media_objects");
+    const dryRunResponse = await request(`/rnet/v0/vibes/${importVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: { dry_run: true },
+    });
+    expect(dryRunResponse.status).toBe(202);
+    const dryRun = await waitForOperation(await dryRunResponse.json(), owner);
+    expect(dryRun.status).toBe("done");
+    expect(dryRun.committed_at).toBeUndefined();
+    expect(dryRun.result).toMatchObject({
+      dry_run: true,
+      policy: "append_new",
+      candidate_count: 5,
+      duplicate_count: 5,
+      added_count: 0,
+      created_count: 0,
+      removed_count: 0,
+    });
+    expect(
+      (await client.unsafe("select count(*)::int as count from media_objects"))[0]?.count,
+    ).toBe(beforePull?.count);
+
+    const delegatedPullResponse = await request(`/rnet/v0/vibes/${importVibeId}/pull`, {
+      method: "POST",
+      headers: dmachine,
+      json: {},
+    });
+    expect(delegatedPullResponse.status).toBe(202);
+    const delegatedPull = await waitForOperation(await delegatedPullResponse.json(), dmachine);
+    expect(delegatedPull.status).toBe("done");
+    expect(delegatedPull.committed_at).toBeString();
+    expect(delegatedPull.result).toMatchObject({
+      dry_run: false,
+      policy: "append_new",
+      candidate_count: 5,
+      duplicate_count: 5,
+      added_count: 0,
+      created_count: 0,
+    });
+    expect(
+      (await client.unsafe("select count(*)::int as count from media_objects"))[0]?.count,
+    ).toBe(beforePull?.count);
+    expect(
+      (
+        await request(`/rnet/v0/vibes/${importVibeId}/pull`, {
+          method: "POST",
+          headers: otherOwner,
+          json: {},
+        })
+      ).status,
+    ).toBe(403);
+
+    const suggestOnlyVibeResponse = await request(`/rnet/v0/vibes/${importVibeId}`, {
+      method: "PATCH",
+      headers: owner,
+      json: {
+        pull: {
+          enabled: true,
+          sources: [csvSource.source, qfxSource.source],
+          policy: "suggest_only",
+        },
+      },
+    });
+    expect(suggestOnlyVibeResponse.status).toBe(200);
+    const suggestOnlyResponse = await request(`/rnet/v0/vibes/${importVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    const suggestOnly = await waitForOperation(await suggestOnlyResponse.json(), owner);
+    expect(suggestOnly.committed_at).toBeUndefined();
+    expect(suggestOnly.result).toMatchObject({
+      policy: "suggest_only",
+      candidate_count: 5,
+      duplicate_count: 5,
+      added_count: 0,
+      created_count: 0,
+    });
+
+    const replaceVibeResponse = await request(`/rnet/v0/vibes/${importVibeId}`, {
+      method: "PATCH",
+      headers: owner,
+      json: {
+        pull: {
+          enabled: true,
+          sources: [csvSource.source, qfxSource.source],
+          policy: "replace",
+        },
+      },
+    });
+    expect(replaceVibeResponse.status).toBe(200);
+    const replaceResponse = await request(`/rnet/v0/vibes/${importVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    const replace = await waitForOperation(await replaceResponse.json(), owner);
+    expect(replace.result).toMatchObject({
+      policy: "replace",
+      candidate_count: 5,
+      duplicate_count: 5,
+      added_count: 5,
+      created_count: 0,
+      removed_count: 5,
+    });
+    const replacedVibe = await request(`/rnet/v0/vibes/${importVibeId}`, { headers: owner });
+    expect((await replacedVibe.json()).objects).toHaveLength(5);
+    expect(
+      (await client.unsafe("select count(*)::int as count from media_objects"))[0]?.count,
+    ).toBe(beforePull?.count);
+    expect(
+      (await request(`/rnet/v0/origins/${csvOrigin.uri.split("/").at(-1)}`, { headers: owner }))
+        .status,
+    ).toBe(200);
+
+    const removeSourceResponse = await request(`/rnet/v0/vibes/${importVibeId}`, {
+      method: "PATCH",
+      headers: owner,
+      json: {
+        pull: {
+          enabled: false,
+          sources: [csvSource.source],
+          policy: "append_new",
+        },
+      },
+    });
+    expect(removeSourceResponse.status).toBe(200);
+    expect((await removeSourceResponse.json()).pull).toMatchObject({
+      enabled: false,
+      sources: [csvSource.source],
+      policy: "append_new",
+    });
+  });
+
+  test("reviews and atomically commits mixed Are.na elements, then deduplicates an unchanged pull", async () => {
+    const capture = mixedArenaCaptureBytes();
+    arenaCaptureResponses.push(capture, capture, capture);
+    const sourceResponse = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: {
+        provider: ARENA_PROVIDER,
+        channel_url: "https://www.are.na/noah/mixed-media",
+      },
+    });
+    expect(sourceResponse.status).toBe(201);
+    const source = (await sourceResponse.json()) as {
+      source: string;
+      kind: string;
+      provider: string;
+      parser: string;
+      config: { channel_slug: string };
+    };
+    expect(source).toMatchObject({
+      kind: "remote",
+      provider: "arena",
+      parser: "arena",
+      config: { channel_slug: "mixed-media" },
+    });
+
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Mixed Are.na",
+        grants: [{ subject: "client:rbudget", scope: ["pull"] }],
+      },
+    });
+    const vibe = await vibeResponse.json();
+    const vibeId = vibe.uri.split("/").at(-1);
+    const beforeObjects = await mediaObjectCount();
+    const beforeElements = await mediaElementCount();
+
+    const previewResponse = await request(`/rnet/v0/vibes/${vibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+    expect(preview.result).toMatchObject({
+      verify: {
+        ok: true,
+        source_record_count: 5,
+        candidate_count: 4,
+        nested_channel_count: 1,
+        element_count: 4,
+        counts_by_block_type: { Attachment: 1, Image: 1, Link: 1, Text: 1 },
+        counts_by_element_kind: { document: 1, image: 2, text: 1 },
+      },
+    });
+    const review = preview.result as {
+      candidates: Array<{ uri: string; keys: Record<string, string>; elements: string[] }>;
+      elements: Array<{
+        uri: string;
+        object_uri: string;
+        kind: string;
+        mime: string;
+        byte_size: number;
+        content_hash: string;
+        preview_url: string;
+      }>;
+    };
+    expect(review.candidates.map(({ keys }) => keys.arena_block_id)).toEqual([
+      "101",
+      "102",
+      "103",
+      "104",
+    ]);
+    expect(review.elements).toHaveLength(4);
+    expect(await mediaObjectCount()).toBe(beforeObjects);
+    expect(await mediaElementCount()).toBe(beforeElements);
+
+    for (const element of review.elements) {
+      const parent = review.candidates.find(({ elements }) => elements.includes(element.uri));
+      expect(parent).toBeDefined();
+      expect(element.object_uri).toBe(parent!.uri);
+      const previewBytes = await app.request(element.preview_url, { headers: owner });
+      expect(previewBytes.status).toBe(200);
+      const bytes = new Uint8Array(await previewBytes.arrayBuffer());
+      expect(bytes.byteLength).toBe(element.byte_size);
+      expect(await sha256(bytes)).toBe(element.content_hash);
+      expect(
+        (
+          await app.request(element.preview_url, {
+            headers: otherOwner,
+          })
+        ).status,
+      ).toBe(403);
+    }
+
+    const confirm = await request(
+      `/rnet/v0/vibes/${vibeId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirm.status).toBe(200);
+    const confirmedVibe = await confirm.json();
+    expect(confirmedVibe.objects).toHaveLength(4);
+    expect(confirmedVibe.pull.sources).toContain(source.source);
+    expect(await mediaObjectCount()).toBe(beforeObjects + 4);
+    expect(await mediaElementCount()).toBe(beforeElements + 4);
+
+    const objectsResponse = await request(`/rnet/v0/vibes/${vibeId}/objects`, {
+      headers: owner,
+    });
+    const objects = (await objectsResponse.json()) as {
+      mediaObjects: Array<{ keys: Record<string, string>; elements: string[] }>;
+    };
+    expect(objects.mediaObjects.map(({ keys }) => keys.arena_block_id)).toEqual([
+      "101",
+      "102",
+      "103",
+      "104",
+    ]);
+    for (const elementUri of objects.mediaObjects.flatMap(({ elements }) => elements)) {
+      const elementId = elementUri.slice("rnet://element/".length);
+      const elementResponse = await request(`/rnet/v0/elements/${elementId}`, { headers: owner });
+      expect(elementResponse.status).toBe(200);
+      const element = (await elementResponse.json()) as {
+        content_hash: string;
+        byte_size: number;
+      };
+      const bytesResponse = await request(`/rnet/v0/elements/${elementId}/bytes`, {
+        headers: owner,
+      });
+      expect(bytesResponse.status).toBe(200);
+      const bytes = new Uint8Array(await bytesResponse.arrayBuffer());
+      expect(bytes.byteLength).toBe(element.byte_size);
+      expect(await sha256(bytes)).toBe(element.content_hash);
+    }
+
+    const canceledVibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Discarded Are.na review" },
+    });
+    const canceledVibe = await canceledVibeResponse.json();
+    const canceledVibeId = canceledVibe.uri.split("/").at(-1);
+    const canceledPreviewResponse = await request(`/rnet/v0/vibes/${canceledVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    const canceledPreview = await waitForOperation(await canceledPreviewResponse.json(), owner);
+    expect(canceledPreview.status).toBe("done");
+    expect(await mediaObjectCount()).toBe(beforeObjects + 4);
+    expect(await mediaElementCount()).toBe(beforeElements + 4);
+    expect(
+      (await (await request(`/rnet/v0/vibes/${canceledVibeId}`, { headers: owner })).json())
+        .objects,
+    ).toEqual([]);
+
+    const pullResponse = await request(`/rnet/v0/vibes/${vibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    expect(pullResponse.status).toBe(202);
+    const pull = await waitForOperation(await pullResponse.json(), owner);
+    expect(pull.status).toBe("done");
+    expect(pull.result).toMatchObject({
+      candidate_count: 4,
+      duplicate_count: 4,
+      created_count: 0,
+      added_count: 0,
+    });
+    expect((pull.result as { elements: unknown[] }).elements).toHaveLength(4);
+
+    const delegatedPullResponse = await request(`/rnet/v0/operations/${pull.operation_id}`, {
+      headers: dmachine,
+    });
+    expect(delegatedPullResponse.status).toBe(200);
+    const delegatedPull = (await delegatedPullResponse.json()) as OperationDocument;
+    expect((delegatedPull.result as { candidates: unknown[] }).candidates).toEqual([]);
+    expect((delegatedPull.result as { elements: unknown[] }).elements).toEqual([]);
+    expect((delegatedPull.result as { source_results: unknown[] }).source_results).toEqual([]);
+    expect(JSON.stringify(delegatedPull)).not.toContain("/elements/");
+    expect(await mediaObjectCount()).toBe(beforeObjects + 4);
+    expect(await mediaElementCount()).toBe(beforeElements + 4);
+  });
+
+  test("only reviewed confirmation can introduce a source and cancellation leaves no derived state", async () => {
+    const fixture = await createCsvSourceFixture("cancel-review.csv");
+    const [beforeObjects] = await client.unsafe("select count(*)::int as count from media_objects");
+
+    const createBypass = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: {
+        title: "Unreviewed source on create",
+        pull: {
+          enabled: true,
+          sources: [fixture.source.source],
+          policy: "append_new",
+        },
+      },
+    });
+    expect(createBypass.status).toBe(422);
+    expect((await createBypass.json()).code).toBe("import_review_invalid");
+
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Canceled import" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibe = await vibeResponse.json();
+    const vibeId = vibe.uri.split("/").at(-1);
+
+    const patchBypass = await request(`/rnet/v0/vibes/${vibeId}`, {
+      method: "PATCH",
+      headers: owner,
+      json: {
+        pull: {
+          enabled: true,
+          sources: [fixture.source.source],
+          policy: "append_new",
+        },
+      },
+    });
+    expect(patchBypass.status).toBe(422);
+    expect((await patchBypass.json()).code).toBe("import_review_invalid");
+    expect(
+      (
+        await request(`/rnet/v0/vibes/${vibeId}/pull`, {
+          method: "POST",
+          headers: owner,
+          json: {},
+        })
+      ).status,
+    ).toBe(422);
+
+    const previewResponse = await request(`/rnet/v0/vibes/${vibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+    expect(preview.committed_at).toBeUndefined();
+
+    // Leaving the completed review unconfirmed is the cancellation boundary. The owner-only
+    // origin and source remain for audit/retry, while all derived state stays untouched.
+    const afterCancel = await request(`/rnet/v0/vibes/${vibeId}`, { headers: owner });
+    const canceledVibe = await afterCancel.json();
+    expect(canceledVibe.objects).toEqual([]);
+    expect(canceledVibe.pull?.sources ?? []).toEqual([]);
+    expect(await mediaObjectCount()).toBe(beforeObjects?.count);
+    expect(await sourceBindingCount(fixture.source.source)).toBe(0);
+    expect(
+      (
+        await request(`/rnet/v0/origins/${fixture.origin.uri.split("/").at(-1)}`, {
+          headers: owner,
+        })
+      ).status,
+    ).toBe(200);
+    const [retainedSource] = await client.unsafe(
+      "select count(*)::int as count from ingestion_sources where uuid = $1 and revoked_at is null",
+      [sourceUuid(fixture.source.source)],
+    );
+    expect(retainedSource?.count).toBe(1);
+  });
+
+  test("wrong-Vibe and tampered reviews fail without consuming or partially committing", async () => {
+    const fixture = await createCsvSourceFixture("tampered-review.csv");
+    const targetResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Digest target" },
+    });
+    const wrongVibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Wrong digest target" },
+    });
+    const target = await targetResponse.json();
+    const wrongVibe = await wrongVibeResponse.json();
+    const targetId = target.uri.split("/").at(-1);
+    const wrongVibeId = wrongVibe.uri.split("/").at(-1);
+    const beforeObjects = await mediaObjectCount();
+
+    const previewResponse = await request(`/rnet/v0/vibes/${targetId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.source.source },
+    });
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+
+    const wrongConfirm = await request(
+      `/rnet/v0/vibes/${wrongVibeId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(wrongConfirm.status).toBe(422);
+    expect((await wrongConfirm.json()).code).toBe("import_review_invalid");
+
+    await client.unsafe(
+      `update operations
+       set result = jsonb_set(
+         result,
+         '{candidates,0,source,properties,amount}',
+         to_jsonb('999.99'::text)
+       )
+       where uuid = $1`,
+      [preview.operation_id],
+    );
+    const tamperedConfirm = await request(
+      `/rnet/v0/vibes/${targetId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(tamperedConfirm.status).toBe(422);
+    expect((await tamperedConfirm.json()).code).toBe("import_review_invalid");
+    expect(await mediaObjectCount()).toBe(beforeObjects);
+    expect(await sourceBindingCount(fixture.source.source)).toBe(0);
+    const unchangedTarget = await request(`/rnet/v0/vibes/${targetId}`, { headers: owner });
+    const targetVibe = await unchangedTarget.json();
+    expect(targetVibe.objects).toEqual([]);
+    expect(targetVibe.pull?.sources ?? []).toEqual([]);
+    const operationAfterFailures = await request(`/rnet/v0/operations/${preview.operation_id}`, {
+      headers: owner,
+    });
+    expect((await operationAfterFailures.json()).committed_at).toBeUndefined();
+  });
+
+  test("tombstoning an origin after preview makes the review stale without writes", async () => {
+    const fixture = await createCsvSourceFixture("tombstoned-review.csv");
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Tombstoned origin review" },
+    });
+    const vibe = await vibeResponse.json();
+    const vibeId = vibe.uri.split("/").at(-1);
+    const beforeObjects = await mediaObjectCount();
+    const previewResponse = await request(`/rnet/v0/vibes/${vibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.source.source },
+    });
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+
+    const originId = fixture.origin.uri.split("/").at(-1);
+    expect(
+      (await request(`/rnet/v0/origins/${originId}`, { method: "DELETE", headers: owner })).status,
+    ).toBe(204);
+    const confirm = await request(
+      `/rnet/v0/vibes/${vibeId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirm.status).toBe(404);
+    expect(await mediaObjectCount()).toBe(beforeObjects);
+    expect(await sourceBindingCount(fixture.source.source)).toBe(0);
+    const unchangedVibe = await request(`/rnet/v0/vibes/${vibeId}`, { headers: owner });
+    const document = await unchangedVibe.json();
+    expect(document.objects).toEqual([]);
+    expect(document.pull?.sources ?? []).toEqual([]);
   });
 
   test("rejects provenance mismatches and malformed extensions before persistence", async () => {
@@ -915,4 +2366,283 @@ async function request(
     headers,
     body: options.json === undefined ? undefined : JSON.stringify(options.json),
   });
+}
+
+async function waitForOperation(
+  initial: OperationDocument,
+  headers: Record<string, string>,
+): Promise<OperationDocument> {
+  let operation = initial;
+  for (
+    let attempt = 0;
+    attempt < 100 && ["queued", "running"].includes(operation.status);
+    attempt += 1
+  ) {
+    await Bun.sleep(10);
+    const response = await request(`/rnet/v0/operations/${operation.operation_id}`, { headers });
+    expect(response.status).toBe(200);
+    operation = (await response.json()) as OperationDocument;
+  }
+  return operation;
+}
+
+async function createCsvSourceFixture(label: string): Promise<{
+  origin: { uri: string };
+  source: { source: string };
+}> {
+  const bytes = await Bun.file(
+    new URL("../../ingest/skills/csv/fixtures/rhizome-bank.csv", import.meta.url),
+  ).text();
+  const originResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
+    method: "POST",
+    headers: { ...owner, "Content-Type": "text/csv", "X-Rnet-Label": label },
+    body: bytes,
+  });
+  expect(originResponse.status).toBe(201);
+  const origin = (await originResponse.json()) as { uri: string };
+  const sourceResponse = await request("/rnet/v0/ingestion-sources", {
+    method: "POST",
+    headers: owner,
+    json: { origin: origin.uri, parser: "csv" },
+  });
+  expect(sourceResponse.status).toBe(201);
+  return {
+    origin,
+    source: (await sourceResponse.json()) as { source: string },
+  };
+}
+
+async function createStoredSimpleFinCredential(sourceCount: number): Promise<{
+  credentialUuid: string;
+  sources: IngestionSourceDocument[];
+}> {
+  const credentialUuid = uuidv7();
+  await db.insert(sourceCredentials).values({
+    uuid: credentialUuid,
+    userUuid: DEV_USER_UUID,
+    provider: SIMPLEFIN_PROVIDER,
+    secret: await sealCredentialSecret(
+      simpleFinAccessUrl,
+      credentialEncryptionKeys,
+      credentialAssociatedData(credentialUuid, DEV_USER_UUID, SIMPLEFIN_PROVIDER),
+    ),
+  });
+  const sources: IngestionSourceDocument[] = [];
+  for (let index = 0; index < sourceCount; index += 1) {
+    const response = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: {
+        credential: `credential:${credentialUuid}`,
+        config: {
+          accounts: [{ connection_id: "conn-alpha", account_id: "acct-shared" }],
+          include_pending: index % 2 === 0,
+        },
+      },
+    });
+    expect(response.status).toBe(201);
+    sources.push((await response.json()) as IngestionSourceDocument);
+  }
+  return { credentialUuid, sources };
+}
+
+async function mediaObjectCount(): Promise<number> {
+  const [row] = await client.unsafe("select count(*)::int as count from media_objects");
+  return row?.count ?? 0;
+}
+
+async function mediaElementCount(): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(mediaElements);
+  return row?.count ?? 0;
+}
+
+async function sourceBindingCount(source: string): Promise<number> {
+  const [row] = await client.unsafe(
+    "select count(*)::int as count from ingestion_source_objects where source_uuid = $1",
+    [sourceUuid(source)],
+  );
+  return row?.count ?? 0;
+}
+
+function sourceUuid(source: string): string {
+  return source.slice("source:".length);
+}
+
+async function connectedFetches(
+  sourceUuid: string,
+  status: "fetching" | "fetched" | "verified" | "rejected" | "committed",
+) {
+  return db
+    .select()
+    .from(ingestionSourceFetches)
+    .where(
+      and(
+        eq(ingestionSourceFetches.sourceUuid, sourceUuid),
+        eq(ingestionSourceFetches.status, status),
+      ),
+    )
+    .orderBy(asc(ingestionSourceFetches.createdAt));
+}
+
+async function simpleFinFixtureBytes(name: string): Promise<Uint8Array> {
+  return new Uint8Array(
+    await Bun.file(
+      new URL(`../../ingest/skills/simplefin/fixtures/${name}`, import.meta.url),
+    ).arrayBuffer(),
+  );
+}
+
+async function simpleFinFixtureWithoutTransactions(name: string): Promise<Uint8Array> {
+  const document = JSON.parse(new TextDecoder().decode(await simpleFinFixtureBytes(name))) as {
+    accounts: Array<{ transactions?: unknown[] }>;
+  };
+  for (const account of document.accounts) account.transactions = [];
+  return new TextEncoder().encode(JSON.stringify(document));
+}
+
+function mixedArenaCaptureBytes(): Uint8Array {
+  const timestamp = "2026-08-29T12:00:00.000Z";
+  const user = { id: 7, name: "Noah Putnam", slug: "noah" };
+  const connection = (id: number, position: number) => ({
+    id,
+    position,
+    pinned: false,
+    connected_at: timestamp,
+    connected_by: user,
+  });
+  const image = (blockId: number) => {
+    const base = `https://images.are.na/${blockId}`;
+    return {
+      src: `https://d2w9rnfcy7mm78.cloudfront.net/${blockId}/original.png`,
+      content_type: "image/png",
+      filename: `arena-${blockId}.png`,
+      width: 640,
+      height: 480,
+      alt_text: `Are.na image ${blockId}`,
+      small: { src: `${base}/small.png`, src_2x: `${base}/small@2x.png` },
+      medium: { src: `${base}/medium.png`, src_2x: `${base}/medium@2x.png` },
+      large: { src: `${base}/large.png`, src_2x: `${base}/large@2x.png` },
+      square: { src: `${base}/square.png`, src_2x: `${base}/square@2x.png` },
+    };
+  };
+  const common = (id: number, type: string, position: number) => ({
+    id,
+    base_type: "Block",
+    type,
+    state: "available",
+    visibility: "public",
+    created_at: timestamp,
+    updated_at: timestamp,
+    user,
+    connection: connection(1_000 + id, position),
+  });
+  const imageBytes = new TextEncoder().encode("rhizome-image-payload");
+  const linkPreviewBytes = new TextEncoder().encode("rhizome-link-preview");
+  const pdfBytes = new TextEncoder().encode("%PDF-1.7\nRhizome fixture\n%%EOF\n");
+  const records = [
+    {
+      ...common(101, "Text", 1),
+      title: "Manifesto",
+      content: { markdown: "# Love always wins\n\nA deterministic markdown block." },
+    },
+    {
+      ...common(102, "Image", 2),
+      title: "A still image",
+      image: image(102),
+    },
+    {
+      ...common(103, "Link", 3),
+      title: "A link with an Are.na preview",
+      source: { url: "https://example.com/reference", title: "Reference" },
+      image: image(103),
+    },
+    {
+      ...common(104, "Attachment", 4),
+      title: "Planning notes",
+      attachment: {
+        url: "https://attachments.are.na/104/planning-notes.pdf",
+        content_type: "application/pdf",
+        filename: "planning-notes.pdf",
+        file_size: pdfBytes.byteLength,
+        file_extension: "pdf",
+        updated_at: timestamp,
+      },
+    },
+    {
+      id: 201,
+      base_type: "Channel",
+      type: "Channel",
+      state: "available",
+      connection: connection(1_201, 5),
+    },
+  ];
+  const channel = {
+    data: {
+      id: 55,
+      slug: "mixed-media",
+      title: "Mixed media",
+      description: { markdown: "A mixed deterministic acceptance fixture." },
+      state: "available",
+      visibility: "public",
+      counts: { blocks: 4, channels: 1, contents: 5 },
+    },
+  };
+  const contents = {
+    data: records,
+    meta: {
+      current_page: 1,
+      total_pages: 1,
+      total_count: records.length,
+      has_more_pages: false,
+    },
+  };
+  const capturedJson = (url: string, value: unknown) => ({
+    url,
+    content_type: "application/json",
+    body_base64: Buffer.from(JSON.stringify(value)).toString("base64"),
+  });
+  const capturedAsset = (
+    blockId: number,
+    role: "content" | "preview",
+    url: string,
+    contentType: string,
+    bytes: Uint8Array,
+  ) => ({
+    block_id: blockId,
+    role,
+    requested_url: url,
+    url,
+    redirects: [],
+    content_type: contentType,
+    body_base64: Buffer.from(bytes).toString("base64"),
+  });
+  const capture = {
+    version: "arena-capture@1",
+    channel_url: "https://www.are.na/noah/mixed-media",
+    retrieved_at: timestamp,
+    channel: capturedJson("https://api.are.na/v3/channels/mixed-media", channel),
+    contents_pages: [
+      capturedJson(
+        "https://api.are.na/v3/channels/mixed-media/contents?per=100&page=1&sort=position_asc",
+        contents,
+      ),
+    ],
+    assets: [
+      capturedAsset(102, "content", image(102).large.src, "image/png", imageBytes),
+      capturedAsset(103, "preview", image(103).large.src, "image/png", linkPreviewBytes),
+      capturedAsset(
+        104,
+        "content",
+        "https://attachments.are.na/104/planning-notes.pdf",
+        "application/pdf",
+        pdfBytes,
+      ),
+    ],
+  };
+  return new TextEncoder().encode(JSON.stringify(capture));
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.slice().buffer));
+  return `sha256:${[...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }

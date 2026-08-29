@@ -2,15 +2,28 @@ import { describe, expect, test } from "bun:test";
 import { mediaObjectSchema, vibeSchema } from "@rnet/types/schemas";
 
 import {
+  ARENA_CHANNEL_SLUG_MAX_LENGTH,
+  ARENA_PARSER_NAME,
+  ARENA_PROVIDER,
   STORE_SCHEMA_COMPONENTS,
+  arenaIngestionSourceDocumentSchema,
+  arenaSourceConfigSchema,
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
+  connectSimpleFinRequestSchema,
+  createArenaIngestionSourceRequestSchema,
+  createImportPreviewRequestSchema,
+  createIngestionSourceRequestSchema,
+  createSimpleFinIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
   createVibeRequestSchema,
   mediaObjectsResponseSchema,
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
   setMediaObjectUserRequestSchema,
+  simpleFinIngestionSourceDocumentSchema,
+  simpleFinSourceConfigSchema,
+  sourceCredentialDocumentSchema,
   type OwnerCreateMediaObjectsRequest,
   vibesResponseSchema,
 } from "../src/index.ts";
@@ -47,7 +60,55 @@ describe("shared store schemas", () => {
   test("registers stable component names without cloning schema objects", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateVibeRequest).toBe(createVibeRequestSchema);
     expect(STORE_SCHEMA_COMPONENTS.CreateMediaObjectsRequest).toBe(createMediaObjectsRequestSchema);
+    expect(STORE_SCHEMA_COMPONENTS.CreateIngestionSourceRequest).toBe(
+      createIngestionSourceRequestSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
+      createImportPreviewRequestSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.ConnectSimpleFinRequest).toBe(connectSimpleFinRequestSchema);
+    expect(STORE_SCHEMA_COMPONENTS.SourceCredential).toBe(sourceCredentialDocumentSchema);
     expect(Object.values(STORE_SCHEMA_COMPONENTS).every((schema) => !("$id" in schema))).toBe(true);
+  });
+
+  test("keeps SimpleFIN secrets out of credential and source documents", () => {
+    expect(connectSimpleFinRequestSchema.properties).toHaveProperty("setup_token");
+    expect(createSimpleFinIngestionSourceRequestSchema.properties).toHaveProperty("credential");
+    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("secret");
+    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("access_url");
+    expect(simpleFinIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
+    expect(simpleFinIngestionSourceDocumentSchema.properties.parser_version).toEqual({
+      type: "string",
+      minLength: 1,
+    });
+    expect(simpleFinSourceConfigSchema.properties.accounts.minItems).toBe(1);
+  });
+
+  test("keeps public Are.na locators normalized and credential-free", () => {
+    expect(createArenaIngestionSourceRequestSchema).toMatchObject({
+      required: ["provider", "channel_url"],
+      properties: {
+        provider: { const: ARENA_PROVIDER },
+        channel_url: { type: "string" },
+      },
+      additionalProperties: false,
+    });
+    expect(arenaSourceConfigSchema).toMatchObject({
+      required: ["channel_slug"],
+      properties: {
+        channel_slug: { maxLength: ARENA_CHANNEL_SLUG_MAX_LENGTH },
+      },
+      additionalProperties: false,
+    });
+    expect(arenaIngestionSourceDocumentSchema.properties).toMatchObject({
+      kind: { const: "remote" },
+      provider: { const: ARENA_PROVIDER },
+      parser: { const: ARENA_PARSER_NAME },
+      config: arenaSourceConfigSchema,
+    });
+    expect(arenaIngestionSourceDocumentSchema.properties).not.toHaveProperty("origin");
+    expect(arenaIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
+    expect(arenaIngestionSourceDocumentSchema.properties).not.toHaveProperty("channel_url");
   });
 });
 

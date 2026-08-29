@@ -1,9 +1,12 @@
 import { useId, useState, type FormEvent } from "react";
+import type { MediaObject } from "@rnet/types";
 import { rnetUriPattern } from "@rnet/types/patterns";
 
 import {
   useAddVibeObjects,
   useDeleteVibe,
+  useMediaElement,
+  usePayloadUrl,
   useRemoveVibeObjects,
   useUpdateVibe,
   useVibe,
@@ -15,8 +18,209 @@ import { uuidOf } from "../api/uris.ts";
 import { Button } from "../ui/index.ts";
 import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
+import { ImportPanel } from "./ImportPanel.tsx";
+import { payloadPresentation } from "./payloadPresentation.ts";
 
 const OBJECT_URI = new RegExp(rnetUriPattern("object"));
+
+function sourceTitle(object: MediaObject): string {
+  const title = (object.source.properties as Record<string, unknown>).title;
+  return typeof title === "string" && title.trim() ? title : "Untitled Are.na block";
+}
+
+function sourceProperty(object: MediaObject, key: string): string | undefined {
+  const value = (object.source.properties as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function arenaBlockType(object: MediaObject): string {
+  return sourceProperty(object, "arena_block_type") ?? "Block";
+}
+
+function arenaDestination(object: MediaObject): string | undefined {
+  return (
+    sourceProperty(object, "source_url") ??
+    sourceProperty(object, "embed_url") ??
+    sourceProperty(object, "attachment_url")
+  );
+}
+
+function destinationHost(destination: string): string {
+  try {
+    return new URL(destination).hostname.replace(/^www\./, "");
+  } catch {
+    return "source";
+  }
+}
+
+function ArenaBlockPayload({
+  blockType,
+  destination,
+  element,
+  isError,
+  isPending,
+  payloadUrl,
+  title,
+}: {
+  blockType: string;
+  destination: string | undefined;
+  element: { kind: string; mime: string } | undefined;
+  isError: boolean;
+  isPending: boolean;
+  payloadUrl: string | undefined;
+  title: string;
+}) {
+  if (!element) {
+    if (isPending) {
+      return <span className="text-caption text-tertiary">Loading block…</span>;
+    }
+    if (isError) {
+      return <span className="text-caption text-tertiary">Block unavailable</span>;
+    }
+    return (
+      <span
+        data-arena-block-presentation="link"
+        className="flex max-w-[80%] flex-col items-center gap-2 text-center"
+      >
+        <span className="rounded-pill border border-hairline px-3 py-1 text-mono-label text-secondary">
+          {blockType}
+        </span>
+        <span className="line-clamp-2 text-body text-primary">
+          {destination ? destinationHost(destination) : "No stored payload"}
+        </span>
+      </span>
+    );
+  }
+
+  const presentation = payloadPresentation(element.mime);
+  if (!payloadUrl) {
+    const label =
+      presentation === "document" ? "document" : presentation === "text" ? "markdown" : "media";
+    return (
+      <span className="text-caption text-tertiary">
+        {isError ? `${label[0]?.toUpperCase()}${label.slice(1)} unavailable` : `Loading ${label}…`}
+      </span>
+    );
+  }
+
+  if (presentation === "image" && element.kind === "image") {
+    return (
+      <img
+        data-arena-block-presentation="image"
+        src={payloadUrl}
+        alt={title}
+        className="size-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+      />
+    );
+  }
+  if (presentation === "text" && element.kind === "text") {
+    return (
+      <iframe
+        data-arena-block-presentation="markdown"
+        src={payloadUrl}
+        title={`Markdown content for ${title}`}
+        sandbox=""
+        className="size-full border-0 bg-white p-3"
+      />
+    );
+  }
+  if (presentation === "document" && element.kind === "document") {
+    return (
+      <iframe
+        data-arena-block-presentation="document"
+        src={payloadUrl}
+        title={`PDF preview for ${title}`}
+        className="size-full border-0 bg-white"
+      />
+    );
+  }
+  if (presentation === "audio" && element.kind === "audio") {
+    return (
+      <audio
+        data-arena-block-presentation="audio"
+        src={payloadUrl}
+        controls
+        aria-label={`Audio for ${title}`}
+        className="w-[80%]"
+      />
+    );
+  }
+  if (presentation === "video" && element.kind === "video") {
+    return (
+      <video
+        data-arena-block-presentation="video"
+        src={payloadUrl}
+        controls
+        aria-label={`Video for ${title}`}
+        className="size-full object-contain"
+      />
+    );
+  }
+  return (
+    <span
+      data-arena-block-presentation="download"
+      className="flex max-w-[80%] flex-col items-center gap-2 text-center"
+    >
+      <span className="rounded-pill border border-hairline px-3 py-1 text-mono-label text-secondary">
+        {blockType}
+      </span>
+      <span className="text-body text-primary">{element.mime}</span>
+    </span>
+  );
+}
+
+function ArenaBlockCard({ object, openObject }: { object: MediaObject; openObject: () => void }) {
+  const elementUri = object.elements[0];
+  const elementUuid = elementUri ? uuidOf(elementUri) : undefined;
+  const element = useMediaElement(elementUuid);
+  const payload = usePayloadUrl("elements", element.data ? elementUuid : undefined);
+  const title = sourceTitle(object);
+  const blockType = arenaBlockType(object);
+  const destination = arenaDestination(object);
+
+  return (
+    <li className="min-w-0">
+      <article className="group flex h-full w-full flex-col overflow-hidden rounded-card border border-hairline bg-surface text-left transition-transform hover:-translate-y-0.5">
+        <span className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-canvas">
+          <ArenaBlockPayload
+            blockType={blockType}
+            destination={destination}
+            element={element.data}
+            isError={elementUri ? element.isError || payload.isError : false}
+            isPending={elementUri ? element.isPending : false}
+            payloadUrl={payload.data}
+            title={title}
+          />
+        </span>
+        <span className="flex min-h-20 flex-col gap-1 px-4 py-3">
+          <span className="flex items-center justify-between gap-3 text-mono-label text-tertiary">
+            <span>{blockType}</span>
+            {element.data ? <span className="truncate">{element.data.mime}</span> : null}
+          </span>
+          <button
+            type="button"
+            onClick={openObject}
+            aria-label={`Open Are.na block ${title}`}
+            className="line-clamp-2 text-left text-label text-primary focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            {title}
+          </button>
+          {destination ? (
+            <a
+              href={destination}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={`Open source for ${title}`}
+              className="mt-auto w-fit text-caption text-secondary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              {destinationHost(destination)} ↗
+            </a>
+          ) : null}
+        </span>
+      </article>
+    </li>
+  );
+}
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const vibe = useVibe(uuid);
@@ -35,6 +239,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
 
   const title = titleDraft ?? vibe.data?.title ?? "";
   const isOwner = vibe.data?.owner === session.data?.user.id;
+  const arenaObjects = objects.data?.filter((object) => object.type === "arena.block") ?? [];
 
   function rename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -151,6 +356,12 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           ) : null}
           {add.isError ? <Failed error={add.error} /> : null}
           {remove.isError ? <Failed error={remove.error} /> : null}
+          <ImportPanel
+            vibeUuid={uuid}
+            hasConfiguredSources={Boolean(
+              vibe.data.pull?.enabled && vibe.data.pull.sources?.length,
+            )}
+          />
         </div>
       ) : null}
 
@@ -158,6 +369,27 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       {objects.isError ? <Failed error={objects.error} /> : null}
       {objects.data?.length === 0 ? (
         <span className="text-body text-tertiary">This Vibe has no objects yet.</span>
+      ) : null}
+      {arenaObjects.length ? (
+        <section aria-labelledby="arena-blocks-heading" className="mb-8 flex flex-col gap-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 id="arena-blocks-heading" className="text-label text-primary">
+              Are.na blocks
+            </h2>
+            <span className="text-caption text-tertiary">
+              {arenaObjects.length} {arenaObjects.length === 1 ? "block" : "blocks"}
+            </span>
+          </div>
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {arenaObjects.map((object) => (
+              <ArenaBlockCard
+                key={object.uri}
+                object={object}
+                openObject={() => open({ kind: "object", uuid: uuidOf(object.uri) })}
+              />
+            ))}
+          </ul>
+        </section>
       ) : null}
       <ul className="flex flex-col">
         {objects.data?.map((object, index) => (

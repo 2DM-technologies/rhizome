@@ -10,21 +10,45 @@ import type { Database } from "./db/index.ts";
 import { notFound, Problem, problemResponse } from "./errors.ts";
 import { createOpenApiDocument } from "./openapi.ts";
 import { createMediaElementRoutes } from "./routes/media-elements.ts";
+import { createIngestionSourceRoutes } from "./routes/ingestion-sources.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
+import { createSourceCredentialRoutes } from "./routes/source-credentials.ts";
 import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
+import { ArenaClient } from "./services/arena-client.ts";
+import { SimpleFinClient } from "./services/simplefin-client.ts";
+import type { ArenaChannelFetcher, SimpleFinAccountsFetcher } from "./services/import-service.ts";
+import type { SourceCredentialCrypto } from "./services/source-credential-crypto.ts";
+import { createSourceCredentialCrypto } from "./services/source-credential-crypto-factory.ts";
+import type { SimpleFinTokenExchange } from "./services/source-credential-service.ts";
 
 export interface AppDependencies {
   config: ServerConfig;
   db: Database;
   blobs: BlobStore;
+  arenaClient?: ArenaChannelFetcher;
+  simpleFinClient?: SimpleFinTokenExchange & SimpleFinAccountsFetcher;
+  sourceCredentialCrypto?: SourceCredentialCrypto;
 }
 
-export function createApp({ config, db, blobs }: AppDependencies) {
+export function createApp({
+  config,
+  db,
+  blobs,
+  arenaClient,
+  simpleFinClient,
+  sourceCredentialCrypto,
+}: AppDependencies) {
   const app = new Hono<AppEnvironment>();
+  const resolvedSimpleFinClient =
+    simpleFinClient ??
+    new SimpleFinClient({ allowedHosts: config.sourceCredentials.simpleFinAllowedHosts });
+  const resolvedArenaClient = arenaClient ?? new ArenaClient();
+  const credentialCrypto =
+    sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
 
   app.use(logger());
   app.use(
@@ -79,7 +103,23 @@ export function createApp({ config, db, blobs }: AppDependencies) {
 
   app.get("/health", (context) => context.json({ ok: true, service: "rhizome" }));
   const routeGroups = [
-    { basePath: "/rnet/v0/vibes", router: createVibeRoutes(db) },
+    {
+      basePath: "/rnet/v0/vibes",
+      router: createVibeRoutes(db, blobs, {
+        arena: resolvedArenaClient,
+        baseUrl: config.baseUrl,
+        credentialCrypto,
+        simpleFin: resolvedSimpleFinClient,
+      }),
+    },
+    {
+      basePath: "/rnet/v0/ingestion-sources",
+      router: createIngestionSourceRoutes(db),
+    },
+    {
+      basePath: "/rnet/v0/source-credentials",
+      router: createSourceCredentialRoutes(db, resolvedSimpleFinClient, credentialCrypto),
+    },
     { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
     {
       basePath: "/rnet/v0/elements",
@@ -89,7 +129,7 @@ export function createApp({ config, db, blobs }: AppDependencies) {
       basePath: "/rnet/v0/origins",
       router: createOriginRoutes(db, blobs, config.baseUrl),
     },
-    { basePath: "/rnet/v0/operations", router: createOperationRoutes(db) },
+    { basePath: "/rnet/v0/operations", router: createOperationRoutes(db, blobs) },
   ];
   const openApiRoutes: RegisteredRhizomeRoute[] = [];
   for (const { basePath, router } of routeGroups) {

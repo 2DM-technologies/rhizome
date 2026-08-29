@@ -1,0 +1,341 @@
+import { describe, expect, test } from "bun:test";
+
+import { ARENA_CHANNEL_SLUG_MAX_LENGTH } from "../../../packages/store-contract/src/arena.ts";
+
+import {
+  ARENA_CAPTURE_VERSION,
+  ARENA_PARSER_NAME,
+  ARENA_PARSER_VERSION,
+  arenaParser,
+  parseArenaCapture,
+  type ArenaCaptureV1,
+  type CapturedArenaResponse,
+} from "../skills/arena/scripts/parse-arena.ts";
+import { parserFor } from "../src/registry.ts";
+import { verifyArena } from "../verify/arena.ts";
+
+describe("M2 committed Are.na v3 parser", () => {
+  test("parses the synthetic mixed channel deterministically with element payloads", async () => {
+    const bytes = await fixtureBytes();
+    const first = parseArenaCapture(bytes);
+    const second = await arenaParser.parse(bytes);
+
+    expect(first).toEqual(second);
+    expect(ARENA_CAPTURE_VERSION).toBe("arena-capture@1");
+    expect(ARENA_PARSER_NAME).toBe("arena");
+    expect(ARENA_PARSER_VERSION).toBe("arena@1.0.0");
+    expect(parserFor("arena")).toBe(arenaParser);
+    expect(first).toMatchObject({
+      channelId: "7001",
+      channelSlug: "synthetic-media-study",
+      channelTitle: "Synthetic Media Study",
+      channelDescription: "A synthetic mixed-media channel.",
+      sourceRecordCount: 5,
+      nestedChannelCount: 0,
+      sourcePositions: [1, 2, 3, 4, 5],
+    });
+    expect(
+      first.blocks.map(({ blockId, blockType, position }) => [blockId, blockType, position]),
+    ).toEqual([
+      ["1101", "Text", 1],
+      ["1102", "Image", 2],
+      ["1103", "Link", 3],
+      ["1104", "Attachment", 4],
+      ["1105", "Embed", 5],
+    ]);
+
+    const [text, image, link, attachment, embed] = first.blocks;
+    expect(new TextDecoder().decode(text?.elements[0]?.bytes)).toBe(
+      "## Notice what connects\n\nA **synthetic** note with [context](https://example.test/context).",
+    );
+    expect(text?.elements[0]).toMatchObject({
+      role: "content",
+      kind: "text",
+      mime: "text/markdown",
+      byteSize: 91,
+      filename: "arena-1101.md",
+    });
+    expect(image?.elements[0]).toMatchObject({
+      role: "content",
+      kind: "image",
+      mime: "image/png",
+      byteSize: 68,
+      sourceUrl: "https://images.are.na/synthetic/primary/large.png",
+    });
+    expect(link?.elements[0]).toMatchObject({ role: "preview", kind: "image" });
+    expect(link?.sourceProperties).toMatchObject({
+      source_url: "https://example.test/article",
+      connection_position: 3,
+      author: { id: 70001, name: "Synthetic Author", slug: "synthetic-author" },
+    });
+    expect(attachment?.elements[0]).toMatchObject({
+      role: "content",
+      kind: "document",
+      mime: "application/pdf",
+      byteSize: 76,
+      filename: "synthetic-field-notes.pdf",
+    });
+    expect(embed?.elements).toEqual([]);
+    expect(embed?.sourceProperties).toMatchObject({
+      source_url: "https://video.example.test/watch/synthetic",
+      embed_url: "https://video.example.test/embed/synthetic",
+      embed_source_url: "https://video.example.test/watch/synthetic",
+      embed_type: "video",
+    });
+    expect(JSON.stringify(embed?.sourceProperties)).not.toContain("iframe");
+    for (const block of first.blocks) {
+      for (const element of block.elements) {
+        expect(element.contentHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+      }
+    }
+  });
+
+  test("passes VERIFY with block, order, MIME, hash, and byte evidence", async () => {
+    const parsed = parseArenaCapture(await fixtureBytes());
+    expect(verifyArena(parsed)).toEqual({
+      ok: true,
+      source_record_count: 5,
+      candidate_count: 5,
+      nested_channel_count: 0,
+      element_count: 4,
+      total_element_bytes: 303,
+      counts_by_block_type: { Attachment: 1, Embed: 1, Image: 1, Link: 1, Text: 1 },
+      counts_by_element_kind: { document: 1, image: 2, text: 1 },
+      checks: expect.arrayContaining([
+        expect.objectContaining({ name: "record_count", ok: true }),
+        expect.objectContaining({ name: "connection_order", ok: true }),
+        expect.objectContaining({ name: "element_accounting", ok: true }),
+        expect.objectContaining({ name: "element_integrity", ok: true }),
+      ]),
+    });
+  });
+
+  test("counts nested channels without traversing or emitting them", async () => {
+    const capture = await fixtureCapture();
+    const channel = decodedBody(capture.channel);
+    const page = decodedBody(capture.contents_pages[0]!);
+    const counts = record(record(channel.data, "channel").counts, "counts");
+    counts.channels = 1;
+    counts.contents = 6;
+    const data = array(page.data, "page data");
+    data.push({
+      id: 2201,
+      type: "Channel",
+      slug: "nested-synthetic-channel",
+      title: "Nested synthetic channel",
+      state: "available",
+      connection: {
+        id: 72006,
+        position: 6,
+        pinned: false,
+        connected_at: "2026-08-06T12:00:00Z",
+        connected_by: null,
+      },
+    });
+    const meta = record(page.meta, "page meta");
+    meta.total_count = 6;
+    encodeBody(capture.channel, channel);
+    encodeBody(capture.contents_pages[0]!, page);
+
+    const parsed = parseArenaCapture(captureBytes(capture));
+    expect(parsed).toMatchObject({
+      sourceRecordCount: 6,
+      nestedChannelCount: 1,
+      declaredNestedChannelCount: 1,
+      sourcePositions: [1, 2, 3, 4, 5, 6],
+    });
+    expect(parsed.blocks).toHaveLength(5);
+    expect(verifyArena(parsed)).toMatchObject({ ok: true, nested_channel_count: 1 });
+  });
+
+  test("rejects unavailable and duplicate blocks before candidate emission", async () => {
+    const unavailable = await fixtureCapture();
+    mutatePage(unavailable, (page) => {
+      record(array(page.data, "data")[0], "block").state = "failed";
+    });
+    expect(() => parseArenaCapture(captureBytes(unavailable))).toThrow("block is unavailable");
+
+    const duplicate = await fixtureCapture();
+    const duplicateChannel = decodedBody(duplicate.channel);
+    const duplicateCounts = record(record(duplicateChannel.data, "channel").counts, "counts");
+    duplicateCounts.blocks = 6;
+    duplicateCounts.contents = 6;
+    encodeBody(duplicate.channel, duplicateChannel);
+    mutatePage(duplicate, (page) => {
+      const data = array(page.data, "data");
+      const repeated = structuredClone(record(data[0], "block"));
+      record(repeated.connection, "connection").position = 6;
+      data.push(repeated);
+      record(page.meta, "meta").total_count = 6;
+    });
+    expect(() => parseArenaCapture(captureBytes(duplicate))).toThrow(
+      "Are.na block 1101 appeared twice",
+    );
+  });
+
+  test("rejects missing, duplicate, unapproved, and block-inconsistent assets", async () => {
+    const missing = await fixtureCapture();
+    missing.assets = missing.assets.filter(({ block_id }) => block_id !== 1102);
+    expect(() => parseArenaCapture(captureBytes(missing))).toThrow(
+      "Are.na block 1102 is missing its captured content asset",
+    );
+
+    const duplicate = await fixtureCapture();
+    duplicate.assets.push(structuredClone(duplicate.assets[0]!));
+    expect(() => parseArenaCapture(captureBytes(duplicate))).toThrow("duplicates 1102:content");
+
+    const unapproved = await fixtureCapture();
+    unapproved.assets[0]!.requested_url = "https://example.test/copied.png";
+    expect(() => parseArenaCapture(captureBytes(unapproved))).toThrow(
+      "not on an approved Are.na asset host",
+    );
+
+    const inconsistent = await fixtureCapture();
+    inconsistent.assets[0]!.requested_url = "https://images.are.na/synthetic/other/large.png";
+    inconsistent.assets[0]!.url = "https://images.are.na/synthetic/other/large.png";
+    expect(() => parseArenaCapture(captureBytes(inconsistent))).toThrow(
+      "does not match an approved block rendition",
+    );
+
+    const wrongMime = await fixtureCapture();
+    wrongMime.assets.find(({ block_id }) => block_id === 1104)!.content_type = "image/png";
+    expect(() => parseArenaCapture(captureBytes(wrongMime))).toThrow(
+      "captured attachment MIME does not match",
+    );
+  });
+
+  test("validates requested, redirect-chain, and final-response asset provenance", async () => {
+    const redirected = await fixtureCapture();
+    const asset = redirected.assets[0]!;
+    const requestedUrl = asset.requested_url;
+    const finalUrl = "https://images.are.na/synthetic/redirected/large.png";
+    asset.url = finalUrl;
+    asset.redirects = [
+      {
+        status: 302,
+        from_url: requestedUrl,
+        location: "/synthetic/redirected/large.png",
+        to_url: finalUrl,
+      },
+    ];
+
+    const parsed = parseArenaCapture(captureBytes(redirected));
+    expect(parsed.blocks[1]?.elements[0]?.sourceUrl).toBe(finalUrl);
+    expect(parsed.blocks[1]?.sourceProperties.imported_asset_url).toBe(finalUrl);
+
+    const brokenChain = structuredClone(redirected);
+    brokenChain.assets[0]!.redirects[0]!.to_url =
+      "https://images.are.na/synthetic/different/large.png";
+    expect(() => parseArenaCapture(captureBytes(brokenChain))).toThrow(
+      "location does not resolve to its captured target",
+    );
+
+    const missingRedirect = structuredClone(redirected);
+    missingRedirect.assets[0]!.redirects = [];
+    expect(() => parseArenaCapture(captureBytes(missingRedirect))).toThrow(
+      "redirect chain does not end at its response URL",
+    );
+
+    const unsafeFinal = structuredClone(redirected);
+    unsafeFinal.assets[0]!.url = "https://example.test/copied.png";
+    expect(() => parseArenaCapture(captureBytes(unsafeFinal))).toThrow(
+      "not on an approved Are.na asset host",
+    );
+  });
+
+  test("rejects incomplete framing, pagination, order, and unsupported block types", async () => {
+    const base64 = await fixtureCapture();
+    base64.channel.body_base64 = `${base64.channel.body_base64.slice(0, -1)}!`;
+    expect(() => parseArenaCapture(captureBytes(base64))).toThrow("canonical base64");
+
+    const pagination = await fixtureCapture();
+    mutatePage(pagination, (page) => {
+      record(page.meta, "meta").has_more_pages = true;
+    });
+    expect(() => parseArenaCapture(captureBytes(pagination))).toThrow("pagination is inconsistent");
+
+    const order = await fixtureCapture();
+    mutatePage(order, (page) => {
+      record(record(array(page.data, "data")[1], "block").connection, "connection").position = 1;
+    });
+    expect(() => parseArenaCapture(captureBytes(order))).toThrow(
+      "not in unique ascending connection order",
+    );
+
+    const unsupported = await fixtureCapture();
+    mutatePage(unsupported, (page) => {
+      record(array(page.data, "data")[0], "block").type = "PendingBlock";
+    });
+    expect(() => parseArenaCapture(captureBytes(unsupported))).toThrow(
+      "unsupported type PendingBlock",
+    );
+
+    const overlongOwner = await fixtureCapture();
+    overlongOwner.channel_url = `https://www.are.na/${"a".repeat(
+      ARENA_CHANNEL_SLUG_MAX_LENGTH + 1,
+    )}/synthetic-media-study`;
+    expect(() => parseArenaCapture(captureBytes(overlongOwner))).toThrow(
+      "must be /owner/channel-slug",
+    );
+  });
+
+  test("VERIFY fails closed if staged element or object evidence changes after parsing", async () => {
+    const parsed = parseArenaCapture(await fixtureBytes());
+    parsed.blocks[0]!.elements[0]!.contentHash = `sha256:${"0".repeat(64)}`;
+    parsed.blocks[1]!.position = 1;
+    parsed.blocks[1]!.blockId = parsed.blocks[0]!.blockId;
+    parsed.blocks[1]!.keys.arena_block_id = parsed.blocks[0]!.blockId;
+    const report = verifyArena(parsed);
+
+    expect(report.ok).toBe(false);
+    for (const name of ["required_fields", "unique_block_ids", "element_integrity"] as const) {
+      expect(report.checks).toContainEqual(expect.objectContaining({ name, ok: false }));
+    }
+  });
+});
+
+function fixture(): URL {
+  return new URL("../skills/arena/fixtures/mixed-channel-capture.json", import.meta.url);
+}
+
+async function fixtureBytes(): Promise<Uint8Array> {
+  return new Uint8Array(await Bun.file(fixture()).arrayBuffer());
+}
+
+async function fixtureCapture(): Promise<ArenaCaptureV1> {
+  return JSON.parse(await Bun.file(fixture()).text()) as ArenaCaptureV1;
+}
+
+function captureBytes(capture: ArenaCaptureV1): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(capture));
+}
+
+function decodedBody(response: CapturedArenaResponse): Record<string, unknown> {
+  return record(JSON.parse(Buffer.from(response.body_base64, "base64").toString("utf8")), "body");
+}
+
+function encodeBody(response: CapturedArenaResponse, body: Record<string, unknown>): void {
+  response.body_base64 = Buffer.from(JSON.stringify(body)).toString("base64");
+}
+
+function mutatePage(
+  capture: ArenaCaptureV1,
+  mutate: (page: Record<string, unknown>) => void,
+): void {
+  const response = capture.contents_pages[0]!;
+  const page = decodedBody(response);
+  mutate(page);
+  encodeBody(response, page);
+}
+
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} is not an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function array(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${label} is not an array`);
+  return value;
+}

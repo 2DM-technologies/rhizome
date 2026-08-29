@@ -22,6 +22,28 @@ The store requires object storage at startup, so `bun run dev:s3` runs a local S
 
 The development auth mode recognizes `Bearer dev:user` and `Bearer dev:user:other` for seeded owners and `Bearer dev:client:rbudget` for the seeded standard dMachine. Development credentials are rejected when `NODE_ENV=production`, including when the auth-mode variable is omitted.
 
+## Credential key management
+
+Local development generates a stable private `.rhizome/source-credential.key`; it does not depend
+on the macOS Keychain or AWS. Production refuses raw active credential keys and requires:
+
+- `RHIZOME_CREDENTIAL_KMS_KEY_ID`: a customer-managed symmetric `ENCRYPT_DECRYPT` KMS key.
+- `RHIZOME_CREDENTIAL_KMS_HMAC_KEY_IDS`: comma-separated `HMAC_256` KMS keys, active first and
+  retained keys after it for one-time-token replay detection. Mutable aliases are rejected: use
+  immutable key ids or key ARNs. When rotating, prepend the new identifier and keep each prior
+  HMAC key enabled and configured until every claim-ledger row and backup fingerprinted with it
+  has expired or been purged under the deployment's retention policy.
+- `AWS_REGION` and an IAM workload role through the AWS SDK's standard credential chain.
+
+The runtime role needs `kms:GenerateDataKey` and `kms:Decrypt` on the encryption key, plus
+`kms:GenerateMac` on the HMAC keys. New credentials use a fresh AES-256 data key and store only a
+v3 envelope containing its KMS-wrapped copy and authenticated ciphertext. The row binding is
+hashed before it enters KMS encryption context so owner and credential identifiers do not appear
+in CloudTrail context fields. KMS key-material rotation under the same key id is transparent.
+`RHIZOME_CREDENTIAL_LEGACY_KEYRING` is a migration-only v1/v2 read fallback and supplies overlapping
+one-time-token fingerprints during a rolling local-to-KMS deployment; all instances must retain it
+until that rollout is complete. It is never used for new production writes.
+
 Run all checks with:
 
 ```sh

@@ -17,13 +17,13 @@ export function SearchField({ className, placeholder = "Search", ...props }: Sea
         className,
       )}
     >
-      <SearchIcon className="shrink-0 text-white/85" />
+      <SearchIcon width={16} height={16} className="shrink-0 text-dock-search-placeholder" />
       <input
         type="search"
         placeholder={placeholder}
         className={cn(
-          "min-w-0 flex-1 bg-transparent text-body-lg font-sans text-on-accent outline-none",
-          "placeholder:text-white/85 [&::-webkit-search-cancel-button]:appearance-none",
+          "min-w-0 flex-1 bg-transparent text-body font-sans text-dock-search-text outline-none",
+          "placeholder:text-dock-search-placeholder [&::-webkit-search-cancel-button]:appearance-none",
         )}
         {...props}
       />

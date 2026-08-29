@@ -20,6 +20,8 @@ export const operations = pgTable(
     vibeUuid: uuid("vibe_uuid").references(() => vibes.uuid),
     request: jsonb("request").$type<JsonObject>().notNull(),
     result: jsonb("result").$type<JsonObject>(),
+    reviewDigest: text("review_digest"),
+    committedAt: timestamp("committed_at", { withTimezone: true }),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),

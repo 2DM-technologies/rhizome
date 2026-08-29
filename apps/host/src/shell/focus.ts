@@ -11,8 +11,8 @@ import {
   type SurfaceId,
   type ViewMode,
 } from "./surfaces.ts";
-import { setDockTransitionTarget } from "./viewTransitions.ts";
-import type { DockTransitionSource } from "./viewTransitions.ts";
+import { setDockTransitionTarget } from "./dockOpenMotion.ts";
+import type { DockTransitionSource } from "./dockOpenMotion.ts";
 
 /**
  * The URL half of the shell's contract: which surface is focused, and how it is presented.
@@ -67,7 +67,7 @@ export interface SurfaceNavigation {
   /** Focus a surface with a shared-element transition from its dock control. */
   openFromDock: (
     surface: Surface,
-    options: { source: DockTransitionSource; mode?: ViewMode },
+    options: { origin: Element | null; source: DockTransitionSource; mode?: ViewMode },
   ) => void;
   /** Close a surface. Navigates away only if it was the focused one. */
   close: (id: SurfaceId) => void;
@@ -92,19 +92,16 @@ export function useSurfaceNavigation(): SurfaceNavigation {
       navigate(locationOf(surface, nextMode));
     },
 
-    openFromDock: (surface, { source, mode: nextMode = defaultViewMode }) => {
+    openFromDock: (surface, { origin, source, mode: nextMode = defaultViewMode }) => {
       const alreadyFocused = focused !== null && surfaceId(focused) === surfaceId(surface);
       const animate =
         !alreadyFocused &&
-        typeof document.startViewTransition === "function" &&
+        origin !== null &&
         !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (animate) setDockTransitionTarget(surface, source);
+      if (animate) setDockTransitionTarget(surface, source, origin.getBoundingClientRect());
       openSurface(surface);
       setDefaultViewMode(nextMode);
-      void navigate(
-        locationOf(surface, nextMode),
-        animate ? { flushSync: true, viewTransition: true } : undefined,
-      );
+      void navigate(locationOf(surface, nextMode), animate ? { flushSync: true } : undefined);
     },
 
     close: (id) => {

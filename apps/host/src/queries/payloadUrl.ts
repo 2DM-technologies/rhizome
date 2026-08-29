@@ -45,3 +45,35 @@ export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undef
 
   return query;
 }
+
+/** A short-lived reviewed-import payload; authorization is inherited from the API client. */
+export function useImportPreviewPayloadUrl(
+  operationUuid: string | undefined,
+  elementUuid: string | undefined,
+) {
+  const query = api.useQuery(
+    "get",
+    "/rnet/v0/operations/{id}/elements/{element_id}/bytes",
+    {
+      params: {
+        path: { id: operationUuid ?? "", element_id: elementUuid ?? "" },
+      },
+      parseAs: "blob",
+    },
+    {
+      enabled: Boolean(operationUuid && elementUuid),
+      gcTime: 0,
+      staleTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+      select: createObjectUrl,
+    },
+  );
+
+  const url = query.data;
+  useEffect(() => {
+    if (!url) return;
+    return () => URL.revokeObjectURL(url);
+  }, [url]);
+
+  return query;
+}
