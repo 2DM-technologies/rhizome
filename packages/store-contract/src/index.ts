@@ -9,7 +9,7 @@ import {
 import { TASK_PATTERN, UUIDV7_PATTERN } from "@rnet/types/patterns";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
-import { FILE_PARSERS } from "./ingestion.ts";
+import { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
 
 export { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
 
