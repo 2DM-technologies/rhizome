@@ -922,6 +922,64 @@ test("opening a Vibe keeps the Vibes index available as the previous dock window
   await expect(rail.getByRole("button", { name: "Spending", exact: true })).toBeVisible();
 });
 
+test("a retained Vibes index stays visible ahead of a full three-Vibe MRU rail", async ({
+  page,
+}) => {
+  const baseVibe = mockStore.vibes[0];
+  if (!baseVibe) throw new Error("Missing seeded Vibe");
+  const priorVibes = [
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd3", "Library"],
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd4", "Trip planning"],
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd5", "Reading list"],
+  ] as const;
+  mockStore.vibes.push(
+    ...priorVibes.map(([uuid, title]): Vibe => ({
+      ...structuredClone(baseVibe),
+      uri: `rnet://vibe/${uuid}`,
+      title,
+    })),
+  );
+
+  for (const [uuid] of priorVibes) {
+    await page.goto(`/vibes/${uuid}`);
+    await expect(page).toHaveURL(new RegExp(`/vibes/${uuid}$`));
+  }
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(page).toHaveURL(/\/vibes$/);
+  await page.getByRole("button", { name: "Open Vibe Spending" }).click();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+
+  const rail = page.locator("[data-dock-recent-vibes]");
+  const items = rail.getByRole("button");
+  await expect(rail).toHaveAttribute("data-count", "4");
+  await expect(rail).toHaveCSS("width", "236px");
+  expect(await items.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel))).toEqual([
+    "Vibes",
+    "Reading list",
+    "Trip planning",
+    "Library",
+  ]);
+
+  const geometry = await rail.evaluate((element) => {
+    const viewport = element.getBoundingClientRect();
+    const vibesButton = [...element.querySelectorAll("button")].find(
+      (button) => button.ariaLabel === "Vibes",
+    );
+    if (!vibesButton) throw new Error("Missing retained Vibes dock item");
+    const vibesBox = vibesButton.getBoundingClientRect();
+    return {
+      scrollLeft: element.scrollLeft,
+      vibesLeft: vibesBox.left,
+      vibesRight: vibesBox.right,
+      viewportLeft: viewport.left,
+      viewportRight: viewport.right,
+    };
+  });
+  expect(geometry.scrollLeft).toBe(0);
+  expect(geometry.vibesLeft).toBeGreaterThanOrEqual(geometry.viewportLeft);
+  expect(geometry.vibesRight).toBeLessThanOrEqual(geometry.viewportRight);
+});
+
 test("opening a surface grows its dock icon into the window", async ({ page }) => {
   await installDockOpenAnimationProbe(page);
   await page.goto("/");

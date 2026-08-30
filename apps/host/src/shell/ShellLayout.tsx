@@ -41,7 +41,7 @@ import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
 const STAND_IN_ORBS = [orb1, orb2, orb3, orb4];
 const DOCK_RAIL_ITEM_SIZE = 44;
 const DOCK_RAIL_GAP = 20;
-const DOCK_RAIL_VISIBLE_ITEMS = 3;
+const DOCK_RAIL_VISIBLE_VIBE_ITEMS = 3;
 const HOME_SURFACE = { kind: "vibes" } satisfies Surface;
 
 function markFor(surface: Surface): string {
@@ -113,11 +113,20 @@ export function ShellLayout() {
         : [],
     );
 
-    // A retained Vibe already appears in the recency list. Keep other explicitly retained
-    // surface kinds reachable after recents without letting mounted-window state dictate MRU.
-    return [...recentVibes, ...background.filter((surface) => surface.kind !== "vibe")];
+    // A retained Vibe already appears in the recency list. Pin other explicitly retained
+    // windows before the shortcuts so the immediately previous Vibes index cannot be clipped
+    // behind an already-full MRU rail.
+    return [...background.filter((surface) => surface.kind !== "vibe"), ...recentVibes];
   }, [background, focused, recentVibeUuids, vibeCatalogLoaded, vibeTitles]);
-  const visibleDockRailItems = Math.min(dockRailSurfaces.length, DOCK_RAIL_VISIBLE_ITEMS);
+  const retainedDockRailItems = dockRailSurfaces.filter(
+    (surface) => surface.kind !== "vibe",
+  ).length;
+  // Retained windows do not consume the three visible MRU Vibe slots. Additional Vibes remain
+  // available through the scrollbar-free horizontal rail.
+  const visibleDockRailItems = Math.min(
+    dockRailSurfaces.length,
+    retainedDockRailItems + DOCK_RAIL_VISIBLE_VIBE_ITEMS,
+  );
   // Match the tray's active-app transition: an explicit width avoids intrinsic flex reflow
   // moving the launcher in the opposite direction while the active-app reserve animates.
   const dockRailWidth =
