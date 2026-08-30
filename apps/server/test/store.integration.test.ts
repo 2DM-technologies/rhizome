@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -13,6 +14,10 @@ import S3rver from "s3rver";
 import { v7 as uuidv7 } from "uuid";
 
 import { CredentialedSourceCatalog } from "../../ingest/connected-sources/types.ts";
+import {
+  PublicRemoteSourceCatalog,
+  type PublicRemoteSourceSkill,
+} from "../../ingest/public-sources/types.ts";
 import {
   SIMPLEFIN_CONNECTOR_VERSION,
   SIMPLEFIN_PARSER_NAME,
@@ -70,6 +75,7 @@ const compromisedSetupToken = Buffer.from(
 const simpleFinRequests: Request[] = [];
 const simpleFinAccountResponses: Uint8Array[] = [];
 const simpleFinAccountFetches: Array<() => Promise<Uint8Array>> = [];
+const syntheticPublicSourceSkill = createSyntheticPublicSourceSkill();
 
 beforeAll(async () => {
   await client.unsafe(`
@@ -138,6 +144,9 @@ beforeAll(async () => {
         },
       }),
     ]),
+    publicRemoteSources: new PublicRemoteSourceCatalog({
+      current: [syntheticPublicSourceSkill],
+    }),
   });
   app = created.app;
   await seedDb(db);
@@ -1578,6 +1587,132 @@ describe("rNet M1 store", () => {
     });
   });
 
+  test("runs a registered public-remote skill generically and preserves ordered elements", async () => {
+    const sourceResponse = await request("/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: owner,
+      json: {
+        skill_id: "synthetic-public",
+        config: { url: "https://synthetic-public.test/ordered-board/" },
+      },
+    });
+    expect(sourceResponse.status).toBe(201);
+    const source = (await sourceResponse.json()) as IngestionSourceDocument;
+    expect(source).toMatchObject({
+      kind: "remote",
+      skill_id: "synthetic-public",
+      connector_version: "synthetic-public-connector@1.0.0",
+      parser: "synthetic-public",
+      parser_version: "synthetic-public@1.0.0",
+      config: { url: "https://synthetic-public.test/ordered-board" },
+    });
+
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Generic public source" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibe = (await vibeResponse.json()) as { uri: string };
+    const targetVibeId = vibe.uri.split("/").at(-1)!;
+    const objectsBeforePreview = await mediaObjectCount();
+
+    const previewResponse = await request(`/rnet/v0/vibes/${targetVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+    const result = preview.result as {
+      candidates: MediaObject[];
+      elements: Array<{
+        uri: string;
+        role: string;
+        kind: string;
+        mime: string;
+        byte_size: number;
+        content_hash: string;
+        preview_url: string;
+      }>;
+      verify: { ok: boolean; candidate_count: number; checks: unknown[] };
+    };
+    expect(result.verify).toMatchObject({ ok: true, candidate_count: 2 });
+    expect(result.candidates.map(({ keys }) => keys?.synthetic_item_id)).toEqual([
+      "item-z",
+      "item-a",
+    ]);
+    expect(result.candidates.map(({ source }) => source.properties.position)).toEqual([20, 10]);
+    expect(result.elements).toHaveLength(2);
+    expect(result.elements.map(({ role, kind, mime }) => ({ role, kind, mime }))).toEqual([
+      { role: "title", kind: "text", mime: "text/plain" },
+      { role: "title", kind: "text", mime: "text/plain" },
+    ]);
+    expect(result.candidates.map(({ elements }) => elements[0])).toEqual(
+      result.elements.map(({ uri }) => uri),
+    );
+    expect(await mediaObjectCount()).toBe(objectsBeforePreview);
+    expect(await sourceBindingCount(source.source)).toBe(0);
+
+    const firstPreviewBytes = await app.request(result.elements[0]!.preview_url, {
+      headers: owner,
+    });
+    const secondPreviewBytes = await app.request(result.elements[1]!.preview_url, {
+      headers: owner,
+    });
+    expect(await firstPreviewBytes.text()).toBe("Zeta stays first");
+    expect(await secondPreviewBytes.text()).toBe("Alpha stays second");
+
+    const confirmResponse = await request(
+      `/rnet/v0/vibes/${targetVibeId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirmResponse.status).toBe(200);
+    const confirmed = (await confirmResponse.json()) as {
+      objects: string[];
+      pull: { sources: string[] };
+    };
+    expect(confirmed.objects).toEqual(result.candidates.map(({ uri }) => uri));
+    expect(confirmed.pull.sources).toContain(source.source);
+    expect(await sourceBindingCount(source.source)).toBe(2);
+    expect(await mediaObjectCount()).toBe(objectsBeforePreview + 2);
+
+    for (const [index, candidate] of result.candidates.entries()) {
+      const objectResponse = await request(`/rnet/v0/objects/${candidate.uri.split("/").at(-1)}`, {
+        headers: owner,
+      });
+      expect(objectResponse.status).toBe(200);
+      const committed = (await objectResponse.json()) as MediaObject;
+      expect(committed.keys?.synthetic_item_id).toBe(index === 0 ? "item-z" : "item-a");
+      const elementResponse = await request(
+        `/rnet/v0/elements/${committed.elements[0]!.split("/").at(-1)}/bytes`,
+        { headers: owner },
+      );
+      expect(await elementResponse.text()).toBe(
+        index === 0 ? "Zeta stays first" : "Alpha stays second",
+      );
+    }
+
+    const repeatResponse = await request(`/rnet/v0/vibes/${targetVibeId}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    expect(repeatResponse.status).toBe(202);
+    const repeat = await waitForOperation(await repeatResponse.json(), owner);
+    expect(repeat.status).toBe("done");
+    expect(repeat.result).toMatchObject({
+      candidate_count: 2,
+      duplicate_count: 2,
+      created_count: 0,
+      added_count: 0,
+    });
+    expect(await sourceBindingCount(source.source)).toBe(2);
+    expect(await mediaObjectCount()).toBe(objectsBeforePreview + 2);
+    expect(await connectedFetches(sourceUuid(source.source), "committed")).toHaveLength(2);
+  });
+
   test("reuses a confirmed source within and across Vibes without partial derived state", async () => {
     const fixture = await createCsvSourceFixture("repeat-review.csv");
     const firstVibeResponse = await request("/rnet/v0/vibes", {
@@ -2471,6 +2606,180 @@ describe("rNet M1 store", () => {
     expect(audit[0]?.revoked).toBe(true);
   });
 });
+
+interface SyntheticPublicCapture {
+  version: "synthetic-public-capture@1";
+  items: Array<{
+    id: string;
+    position: number;
+    title: string;
+  }>;
+}
+
+function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
+  const capture: SyntheticPublicCapture = {
+    version: "synthetic-public-capture@1",
+    items: [
+      { id: "item-z", position: 20, title: "Zeta stays first" },
+      { id: "item-a", position: 10, title: "Alpha stays second" },
+    ],
+  };
+  const captureBytes = new TextEncoder().encode(JSON.stringify(capture));
+  return {
+    skillId: "synthetic-public",
+    displayName: "Synthetic public board",
+    manifest: {
+      skill_id: "synthetic-public",
+      label: "Synthetic public board",
+      description: "Exercises the generic public-remote ingestion contract in store tests.",
+      source_kind: "public_remote",
+      connector_version: "synthetic-public-connector@1.0.0",
+      parser: { name: "synthetic-public", version: "synthetic-public@1.0.0" },
+      input_fields: [
+        {
+          name: "url",
+          label: "Public board URL",
+          target: "source",
+          control: "url",
+          required: true,
+          secret: false,
+        },
+      ],
+      review_actions: ["review_import", "refresh_source"],
+    },
+    parser: {
+      name: "synthetic-public",
+      version: "synthetic-public@1.0.0",
+      async parse(bytes) {
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        if (text !== new TextDecoder().decode(captureBytes)) {
+          throw new Error("Synthetic public capture changed");
+        }
+        return parseSyntheticPublicCapture(JSON.parse(text));
+      },
+    },
+    fetchPolicy: { attempts: 100, windowHours: 1 },
+    networkPolicy: {
+      capabilities: [{ kind: "safe_public_https" }],
+    },
+    capture: {
+      mime: "application/json",
+      label(config, fetchUuid) {
+        parseSyntheticPublicConfig(config);
+        return `synthetic-public-${fetchUuid}.json`;
+      },
+    },
+    normalizeConfig(input) {
+      return parseSyntheticPublicConfig(input);
+    },
+    parseConfig(value) {
+      return parseSyntheticPublicConfig(value);
+    },
+    stateDigest(config) {
+      return {
+        version: "synthetic-public-state@1",
+        url: parseSyntheticPublicConfig(config).url,
+      };
+    },
+    async retrieve(config) {
+      parseSyntheticPublicConfig(config);
+      return captureBytes.slice();
+    },
+    verify(parsed, config) {
+      parseSyntheticPublicConfig(config);
+      const value = parseSyntheticPublicCapture(parsed);
+      const ordered = value.items.map(({ position }) => position).join(",") === "20,10";
+      return {
+        ok: ordered,
+        candidate_count: value.items.length,
+        checks: [
+          {
+            name: "provider_order",
+            ok: ordered,
+            detail: ordered ? "Provider order is preserved" : "Provider order changed",
+          },
+        ],
+      };
+    },
+    candidates(parsed, config) {
+      parseSyntheticPublicConfig(config);
+      return parseSyntheticPublicCapture(parsed).items.map((item) => {
+        const bytes = new TextEncoder().encode(item.title);
+        return {
+          type: "synthetic.note",
+          keys: { synthetic_item_id: item.id },
+          sourceProperties: { title: item.title, position: item.position },
+          retrievedAt: "2026-08-30T12:00:00.000Z",
+          elements: [
+            {
+              role: "title" as const,
+              kind: "text" as const,
+              mime: "text/plain",
+              bytes,
+              byteSize: bytes.byteLength,
+              contentHash: sha256(bytes),
+            },
+          ],
+        };
+      });
+    },
+  };
+}
+
+function parseSyntheticPublicConfig(value: unknown): { url: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Synthetic public config must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length !== 1 || typeof record.url !== "string") {
+    throw new Error("Synthetic public config accepts only url");
+  }
+  let url: URL;
+  try {
+    url = new URL(record.url);
+  } catch {
+    throw new Error("Synthetic public URL is invalid");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "synthetic-public.test" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error("Synthetic public URL is outside its test boundary");
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+  return { url: url.toString() };
+}
+
+function parseSyntheticPublicCapture(value: unknown): SyntheticPublicCapture {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Synthetic public capture is invalid");
+  }
+  const capture = value as Partial<SyntheticPublicCapture>;
+  if (
+    capture.version !== "synthetic-public-capture@1" ||
+    !Array.isArray(capture.items) ||
+    capture.items.length !== 2 ||
+    capture.items.some(
+      (item) =>
+        !item ||
+        typeof item.id !== "string" ||
+        !Number.isSafeInteger(item.position) ||
+        typeof item.title !== "string",
+    )
+  ) {
+    throw new Error("Synthetic public capture is invalid");
+  }
+  return capture as SyntheticPublicCapture;
+}
+
+function sha256(bytes: Uint8Array): `sha256:${string}` {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
 
 async function request(
   path: string,

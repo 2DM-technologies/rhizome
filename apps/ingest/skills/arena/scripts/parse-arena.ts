@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { ARENA_CHANNEL_SLUG_MAX_LENGTH } from "../../../../../packages/store-contract/src/arena.ts";
-import { ARENA_PARSER_NAME } from "../../../../../packages/store-contract/src/ingestion.ts";
+import { ARENA_CHANNEL_SLUG_MAX_LENGTH, ARENA_PARSER_NAME } from "../contracts.ts";
 
 export const ARENA_CAPTURE_VERSION = "arena-capture@1" as const;
-export const ARENA_PARSER_VERSION = "arena@1.1.0" as const;
+export const ARENA_PARSER_VERSION = "arena@1.2.0" as const;
 
 export type ArenaBlockType = "Text" | "Image" | "Attachment" | "Link" | "Embed";
 export type ArenaElementKind = "text" | "image" | "audio" | "video" | "document";
@@ -112,7 +111,7 @@ interface ParsedImageDescriptor {
   width?: number;
   height?: number;
   altText?: string;
-  approvedCaptureUrls: Set<string>;
+  declaredCaptureUrls: Set<string>;
 }
 
 interface AssetEntry {
@@ -142,11 +141,6 @@ const DOCUMENT_MIMES = new Set([
   "text/plain",
   "text/rtf",
 ]);
-const APPROVED_ASSET_HOSTS = new Set([
-  "attachments.are.na",
-  "d2w9rnfcy7mm78.cloudfront.net",
-  "images.are.na",
-]);
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export const arenaParser: ArenaParser = {
@@ -168,6 +162,11 @@ export function parseArenaCapture(bytes: Uint8Array): ParsedArenaChannel {
   const channelSlug = requiredString(channel.slug, "Are.na channel slug");
   if (!SLUG.test(channelSlug) || channelSlug !== channelUrl.slug) {
     throw new Error("Are.na channel response does not match the captured channel URL");
+  }
+  const channelOwner = objectValue(channel.owner, "Are.na channel owner");
+  const channelOwnerSlug = requiredString(channelOwner.slug, "Are.na channel owner slug");
+  if (!SLUG.test(channelOwnerSlug) || channelOwnerSlug !== channelUrl.ownerSlug) {
+    throw new Error("Are.na channel owner does not match the captured channel URL");
   }
   const channelTitle = requiredString(channel.title, "Are.na channel title");
   if (channel.state !== "available") throw new Error("Are.na channel is unavailable");
@@ -413,7 +412,7 @@ function parseBlock(
     rejectUnexpectedAssets(assets, blockId, label);
   } else if (blockType === "Attachment") {
     const attachment = objectValue(block.attachment, `${label} attachment`);
-    const attachmentUrl = approvedAssetUrl(
+    const attachmentUrl = canonicalAssetUrl(
       requiredHttpsUrl(attachment.url, `${label} attachment URL`),
       `${label} attachment URL`,
     );
@@ -613,8 +612,8 @@ function parseAssets(values: CapturedArenaAsset[]): Map<string, AssetEntry> {
     const label = `Are.na capture asset ${index + 1}`;
     const key = assetKey(asset.block_id, asset.role);
     if (assets.has(key)) throw new Error(`${label} duplicates ${key}`);
-    const requestedUrl = approvedAssetUrl(asset.requested_url, `${label} requested URL`);
-    const url = approvedAssetUrl(asset.url, `${label} response URL`);
+    const requestedUrl = canonicalAssetUrl(asset.requested_url, `${label} requested URL`);
+    const url = canonicalAssetUrl(asset.url, `${label} response URL`);
     const redirects = validateAssetRedirects(asset.redirects, requestedUrl, url, label);
     const mime = normalizedMime(asset.content_type, `${label} content type`);
     const bytes = decodeBase64(asset.body_base64, `${label} body`);
@@ -646,7 +645,7 @@ function validateAssetRedirects(
     if (!REDIRECT_STATUSES.has(redirect.status)) {
       throw new Error(`${redirectLabel} has an invalid status`);
     }
-    const fromUrl = approvedAssetUrl(redirect.from_url, `${redirectLabel} from_url`);
+    const fromUrl = canonicalAssetUrl(redirect.from_url, `${redirectLabel} from_url`);
     if (fromUrl !== currentUrl) {
       throw new Error(`${redirectLabel} does not continue the captured redirect chain`);
     }
@@ -656,7 +655,7 @@ function validateAssetRedirects(
     } catch {
       throw new Error(`${redirectLabel} has an invalid location`);
     }
-    const toUrl = approvedAssetUrl(redirect.to_url, `${redirectLabel} to_url`);
+    const toUrl = canonicalAssetUrl(redirect.to_url, `${redirectLabel} to_url`);
     if (canonicalUrl(resolved.toString()) !== toUrl) {
       throw new Error(`${redirectLabel} location does not resolve to its captured target`);
     }
@@ -693,16 +692,17 @@ function parseUser(value: unknown, label: string): ParsedUser {
 function parseImage(value: unknown, label: string): ParsedImageDescriptor {
   const image = objectValue(value, `${label} image`);
   const originalUrl = requiredHttpsUrl(image.src, `${label} original image URL`);
-  const approvedCaptureUrls = new Set<string>();
-  if (isApprovedAssetUrl(originalUrl)) approvedCaptureUrls.add(canonicalUrl(originalUrl));
+  const declaredCaptureUrls = new Set<string>([
+    canonicalAssetUrl(originalUrl, `${label} original image URL`),
+  ]);
   for (const version of ["small", "medium", "large", "square"] as const) {
     const rendition = objectValue(image[version], `${label} ${version} image`);
     for (const key of ["src", "src_2x"] as const) {
-      const url = approvedAssetUrl(
+      const url = canonicalAssetUrl(
         requiredHttpsUrl(rendition[key], `${label} ${version} ${key}`),
         `${label} ${version} ${key}`,
       );
-      approvedCaptureUrls.add(url);
+      declaredCaptureUrls.add(url);
     }
   }
   const originalMime =
@@ -730,7 +730,7 @@ function parseImage(value: unknown, label: string): ParsedImageDescriptor {
     ...(optionalNonemptyString(image.alt_text, `${label} image alt text`)
       ? { altText: image.alt_text as string }
       : {}),
-    approvedCaptureUrls,
+    declaredCaptureUrls,
   };
 }
 
@@ -741,8 +741,8 @@ function optionalImage(value: unknown, label: string): ParsedImageDescriptor | u
 
 function assertImageAsset(entry: AssetEntry, image: ParsedImageDescriptor, label: string): void {
   const requestedUrl = canonicalUrl(entry.asset.requested_url);
-  if (!image.approvedCaptureUrls.has(requestedUrl)) {
-    throw new Error(`${label} captured image URL does not match an approved block rendition`);
+  if (!image.declaredCaptureUrls.has(requestedUrl)) {
+    throw new Error(`${label} captured image URL does not match a declared block rendition`);
   }
   const mime = normalizedMime(entry.asset.content_type, label);
   if (!mime.startsWith("image/")) throw new Error(`${label} captured asset is not an image`);
@@ -895,7 +895,7 @@ function decodeBase64(value: string, label: string): Uint8Array {
   return new Uint8Array(buffer);
 }
 
-function normalizeChannelUrl(value: string): { url: string; slug: string } {
+function normalizeChannelUrl(value: string): { url: string; ownerSlug: string; slug: string } {
   let url: URL;
   try {
     url = new URL(value);
@@ -917,7 +917,11 @@ function normalizeChannelUrl(value: string): { url: string; slug: string } {
   if (segments.length !== 2 || !SLUG.test(segments[0] ?? "") || !SLUG.test(segments[1] ?? "")) {
     throw new Error("Are.na capture channel URL must be /owner/channel-slug");
   }
-  return { url: `https://www.are.na/${segments[0]}/${segments[1]}`, slug: segments[1]! };
+  return {
+    url: `https://www.are.na/${segments[0]}/${segments[1]}`,
+    ownerSlug: segments[0]!,
+    slug: segments[1]!,
+  };
 }
 
 function assertApiResponseUrl(value: string, kind: "channel", channelLocator: string): void;
@@ -970,26 +974,13 @@ function assertApiResponseUrl(
   return sort === "position_desc" ? "desc" : "asc";
 }
 
-function approvedAssetUrl(value: string, label: string): string {
+function canonicalAssetUrl(value: string, label: string): string {
   const url = requiredHttpsUrl(value, label);
-  if (!isApprovedAssetUrl(url)) throw new Error(`${label} is not on an approved Are.na asset host`);
-  return canonicalUrl(url);
-}
-
-function isApprovedAssetUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      APPROVED_ASSET_HOSTS.has(url.hostname) &&
-      !url.username &&
-      !url.password &&
-      !url.port &&
-      !url.hash
-    );
-  } catch {
-    return false;
+  const parsed = new URL(url);
+  if (parsed.port || parsed.hash) {
+    throw new Error(`${label} must be a canonical HTTPS asset URL`);
   }
+  return canonicalUrl(parsed.toString());
 }
 
 function canonicalUrl(value: string): string {

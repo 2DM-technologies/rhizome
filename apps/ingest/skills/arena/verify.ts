@@ -6,7 +6,7 @@ import type {
   ParsedArenaBlock,
   ParsedArenaChannel,
   ParsedArenaElement,
-} from "../skills/arena/scripts/parse-arena.ts";
+} from "./scripts/parse-arena.ts";
 
 export type ArenaVerifyCheckName =
   | "non_empty"

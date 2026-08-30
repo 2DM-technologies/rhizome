@@ -5,6 +5,7 @@ import {
 
 import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
 import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
+import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { Database } from "../db/index.ts";
 import {
   IngestionSourcesService,
@@ -20,6 +21,7 @@ export function createIngestionSourceRoutes(
   db: Database,
   fileSources: FileSourceCatalog,
   credentialedSources: CredentialedSourceCatalog,
+  publicRemoteSources: PublicRemoteSourceCatalog,
 ) {
   const router = createRhizomeRouter();
   router.post(
@@ -42,6 +44,7 @@ export function createIngestionSourceRoutes(
         actor: context.get("actor"),
         fileSources,
         credentialedSources,
+        publicRemoteSources,
       });
       const source = await service.create(context.req.valid("json"));
       return context.json(serializeIngestionSource(source), 201);

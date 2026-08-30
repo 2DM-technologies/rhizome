@@ -7,6 +7,7 @@ import { v7 as uuidv7 } from "uuid";
 
 import { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
 import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
+import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { Database } from "../db/index.ts";
 import {
   ingestionSources,
@@ -25,30 +26,26 @@ export class IngestionSourcesService {
   private readonly actor: ServiceContext["actor"];
   private readonly credentialedSources: CredentialedSourceCatalog;
   private readonly fileSources: FileSourceCatalog;
+  private readonly publicRemoteSources: PublicRemoteSourceCatalog;
 
   constructor(
     context: ServiceContext & {
       credentialedSources: CredentialedSourceCatalog;
       fileSources: FileSourceCatalog;
+      publicRemoteSources: PublicRemoteSourceCatalog;
     },
   ) {
     this.db = context.db;
     this.actor = context.actor;
     this.credentialedSources = context.credentialedSources;
     this.fileSources = context.fileSources;
+    this.publicRemoteSources = context.publicRemoteSources;
   }
 
   async create(input: CreateIngestionSourceRequest): Promise<DbIngestionSource> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     if ("credential" in input) return this.createCredentialSource(input);
-    if (!("origin" in input)) {
-      throw new Problem(
-        422,
-        "parser_unsupported",
-        "Source kind unsupported",
-        "This store supports pinned file sources",
-      );
-    }
+    if (!("origin" in input)) return this.createPublicRemoteSource(input);
 
     const skill = this.fileSources.forSkillId(input.skill_id);
     if (!skill) {
@@ -73,6 +70,43 @@ export class IngestionSourcesService {
       parser: skill.parser.name,
       parserVersion: skill.parser.version,
       originUuid,
+    };
+    const [source] = await this.db.insert(ingestionSources).values(candidate).returning();
+    if (!source) throw new Error("Ingestion source insert did not return a row");
+    return source;
+  }
+
+  private async createPublicRemoteSource(
+    input: Extract<CreateIngestionSourceRequest, { skill_id: string; config: object }>,
+  ): Promise<DbIngestionSource> {
+    if (this.actor.kind !== "user") throw grantMissing("owner");
+    const skill = this.publicRemoteSources.currentForSkillId(input.skill_id);
+    if (!skill) {
+      throw new Problem(422, "parser_unsupported", "Source skill unsupported", input.skill_id);
+    }
+    let config: JsonObject;
+    try {
+      config = storedConfig(skill.normalizeConfig(input.config));
+      skill.parseConfig(config);
+    } catch (error) {
+      throw new Problem(
+        422,
+        "schema_violation",
+        "Source configuration invalid",
+        error instanceof Error
+          ? error.message
+          : `${skill.displayName} source configuration is invalid`,
+      );
+    }
+    const candidate: NewDbIngestionSource = {
+      uuid: uuidv7(),
+      ownerUuid: this.actor.uuid,
+      kind: "remote",
+      skillId: skill.manifest.skill_id,
+      connectorVersion: skill.manifest.connector_version,
+      parser: skill.parser.name,
+      parserVersion: skill.parser.version,
+      config,
     };
     const [source] = await this.db.insert(ingestionSources).values(candidate).returning();
     if (!source) throw new Error("Ingestion source insert did not return a row");
@@ -162,6 +196,28 @@ export class IngestionSourcesService {
 }
 
 export function serializeIngestionSource(source: DbIngestionSource): IngestionSourceDocument {
+  if (source.kind === "remote") {
+    if (
+      source.originUuid ||
+      source.credentialUuid ||
+      !source.skillId ||
+      !source.connectorVersion ||
+      !source.parser ||
+      !source.config
+    ) {
+      throw new Error("Public-remote ingestion source is internally inconsistent");
+    }
+    return {
+      source: `source:${source.uuid}`,
+      kind: "remote",
+      skill_id: source.skillId,
+      connector_version: source.connectorVersion,
+      parser: source.parser,
+      parser_version: source.parserVersion,
+      config: source.config,
+      created_at: source.createdAt.toISOString(),
+    };
+  }
   if (source.kind === "credential") {
     if (
       !source.credentialUuid ||

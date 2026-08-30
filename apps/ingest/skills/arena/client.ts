@@ -1,7 +1,19 @@
-import { ARENA_CHANNEL_SLUG_MAX_LENGTH } from "@rhizome/store-contract";
+import type { PublicAssetFetcher, PublicAssetFetchResult } from "../../public-sources/types.ts";
 
-const ARENA_API_ORIGIN = "https://api.are.na";
-const ARENA_WEB_ORIGIN = "https://www.are.na";
+import {
+  normalizeArenaChannelLocator,
+  type ArenaChannelLocator,
+  type ArenaSourceConfig,
+} from "./contracts.ts";
+import {
+  ARENA_CAPTURE_VERSION,
+  type ArenaCaptureV1,
+  type CapturedArenaAsset,
+  type CapturedArenaResponse,
+} from "./scripts/parse-arena.ts";
+
+export const ARENA_API_ORIGIN = "https://api.are.na" as const;
+
 const CONTENTS_PER_PAGE = 100;
 const DEFAULT_MAX_API_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MAX_ASSET_BYTES = 10 * 1024 * 1024;
@@ -10,21 +22,16 @@ const DEFAULT_MAX_PAGES = 25;
 const DEFAULT_MAX_BLOCKS = 200;
 const DEFAULT_MAX_REDIRECTS = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-
-const ASSET_HOSTS = new Set([
-  "attachments.are.na",
-  "d2w9rnfcy7mm78.cloudfront.net",
-  "images.are.na",
-]);
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const BLOCK_TYPES = new Set(["Attachment", "Embed", "Image", "Link", "Text"]);
-const CHANNEL_SLUG = new RegExp(`^[a-z0-9][a-z0-9-]{0,${ARENA_CHANNEL_SLUG_MAX_LENGTH - 1}}$`);
 const MIME = /^[a-z]+\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
 
-export type ArenaFetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type ArenaApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface ArenaClientOptions {
-  fetch?: ArenaFetchLike;
+  /** Required shared adapter; there is no direct arbitrary-asset egress fallback. */
+  assetFetch: PublicAssetFetcher;
+  /** Fixed-origin JSON transport; useful for tests and server-owned API policy wrappers. */
+  apiFetch?: ArenaApiFetch;
   maxApiResponseBytes?: number;
   maxAssetBytes?: number;
   maxBlocks?: number;
@@ -38,7 +45,7 @@ export interface ArenaClientOptions {
 export class ArenaClientError extends Error {
   constructor(
     readonly kind:
-      | "invalid_channel_slug"
+      | "invalid_channel_url"
       | "invalid_response"
       | "limit_exceeded"
       | "provider_rejected"
@@ -52,45 +59,21 @@ export class ArenaClientError extends Error {
   }
 }
 
-interface CapturedResponse {
-  url: string;
-  content_type: string;
-  body_base64: string;
-}
-
-interface CapturedAsset extends CapturedResponse {
-  block_id: number;
-  redirects: CapturedAssetRedirect[];
-  requested_url: string;
-  role: "content" | "preview";
-}
-
-interface CapturedAssetRedirect {
-  status: number;
-  from_url: string;
-  location: string;
-  to_url: string;
-}
-
 interface FetchedBytes {
-  bytes: Uint8Array;
-  contentType: string;
-}
-
-interface FetchedAssetBytes extends FetchedBytes {
-  finalUrl: string;
-  redirects: CapturedAssetRedirect[];
-  requestedUrl: string;
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
 }
 
 type JsonRecord = Record<string, unknown>;
 
 /**
- * Fetches the deliberately narrow public Are.na surface and frames every response byte needed by
- * the deterministic parser. It never follows links or executes embed HTML.
+ * Reads the narrow, unauthenticated Are.na API and frames a deterministic capture. The supplied
+ * page URL is only a locator. API requests stay pinned to api.are.na; provider-declared assets are
+ * delegated to the injected safe-public-fetch boundary.
  */
 export class ArenaClient {
-  readonly #fetch: ArenaFetchLike;
+  readonly #apiFetch: ArenaApiFetch;
+  readonly #assetFetch: PublicAssetFetcher;
   readonly #maxApiResponseBytes: number;
   readonly #maxAssetBytes: number;
   readonly #maxBlocks: number;
@@ -100,8 +83,9 @@ export class ArenaClient {
   readonly #now: () => Date;
   readonly #requestTimeoutMs: number;
 
-  constructor(options: ArenaClientOptions = {}) {
-    this.#fetch = options.fetch ?? globalThis.fetch;
+  constructor(options: ArenaClientOptions) {
+    this.#apiFetch = options.apiFetch ?? globalThis.fetch;
+    this.#assetFetch = options.assetFetch;
     this.#maxApiResponseBytes = positiveInteger(
       options.maxApiResponseBytes ?? DEFAULT_MAX_API_RESPONSE_BYTES,
       "maxApiResponseBytes",
@@ -127,8 +111,16 @@ export class ArenaClient {
     );
   }
 
-  async fetchChannelCapture(channelSlug: string): Promise<Uint8Array> {
-    const slug = normalizeChannelSlug(channelSlug);
+  async fetchChannelCapture(config: ArenaSourceConfig | string): Promise<Uint8Array> {
+    let locator: ArenaChannelLocator;
+    try {
+      locator = normalizeArenaChannelLocator(typeof config === "string" ? config : config.url);
+    } catch (error) {
+      throw new ArenaClientError(
+        "invalid_channel_url",
+        error instanceof Error ? error.message : "Are.na channel URL is invalid",
+      );
+    }
     const retrievedAt = this.#retrievedAt();
 
     return withDeadline(this.#requestTimeoutMs, async (signal) => {
@@ -143,25 +135,26 @@ export class ArenaClient {
         }
       };
 
-      const channelUrl = new URL(`/v3/channels/${slug}`, ARENA_API_ORIGIN);
+      const channelUrl = new URL(
+        `/v3/channels/${encodeURIComponent(locator.channelSlug)}`,
+        ARENA_API_ORIGIN,
+      );
       const channelResponse = await this.#fetchApi(channelUrl, signal);
       accountForBytes(channelResponse.bytes);
       const channelEnvelope = parseJsonObject(channelResponse.bytes, "Are.na channel response");
       const channel = envelopeData(channelEnvelope, "Are.na channel response");
       const returnedSlug = requiredString(channel.slug, "Are.na channel slug");
-      if (returnedSlug !== slug) {
+      if (returnedSlug !== locator.channelSlug) {
         throw invalidResponse("Are.na returned a different channel than requested");
       }
-      if (channel.state !== "available") {
-        throw invalidResponse("Are.na channel is unavailable");
-      }
+      if (channel.state !== "available") throw invalidResponse("Are.na channel is unavailable");
       if (channel.visibility !== "public" && channel.visibility !== "closed") {
         throw invalidResponse("Are.na channel is not publicly readable");
       }
       const owner = record(channel.owner, "Are.na channel owner");
       const ownerSlug = requiredString(owner.slug, "Are.na channel owner slug");
-      if (!CHANNEL_SLUG.test(ownerSlug)) {
-        throw invalidResponse("Are.na channel owner slug is invalid");
+      if (ownerSlug !== locator.ownerSlug) {
+        throw invalidResponse("Are.na returned a channel owned by a different user");
       }
       const counts = record(channel.counts, "Are.na channel counts");
       const declaredBlocks = requiredNonnegativeInteger(
@@ -176,33 +169,30 @@ export class ArenaClient {
         counts.contents,
         "Are.na channel content count",
       );
-      if (
-        declaredBlocks + declaredNestedChannels !== declaredContents ||
-        declaredContents > this.#maxBlocks
-      ) {
+      if (declaredBlocks + declaredNestedChannels !== declaredContents) {
+        throw invalidResponse("Are.na channel counts are inconsistent");
+      }
+      if (declaredContents > this.#maxBlocks) {
         throw new ArenaClientError(
-          declaredContents > this.#maxBlocks ? "limit_exceeded" : "invalid_response",
-          declaredContents > this.#maxBlocks
-            ? "Are.na channel exceeded the configured content limit"
-            : "Are.na channel counts are inconsistent",
+          "limit_exceeded",
+          "Are.na channel exceeded the configured content limit",
         );
       }
 
-      const pageResponses: CapturedResponse[] = [];
+      const contentsPages: CapturedArenaResponse[] = [];
       const contentRecords: JsonRecord[] = [];
       let expectedTotalPages: number | undefined;
       let expectedTotalCount: number | undefined;
 
       for (let pageNumber = 1; pageNumber <= this.#maxPages; pageNumber += 1) {
-        const contentsUrl = contentsEndpoint(slug, pageNumber);
+        const contentsUrl = contentsEndpoint(locator.channelSlug, pageNumber);
         const response = await this.#fetchApi(contentsUrl, signal);
         accountForBytes(response.bytes);
         const envelope = parseJsonObject(response.bytes, `Are.na contents page ${pageNumber}`);
-        const data = envelope.data;
-        if (!Array.isArray(data)) {
+        if (!Array.isArray(envelope.data)) {
           throw invalidResponse(`Are.na contents page ${pageNumber} has no data array`);
         }
-        if (data.length > CONTENTS_PER_PAGE) {
+        if (envelope.data.length > CONTENTS_PER_PAGE) {
           throw invalidResponse(`Are.na contents page ${pageNumber} exceeds its page size`);
         }
         const meta = record(envelope.meta, `Are.na contents page ${pageNumber} metadata`);
@@ -243,8 +233,7 @@ export class ArenaClient {
             "Are.na channel exceeded the configured page or content limit",
           );
         }
-
-        for (const [index, value] of data.entries()) {
+        for (const [index, value] of envelope.data.entries()) {
           contentRecords.push(
             record(value, `Are.na contents page ${pageNumber} item ${index + 1}`),
           );
@@ -255,7 +244,7 @@ export class ArenaClient {
             "Are.na channel exceeded the configured content limit",
           );
         }
-        pageResponses.push(captureResponse(contentsUrl, response));
+        contentsPages.push(captureResponse(contentsUrl, response));
         if (!hasMorePages) break;
         if (pageNumber === this.#maxPages) {
           throw new ArenaClientError(
@@ -266,14 +255,14 @@ export class ArenaClient {
       }
 
       if (
-        expectedTotalPages !== pageResponses.length ||
+        expectedTotalPages !== contentsPages.length ||
         expectedTotalCount !== contentRecords.length ||
         declaredContents !== contentRecords.length
       ) {
         throw invalidResponse("Are.na contents count does not match its pagination metadata");
       }
 
-      const assets: CapturedAsset[] = [];
+      const assets: CapturedArenaAsset[] = [];
       const seenContentIds = new Set<number>();
       for (const [index, content] of contentRecords.entries()) {
         const label = `Are.na content ${index + 1}`;
@@ -285,7 +274,6 @@ export class ArenaClient {
         if (content.state !== "available") {
           throw invalidResponse(`Are.na content ${contentId} is unavailable`);
         }
-
         if (content.type === "Channel" || content.base_type === "Channel") continue;
         if (content.base_type !== "Block") {
           throw invalidResponse(`Are.na content ${contentId} has an unknown base type`);
@@ -297,39 +285,48 @@ export class ArenaClient {
         const source = assetSourceForBlock(content, contentId, blockType);
         if (!source) continue;
 
-        const assetUrl = approvedAssetUrl(source.url, `Are.na block ${contentId} asset URL`);
-        const asset = await this.#fetchAsset(assetUrl, signal);
+        const requestedUrl = canonicalPublicAssetUrl(
+          source.url,
+          `Are.na block ${contentId} asset URL`,
+        );
+        const asset = await this.#fetchAsset(requestedUrl, signal);
         accountForBytes(asset.bytes);
-        if (source.role === "preview" || blockType === "Image") {
-          if (!asset.contentType.startsWith("image/")) {
-            throw invalidResponse(`Are.na block ${contentId} asset is not an image`);
-          }
+        if (
+          (source.role === "preview" || blockType === "Image") &&
+          !asset.contentType.startsWith("image/")
+        ) {
+          throw invalidResponse(`Are.na block ${contentId} asset is not an image`);
         }
         assets.push({
-          ...captureResponse(new URL(asset.finalUrl), asset),
+          url: asset.finalUrl,
+          content_type: asset.contentType,
+          body_base64: Buffer.from(asset.bytes).toString("base64"),
           block_id: contentId,
-          redirects: asset.redirects,
+          redirects: [...asset.redirects],
           requested_url: asset.requestedUrl,
           role: source.role,
         });
       }
 
-      const capture = {
-        version: "arena-capture@1",
-        channel_url: `${ARENA_WEB_ORIGIN}/${ownerSlug}/${slug}`,
+      const capture: ArenaCaptureV1 = {
+        version: ARENA_CAPTURE_VERSION,
+        channel_url: locator.canonicalUrl,
         retrieved_at: retrievedAt,
         channel: captureResponse(channelUrl, channelResponse),
-        contents_pages: pageResponses,
+        contents_pages: contentsPages,
         assets,
-      } as const;
+      };
       return new TextEncoder().encode(JSON.stringify(capture));
     });
   }
 
   async #fetchApi(url: URL, signal: AbortSignal): Promise<FetchedBytes> {
+    if (url.origin !== ARENA_API_ORIGIN || !url.pathname.startsWith("/v3/channels/")) {
+      throw new ArenaClientError("unsafe_endpoint", "Are.na API endpoint is outside its boundary");
+    }
     let response: Response;
     try {
-      response = await this.#fetch(url, {
+      response = await this.#apiFetch(url, {
         method: "GET",
         redirect: "error",
         headers: { Accept: "application/json" },
@@ -350,8 +347,7 @@ export class ArenaClient {
         `Are.na API request failed with HTTP ${response.status}`,
       );
     }
-    const responseUrl = response.url;
-    if (responseUrl && responseUrl !== url.toString()) {
+    if (response.url && response.url !== url.toString()) {
       await response.body?.cancel();
       throw new ArenaClientError("unsafe_endpoint", "Are.na API response changed endpoint");
     }
@@ -361,93 +357,54 @@ export class ArenaClient {
       "Are.na API response exceeded the configured byte limit",
       signal,
     );
-    if (result.bytes.byteLength === 0) {
+    if (result.bytes.byteLength === 0)
       throw invalidResponse("Are.na API returned an empty response");
-    }
     if (result.contentType !== "application/json") {
       throw invalidResponse("Are.na API response is not application/json");
     }
     return result;
   }
 
-  async #fetchAsset(initialUrl: URL, signal: AbortSignal): Promise<FetchedAssetBytes> {
-    const requestedUrl = initialUrl.toString();
-    const redirectChain: CapturedAssetRedirect[] = [];
-    let endpoint = initialUrl;
-    for (let redirects = 0; redirects <= this.#maxRedirects; redirects += 1) {
-      let response: Response;
-      try {
-        response = await this.#fetch(endpoint, {
-          method: "GET",
-          redirect: "manual",
-          headers: { Accept: "*/*" },
-          signal,
-        });
-      } catch (error) {
-        if (signal.aborted) throw timeoutError();
-        if (error instanceof ArenaClientError) throw error;
-        throw new ArenaClientError(
-          "provider_rejected",
-          "Are.na asset request could not reach the provider",
-        );
-      }
-      if (REDIRECT_STATUSES.has(response.status)) {
-        await response.body?.cancel();
-        const location = response.headers.get("Location");
-        if (!location || redirects === this.#maxRedirects) {
-          throw new ArenaClientError(
-            "provider_rejected",
-            "Are.na asset returned too many or malformed redirects",
-          );
-        }
-        let redirected: URL;
-        try {
-          redirected = new URL(location, endpoint);
-        } catch {
-          throw new ArenaClientError(
-            "provider_rejected",
-            "Are.na asset returned a malformed redirect",
-          );
-        }
-        const approvedRedirect = approvedAssetUrl(redirected.toString(), "Are.na asset redirect");
-        redirectChain.push({
-          status: response.status,
-          from_url: endpoint.toString(),
-          location,
-          to_url: approvedRedirect.toString(),
-        });
-        endpoint = approvedRedirect;
-        continue;
-      }
-      if (response.status !== 200) {
-        await response.body?.cancel();
-        throw new ArenaClientError(
-          "provider_rejected",
-          `Are.na asset request failed with HTTP ${response.status}`,
-        );
-      }
-      const responseUrl = response.url;
-      if (responseUrl && responseUrl !== endpoint.toString()) {
-        await response.body?.cancel();
-        throw new ArenaClientError("unsafe_endpoint", "Are.na asset response changed endpoint");
-      }
-      const result = await readBoundedResponse(
-        response,
-        this.#maxAssetBytes,
-        "Are.na asset exceeded the configured byte limit",
+  async #fetchAsset(url: string, signal: AbortSignal): Promise<PublicAssetFetchResult> {
+    let result: PublicAssetFetchResult;
+    try {
+      result = await this.#assetFetch({
+        url,
+        accept: "*/*",
         signal,
+        maxBytes: this.#maxAssetBytes,
+        maxRedirects: this.#maxRedirects,
+      });
+    } catch (error) {
+      if (signal.aborted) throw timeoutError();
+      if (error instanceof ArenaClientError) throw error;
+      throw new ArenaClientError(
+        "provider_rejected",
+        "Are.na asset request could not reach the provider",
       );
-      if (result.bytes.byteLength === 0) {
-        throw invalidResponse("Are.na asset response was empty");
-      }
-      return {
-        ...result,
-        finalUrl: endpoint.toString(),
-        redirects: redirectChain,
-        requestedUrl,
-      };
     }
-    throw new ArenaClientError("provider_rejected", "Are.na asset redirect did not resolve");
+    const requestedUrl = canonicalPublicAssetUrl(result.requestedUrl, "Are.na asset request URL");
+    const finalUrl = canonicalPublicAssetUrl(result.finalUrl, "Are.na asset response URL");
+    if (requestedUrl !== url) {
+      throw new ArenaClientError("unsafe_endpoint", "Are.na asset fetch changed its requested URL");
+    }
+    if (result.redirects.length > this.#maxRedirects) {
+      throw new ArenaClientError("limit_exceeded", "Are.na asset exceeded the redirect limit");
+    }
+    if (result.bytes.byteLength === 0) throw invalidResponse("Are.na asset response was empty");
+    if (result.bytes.byteLength > this.#maxAssetBytes) {
+      throw new ArenaClientError(
+        "response_too_large",
+        "Are.na asset exceeded the configured byte limit",
+      );
+    }
+    return {
+      requestedUrl,
+      finalUrl,
+      contentType: normalizedContentType(result.contentType),
+      bytes: result.bytes,
+      redirects: result.redirects,
+    };
   }
 
   #retrievedAt(): string {
@@ -459,18 +416,8 @@ export class ArenaClient {
   }
 }
 
-function normalizeChannelSlug(value: string): string {
-  if (typeof value !== "string" || !CHANNEL_SLUG.test(value)) {
-    throw new ArenaClientError(
-      "invalid_channel_slug",
-      "Are.na channel slug must be lowercase letters, numbers, and hyphens",
-    );
-  }
-  return value;
-}
-
 function contentsEndpoint(slug: string, pageNumber: number): URL {
-  const url = new URL(`/v3/channels/${slug}/contents`, ARENA_API_ORIGIN);
+  const url = new URL(`/v3/channels/${encodeURIComponent(slug)}/contents`, ARENA_API_ORIGIN);
   url.searchParams.set("per", String(CONTENTS_PER_PAGE));
   url.searchParams.set("page", String(pageNumber));
   url.searchParams.set("sort", "position_desc");
@@ -496,47 +443,29 @@ function assetSourceForBlock(
     };
   }
   if (blockType === "Image") {
-    return { role: "content", url: originalImageUrl(block.image, label) };
+    const image = record(block.image, `${label} image`);
+    return { role: "content", url: requiredString(image.src, `${label} original image URL`) };
   }
   if (block.image === undefined || block.image === null) return undefined;
-  return { role: "preview", url: largeImageUrl(block.image, label) };
-}
-
-function originalImageUrl(value: unknown, label: string): string {
-  const image = record(value, `${label} image`);
-  return requiredString(image.src, `${label} original image URL`);
-}
-
-function largeImageUrl(value: unknown, label: string): string {
-  const image = record(value, `${label} image`);
+  const image = record(block.image, `${label} image`);
   const large = record(image.large, `${label} large image`);
-  return requiredString(large.src, `${label} large image URL`);
+  return { role: "preview", url: requiredString(large.src, `${label} large image URL`) };
 }
 
-function approvedAssetUrl(value: string, label: string): URL {
+function canonicalPublicAssetUrl(value: string, label: string): string {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new ArenaClientError("unsafe_endpoint", `${label} is not a valid URL`);
   }
-  if (
-    url.protocol !== "https:" ||
-    !ASSET_HOSTS.has(url.hostname) ||
-    url.username ||
-    url.password ||
-    url.port ||
-    url.hash
-  ) {
-    throw new ArenaClientError(
-      "unsafe_endpoint",
-      `${label} is not on an approved Are.na asset host`,
-    );
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.hash) {
+    throw new ArenaClientError("unsafe_endpoint", `${label} must be a canonical public HTTPS URL`);
   }
-  return url;
+  return url.toString();
 }
 
-function captureResponse(url: URL, response: FetchedBytes): CapturedResponse {
+function captureResponse(url: URL, response: FetchedBytes): CapturedArenaResponse {
   return {
     url: url.toString(),
     content_type: response.contentType,
@@ -568,9 +497,7 @@ function record(value: unknown, label: string): JsonRecord {
 }
 
 function requiredString(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw invalidResponse(`${label} is missing`);
-  }
+  if (typeof value !== "string" || !value.trim()) throw invalidResponse(`${label} is missing`);
   return value;
 }
 
@@ -608,16 +535,11 @@ async function readBoundedResponse(
   const contentType = normalizedContentType(response.headers.get("Content-Type"));
   const contentLength = response.headers.get("Content-Length");
   if (contentLength !== null) {
-    if (!/^\d+$/.test(contentLength)) {
+    if (!/^\d+$/.test(contentLength) || !Number.isSafeInteger(Number(contentLength))) {
       await response.body?.cancel();
       throw invalidResponse("Are.na response has an invalid content length");
     }
-    const declaredSize = Number(contentLength);
-    if (!Number.isSafeInteger(declaredSize)) {
-      await response.body?.cancel();
-      throw invalidResponse("Are.na response has an invalid content length");
-    }
-    if (declaredSize > maximumBytes) {
+    if (Number(contentLength) > maximumBytes) {
       await response.body?.cancel();
       throw new ArenaClientError("response_too_large", message);
     }
@@ -647,7 +569,6 @@ async function readBoundedResponse(
     signal.removeEventListener("abort", cancelOnAbort);
     reader.releaseLock();
   }
-
   const bytes = new Uint8Array(byteLength);
   let offset = 0;
   for (const chunk of chunks) {

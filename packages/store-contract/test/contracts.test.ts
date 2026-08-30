@@ -10,6 +10,7 @@ import {
   createImportPreviewRequestSchema,
   createIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
+  createPublicRemoteIngestionSourceRequestSchema,
   createVibeRequestSchema,
   fileIngestionSourceDocumentSchema,
   credentialIngestionSourceDocumentSchema,
@@ -17,6 +18,7 @@ import {
   mediaObjectsResponseSchema,
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
+  publicRemoteIngestionSourceDocumentSchema,
   setMediaObjectUserRequestSchema,
   reviewImportContinuationRequestSchema,
   sourceActionRequiredSchema,
@@ -115,6 +117,28 @@ describe("shared store schemas", () => {
       type: "string",
       minLength: 1,
     });
+  });
+
+  test("selects public remotes by free-form skill id without provider enums", () => {
+    expect(createIngestionSourceRequestSchema.oneOf).toContain(
+      createPublicRemoteIngestionSourceRequestSchema,
+    );
+    expect(ingestionSourceDocumentSchema.oneOf).toContain(
+      publicRemoteIngestionSourceDocumentSchema,
+    );
+    expect(createPublicRemoteIngestionSourceRequestSchema.required).toEqual(["skill_id", "config"]);
+    expect(createPublicRemoteIngestionSourceRequestSchema.properties).not.toHaveProperty(
+      "provider",
+    );
+    expect(publicRemoteIngestionSourceDocumentSchema.properties).toMatchObject({
+      kind: { const: "remote" },
+      skill_id: { type: "string" },
+      connector_version: { type: "string", minLength: 1 },
+      parser: { type: "string", minLength: 1 },
+      parser_version: { type: "string", minLength: 1 },
+      config: { type: "object" },
+    });
+    expect(publicRemoteIngestionSourceDocumentSchema.properties).not.toHaveProperty("provider");
   });
 
   test("describes source skills and recovery without provider-specific fields", () => {

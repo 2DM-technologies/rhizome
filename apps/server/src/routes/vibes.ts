@@ -12,6 +12,7 @@ import { UUIDV7_PATTERN } from "@rnet/types/patterns";
 
 import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
 import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
+import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
@@ -63,6 +64,7 @@ export function createVibeRoutes(
     credentialedSources: CredentialedSourceCatalog;
     credentialCrypto: SourceCredentialCrypto;
     fileSources: FileSourceCatalog;
+    publicRemoteSources: PublicRemoteSourceCatalog;
   },
 ) {
   const router = createRhizomeRouter();

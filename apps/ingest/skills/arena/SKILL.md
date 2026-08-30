@@ -1,6 +1,6 @@
 # Are.na v3 channel ingestion
 
-Version: `arena@1.1.0`
+Version: `arena@1.2.0`
 
 The parser accepts one UTF-8 JSON `arena-capture@1` OriginArtifact. The capture is a framed,
 self-contained record of a public Are.na v3 channel fetch: exact channel-response bytes, ordered
@@ -24,12 +24,12 @@ Payload mapping is closed and deterministic:
   the canonical block title. If Are.na omits the title, the parser's deterministic fallback title
   is used. Its role is `title`, and it is always first.
 - `Text`: original Markdown UTF-8 bytes → one `text` / `text/markdown` content element.
-- `Image`: captured original Are.na asset → one `image` content element. Resized renditions are
+- `Image`: captured original provider-declared asset → one `image` content element. Resized renditions are
   accepted only as `Link` or `Embed` previews.
 - `Attachment`: captured attachment URL → one content element; validated MIME selects
   `image`, `audio`, `video`, or `document`.
 - `Link` and `Embed`: destination URLs remain source properties. They produce no destination
-  payload. A non-null Are.na image descriptor requires exactly one captured `image` preview
+  payload. A non-null Are.na image descriptor requires exactly one safely-fetched `image` preview
   element.
 
 Provider HTML and extracted Link content are not elements and are not copied into source

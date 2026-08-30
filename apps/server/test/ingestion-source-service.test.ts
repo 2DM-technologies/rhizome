@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { getTableConfig } from "drizzle-orm/pg-core";
 
 import { CredentialedSourceCatalog } from "../../ingest/connected-sources/types.ts";
+import {
+  PublicRemoteSourceCatalog,
+  type PublicRemoteSourceSkill,
+} from "../../ingest/public-sources/types.ts";
 import { SIMPLEFIN_CONNECTOR_VERSION } from "../../ingest/skills/simplefin/contracts.ts";
 import { createSimpleFinSkill } from "../../ingest/skills/simplefin/source.ts";
 import { installedFileSourceSkills } from "../../ingest/src/source-skill-catalog.ts";
@@ -20,6 +24,10 @@ const originUuid = "0198f2a1-a001-7a01-8001-000000000001";
 const sourceUuid = "0198f2a1-a002-7a02-8002-000000000002";
 const credentialUuid = "0198f2a1-a003-7a03-8003-000000000003";
 const noCredentialedSources = new CredentialedSourceCatalog([]);
+const noPublicRemoteSources = new PublicRemoteSourceCatalog({ current: [] });
+const syntheticPublicSources = new PublicRemoteSourceCatalog({
+  current: [syntheticPublicSkill()],
+});
 const simpleFinSources = new CredentialedSourceCatalog([
   createSimpleFinSkill({ allowedHosts: ["bridge.simplefin.test"] }),
 ]);
@@ -100,6 +108,56 @@ describe("ingestion sources", () => {
     });
   });
 
+  test("serializes a public remote without exposing provider-specific protocol fields", () => {
+    expect(
+      serializeIngestionSource(
+        source({
+          kind: "remote",
+          skillId: "synthetic_public",
+          connectorVersion: "synthetic-public-connector@1",
+          parser: "synthetic-public",
+          parserVersion: "synthetic-public@1",
+          originUuid: null,
+          config: { locator: "https://public.example.test/feed" },
+        }),
+      ),
+    ).toEqual({
+      source: `source:${sourceUuid}`,
+      kind: "remote",
+      skill_id: "synthetic_public",
+      connector_version: "synthetic-public-connector@1",
+      parser: "synthetic-public",
+      parser_version: "synthetic-public@1",
+      config: { locator: "https://public.example.test/feed" },
+      created_at: "2026-08-29T12:00:00.000Z",
+    });
+  });
+
+  test("normalizes public-source input and pins its registered implementation", async () => {
+    let inserted: Record<string, unknown> | undefined;
+    const service = ownedService(
+      databaseWithOrigin(origin(), (candidate) => {
+        inserted = candidate;
+      }),
+      noCredentialedSources,
+      syntheticPublicSources,
+    );
+
+    await service.create({
+      skill_id: "synthetic_public",
+      config: { url: "https://public.example.test/feed" },
+    });
+    expect(inserted).toMatchObject({
+      ownerUuid,
+      kind: "remote",
+      skillId: "synthetic_public",
+      connectorVersion: "synthetic-public-connector@1",
+      parser: "synthetic-public",
+      parserVersion: "synthetic-public@1",
+      config: { locator: "https://public.example.test/feed" },
+    });
+  });
+
   test("copies a matching credential connector pin and rejects unavailable pins", async () => {
     let inserted: Record<string, unknown> | undefined;
     const matching = credential();
@@ -172,6 +230,7 @@ describe("ingestion sources", () => {
       },
       credentialedSources: noCredentialedSources,
       fileSources: installedFileSourceSkills,
+      publicRemoteSources: noPublicRemoteSources,
     });
 
     const problem = await capturedProblem(
@@ -262,13 +321,72 @@ describe("ingestion sources", () => {
 function ownedService(
   db: Database,
   credentialedSources: CredentialedSourceCatalog = noCredentialedSources,
+  publicRemoteSources: PublicRemoteSourceCatalog = noPublicRemoteSources,
 ): IngestionSourcesService {
   return new IngestionSourcesService({
     db,
     actor: { kind: "user", uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` },
     credentialedSources,
     fileSources: installedFileSourceSkills,
+    publicRemoteSources,
   });
+}
+
+function syntheticPublicSkill(): PublicRemoteSourceSkill {
+  const parser = {
+    name: "synthetic-public",
+    version: "synthetic-public@1",
+    async parse() {
+      return {};
+    },
+  };
+  return {
+    skillId: "synthetic_public",
+    displayName: "Synthetic public source",
+    manifest: {
+      skill_id: "synthetic_public",
+      label: "Synthetic public source",
+      description: "A generic public source used by server boundary tests.",
+      source_kind: "public_remote",
+      connector_version: "synthetic-public-connector@1",
+      parser: { name: parser.name, version: parser.version },
+      input_fields: [
+        {
+          name: "url",
+          label: "URL",
+          target: "source",
+          control: "url",
+          required: true,
+          secret: false,
+        },
+      ],
+      review_actions: ["review_import"],
+    },
+    parser,
+    fetchPolicy: { attempts: 10, windowHours: 24 },
+    networkPolicy: {
+      capabilities: [{ kind: "safe_public_https" }],
+    },
+    capture: { mime: "application/json", label: (_config, id) => `capture-${id}.json` },
+    normalizeConfig(input) {
+      const url = (input as { url?: unknown }).url;
+      if (typeof url !== "string" || !url.startsWith("https://")) {
+        throw new Error("A public HTTPS URL is required");
+      }
+      return { locator: url };
+    },
+    parseConfig(value) {
+      const locator = (value as { locator?: unknown }).locator;
+      if (typeof locator !== "string") throw new Error("Stored locator is invalid");
+      return { locator };
+    },
+    stateDigest: (config) => ({ locator: (config as { locator: string }).locator }),
+    async retrieve() {
+      return new Uint8Array();
+    },
+    verify: () => ({ ok: true, checks: [] }),
+    candidates: () => [],
+  };
 }
 
 function databaseWithCredential(

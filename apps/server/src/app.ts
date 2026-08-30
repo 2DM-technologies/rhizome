@@ -8,7 +8,12 @@ import {
   type CredentialedSourceCatalog,
 } from "../../ingest/connected-sources/types.ts";
 import type { FileSourceCatalog } from "../../ingest/file-sources/types.ts";
+import type {
+  PublicAssetFetcher,
+  PublicRemoteSourceCatalog,
+} from "../../ingest/public-sources/types.ts";
 import { createCredentialedSourceCatalog } from "../../ingest/src/credentialed-source-catalog.ts";
+import { createPublicRemoteSourceCatalog } from "../../ingest/src/public-remote-source-catalog.ts";
 import {
   createSourceSkillManifestCatalog,
   installedFileSourceSkills,
@@ -19,6 +24,7 @@ import type { ServerConfig } from "./config.ts";
 import type { Database } from "./db/index.ts";
 import { notFound, Problem, problemResponse } from "./errors.ts";
 import { createOpenApiDocument } from "./openapi.ts";
+import { createSafePublicAssetFetcher, SafePublicFetcher } from "./public-fetch/index.ts";
 import { createMediaElementRoutes } from "./routes/media-elements.ts";
 import { createIngestionSourceRoutes } from "./routes/ingestion-sources.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
@@ -38,6 +44,8 @@ export interface AppDependencies {
   blobs: BlobStore;
   credentialedSources?: CredentialedSourceCatalog;
   fileSources?: FileSourceCatalog;
+  publicAssetFetcher?: PublicAssetFetcher;
+  publicRemoteSources?: PublicRemoteSourceCatalog;
   sourceCredentialCrypto?: SourceCredentialCrypto;
 }
 
@@ -47,15 +55,23 @@ export function createApp({
   blobs,
   credentialedSources,
   fileSources,
+  publicAssetFetcher,
+  publicRemoteSources,
   sourceCredentialCrypto,
 }: AppDependencies) {
   const app = new Hono<AppEnvironment>();
   const resolvedCredentialedSources =
     credentialedSources ?? createCredentialedSourceCatalog(config.sourceCredentials.sources);
   const resolvedFileSources = fileSources ?? installedFileSourceSkills;
+  const resolvedPublicRemoteSources =
+    publicRemoteSources ??
+    createPublicRemoteSourceCatalog({
+      assetFetch: publicAssetFetcher ?? createSafePublicAssetFetcher(new SafePublicFetcher()),
+    });
   const sourceSkillManifests = createSourceSkillManifestCatalog(
     resolvedFileSources,
     resolvedCredentialedSources,
+    resolvedPublicRemoteSources,
   );
   const credentialCrypto =
     sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
@@ -126,11 +142,17 @@ export function createApp({
         credentialCrypto,
         credentialedSources: resolvedCredentialedSources,
         fileSources: resolvedFileSources,
+        publicRemoteSources: resolvedPublicRemoteSources,
       }),
     },
     {
       basePath: "/rnet/v0/ingestion-sources",
-      router: createIngestionSourceRoutes(db, resolvedFileSources, resolvedCredentialedSources),
+      router: createIngestionSourceRoutes(
+        db,
+        resolvedFileSources,
+        resolvedCredentialedSources,
+        resolvedPublicRemoteSources,
+      ),
     },
     {
       basePath: "/rnet/v0/source-credentials",
@@ -149,7 +171,7 @@ export function createApp({
       basePath: "/rnet/v0/origins",
       router: createOriginRoutes(db, blobs, config.baseUrl),
     },
-    { basePath: "/rnet/v0/operations", router: createOperationRoutes(db) },
+    { basePath: "/rnet/v0/operations", router: createOperationRoutes(db, blobs) },
   ];
   const openApiRoutes: RegisteredRhizomeRoute[] = [];
   for (const { basePath, router } of routeGroups) {

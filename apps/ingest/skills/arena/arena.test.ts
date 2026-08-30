@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { ARENA_CHANNEL_SLUG_MAX_LENGTH } from "../../../packages/store-contract/src/arena.ts";
-import { ARENA_PARSER_NAME } from "../../../packages/store-contract/src/ingestion.ts";
+import { ARENA_CHANNEL_SLUG_MAX_LENGTH, ARENA_PARSER_NAME } from "./contracts.ts";
 
 import {
   ARENA_CAPTURE_VERSION,
@@ -10,8 +9,8 @@ import {
   parseArenaCapture,
   type ArenaCaptureV1,
   type CapturedArenaResponse,
-} from "../skills/arena/scripts/parse-arena.ts";
-import { verifyArena } from "../verify/arena.ts";
+} from "./scripts/parse-arena.ts";
+import { verifyArena } from "./verify.ts";
 
 const ORIGINAL_IMAGE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlDoAAAAASUVORK5CYII=";
@@ -27,7 +26,7 @@ describe("M2 committed Are.na v3 parser", () => {
     expect(first).toEqual(second);
     expect(ARENA_CAPTURE_VERSION).toBe("arena-capture@1");
     expect(ARENA_PARSER_NAME).toBe("arena");
-    expect(ARENA_PARSER_VERSION).toBe("arena@1.1.0");
+    expect(ARENA_PARSER_VERSION).toBe("arena@1.2.0");
     expect(arenaParser.name).toBe(ARENA_PARSER_NAME);
     expect(first).toMatchObject({
       channelId: "7001",
@@ -234,7 +233,7 @@ describe("M2 committed Are.na v3 parser", () => {
     );
   });
 
-  test("rejects missing, duplicate, unapproved, and block-inconsistent assets", async () => {
+  test("rejects missing, duplicate, unsafe, and block-inconsistent assets", async () => {
     const missingOriginal = await fixtureCapture();
     mutatePage(missingOriginal, (page) => {
       const imageBlock = record(array(page.data, "data")[1], "image block");
@@ -252,17 +251,17 @@ describe("M2 committed Are.na v3 parser", () => {
     duplicate.assets.push(structuredClone(duplicate.assets[0]!));
     expect(() => parseArenaCapture(captureBytes(duplicate))).toThrow("duplicates 1102:content");
 
-    const unapproved = await fixtureCapture();
-    unapproved.assets[0]!.requested_url = "https://example.test/copied.png";
-    expect(() => parseArenaCapture(captureBytes(unapproved))).toThrow(
-      "not on an approved Are.na asset host",
+    const unsafe = await fixtureCapture();
+    unsafe.assets[0]!.requested_url = "http://127.0.0.1/copied.png";
+    expect(() => parseArenaCapture(captureBytes(unsafe))).toThrow(
+      "must be an HTTPS URL without credentials",
     );
 
     const inconsistent = await fixtureCapture();
     inconsistent.assets[0]!.requested_url = "https://images.are.na/synthetic/other/large.png";
     inconsistent.assets[0]!.url = "https://images.are.na/synthetic/other/large.png";
     expect(() => parseArenaCapture(captureBytes(inconsistent))).toThrow(
-      "does not match an approved block rendition",
+      "does not match a declared block rendition",
     );
 
     const resizedImage = await fixtureCapture();
@@ -313,9 +312,9 @@ describe("M2 committed Are.na v3 parser", () => {
     );
 
     const unsafeFinal = structuredClone(redirected);
-    unsafeFinal.assets[0]!.url = "https://example.test/copied.png";
+    unsafeFinal.assets[0]!.url = "http://127.0.0.1/copied.png";
     expect(() => parseArenaCapture(captureBytes(unsafeFinal))).toThrow(
-      "not on an approved Are.na asset host",
+      "must be an HTTPS URL without credentials",
     );
   });
 
@@ -353,6 +352,13 @@ describe("M2 committed Are.na v3 parser", () => {
     expect(() => parseArenaCapture(captureBytes(overlongOwner))).toThrow(
       "must be /owner/channel-slug",
     );
+
+    const mismatchedOwner = await fixtureCapture();
+    mismatchedOwner.channel_url = mismatchedOwner.channel_url.replace(
+      "synthetic-author",
+      "different-owner",
+    );
+    expect(() => parseArenaCapture(captureBytes(mismatchedOwner))).toThrow("owner does not match");
   });
 
   test("VERIFY fails closed if staged element or object evidence changes after parsing", async () => {
@@ -377,7 +383,7 @@ describe("M2 committed Are.na v3 parser", () => {
 });
 
 function fixture(): URL {
-  return new URL("../skills/arena/fixtures/mixed-channel-capture.json", import.meta.url);
+  return new URL("./fixtures/mixed-channel-capture.json", import.meta.url);
 }
 
 async function fixtureBytes(): Promise<Uint8Array> {

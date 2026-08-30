@@ -3,6 +3,7 @@ import {
   SourceSkillManifestCatalog,
 } from "../connected-sources/types.ts";
 import { FileSourceCatalog } from "../file-sources/types.ts";
+import type { PublicRemoteSourceCatalog } from "../public-sources/types.ts";
 import { csvSourceSkill } from "../skills/csv/manifest.ts";
 import { ofxSourceSkill } from "../skills/ofx/manifest.ts";
 
@@ -13,6 +14,11 @@ export const installedFileSourceSkills = new FileSourceCatalog([csvSourceSkill, 
 export function createSourceSkillManifestCatalog(
   fileSources: FileSourceCatalog,
   credentialed: CredentialedSourceCatalog,
+  publicRemote: PublicRemoteSourceCatalog,
 ): SourceSkillManifestCatalog {
-  return new SourceSkillManifestCatalog([...fileSources.manifests(), ...credentialed.manifests()]);
+  return new SourceSkillManifestCatalog([
+    ...fileSources.manifests(),
+    ...credentialed.manifests(),
+    ...publicRemote.manifests(),
+  ]);
 }

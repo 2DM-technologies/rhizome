@@ -139,8 +139,23 @@ export const createCredentialIngestionSourceRequestSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
+/** Provider-neutral public source shape; its installed skill validates and normalizes `config`. */
+export const createPublicRemoteIngestionSourceRequestSchema = {
+  type: "object",
+  required: ["skill_id", "config"],
+  properties: {
+    skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+    config: { type: "object" },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
 export const createIngestionSourceRequestSchema = {
-  oneOf: [createFileIngestionSourceRequestSchema, createCredentialIngestionSourceRequestSchema],
+  oneOf: [
+    createFileIngestionSourceRequestSchema,
+    createCredentialIngestionSourceRequestSchema,
+    createPublicRemoteIngestionSourceRequestSchema,
+  ],
 } as const satisfies JSONSchema;
 
 export const fileIngestionSourceDocumentSchema = {
@@ -194,8 +209,38 @@ export const credentialIngestionSourceDocumentSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
+/** Provider-neutral public source document; locator semantics remain private to its skill. */
+export const publicRemoteIngestionSourceDocumentSchema = {
+  type: "object",
+  required: [
+    "source",
+    "kind",
+    "skill_id",
+    "connector_version",
+    "parser",
+    "parser_version",
+    "config",
+    "created_at",
+  ],
+  properties: {
+    source: { type: "string", pattern: SOURCE_ID_PATTERN },
+    kind: { const: "remote" },
+    skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+    connector_version: { type: "string", minLength: 1 },
+    parser: { type: "string", minLength: 1 },
+    parser_version: { type: "string", minLength: 1 },
+    config: { type: "object" },
+    created_at: { type: "string", format: "date-time" },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
 export const ingestionSourceDocumentSchema = {
-  oneOf: [fileIngestionSourceDocumentSchema, credentialIngestionSourceDocumentSchema],
+  oneOf: [
+    fileIngestionSourceDocumentSchema,
+    credentialIngestionSourceDocumentSchema,
+    publicRemoteIngestionSourceDocumentSchema,
+  ],
 } as const satisfies JSONSchema;
 
 export const createImportPreviewRequestSchema = {

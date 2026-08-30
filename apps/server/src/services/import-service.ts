@@ -8,6 +8,12 @@ import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import type { FileSourceCatalog, FileSourceSkill } from "../../../ingest/file-sources/types.ts";
+import type {
+  PublicRemoteSourceCatalog,
+  PublicRemoteSourceSkill,
+  PublicSourceCandidateDraft,
+  PublicSourceVerifyReport,
+} from "../../../ingest/public-sources/types.ts";
 import {
   ConnectedSourceActionRequired,
   ConnectedSourceError,
@@ -65,7 +71,7 @@ interface ImportPreviewResult {
   action_evidence?: ConnectedSourceActionEvidence;
   candidates: MediaObject[];
   elements: StagedElement[];
-  verify: VerifyReport;
+  verify: SourceVerifyReport;
   source_digest: string;
   staged_origin: string;
   review_digest: string;
@@ -82,7 +88,7 @@ interface StagedCandidate {
 
 interface PullSourceResult {
   source: string;
-  verify: VerifyReport;
+  verify: SourceVerifyReport;
 }
 
 interface PullOperationResult {
@@ -118,7 +124,14 @@ interface ResolvedCredentialSource extends ResolvedSourceBase {
   };
 }
 
-type ResolvedSource = ResolvedOriginSource | ResolvedCredentialSource;
+interface ResolvedRemoteSource extends ResolvedSourceBase {
+  kind: "remote";
+  skill: PublicRemoteSourceSkill;
+}
+
+type ResolvedSource = ResolvedOriginSource | ResolvedCredentialSource | ResolvedRemoteSource;
+
+type SourceVerifyReport = VerifyReport | PublicSourceVerifyReport;
 
 type StagedElementRole = "title" | "content" | "preview";
 
@@ -142,11 +155,11 @@ interface StagedSourceCapture {
   actionEvidence?: ConnectedSourceActionEvidence;
   candidates: StagedCandidate[];
   fetchUuid?: string;
-  kind: "origin" | "credential";
+  kind: "origin" | "credential" | "remote";
   origin: DbOriginArtifact;
   source: DbIngestionSource;
   sourceStateDigest: string;
-  verify: VerifyReport;
+  verify: SourceVerifyReport;
 }
 
 interface CredentialFetchReservation {
@@ -155,8 +168,16 @@ interface CredentialFetchReservation {
   resolved: ResolvedCredentialSource;
 }
 
+interface PublicRemoteFetchReservation {
+  fetchUuid: string;
+  release: () => Promise<void>;
+  resolved: ResolvedRemoteSource;
+}
+
 // This seed is also pinned in the credential-revocation database trigger.
 const CREDENTIAL_FETCH_LOCK_SEED = 0x53464e;
+// Stable namespace for owner-and-skill public-remote fetch leases.
+const PUBLIC_REMOTE_FETCH_LOCK_SEED = 0x505542;
 
 export class ImportService {
   private readonly db: Database;
@@ -166,6 +187,8 @@ export class ImportService {
   private readonly credentialCrypto: SourceCredentialCrypto;
   private readonly credentialedSources: CredentialedSourceCatalog;
   private readonly fileSources: FileSourceCatalog;
+  private readonly publicRemoteSources: PublicRemoteSourceCatalog;
+  private readonly baseUrl: string;
   private readonly sourceContinuations: SourceContinuationCodec;
 
   constructor(
@@ -173,6 +196,8 @@ export class ImportService {
       blobs: BlobStore;
       credentialedSources: CredentialedSourceCatalog;
       fileSources: FileSourceCatalog;
+      publicRemoteSources: PublicRemoteSourceCatalog;
+      baseUrl: string;
       credentialCrypto?: SourceCredentialCrypto;
       credentialEncryptionKey?: CredentialEncryptionKeys;
     },
@@ -190,6 +215,8 @@ export class ImportService {
     this.sourceContinuations = new SourceContinuationCodec(this.credentialCrypto);
     this.credentialedSources = context.credentialedSources;
     this.fileSources = context.fileSources;
+    this.publicRemoteSources = context.publicRemoteSources;
+    this.baseUrl = context.baseUrl.replace(/\/$/, "");
   }
 
   async startPreview(vibeUuid: string, input: CreateImportPreviewRequest): Promise<DbOperation> {
@@ -386,7 +413,7 @@ export class ImportService {
         lockedVibe.ownerUuid,
       );
       const stagedFetch =
-        resolved.kind === "credential"
+        resolved.kind !== "origin"
           ? await this.lockVerifiedFetch(
               transaction,
               operationUuid,
@@ -660,8 +687,104 @@ export class ImportService {
     if (resolved.kind === "credential") {
       return this.stageCredentialSource(resolved, ownerUuid, operationUuid, continuation);
     }
+    if (resolved.kind === "remote") {
+      if (continuation) throw invalidContinuation();
+      return this.stagePublicRemoteSource(resolved, ownerUuid, operationUuid);
+    }
     if (continuation) throw invalidContinuation();
     return this.stageOriginSource(resolved, ownerUuid);
+  }
+
+  private async stagePublicRemoteSource(
+    resolved: ResolvedRemoteSource,
+    ownerUuid: string,
+    operationUuid: string,
+  ): Promise<StagedSourceCapture> {
+    const reservation = await this.reservePublicRemoteFetch(resolved, ownerUuid, operationUuid);
+    const reservedSource = reservation.resolved;
+    const fetchUuid = reservation.fetchUuid;
+    const config = reservedSource.skill.parseConfig(reservedSource.source.config);
+    let phase: "fetch" | "parse" | "verify" | "candidate" = "fetch";
+    try {
+      const bytes = await reservedSource.skill.retrieve(config);
+      // Public data is still staged immutably before any parser or verifier runs.
+      const origin = await storeOwnedOriginArtifact(
+        { db: this.db, blobs: this.blobs },
+        {
+          ownerUuid,
+          bytes,
+          mime: reservedSource.skill.capture.mime,
+          label: reservedSource.skill.capture.label(config, fetchUuid),
+        },
+      );
+      await reservation.release();
+      const [fetched] = await this.db
+        .update(ingestionSourceFetches)
+        .set({ originUuid: origin.uuid, status: "fetched", retrievedAt: new Date() })
+        .where(
+          and(
+            eq(ingestionSourceFetches.uuid, fetchUuid),
+            eq(ingestionSourceFetches.status, "fetching"),
+          ),
+        )
+        .returning({ uuid: ingestionSourceFetches.uuid });
+      if (!fetched) throw new Error("Public-remote fetch state changed unexpectedly");
+
+      phase = "parse";
+      const parsed = await reservedSource.skill.parser.parse(bytes);
+      phase = "verify";
+      const verify = reservedSource.skill.verify(parsed, config);
+      assertPublicSourceVerifyReport(verify);
+      if (!verify.ok) {
+        throw new Error(`VERIFY rejected the public source: ${failedChecks(verify)}`);
+      }
+      phase = "candidate";
+      const candidates = await publicCandidatesFromDrafts(
+        reservedSource.skill.candidates(parsed, config),
+        reservedSource,
+        origin,
+        ownerUuid,
+        operationUuid,
+        this.baseUrl,
+        this.blobs,
+      );
+      const [verified] = await this.db
+        .update(ingestionSourceFetches)
+        .set({ status: "verified", verifiedAt: new Date(), errorCode: null })
+        .where(
+          and(
+            eq(ingestionSourceFetches.uuid, fetchUuid),
+            eq(ingestionSourceFetches.status, "fetched"),
+          ),
+        )
+        .returning({ uuid: ingestionSourceFetches.uuid });
+      if (!verified) throw new Error("Public-remote fetch state changed unexpectedly");
+      return {
+        candidates,
+        fetchUuid,
+        kind: "remote",
+        origin,
+        source: reservedSource.source,
+        sourceStateDigest: reservedSource.sourceStateDigest,
+        verify,
+      };
+    } catch (error) {
+      try {
+        await reservation.release();
+      } catch {
+        // Preserve the fetch/parser failure if cleanup also fails.
+      }
+      await this.db
+        .update(ingestionSourceFetches)
+        .set({ status: "rejected", errorCode: `${phase}_failed` })
+        .where(
+          and(
+            eq(ingestionSourceFetches.uuid, fetchUuid),
+            inArray(ingestionSourceFetches.status, ["fetching", "fetched", "verified"]),
+          ),
+        );
+      throw error;
+    }
   }
 
   private async stageOriginSource(
@@ -1130,6 +1253,136 @@ export class ImportService {
     }
   }
 
+  /**
+   * Serializes public-remote retrieval per owner and skill, then records the attempt before
+   * outbound traffic. The catalog supplies the rolling limit; the server supplies enforcement.
+   */
+  private async reservePublicRemoteFetch(
+    expected: ResolvedRemoteSource,
+    ownerUuid: string,
+    operationUuid: string,
+  ): Promise<PublicRemoteFetchReservation> {
+    const connection = await this.db.$client.reserve();
+    const fetchUuid = uuidv7();
+    let leaseHeld = false;
+    let connectionReleased = false;
+    const release = async (): Promise<void> => {
+      if (connectionReleased) return;
+      try {
+        if (leaseHeld) {
+          await connection`select pg_advisory_unlock_all()`;
+          leaseHeld = false;
+        }
+      } finally {
+        connection.release();
+        connectionReleased = true;
+      }
+    };
+
+    try {
+      await connection`begin`;
+      try {
+        const [locked] = await connection<
+          Array<{
+            source_config: unknown;
+            source_connector_version: string;
+            source_kind: string;
+            source_parser: string;
+            source_parser_version: string;
+            source_skill_id: string;
+            source_uuid: string;
+          }>
+        >`
+          select
+            source.uuid as source_uuid,
+            source.kind as source_kind,
+            source.skill_id as source_skill_id,
+            source.connector_version as source_connector_version,
+            source.parser as source_parser,
+            source.parser_version as source_parser_version,
+            source.config as source_config
+          from ingestion_sources as source
+          where source.uuid = ${expected.source.uuid}
+            and source.owner_uuid = ${ownerUuid}
+            and source.kind = 'remote'
+            and source.origin_uuid is null
+            and source.credential_uuid is null
+            and source.revoked_at is null
+          for update of source
+        `;
+        if (!locked) throw notFound("Ingestion source");
+        if (
+          locked.source_uuid !== expected.source.uuid ||
+          locked.source_kind !== expected.source.kind ||
+          locked.source_skill_id !== expected.source.skillId ||
+          locked.source_connector_version !== expected.source.connectorVersion ||
+          locked.source_parser !== expected.source.parser ||
+          locked.source_parser_version !== expected.source.parserVersion ||
+          canonicalJson(locked.source_config ?? {}) !== canonicalJson(expected.source.config ?? {})
+        ) {
+          throw new Error("The public-remote source changed before its fetch could start");
+        }
+
+        const lockKey = `${ownerUuid}:${expected.skill.skillId}`;
+        const [lock] = await connection<[{ acquired: boolean }]>`
+          select pg_try_advisory_lock(
+            hashtextextended(${lockKey}::text, ${PUBLIC_REMOTE_FETCH_LOCK_SEED}::bigint)
+          ) as acquired
+        `;
+        if (!lock?.acquired) {
+          throw new ConnectedSourceError(expected.skill.skillId, {
+            status: 429,
+            code: "rate_limited",
+            title: `${expected.skill.displayName} fetch already in progress`,
+            detail: "Wait for the active public-source fetch to finish before trying again",
+          });
+        }
+        leaseHeld = true;
+
+        const [recent] = await connection<Array<{ count: number }>>`
+          select count(*)::int as count
+          from ingestion_source_fetches as source_fetch
+          join ingestion_sources as source on source.uuid = source_fetch.source_uuid
+          where source_fetch.owner_uuid = ${ownerUuid}
+            and source.kind = 'remote'
+            and source.skill_id = ${expected.skill.skillId}
+            and source_fetch.created_at >= now() - make_interval(hours => ${expected.skill.fetchPolicy.windowHours})
+        `;
+        assertPublicRemoteFetchAllowance(expected.skill, recent?.count ?? 0);
+
+        await connection`
+          insert into ingestion_source_fetches (
+            uuid,
+            source_uuid,
+            owner_uuid,
+            credential_uuid,
+            operation_uuid,
+            connector_version,
+            parser_version,
+            source_state_digest
+          ) values (
+            ${fetchUuid},
+            ${expected.source.uuid},
+            ${ownerUuid},
+            null,
+            ${operationUuid},
+            ${expected.source.connectorVersion},
+            ${expected.source.parserVersion},
+            ${expected.sourceStateDigest}
+          )
+        `;
+        await connection`commit`;
+      } catch (error) {
+        await connection`rollback`;
+        throw error;
+      }
+      return { fetchUuid, release, resolved: expected };
+    } catch (error) {
+      await release();
+      throw error;
+    }
+  }
+
   private async applyPull(
     operationUuid: string,
     initialVibe: DbVibe,
@@ -1182,8 +1435,8 @@ export class ImportService {
             throw new Error("The file source origin changed while the pull was running");
           }
         } else {
-          if (capture.kind !== "credential" || !capture.fetchUuid) {
-            throw new Error("The connected source capture is malformed");
+          if (capture.kind !== resolved.kind || !capture.fetchUuid) {
+            throw new Error("The fetched source capture is malformed");
           }
           connectedFetches.push(
             await this.lockVerifiedFetch(
@@ -1558,6 +1811,53 @@ export class ImportService {
       return { kind: "credential", source, credential, skill, baseline, sourceStateDigest };
     }
 
+    if (observedSource.kind === "remote") {
+      const [source] = await database
+        .select()
+        .from(ingestionSources)
+        .where(
+          and(
+            eq(ingestionSources.uuid, sourceUuid),
+            eq(ingestionSources.ownerUuid, ownerUuid),
+            eq(ingestionSources.kind, "remote"),
+            isNull(ingestionSources.revokedAt),
+          ),
+        )
+        .for(lock);
+      if (
+        !source ||
+        source.originUuid ||
+        source.credentialUuid ||
+        !source.skillId ||
+        !source.connectorVersion ||
+        !source.parser ||
+        !source.config
+      ) {
+        throw notFound("Ingestion source");
+      }
+      const skill = this.publicRemoteSources.forPinnedSource({
+        skillId: source.skillId,
+        connectorVersion: source.connectorVersion,
+        parserName: source.parser,
+        parserVersion: source.parserVersion,
+      });
+      if (!skill) {
+        throw new Problem(
+          422,
+          "parser_unsupported",
+          "Pinned source implementation unavailable",
+          `${source.skillId} ${source.connectorVersion} ${source.parserVersion}`,
+        );
+      }
+      const config = skill.parseConfig(source.config);
+      return {
+        kind: "remote",
+        source,
+        skill,
+        sourceStateDigest: await publicRemoteSourceStateDigest(source, skill, config),
+      };
+    }
+
     const [source] = await database
       .select()
       .from(ingestionSources)
@@ -1618,7 +1918,7 @@ export class ImportService {
   private async lockVerifiedFetch(
     transaction: DatabaseTransaction,
     operationUuid: string,
-    resolved: ResolvedCredentialSource,
+    resolved: ResolvedCredentialSource | ResolvedRemoteSource,
     originUuid: string,
     sourceStateDigest: string,
     fetchUuid?: string,
@@ -1638,7 +1938,7 @@ export class ImportService {
       .from(ingestionSourceFetches)
       .where(and(...conditions))
       .for("update");
-    if (!fetch) throw invalidReview("The connected capture is stale or unavailable");
+    if (!fetch) throw invalidReview("The fetched capture is stale or unavailable");
     return fetch;
   }
 
@@ -1657,7 +1957,7 @@ export class ImportService {
         ),
       )
       .returning({ uuid: ingestionSourceFetches.uuid });
-    if (!committed) throw invalidReview("The connected capture was already consumed");
+    if (!committed) throw invalidReview("The fetched capture was already consumed");
   }
 }
 
@@ -1780,6 +2080,25 @@ async function credentialSourceStateDigest(
   });
 }
 
+async function publicRemoteSourceStateDigest(
+  source: DbIngestionSource,
+  skill: PublicRemoteSourceSkill,
+  config: unknown,
+): Promise<string> {
+  const skillState = skill.stateDigest(config);
+  assertJsonSerializable(skillState, "Public-source state digest");
+  return digest({
+    source: source.uuid,
+    kind: source.kind,
+    skill_id: source.skillId,
+    connector_version: source.connectorVersion,
+    parser: source.parser,
+    parser_version: source.parserVersion,
+    config: source.config ?? {},
+    skill_state: skillState,
+  });
+}
+
 function assertCredentialFetchAllowance(
   skill: CredentialedSourceSkill,
   recentAttemptCount: number,
@@ -1797,6 +2116,23 @@ function assertCredentialFetchAllowance(
   }
 }
 
+function assertPublicRemoteFetchAllowance(
+  skill: PublicRemoteSourceSkill,
+  recentAttemptCount: number,
+): void {
+  if (!Number.isSafeInteger(recentAttemptCount) || recentAttemptCount < 0) {
+    throw new Error("Public-source fetch attempt count is invalid");
+  }
+  if (recentAttemptCount >= skill.fetchPolicy.attempts) {
+    throw new ConnectedSourceError(skill.skillId, {
+      status: 429,
+      code: "rate_limited",
+      title: `${skill.displayName} fetch limit reached`,
+      detail: `This owner has already attempted ${skill.fetchPolicy.attempts} ${skill.displayName} fetches in the last ${skill.fetchPolicy.windowHours} hours`,
+    });
+  }
+}
+
 function assertDeclaredReviewAction(
   skill: CredentialedSourceSkill,
   action: ConnectedSourceActionKind,
@@ -1806,7 +2142,7 @@ function assertDeclaredReviewAction(
   }
 }
 
-function failedChecks(report: VerifyReport): string {
+function failedChecks(report: SourceVerifyReport): string {
   const names = report.checks.filter(({ ok }) => !ok).map(({ name }) => name);
   return names.length ? names.join(", ") : "unknown_check";
 }
@@ -1866,12 +2202,148 @@ async function candidatesFromParsed(
   return candidates;
 }
 
+async function publicCandidatesFromDrafts(
+  drafts: readonly PublicSourceCandidateDraft[],
+  resolved: ResolvedRemoteSource,
+  origin: DbOriginArtifact,
+  ownerUuid: string,
+  operationUuid: string,
+  baseUrl: string,
+  blobs: BlobStore,
+): Promise<StagedCandidate[]> {
+  if (!Array.isArray(drafts)) throw new Error("Public-source skill returned no candidate list");
+  const candidates: StagedCandidate[] = [];
+  const identities = new Set<string>();
+  for (const draft of drafts) {
+    assertPublicSourceDraft(draft);
+    const objectUri = `rnet://object/${uuidv7()}`;
+    const elements: StagedElement[] = [];
+    for (const element of draft.elements) {
+      if (
+        element.byteSize !== element.bytes.byteLength ||
+        element.byteSize <= 0 ||
+        !/^sha256:[a-f0-9]{64}$/.test(element.contentHash) ||
+        (await contentHash(element.bytes)) !== element.contentHash
+      ) {
+        throw new Error("Public-source skill produced inconsistent element metadata");
+      }
+      await blobs.put("elements", element.contentHash, element.bytes, element.mime);
+      const elementUuid = uuidv7();
+      elements.push({
+        uri: `rnet://element/${elementUuid}`,
+        object_uri: objectUri,
+        role: element.role,
+        kind: element.kind,
+        mime: element.mime,
+        byte_size: element.byteSize,
+        content_hash: element.contentHash,
+        preview_url: `${baseUrl}/rnet/v0/operations/${operationUuid}/elements/${elementUuid}/bytes`,
+      });
+    }
+    const candidate: MediaObject = {
+      rnet_schema: RNET_SCHEMA_VERSION,
+      uri: objectUri,
+      owner: `rnet://id/${ownerUuid}`,
+      type: draft.type,
+      elements: elements.map(({ uri }) => uri),
+      keys: { ...draft.keys },
+      source: {
+        ingest: {
+          method: "parser",
+          reproducible: true,
+          skill: resolved.skill.parser.version,
+        },
+        origins: [`rnet://origin/${origin.uuid}`],
+        ...(draft.retrievedAt ? { retrieved_at: draft.retrievedAt } : {}),
+        properties: { ...draft.sourceProperties },
+      },
+    };
+    const validation = validateMediaObject(candidate);
+    if (!validation.ok) {
+      throw new Error(
+        `Public-source skill produced a nonconformant candidate: ${validation.issues
+          .map((issue) => `${issue.instancePath} ${issue.message}`)
+          .join(", ")}`,
+      );
+    }
+    const identity = await identityForCandidate(candidate);
+    if (identities.has(identity)) {
+      throw new Error("Public-source skill repeated a candidate identity");
+    }
+    identities.add(identity);
+    candidates.push({
+      candidate,
+      candidate_digest: await candidateSemanticDigest(candidate, elements),
+      elements,
+      identity,
+      origin_uuid: origin.uuid,
+      source_uuid: resolved.source.uuid,
+    });
+  }
+  return candidates;
+}
+
+function assertPublicSourceDraft(value: PublicSourceCandidateDraft): void {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    typeof value.type !== "string" ||
+    !value.type ||
+    !value.keys ||
+    typeof value.keys !== "object" ||
+    Array.isArray(value.keys) ||
+    Object.values(value.keys).some((entry) => typeof entry !== "string" || entry.length > 512) ||
+    !value.sourceProperties ||
+    typeof value.sourceProperties !== "object" ||
+    Array.isArray(value.sourceProperties) ||
+    !Array.isArray(value.elements)
+  ) {
+    throw new Error("Public-source skill produced a malformed candidate draft");
+  }
+  assertJsonSerializable(value.keys, "Public-source candidate keys");
+  assertJsonSerializable(value.sourceProperties, "Public-source candidate properties");
+}
+
+function assertPublicSourceVerifyReport(report: PublicSourceVerifyReport): void {
+  if (
+    !report ||
+    typeof report !== "object" ||
+    typeof report.ok !== "boolean" ||
+    !Array.isArray(report.checks) ||
+    report.checks.some(
+      (check) =>
+        !check ||
+        typeof check !== "object" ||
+        typeof check.name !== "string" ||
+        !check.name ||
+        typeof check.ok !== "boolean" ||
+        typeof check.detail !== "string",
+    )
+  ) {
+    throw new Error("Public-source skill produced a malformed VERIFY report");
+  }
+  assertJsonSerializable(report, "Public-source VERIFY report");
+}
+
+function assertJsonSerializable(value: unknown, label: string): void {
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new Error(`${label} must contain JSON values`);
+  }
+  if (encoded === undefined) throw new Error(`${label} must contain JSON values`);
+}
+
 async function digest(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(typeof value === "string" ? value : canonicalJson(value));
   return contentHash(bytes);
 }
 
 async function identityForCandidate(candidate: MediaObject): Promise<string> {
+  if (candidate.type !== "transaction") {
+    return digest({ type: candidate.type, keys: candidate.keys ?? {} });
+  }
   const accountHash = candidate.keys?.account_hash ?? "default";
   const fitid = candidate.keys?.fitid;
   return digest(

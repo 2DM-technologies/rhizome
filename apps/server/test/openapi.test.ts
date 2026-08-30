@@ -129,6 +129,14 @@ describe("OpenAPI", () => {
           parser: { name: "simplefin", version: "simplefin@2.0.0" },
           review_actions: ["review_import", "refresh_source"],
         }),
+        expect.objectContaining({
+          skill_id: "arena",
+          label: "Are.na channel",
+          source_kind: "public_remote",
+          connector_version: "arena-connector@1.0.0",
+          parser: { name: "arena", version: "arena@1.2.0" },
+          review_actions: ["review_import", "refresh_source"],
+        }),
       ],
     });
   });
@@ -168,7 +176,11 @@ describe("OpenAPI", () => {
         headers: { Authorization: "Bearer dev:user" },
       })
     ).json()) as { skills: Array<{ skill_id: string }> };
-    expect(manifests.skills.map(({ skill_id }) => skill_id)).toEqual(["custom_file", "simplefin"]);
+    expect(manifests.skills.map(({ skill_id }) => skill_id)).toEqual([
+      "custom_file",
+      "simplefin",
+      "arena",
+    ]);
 
     const omittedBuiltIn = await injected.request("http://rhizome.test/rnet/v0/ingestion-sources", {
       method: "POST",
