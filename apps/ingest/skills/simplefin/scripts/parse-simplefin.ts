@@ -1,3 +1,5 @@
+import { SIMPLEFIN_PARSER_NAME } from "../../../../../packages/store-contract/src/ingestion.ts";
+
 import type {
   ParsedAccountBalance,
   ParsedProviderErrors,
@@ -5,7 +7,7 @@ import type {
   ParsedTransaction,
   ParsedTransactions,
   TransactionParser,
-} from "../../../src/types.ts";
+} from "../../../transactions/types.ts";
 
 interface ParsedConnection {
   connId: string;
@@ -16,7 +18,6 @@ const DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 const ISO_CURRENCY = /^[A-Z]{3}$/;
 const PROVIDER_ERROR_CODE = /^(?:gen|con|act)\.(?:[A-Za-z0-9_-]+)?$/;
 
-export const SIMPLEFIN_PARSER_NAME = "simplefin" as const;
 export const SIMPLEFIN_PARSER_VERSION = "simplefin@2.0.0" as const;
 
 export const simpleFinParser: TransactionParser = {

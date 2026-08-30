@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { simpleFinParser } from "../skills/simplefin/scripts/parse-simplefin.ts";
-import { parserFor } from "../src/registry.ts";
+import { transactionParserFor } from "../src/parser-catalog.ts";
 import { verifyTransactions } from "../verify/transactions.ts";
 
 describe("M2 SimpleFIN v2 committed parser", () => {
@@ -12,7 +12,7 @@ describe("M2 SimpleFIN v2 committed parser", () => {
 
     expect(first).toEqual(second);
     expect(simpleFinParser.version).toBe("simplefin@2.0.0");
-    expect(parserFor("simplefin")).toBe(simpleFinParser);
+    expect(transactionParserFor("simplefin")).toBe(simpleFinParser);
     expect(first).toMatchObject({ sourceRecordCount: 4, allowEmpty: true });
     expect(first.transactions).toHaveLength(4);
     expect(first.transactions[0]).toMatchObject({

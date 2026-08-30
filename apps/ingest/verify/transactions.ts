@@ -4,7 +4,7 @@ import type {
   ParsedStatementBalance,
   ParsedTransaction,
   ParsedTransactions,
-} from "../src/types.ts";
+} from "../transactions/types.ts";
 
 export interface VerifyCheck {
   name:

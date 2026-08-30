@@ -6,6 +6,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
+    "./ingestion": "./src/ingestion.ts",
     "./multipart": "./src/multipart.ts"
   },
   "files": [

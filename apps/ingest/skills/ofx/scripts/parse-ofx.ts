@@ -3,7 +3,7 @@ import type {
   ParsedTransaction,
   ParsedTransactions,
   TransactionParser,
-} from "../../../src/types.ts";
+} from "../../../transactions/types.ts";
 
 export const ofxParser: TransactionParser = {
   name: "ofx",

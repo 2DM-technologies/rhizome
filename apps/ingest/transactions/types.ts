@@ -1,3 +1,12 @@
+import type {
+  FILE_PARSERS,
+  SIMPLEFIN_PARSER_NAME,
+} from "../../../packages/store-contract/src/ingestion.ts";
+
+/**
+ * Normalized transaction intermediate representation shared by committed parsers, VERIFY, and the
+ * ingestion runtime. Provider-specific capture types stay with their owning skill.
+ */
 export interface ParsedTransaction {
   amount: string;
   currency: string;
@@ -59,7 +68,7 @@ export interface ParsedTransactions {
 }
 
 export interface TransactionParser {
-  readonly name: "csv" | "ofx" | "simplefin";
+  readonly name: (typeof FILE_PARSERS)[number] | typeof SIMPLEFIN_PARSER_NAME;
   readonly version: string;
   parse(bytes: Uint8Array): Promise<ParsedTransactions>;
 }

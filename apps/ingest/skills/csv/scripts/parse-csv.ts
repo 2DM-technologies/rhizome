@@ -1,4 +1,4 @@
-import type { ParsedTransactions, TransactionParser } from "../../../src/types.ts";
+import type { ParsedTransactions, TransactionParser } from "../../../transactions/types.ts";
 
 const RHIZOME_REQUIRED_HEADERS = ["Date", "Description", "Amount", "Currency", "Transaction ID"];
 const FINANCIAL_PLANNING_HEADERS = [
