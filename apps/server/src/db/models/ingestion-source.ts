@@ -17,8 +17,6 @@ import { users } from "./user.ts";
 
 export const INGESTION_SOURCE_KINDS = ["origin", "credential", "remote"] as const;
 export type IngestionSourceKind = (typeof INGESTION_SOURCE_KINDS)[number];
-export const INGESTION_SOURCE_PROVIDERS = ["arena"] as const;
-export type IngestionSourceProvider = (typeof INGESTION_SOURCE_PROVIDERS)[number];
 
 export const ingestionSources = pgTable(
   "ingestion_sources",
@@ -28,7 +26,10 @@ export const ingestionSources = pgTable(
       .notNull()
       .references(() => users.uuid, { onDelete: "cascade" }),
     kind: text("kind", { enum: INGESTION_SOURCE_KINDS }).notNull(),
-    provider: text("provider", { enum: INGESTION_SOURCE_PROVIDERS }),
+    // Skill ids are runtime catalog keys, not a database enum. Every source resolves through
+    // the installed catalog and pins this identity with its implementation versions.
+    skillId: text("skill_id").notNull(),
+    connectorVersion: text("connector_version").notNull(),
     parser: text("parser").notNull(),
     parserVersion: text("parser_version").notNull(),
     originUuid: uuid("origin_uuid"),
@@ -42,9 +43,9 @@ export const ingestionSources = pgTable(
     check(
       "ingestion_sources_reference_check",
       sql`(
-        (${source.kind} = 'origin' AND ${source.originUuid} IS NOT NULL AND ${source.credentialUuid} IS NULL AND ${source.provider} IS NULL) OR
-        (${source.kind} = 'credential' AND ${source.credentialUuid} IS NOT NULL AND ${source.originUuid} IS NULL AND ${source.provider} IS NULL) OR
-        (${source.kind} = 'remote' AND ${source.originUuid} IS NULL AND ${source.credentialUuid} IS NULL AND ${source.provider} = 'arena')
+        (${source.kind} = 'origin' AND ${source.originUuid} IS NOT NULL AND ${source.credentialUuid} IS NULL) OR
+        (${source.kind} = 'credential' AND ${source.credentialUuid} IS NOT NULL AND ${source.originUuid} IS NULL) OR
+        (${source.kind} = 'remote' AND ${source.originUuid} IS NULL AND ${source.credentialUuid} IS NULL)
       )`,
     ),
     foreignKey({
@@ -53,9 +54,14 @@ export const ingestionSources = pgTable(
       foreignColumns: [originArtifacts.uuid, originArtifacts.ownerUuid],
     }),
     foreignKey({
-      name: "ingestion_sources_credential_owner_fk",
-      columns: [source.credentialUuid, source.ownerUuid],
-      foreignColumns: [sourceCredentials.uuid, sourceCredentials.userUuid],
+      name: "ingestion_sources_credential_owner_skill_connector_fk",
+      columns: [source.credentialUuid, source.ownerUuid, source.skillId, source.connectorVersion],
+      foreignColumns: [
+        sourceCredentials.uuid,
+        sourceCredentials.userUuid,
+        sourceCredentials.skillId,
+        sourceCredentials.connectorVersion,
+      ],
     }),
   ],
 );

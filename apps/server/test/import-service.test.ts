@@ -1,15 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MediaObject } from "@rnet/types";
 
-import { simpleFinParser } from "../../ingest/skills/simplefin/scripts/parse-simplefin.ts";
-import {
-  assertSimpleFinFetchAllowance,
-  candidateSemanticDigest,
-  canonicalJson,
-  filterSimpleFinTransactions,
-  planSimpleFinHistory,
-  redactSimpleFinHistoryGapForPull,
-} from "../src/services/import-service.ts";
+import { candidateSemanticDigest, canonicalJson } from "../src/services/import-service.ts";
 
 const firstCandidate: MediaObject = {
   rnet_schema: "0.1",
@@ -26,85 +18,6 @@ const firstCandidate: MediaObject = {
 };
 
 describe("pull candidate identity", () => {
-  test("enforces the credential-wide SimpleFIN rolling attempt boundary", () => {
-    expect(() => assertSimpleFinFetchAllowance(23)).not.toThrow();
-    expect(() => assertSimpleFinFetchAllowance(24)).toThrow("24 account fetches");
-    expect(() => assertSimpleFinFetchAllowance(-1)).toThrow("attempt count is invalid");
-  });
-
-  test("extends one request beyond 45 days and requires reviewed recovery past 90 days", () => {
-    const day = 24 * 60 * 60;
-    const endDateEpoch = 1_800_000_000;
-    const previous = (balanceAtEpoch: number) => ({
-      transactions: [],
-      sourceRecordCount: 0,
-      allowEmpty: true,
-      accountBalances: [
-        {
-          accountIdentity: '["conn","account"]',
-          currency: "USD",
-          balance: "100.00",
-          balanceAt: new Date(balanceAtEpoch * 1_000).toISOString(),
-          balanceAtEpoch,
-          sourceRecordCount: 0,
-        },
-      ],
-    });
-
-    expect(planSimpleFinHistory(undefined, endDateEpoch, false)).toEqual({
-      startDateEpoch: endDateEpoch - 45 * day,
-    });
-    const covered = previous(endDateEpoch - 60 * day);
-    expect(planSimpleFinHistory(covered, endDateEpoch, false)).toEqual({
-      previous: covered,
-      startDateEpoch: endDateEpoch - 75 * day,
-    });
-
-    const nearLimit = previous(endDateEpoch - 80 * day);
-    expect(planSimpleFinHistory(nearLimit, endDateEpoch, false)).toEqual({
-      previous: nearLimit,
-      startDateEpoch: endDateEpoch - 90 * day,
-    });
-
-    const stale = previous(endDateEpoch - 100 * day);
-    let ownerGap: unknown;
-    try {
-      planSimpleFinHistory(
-        stale,
-        endDateEpoch,
-        false,
-        "source:0198f2a1-a001-7a01-8001-000000000001",
-      );
-      throw new Error("expected history gap");
-    } catch (error) {
-      ownerGap = error;
-      expect(error).toMatchObject({
-        status: 422,
-        code: "simplefin_history_gap",
-        extensions: { source: "source:0198f2a1-a001-7a01-8001-000000000001" },
-      });
-    }
-    const delegatedGap = redactSimpleFinHistoryGapForPull(ownerGap);
-    expect(delegatedGap).toMatchObject({
-      status: 422,
-      code: "simplefin_history_gap",
-      extensions: { recovery: "owner_reviewed_rebaseline" },
-    });
-    expect(JSON.stringify(delegatedGap)).not.toContain("source:");
-    expect(JSON.stringify(delegatedGap)).not.toContain(
-      new Date((endDateEpoch - 100 * day) * 1_000).toISOString(),
-    );
-    expect(planSimpleFinHistory(stale, endDateEpoch, true)).toMatchObject({
-      startDateEpoch: endDateEpoch - 45 * day,
-      historyRecovery: {
-        mode: "rebaseline",
-        reason: "simplefin_history_gap",
-        previous_balance_at: new Date((endDateEpoch - 100 * day) * 1_000).toISOString(),
-        history_resumes_at: new Date((endDateEpoch - 45 * day) * 1_000).toISOString(),
-      },
-    });
-  });
-
   test("semantic digests ignore record and capture identities but retain source values", async () => {
     const recaptured: MediaObject = {
       ...firstCandidate,
@@ -128,69 +41,6 @@ describe("pull candidate identity", () => {
     expect(await candidateSemanticDigest(changed)).not.toBe(
       await candidateSemanticDigest(firstCandidate),
     );
-  });
-
-  test("semantic digests ignore SimpleFIN account snapshots but retain transaction changes", async () => {
-    const firstSnapshot: MediaObject = {
-      ...firstCandidate,
-      source: {
-        ...firstCandidate.source,
-        properties: {
-          ...firstCandidate.source.properties,
-          account_balance: "100.00",
-          account_balance_date: "2026-08-29T12:00:00.000Z",
-          account_balance_date_epoch: 1_777_461_600,
-          simplefin_account_extra: { available_balance: "90.00", status: "open" },
-          simplefin_transaction_extra: { category: "food" },
-        },
-      },
-    };
-    const laterSnapshot: MediaObject = {
-      ...firstSnapshot,
-      source: {
-        ...firstSnapshot.source,
-        properties: {
-          ...firstSnapshot.source.properties,
-          account_balance: "75.00",
-          account_balance_date: "2026-08-30T12:00:00.000Z",
-          account_balance_date_epoch: 1_777_548_000,
-          simplefin_account_extra: { available_balance: "65.00", status: "restricted" },
-        },
-      },
-    };
-    const changedAmount: MediaObject = {
-      ...laterSnapshot,
-      source: {
-        ...laterSnapshot.source,
-        properties: { ...laterSnapshot.source.properties, amount: "-12.35" },
-      },
-    };
-    const changedTransactionExtra: MediaObject = {
-      ...laterSnapshot,
-      source: {
-        ...laterSnapshot.source,
-        properties: {
-          ...laterSnapshot.source.properties,
-          simplefin_transaction_extra: { category: "travel" },
-        },
-      },
-    };
-
-    expect(await candidateSemanticDigest(laterSnapshot)).toBe(
-      await candidateSemanticDigest(firstSnapshot),
-    );
-    expect(await candidateSemanticDigest(changedAmount)).not.toBe(
-      await candidateSemanticDigest(firstSnapshot),
-    );
-    expect(await candidateSemanticDigest(changedTransactionExtra)).not.toBe(
-      await candidateSemanticDigest(firstSnapshot),
-    );
-    expect(laterSnapshot.source.properties).toMatchObject({
-      account_balance: "75.00",
-      account_balance_date: "2026-08-30T12:00:00.000Z",
-      account_balance_date_epoch: 1_777_548_000,
-      simplefin_account_extra: { available_balance: "65.00", status: "restricted" },
-    });
   });
 
   test("semantic digests bind staged element bytes without binding allocated UUIDs", async () => {
@@ -244,58 +94,6 @@ describe("pull candidate identity", () => {
         { ...recapturedManifest, role: "preview" as const },
       ]),
     ).not.toBe(await candidateSemanticDigest(first, [manifest]));
-  });
-
-  test("SimpleFIN filtering uses composite accounts and applies pending policy deterministically", async () => {
-    const bytes = new Uint8Array(
-      await Bun.file(
-        new URL("../../ingest/skills/simplefin/fixtures/accounts-current-v2.json", import.meta.url),
-      ).arrayBuffer(),
-    );
-    const parsed = await simpleFinParser.parse(bytes);
-    const alpha = filterSimpleFinTransactions(parsed, {
-      accounts: [{ connection_id: "conn-alpha", account_id: "acct-shared" }],
-    });
-    expect(alpha.transactions.map(({ fitid }) => fitid)).toEqual([
-      "shared-transaction",
-      "alpha-debit",
-    ]);
-    expect(alpha.sourceRecordCount).toBe(2);
-    expect(alpha.accountBalances).toHaveLength(1);
-    expect(alpha.accountBalances?.[0]?.sourceRecordCount).toBe(2);
-
-    const withPending = filterSimpleFinTransactions(parsed, {
-      accounts: [{ connection_id: "conn-alpha", account_id: "acct-shared" }],
-      include_pending: true,
-    });
-    expect(withPending.transactions.map(({ fitid }) => fitid)).toEqual([
-      "shared-transaction",
-      "alpha-debit",
-      "alpha-pending",
-    ]);
-
-    const bothConnections = filterSimpleFinTransactions(parsed, {
-      accounts: [
-        { connection_id: "conn-beta", account_id: "acct-shared" },
-        { connection_id: "conn-alpha", account_id: "acct-shared" },
-      ],
-    });
-    expect(
-      bothConnections.transactions.map(({ accountIdentity, fitid }) => [accountIdentity, fitid]),
-    ).toEqual([
-      ['["conn-alpha","acct-shared"]', "shared-transaction"],
-      ['["conn-alpha","acct-shared"]', "alpha-debit"],
-      ['["conn-beta","acct-shared"]', "shared-transaction"],
-    ]);
-
-    expect(() =>
-      filterSimpleFinTransactions(parsed, {
-        accounts: [
-          { connection_id: "conn-alpha", account_id: "acct-shared" },
-          { connection_id: "conn-missing", account_id: "acct-shared" },
-        ],
-      }),
-    ).toThrow("SimpleFIN response omitted 1 selected account");
   });
 });
 

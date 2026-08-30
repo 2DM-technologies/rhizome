@@ -5,21 +5,23 @@ import {
   STORE_SCHEMA_COMPONENTS,
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
-  connectSimpleFinRequestSchema,
+  createCredentialIngestionSourceRequestSchema,
   createFileIngestionSourceRequestSchema,
   createImportPreviewRequestSchema,
   createIngestionSourceRequestSchema,
-  createSimpleFinIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
   createVibeRequestSchema,
   fileIngestionSourceDocumentSchema,
+  credentialIngestionSourceDocumentSchema,
   ingestionSourceDocumentSchema,
   mediaObjectsResponseSchema,
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
   setMediaObjectUserRequestSchema,
-  simpleFinIngestionSourceDocumentSchema,
-  simpleFinSourceConfigSchema,
+  reviewImportContinuationRequestSchema,
+  sourceActionRequiredSchema,
+  sourceSkillManifestSchema,
+  sourceSkillManifestsResponseSchema,
   sourceCredentialDocumentSchema,
   type OwnerCreateMediaObjectsRequest,
   vibesResponseSchema,
@@ -63,44 +65,75 @@ describe("shared store schemas", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
       createImportPreviewRequestSchema,
     );
-    expect(createImportPreviewRequestSchema.properties.rebaseline).toEqual({
-      type: "boolean",
-      default: false,
-    });
-    expect(STORE_SCHEMA_COMPONENTS.ConnectSimpleFinRequest).toBe(connectSimpleFinRequestSchema);
+    expect(createImportPreviewRequestSchema.properties.continuation_token).toBe(
+      reviewImportContinuationRequestSchema.properties.continuation_token,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.SourceSkillManifestsResponse).toBe(
+      sourceSkillManifestsResponseSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.SourceActionRequired).toBe(sourceActionRequiredSchema);
     expect(STORE_SCHEMA_COMPONENTS.SourceCredential).toBe(sourceCredentialDocumentSchema);
     expect(Object.values(STORE_SCHEMA_COMPONENTS).every((schema) => !("$id" in schema))).toBe(true);
   });
 
-  test("keeps file ingestion sources pinned to an owned origin and parser version", () => {
+  test("selects file sources by skill and pins their resolved implementation versions", () => {
     expect(createIngestionSourceRequestSchema.oneOf).toContain(
       createFileIngestionSourceRequestSchema,
     );
     expect(ingestionSourceDocumentSchema.oneOf).toContain(fileIngestionSourceDocumentSchema);
+    expect(createFileIngestionSourceRequestSchema.required).toEqual(["origin", "skill_id"]);
+    expect(createFileIngestionSourceRequestSchema.properties).not.toHaveProperty("parser");
     expect(fileIngestionSourceDocumentSchema.properties).toMatchObject({
       kind: { const: "origin" },
-      parser: { enum: ["csv", "ofx"] },
+      skill_id: { type: "string" },
+      connector_version: { type: "string", minLength: 1 },
+      parser: { type: "string", minLength: 1 },
       parser_version: { type: "string", minLength: 1 },
     });
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("provider");
   });
 
-  test("keeps SimpleFIN secrets out of credential and source documents", () => {
+  test("keeps provider secrets out of generic credential and source documents", () => {
     expect(createIngestionSourceRequestSchema.oneOf).toContain(
-      createSimpleFinIngestionSourceRequestSchema,
+      createCredentialIngestionSourceRequestSchema,
     );
-    expect(ingestionSourceDocumentSchema.oneOf).toContain(simpleFinIngestionSourceDocumentSchema);
-    expect(connectSimpleFinRequestSchema.properties).toHaveProperty("setup_token");
-    expect(createSimpleFinIngestionSourceRequestSchema.properties).toHaveProperty("credential");
-    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("secret");
-    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("access_url");
-    expect(simpleFinIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
-    expect(simpleFinIngestionSourceDocumentSchema.properties.parser_version).toEqual({
+    expect(ingestionSourceDocumentSchema.oneOf).toContain(credentialIngestionSourceDocumentSchema);
+    expect(sourceCredentialDocumentSchema.properties.skill_id).toMatchObject({ type: "string" });
+    expect(sourceCredentialDocumentSchema.required).toContain("connector_version");
+    expect(sourceCredentialDocumentSchema.properties.connector_version).toEqual({
       type: "string",
       minLength: 1,
     });
-    expect(simpleFinSourceConfigSchema.properties.accounts.minItems).toBe(1);
+    expect(createCredentialIngestionSourceRequestSchema.properties).toHaveProperty("credential");
+    expect(credentialIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
+    expect(credentialIngestionSourceDocumentSchema.properties.parser_version).toEqual({
+      type: "string",
+      minLength: 1,
+    });
+    expect(credentialIngestionSourceDocumentSchema.properties.connector_version).toEqual({
+      type: "string",
+      minLength: 1,
+    });
+  });
+
+  test("describes source skills and recovery without provider-specific fields", () => {
+    expect(sourceSkillManifestSchema.properties).toMatchObject({
+      skill_id: { type: "string" },
+      source_kind: { enum: ["file", "public_remote", "credentialed_remote"] },
+      connector_version: { type: "string" },
+      parser: { type: "object" },
+      connection: { type: "object" },
+      input_fields: { type: "array" },
+      review_actions: { type: "array" },
+    });
+    expect(sourceActionRequiredSchema.properties).toMatchObject({
+      kind: { const: "source_action_required" },
+      action: { enum: ["review_import"] },
+      continuation_token: { type: "string" },
+    });
+    expect(sourceActionRequiredSchema.properties).not.toHaveProperty("rebaseline");
+    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("secret");
   });
 });
 

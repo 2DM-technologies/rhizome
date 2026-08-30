@@ -18,3 +18,15 @@ snapshot, exact provider timestamps, pending state, and optional `extra` objects
 Only ISO 4217 alpha currencies are supported because the rNet `transaction` vocabulary requires
 them. SimpleFIN custom-currency URLs fail closed. An otherwise valid connected response with one or
 more accounts and zero transactions is valid for a re-pull.
+
+## Connected-source capability
+
+This directory owns the complete SimpleFIN provider capability. `config.ts` validates the exact
+HTTPS hosts the client may contact, `client.ts` performs bounded token exchange and Account Set
+retrieval, and `source.ts` exposes the connector, fetch policy, configuration normalization,
+account selection, history-window planning, and recovery behavior through
+`CredentialedSourceSkill`. Provider unit tests and their synthetic captures remain colocated here.
+
+The server consumes only the generic skill contract. It stores and protects opaque credential
+secrets, reserves and records fetches, persists raw captures, and runs the shared reviewed-import
+lifecycle without importing SimpleFIN request types or adding provider-specific service methods.

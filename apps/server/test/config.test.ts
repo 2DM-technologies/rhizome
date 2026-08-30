@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { DEFAULT_SIMPLEFIN_ALLOWED_HOSTS, loadSourceCredentialConfig } from "../src/config.ts";
+import { loadSourceCredentialConfig } from "../src/config.ts";
 
 const key = Uint8Array.from({ length: 32 }, (_, index) => index);
 const encodedKey = Buffer.from(key).toString("base64");
@@ -120,38 +120,6 @@ describe("source credential configuration", () => {
       expect((await stat(join(directory, ".rhizome"))).mode & 0o777).toBe(0o700);
     } finally {
       await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  test("accepts only exact SimpleFIN hostnames and uses safe official defaults", () => {
-    const defaults = loadSourceCredentialConfig({
-      RHIZOME_CREDENTIAL_ENCRYPTION_KEY: encodedKey,
-    });
-    expect(defaults.simpleFinAllowedHosts).toEqual([...DEFAULT_SIMPLEFIN_ALLOWED_HOSTS]);
-
-    const configured = loadSourceCredentialConfig({
-      RHIZOME_CREDENTIAL_ENCRYPTION_KEY: encodedKey,
-      RHIZOME_SIMPLEFIN_ALLOWED_HOSTS:
-        "BRIDGE.SIMPLEFIN.TEST, bridge.simplefin.test, beta.simplefin.test",
-    });
-    expect(configured.simpleFinAllowedHosts).toEqual([
-      "bridge.simplefin.test",
-      "beta.simplefin.test",
-    ]);
-
-    for (const host of [
-      "https://bridge.simplefin.org",
-      "*.simplefin.org",
-      "bridge.simplefin.org:443",
-      "127.0.0.1",
-      "localhost",
-    ]) {
-      expect(() =>
-        loadSourceCredentialConfig({
-          RHIZOME_CREDENTIAL_ENCRYPTION_KEY: encodedKey,
-          RHIZOME_SIMPLEFIN_ALLOWED_HOSTS: host,
-        }),
-      ).toThrow("exact hostnames only");
     }
   });
 });

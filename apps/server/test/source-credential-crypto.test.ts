@@ -4,7 +4,7 @@ import {
   createCredentialKeyring,
   credentialAssociatedData,
   decodeCredentialEncryptionKey,
-  fingerprintCredentialSetupToken,
+  fingerprintCredentialConnectionClaim,
   openCredentialSecret,
   sealCredentialSecret,
 } from "../src/services/source-credential-crypto.ts";
@@ -14,12 +14,12 @@ const otherKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 const associatedData = credentialAssociatedData(
   "0198f2a1-f5d0-7bee-aacd-4ba0aa096e07",
   "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
-  "simplefin",
+  "test-provider",
 );
 
 describe("source credential encryption", () => {
   test("round-trips a secret through randomized authenticated encryption", async () => {
-    const secret = "https://user:password@example.test/simplefin";
+    const secret = "opaque-provider-secret";
     const first = await sealCredentialSecret(secret, key, associatedData);
     const second = await sealCredentialSecret(secret, key, associatedData);
 
@@ -64,14 +64,43 @@ describe("source credential encryption", () => {
     expect(await openCredentialSecret(legacy, keyring, associatedData)).toBe("legacy-secret");
   });
 
-  test("HMAC-fingerprints setup tokens across active and legacy keys", async () => {
+  test("HMAC-fingerprints provider-scoped replay keys across active and legacy keys", async () => {
     const keyring = createCredentialKeyring("current", { current: otherKey, previous: key });
-    const fingerprints = await fingerprintCredentialSetupToken(" secret-token ", keyring);
-    const same = await fingerprintCredentialSetupToken("secret-token", keyring);
+    const fingerprints = await fingerprintCredentialConnectionClaim(
+      "test-provider",
+      "canonical-claim",
+      keyring,
+    );
+    const same = await fingerprintCredentialConnectionClaim(
+      "test-provider",
+      "canonical-claim",
+      keyring,
+    );
     expect(fingerprints).toEqual(same);
+    expect(
+      await fingerprintCredentialConnectionClaim("other-provider", "canonical-claim", keyring),
+    ).not.toEqual(fingerprints);
     expect(fingerprints.all).toHaveLength(2);
     expect(fingerprints.active).toMatch(/^hmac-sha256-hkdf-v1:[a-f0-9]{64}$/);
-    expect(JSON.stringify(fingerprints)).not.toContain("secret-token");
+    expect(JSON.stringify(fingerprints)).not.toContain("canonical-claim");
+  });
+
+  test("retains exact pre-generalization SimpleFIN aliases for every local key", async () => {
+    const keyring = createCredentialKeyring("current", { current: otherKey, previous: key });
+    const fingerprints = await fingerprintCredentialConnectionClaim(
+      "simplefin",
+      "canonical-one-time-claim",
+      keyring,
+    );
+    const legacyCurrent =
+      "hmac-sha256-hkdf-v1:4ece111cf55e09b97c9caaa710d1e4f8e747dd32ada6fca1ee01c77169f70fdf";
+    const legacyPrevious =
+      "hmac-sha256-hkdf-v1:12202b093bf56008dfc7437b51579322e67751e82839ecad3d506d3423cac192";
+
+    expect(fingerprints.all[0]).toBe(fingerprints.active);
+    expect(fingerprints.active).not.toBe(legacyCurrent);
+    expect(fingerprints.all).toHaveLength(4);
+    expect(fingerprints.all).toEqual(expect.arrayContaining([legacyCurrent, legacyPrevious]));
   });
 });
 

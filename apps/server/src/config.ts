@@ -11,7 +11,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { isIP } from "node:net";
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +20,10 @@ import {
   decodeCredentialEncryptionKey,
   type CredentialKeyring,
 } from "./services/source-credential-crypto.ts";
+import {
+  loadCredentialedSourceSettings,
+  type CredentialedSourceSettings,
+} from "../../ingest/src/credentialed-source-catalog.ts";
 
 export type SourceCredentialKeyProviderConfig =
   | {
@@ -38,7 +41,7 @@ export type SourceCredentialKeyProviderConfig =
 
 export interface SourceCredentialConfig {
   keyProvider: SourceCredentialKeyProviderConfig;
-  simpleFinAllowedHosts: string[];
+  sources: CredentialedSourceSettings;
 }
 
 export interface ServerConfig {
@@ -62,14 +65,6 @@ export interface ServerConfig {
 /** The four buckets, enumerable so tooling can create them rather than restating the list. */
 export const BLOB_NAMESPACES = ["elements", "origins", "bundles", "assets"] as const;
 export type BlobNamespace = (typeof BLOB_NAMESPACES)[number];
-
-export const DEFAULT_SIMPLEFIN_ALLOWED_HOSTS = [
-  "bridge.simplefin.org",
-  "beta-bridge.simplefin.org",
-] as const;
-
-const EXACT_HOSTNAME_PATTERN =
-  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
 function required(name: string): string {
   const value = process.env[name];
@@ -122,31 +117,9 @@ export function loadSourceCredentialConfig(
   options: { devKeyPath?: string } = {},
 ): SourceCredentialConfig {
   const keyProvider = loadCredentialKeyProvider(environment, options);
-
-  const configuredHosts =
-    environment.RHIZOME_SIMPLEFIN_ALLOWED_HOSTS ?? DEFAULT_SIMPLEFIN_ALLOWED_HOSTS.join(",");
-  const simpleFinAllowedHosts = [
-    ...new Set(
-      configuredHosts
-        .split(",")
-        .map((host) => host.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-  ];
-  if (simpleFinAllowedHosts.length === 0) {
-    throw new Error("RHIZOME_SIMPLEFIN_ALLOWED_HOSTS must contain at least one exact hostname");
-  }
-  for (const host of simpleFinAllowedHosts) {
-    if (!EXACT_HOSTNAME_PATTERN.test(host) || isIP(host) !== 0) {
-      throw new Error(
-        "RHIZOME_SIMPLEFIN_ALLOWED_HOSTS accepts exact hostnames only; URLs, ports, IP addresses, and wildcards are forbidden",
-      );
-    }
-  }
-
   return {
     keyProvider,
-    simpleFinAllowedHosts,
+    sources: loadCredentialedSourceSettings(environment),
   };
 }
 

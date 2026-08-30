@@ -1,25 +1,28 @@
 import { rnetUriPattern, validateMediaObject, type MediaObject, type Vibe } from "@rnet/types";
 import {
-  SIMPLEFIN_PARSER_NAME,
-  SIMPLEFIN_PROVIDER,
   SOURCE_ID_PATTERN,
   type CreateImportPreviewRequest,
   type PullVibeRequest,
-  type SimpleFinSourceConfig,
 } from "@rhizome/store-contract";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import { transactionParserFor } from "../../../ingest/src/parser-catalog.ts";
-import type {
-  ParsedAccountBalance,
-  ParsedTransactions,
-} from "../../../ingest/transactions/types.ts";
+import type { FileSourceCatalog, FileSourceSkill } from "../../../ingest/file-sources/types.ts";
 import {
-  verifyTransactions,
-  type HistoryRecoveryEvidence,
-  type VerifyReport,
-} from "../../../ingest/transactions/verify.ts";
+  ConnectedSourceActionRequired,
+  ConnectedSourceError,
+  CredentialedSourceCatalog,
+  connectedSourceOperationResult,
+  delegatedConnectedSourceError,
+  type ConnectedSourceActionEvidence,
+  type ConnectedSourceActionKind,
+  type CredentialedSourceSkill,
+  type PreparedConnectedSourceFetch,
+  type SourceJsonObject,
+  type SourceJsonValue,
+} from "../../../ingest/connected-sources/types.ts";
+import type { ParsedTransactions } from "../../../ingest/transactions/types.ts";
+import { verifyTransactions, type VerifyReport } from "../../../ingest/transactions/verify.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
@@ -52,10 +55,14 @@ import {
   type CredentialEncryptionKeys,
   type SourceCredentialCrypto,
 } from "./source-credential-crypto.ts";
-import type { SimpleFinAccountsRequest } from "./simplefin-client.ts";
+import {
+  SourceContinuationCodec,
+  type ConnectedSourceContinuation,
+} from "./source-continuation.ts";
 import type { ServiceContext } from "./types.ts";
 
 interface ImportPreviewResult {
+  action_evidence?: ConnectedSourceActionEvidence;
   candidates: MediaObject[];
   elements: StagedElement[];
   verify: VerifyReport;
@@ -104,6 +111,7 @@ interface ResolvedOriginSource extends ResolvedSourceBase {
 interface ResolvedCredentialSource extends ResolvedSourceBase {
   kind: "credential";
   credential: DbSourceCredential;
+  skill: CredentialedSourceSkill;
   baseline?: {
     fetch: DbIngestionSourceFetch;
     origin: DbOriginArtifact;
@@ -131,6 +139,7 @@ export interface StagedElement {
 }
 
 interface StagedSourceCapture {
+  actionEvidence?: ConnectedSourceActionEvidence;
   candidates: StagedCandidate[];
   fetchUuid?: string;
   kind: "origin" | "credential";
@@ -146,26 +155,8 @@ interface CredentialFetchReservation {
   resolved: ResolvedCredentialSource;
 }
 
-const SIMPLEFIN_FETCH_LIMIT = 24;
-const SIMPLEFIN_FETCH_WINDOW_HOURS = 24;
-// Ordinary pulls retain a 15-day overlap at a monthly cadence. When a committed balance is older,
-// extend this one exact provider request just far enough to cover that balance and the same overlap,
-// bounded by SimpleFIN's documented 90-day maximum.
-const SIMPLEFIN_HISTORY_WINDOW_SECONDS = 45 * 24 * 60 * 60;
-const SIMPLEFIN_HISTORY_OVERLAP_SECONDS = 15 * 24 * 60 * 60;
-const SIMPLEFIN_MAX_HISTORY_WINDOW_SECONDS = 90 * 24 * 60 * 60;
-// A stable namespace for the PostgreSQL advisory lock used by SimpleFIN fetch leases.
-const SIMPLEFIN_FETCH_LOCK_SEED = 0x53464e;
-
-export interface SimpleFinHistoryPlan {
-  historyRecovery?: HistoryRecoveryEvidence;
-  previous?: ParsedTransactions;
-  startDateEpoch: number;
-}
-
-export interface SimpleFinAccountsFetcher {
-  fetchAccounts(accessUrl: string, request?: SimpleFinAccountsRequest): Promise<Uint8Array>;
-}
+// This seed is also pinned in the credential-revocation database trigger.
+const CREDENTIAL_FETCH_LOCK_SEED = 0x53464e;
 
 export class ImportService {
   private readonly db: Database;
@@ -173,14 +164,17 @@ export class ImportService {
   private readonly access: AccessService;
   private readonly blobs: BlobStore;
   private readonly credentialCrypto: SourceCredentialCrypto;
-  private readonly simpleFin: SimpleFinAccountsFetcher;
+  private readonly credentialedSources: CredentialedSourceCatalog;
+  private readonly fileSources: FileSourceCatalog;
+  private readonly sourceContinuations: SourceContinuationCodec;
 
   constructor(
     context: ServiceContext & {
       blobs: BlobStore;
+      credentialedSources: CredentialedSourceCatalog;
+      fileSources: FileSourceCatalog;
       credentialCrypto?: SourceCredentialCrypto;
       credentialEncryptionKey?: CredentialEncryptionKeys;
-      simpleFin: SimpleFinAccountsFetcher;
     },
   ) {
     this.db = context.db;
@@ -193,7 +187,9 @@ export class ImportService {
     this.credentialCrypto =
       context.credentialCrypto ??
       createLocalSourceCredentialCrypto(context.credentialEncryptionKey!);
-    this.simpleFin = context.simpleFin;
+    this.sourceContinuations = new SourceContinuationCodec(this.credentialCrypto);
+    this.credentialedSources = context.credentialedSources;
+    this.fileSources = context.fileSources;
   }
 
   async startPreview(vibeUuid: string, input: CreateImportPreviewRequest): Promise<DbOperation> {
@@ -204,16 +200,24 @@ export class ImportService {
 
     const sourceUuid = sourceUuidOf(input.source);
     const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
-    if (input.rebaseline === true && source.kind !== "credential") {
-      throw new Problem(
-        422,
-        "schema_violation",
-        "Rebaseline is only available for connected sources",
-        "Remove rebaseline or select a SimpleFIN ingestion source",
-      );
-    }
+    const continuation = input.continuation_token
+      ? await this.openSourceContinuation(
+          input.continuation_token,
+          vibe.uuid,
+          vibe.ownerUuid,
+          source,
+        )
+      : undefined;
     if (source.kind === "credential") {
-      await this.historyPlanFor(source, input.rebaseline === true, undefined, true);
+      try {
+        await this.prepareConnectedFetch(source, continuation?.resume);
+      } catch (error) {
+        if (!(error instanceof ConnectedSourceActionRequired)) throw error;
+        if (continuation) throw invalidContinuation();
+        throw await this.sourceActionError(error, source, vibe);
+      }
+    } else if (continuation) {
+      throw invalidContinuation();
     }
     const operationUuid = uuidv7();
     const [operation] = await this.db
@@ -227,20 +231,20 @@ export class ImportService {
         request: {
           mode: "import_preview",
           source: input.source,
-          rebaseline: input.rebaseline ?? false,
+          ...(continuation ? { continuation_action: continuation.kind } : {}),
         },
       })
       .returning();
     if (!operation) throw new Error("Import preview operation insert did not return a row");
 
     queueMicrotask(() => {
-      void this.runPreview(operationUuid, sourceUuid, vibe, input.rebaseline === true).catch(
+      void this.runPreview(operationUuid, sourceUuid, vibe, continuation).catch(
         async (error: unknown) => {
           await this.db
             .update(operations)
             .set({
               status: "failed",
-              result: simpleFinRecoveryResult(error),
+              result: connectedSourceOperationResult(error),
               error: error instanceof Error ? error.message : "Import preview failed",
               finishedAt: new Date(),
             })
@@ -270,17 +274,18 @@ export class ImportService {
       );
     }
     const sourceUuids = vibe.pullConfig.sources.map(sourceUuidOf);
-    const exposeOwnerHistoryGap = this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid;
+    const exposeOwnerAction = this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid;
     for (const sourceUuid of sourceUuids) {
       const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
       if (source.kind === "credential") {
         try {
-          await this.historyPlanFor(source, false, undefined, exposeOwnerHistoryGap);
+          await this.prepareConnectedFetch(source);
         } catch (error) {
-          if (exposeOwnerHistoryGap) throw error;
-          // Pull may be invoked by a delegated dMachine. Keep private banking timestamps and the
-          // source identifier in the owner's response while retaining a typed recovery signal.
-          throw redactSimpleFinHistoryGapForPull(error);
+          if (error instanceof ConnectedSourceActionRequired) {
+            if (exposeOwnerAction) throw await this.sourceActionError(error, source, vibe);
+            throw delegatedSourceActionError(error.skillId);
+          }
+          throw delegatedConnectedSourceError(error);
         }
       }
     }
@@ -309,7 +314,7 @@ export class ImportService {
           .update(operations)
           .set({
             status: "failed",
-            result: simpleFinRecoveryResult(error),
+            result: connectedSourceOperationResult(error),
             error: error instanceof Error ? error.message : "Pull failed",
             finishedAt: new Date(),
           })
@@ -354,9 +359,9 @@ export class ImportService {
       if (!result.verify.ok || result.review_digest !== operation.reviewDigest) {
         throw invalidReview("The preview did not pass VERIFY or its digest does not match");
       }
-      const reviewedRebaseline = operation.request.rebaseline === true;
-      if (reviewedRebaseline !== Boolean(result.verify.history_recovery)) {
-        throw invalidReview("The preview history-recovery evidence does not match its request");
+      const continuationAction = operationContinuationAction(operation.request);
+      if (continuationAction !== result.action_evidence?.kind) {
+        throw invalidReview("The preview action evidence does not match its continuation");
       }
       const sourceReference = operation.request.source;
       if (typeof sourceReference !== "string") throw invalidReview("The preview has no source");
@@ -369,8 +374,11 @@ export class ImportService {
       if (resolved.sourceStateDigest !== result.source_digest) {
         throw invalidReview("The source or pinned parser changed after review");
       }
-      if (result.verify.history_recovery && resolved.kind !== "credential") {
-        throw invalidReview("History recovery is only valid for a connected source");
+      if (result.action_evidence && resolved.kind !== "credential") {
+        throw invalidReview("Reviewed actions are only valid for a connected source");
+      }
+      if (result.action_evidence && resolved.kind === "credential") {
+        assertDeclaredReviewAction(resolved.skill, result.action_evidence.kind);
       }
       const stagedOrigin = await this.lockStagedOrigin(
         transaction,
@@ -391,6 +399,7 @@ export class ImportService {
         throw invalidReview("The staged origin does not match the file source");
       }
       const expectedReviewDigest = await digest({
+        ...(result.action_evidence ? { action_evidence: result.action_evidence } : {}),
         candidates: result.candidates,
         elements: result.elements,
         verify: result.verify,
@@ -402,6 +411,10 @@ export class ImportService {
       }
 
       const stagedCandidates: StagedCandidate[] = [];
+      const identitySourceProperties =
+        resolved.kind === "credential"
+          ? resolved.skill.identitySourceProperties
+          : identityProperties;
       for (const candidate of result.candidates) {
         const candidateElements = result.elements.filter(
           ({ object_uri }) => object_uri === candidate.uri,
@@ -409,7 +422,11 @@ export class ImportService {
         assertCandidate(candidate, lockedVibe.ownerUuid, stagedOrigin.uuid, candidateElements);
         stagedCandidates.push({
           candidate,
-          candidate_digest: await candidateSemanticDigest(candidate, candidateElements),
+          candidate_digest: await candidateSemanticDigest(
+            candidate,
+            candidateElements,
+            identitySourceProperties,
+          ),
           elements: candidateElements,
           identity: await identityForCandidate(candidate),
           origin_uuid: stagedOrigin.uuid,
@@ -534,18 +551,31 @@ export class ImportService {
     operationUuid: string,
     sourceUuid: string,
     vibe: DbVibe,
-    rebaseline: boolean,
+    continuation?: ConnectedSourceContinuation,
   ): Promise<void> {
     await this.db
       .update(operations)
       .set({ status: "running" })
       .where(and(eq(operations.uuid, operationUuid), eq(operations.status, "queued")));
     const resolved = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
-    const staged = await this.stageSource(resolved, vibe.ownerUuid, operationUuid, rebaseline);
+    if (continuation && continuation.expectedSourceStateDigest !== resolved.sourceStateDigest) {
+      throw invalidContinuation();
+    }
+    let staged: StagedSourceCapture;
+    try {
+      staged = await this.stageSource(resolved, vibe.ownerUuid, operationUuid, continuation);
+    } catch (error) {
+      if (!(error instanceof ConnectedSourceActionRequired) || resolved.kind !== "credential") {
+        throw error;
+      }
+      if (continuation) throw invalidContinuation();
+      throw await this.sourceActionError(error, resolved, vibe);
+    }
     const candidates = staged.candidates.map(({ candidate }) => candidate);
     const elements = staged.candidates.flatMap(({ elements }) => elements);
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
     const reviewDigest = await digest({
+      ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
       candidates,
       elements,
       verify: staged.verify,
@@ -553,6 +583,7 @@ export class ImportService {
       staged_origin: stagedOrigin,
     });
     const result: ImportPreviewResult = {
+      ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
       candidates,
       elements,
       verify: staged.verify,
@@ -587,7 +618,15 @@ export class ImportService {
         sourceUuidOf(sourceReference),
         initialVibe.ownerUuid,
       );
-      const parsed = await this.stageSource(resolved, initialVibe.ownerUuid, operationUuid, false);
+      let parsed: StagedSourceCapture;
+      try {
+        parsed = await this.stageSource(resolved, initialVibe.ownerUuid, operationUuid);
+      } catch (error) {
+        if (!(error instanceof ConnectedSourceActionRequired) || resolved.kind !== "credential") {
+          throw error;
+        }
+        throw await this.sourceActionError(error, resolved, initialVibe);
+      }
       staged.push(...parsed.candidates);
       captures.push(parsed);
       sourceResults.push({ source: sourceReference, verify: parsed.verify });
@@ -616,11 +655,12 @@ export class ImportService {
     resolved: ResolvedSource,
     ownerUuid: string,
     operationUuid: string,
-    rebaseline: boolean,
+    continuation?: ConnectedSourceContinuation,
   ): Promise<StagedSourceCapture> {
     if (resolved.kind === "credential") {
-      return this.stageCredentialSource(resolved, ownerUuid, operationUuid, rebaseline);
+      return this.stageCredentialSource(resolved, ownerUuid, operationUuid, continuation);
     }
+    if (continuation) throw invalidContinuation();
     return this.stageOriginSource(resolved, ownerUuid);
   }
 
@@ -628,10 +668,7 @@ export class ImportService {
     resolved: ResolvedOriginSource,
     ownerUuid: string,
   ): Promise<StagedSourceCapture> {
-    const parser = transactionParserFor(resolved.source.parser);
-    if (!parser || parser.version !== resolved.source.parserVersion) {
-      throw new Error("Pinned parser version is unavailable");
-    }
+    const parser = assertPinnedFileSkill(resolved.source, this.fileSources).parser;
     const blob = await this.blobs.get("origins", resolved.origin.contentHash);
     if (!blob) throw new Error("Origin payload is unavailable");
     const parsed = await parser.parse(blob.bytes);
@@ -659,7 +696,7 @@ export class ImportService {
     resolved: ResolvedCredentialSource,
     ownerUuid: string,
     operationUuid: string,
-    rebaseline: boolean,
+    continuation?: ConnectedSourceContinuation,
   ): Promise<StagedSourceCapture> {
     const reservation = await this.reserveCredentialFetch(resolved, ownerUuid, operationUuid);
     const reservedSource = reservation.resolved;
@@ -668,26 +705,22 @@ export class ImportService {
     let phase: "fetch" | "parse" | "verify" | "candidate" = "fetch";
     let providerRequestStarted = false;
     try {
-      const config = simpleFinConfig(reservedSource.source.config);
       const endDateEpoch = Math.floor(Date.now() / 1_000);
-      const historyPlan = await this.historyPlanFor(reservedSource, rebaseline, endDateEpoch);
-      const accessUrl = await this.credentialCrypto.open(
+      const prepared = await this.prepareConnectedFetch(
+        reservedSource,
+        continuation?.resume,
+        endDateEpoch,
+      );
+      const secret = await this.credentialCrypto.open(
         reservedSource.credential.secret,
         credentialAssociatedData(
           reservedSource.credential.uuid,
           ownerUuid,
-          reservedSource.credential.provider,
+          reservedSource.credential.skillId,
         ),
       );
       providerRequestStarted = true;
-      const bytes = await this.simpleFin.fetchAccounts(accessUrl, {
-        ...(config.accounts
-          ? { accountIds: config.accounts.map(({ account_id }) => account_id) }
-          : {}),
-        startDateEpoch: historyPlan.startDateEpoch,
-        endDateEpoch,
-        includePending: config.include_pending === true,
-      });
+      const bytes = await prepared.fetch.retrieve(secret);
       // Persist the exact successful provider response before lease cleanup. If unlocking the
       // dedicated connection fails, the rate-counted response remains retained as an immutable
       // OriginArtifact instead of disappearing before the fetch ledger can record its failure.
@@ -696,8 +729,8 @@ export class ImportService {
         {
           ownerUuid,
           bytes,
-          mime: "application/json",
-          label: `simplefin-${fetchUuid}.json`,
+          mime: reservedSource.skill.capture.mime,
+          label: reservedSource.skill.capture.label(fetchUuid),
         },
       );
       // Revocation may proceed once the exact response is durable. Parsing does not use the
@@ -717,31 +750,28 @@ export class ImportService {
       if (!fetched) throw new Error("Connected fetch state changed unexpectedly");
 
       phase = "parse";
-      const parser = transactionParserFor(reservedSource.source.parser);
-      if (!parser || parser.version !== reservedSource.source.parserVersion) {
-        throw new Error("Pinned parser version is unavailable");
-      }
-      const current = filterSimpleFinTransactions(await parser.parse(bytes), config);
+      const parser = reservedSource.skill.parser;
+      const current = reservedSource.skill.normalize(await parser.parse(bytes), prepared.config);
 
       phase = "verify";
-      const verify = verifyTransactions(current, {
-        ...(historyPlan.previous ? { previous: historyPlan.previous } : {}),
-        ...(historyPlan.previous ? { historyStartEpoch: historyPlan.startDateEpoch } : {}),
-        ...(historyPlan.historyRecovery ? { historyRecovery: historyPlan.historyRecovery } : {}),
-      });
+      const verify = verifyTransactions(current, prepared.fetch.verifyOptions);
       if (!verify.ok) {
-        const recovery = unreconciledSimpleFinActivity(verify, reservedSource.source.uuid);
-        if (recovery) throw recovery;
+        const action = reservedSource.skill.verificationError(verify);
+        if (action) throw action;
         throw new Error(`VERIFY rejected the connected transaction set: ${failedChecks(verify)}`);
       }
 
       phase = "candidate";
+      if (prepared.fetch.actionEvidence) {
+        assertDeclaredReviewAction(reservedSource.skill, prepared.fetch.actionEvidence.kind);
+      }
       const candidates = await candidatesFromParsed(
         current,
         reservation.resolved.source,
         origin,
         ownerUuid,
         parser.version,
+        reservedSource.skill.identitySourceProperties,
       );
       const verifiedAt = new Date();
       const [verified] = await this.db
@@ -756,6 +786,7 @@ export class ImportService {
         .returning({ uuid: ingestionSourceFetches.uuid });
       if (!verified) throw new Error("Connected fetch state changed unexpectedly");
       return {
+        ...(prepared.fetch.actionEvidence ? { actionEvidence: prepared.fetch.actionEvidence } : {}),
         candidates,
         fetchUuid,
         kind: "credential",
@@ -784,7 +815,7 @@ export class ImportService {
           );
       } else {
         // Local/KMS credential failures happen before any provider traffic. Removing the
-        // untouched reservation keeps the rolling limit tied to actual SimpleFIN attempts.
+        // untouched reservation keeps the rolling limit tied to actual provider attempts.
         await this.db
           .delete(ingestionSourceFetches)
           .where(
@@ -798,37 +829,113 @@ export class ImportService {
     }
   }
 
-  /** Loads the exact committed capture and derives one provider-bounded history request. */
-  private async historyPlanFor(
+  /** Loads the exact committed capture and asks the owning skill to plan one bounded request. */
+  private async prepareConnectedFetch(
     resolved: ResolvedCredentialSource,
-    rebaseline: boolean,
+    resume?: SourceJsonValue,
     endDateEpoch = Math.floor(Date.now() / 1_000),
-    exposeSource = false,
-  ): Promise<SimpleFinHistoryPlan> {
-    if (!resolved.baseline) {
-      return planSimpleFinHistory(
-        undefined,
-        endDateEpoch,
-        rebaseline,
-        exposeSource ? `source:${resolved.source.uuid}` : undefined,
+  ): Promise<{ config: unknown; fetch: PreparedConnectedSourceFetch }> {
+    const config = resolved.skill.parseConfig(resolved.source.config);
+    let previous: ParsedTransactions | undefined;
+    if (resolved.baseline) {
+      const previousBlob = await this.blobs.get("origins", resolved.baseline.origin.contentHash);
+      if (!previousBlob) throw new Error("Previous connected capture is unavailable");
+      previous = resolved.skill.normalize(
+        await resolved.skill.parser.parse(previousBlob.bytes),
+        config,
       );
     }
-    const parser = transactionParserFor(resolved.source.parser);
-    if (!parser || parser.version !== resolved.source.parserVersion) {
-      throw new Error("Pinned parser version is unavailable");
+    return {
+      config,
+      fetch: resolved.skill.prepareFetch({
+        config,
+        endDateEpoch,
+        ...(previous ? { previous } : {}),
+        ...(resume === undefined ? {} : { resume }),
+      }),
+    };
+  }
+
+  private async sourceActionError(
+    requirement: ConnectedSourceActionRequired,
+    resolved: ResolvedCredentialSource,
+    vibe: DbVibe,
+  ): Promise<ConnectedSourceError> {
+    if (requirement.skillId !== resolved.skill.skillId) {
+      throw new Error("Connected-source action skill id does not match its registered skill");
     }
-    const previousBlob = await this.blobs.get("origins", resolved.baseline.origin.contentHash);
-    if (!previousBlob) throw new Error("Previous connected capture is unavailable");
-    const previous = filterSimpleFinTransactions(
-      await parser.parse(previousBlob.bytes),
-      simpleFinConfig(resolved.source.config),
+    assertDeclaredReviewAction(resolved.skill, requirement.kind);
+    if (
+      requirement.title.length === 0 ||
+      requirement.title.length > 256 ||
+      requirement.detail.length === 0 ||
+      requirement.detail.length > 2_048
+    ) {
+      throw new Error("Connected-source action copy exceeds its public bounds");
+    }
+    const source = `source:${resolved.source.uuid}`;
+    const continuationToken = await this.sealSourceContinuation(
+      requirement,
+      vibe.uuid,
+      vibe.ownerUuid,
+      source,
+      resolved.sourceStateDigest,
     );
-    return planSimpleFinHistory(
-      previous,
-      endDateEpoch,
-      rebaseline,
-      exposeSource ? `source:${resolved.source.uuid}` : undefined,
-    );
+    const requiredAction: SourceJsonObject = {
+      kind: "source_action_required",
+      action: requirement.kind,
+      title: requirement.title,
+      detail: requirement.detail,
+      source,
+      continuation_token: continuationToken,
+    };
+    return new ConnectedSourceError(requirement.skillId, {
+      status: 422,
+      code: "source_action_required",
+      title: requirement.title,
+      detail: requirement.detail,
+      extensions: { required_action: requiredAction },
+      operationResult: {
+        code: "source_action_required",
+        required_action: requiredAction,
+      },
+    });
+  }
+
+  private async sealSourceContinuation(
+    requirement: ConnectedSourceActionRequired,
+    vibeUuid: string,
+    ownerUuid: string,
+    source: string,
+    sourceStateDigest: string,
+  ): Promise<string> {
+    return this.sourceContinuations.seal({
+      kind: requirement.kind,
+      ownerUuid,
+      resume: requirement.resume,
+      source,
+      sourceStateDigest,
+      vibeUuid,
+    });
+  }
+
+  private async openSourceContinuation(
+    token: string,
+    vibeUuid: string,
+    ownerUuid: string,
+    resolved: ResolvedSource,
+  ): Promise<ConnectedSourceContinuation> {
+    try {
+      if (resolved.kind !== "credential") throw invalidContinuation();
+      return await this.sourceContinuations.open(token, {
+        ownerUuid,
+        source: `source:${resolved.source.uuid}`,
+        sourceStateDigest: resolved.sourceStateDigest,
+        vibeUuid,
+      });
+    } catch {
+      throw invalidContinuation();
+    }
   }
 
   /**
@@ -871,22 +978,28 @@ export class ImportService {
       try {
         const [locked] = await connection<
           Array<{
+            credential_connector_version: string;
+            credential_skill_id: string;
             credential_uuid: string;
             owner_uuid: string;
-            provider: string;
             source_config: unknown;
+            source_connector_version: string;
             source_kind: string;
             source_parser: string;
             source_parser_version: string;
+            source_skill_id: string;
             source_uuid: string;
           }>
         >`
           select
             credential.uuid as credential_uuid,
             credential.user_uuid as owner_uuid,
-            credential.provider,
+            credential.skill_id as credential_skill_id,
+            credential.connector_version as credential_connector_version,
             source.uuid as source_uuid,
             source.kind as source_kind,
+            source.skill_id as source_skill_id,
+            source.connector_version as source_connector_version,
             source.parser as source_parser,
             source.parser_version as source_parser_version,
             source.config as source_config
@@ -907,6 +1020,7 @@ export class ImportService {
         const [baseline] = await connection<
           Array<{
             fetch_uuid: string;
+            connector_version: string;
             origin_content_hash: string;
             origin_uuid: string;
             parser_version: string;
@@ -914,6 +1028,7 @@ export class ImportService {
         >`
           select
             source_fetch.uuid as fetch_uuid,
+            source_fetch.connector_version,
             source_fetch.parser_version,
             origin.uuid as origin_uuid,
             origin.content_hash as origin_content_hash
@@ -934,9 +1049,12 @@ export class ImportService {
         if (
           locked.credential_uuid !== expected.credential.uuid ||
           locked.owner_uuid !== ownerUuid ||
-          locked.provider !== expected.credential.provider ||
+          locked.credential_skill_id !== expected.credential.skillId ||
+          locked.credential_connector_version !== expected.credential.connectorVersion ||
           locked.source_uuid !== expected.source.uuid ||
           locked.source_kind !== expected.source.kind ||
+          locked.source_skill_id !== expected.source.skillId ||
+          locked.source_connector_version !== expected.source.connectorVersion ||
           locked.source_parser !== expected.source.parser ||
           locked.source_parser_version !== expected.source.parserVersion ||
           canonicalJson(locked.source_config ?? {}) !==
@@ -944,6 +1062,7 @@ export class ImportService {
           Boolean(baseline) !== Boolean(expectedBaseline) ||
           (baseline !== undefined &&
             (baseline.fetch_uuid !== expectedBaseline?.fetch.uuid ||
+              baseline.connector_version !== expectedBaseline.fetch.connectorVersion ||
               baseline.parser_version !== expectedBaseline.fetch.parserVersion ||
               baseline.origin_uuid !== expectedBaseline.origin.uuid ||
               baseline.origin_content_hash !== expectedBaseline.origin.contentHash))
@@ -956,16 +1075,16 @@ export class ImportService {
         // revocation transaction's row-lock-then-advisory-lock order and avoiding deadlocks.
         const [lock] = await connection<[{ acquired: boolean }]>`
           select pg_try_advisory_lock(
-            hashtextextended(${candidate.credential.uuid}::text, ${SIMPLEFIN_FETCH_LOCK_SEED}::bigint)
+            hashtextextended(${candidate.credential.uuid}::text, ${CREDENTIAL_FETCH_LOCK_SEED}::bigint)
           ) as acquired
         `;
         if (!lock?.acquired) {
-          throw new Problem(
-            429,
-            "rate_limited",
-            "SimpleFIN fetch already in progress",
-            "Wait for the active credential fetch to finish before trying again",
-          );
+          throw new ConnectedSourceError(candidate.skill.skillId, {
+            status: 429,
+            code: "rate_limited",
+            title: `${candidate.skill.displayName} fetch already in progress`,
+            detail: "Wait for the active credential fetch to finish before trying again",
+          });
         }
         leaseHeld = true;
 
@@ -973,9 +1092,9 @@ export class ImportService {
           select count(*)::int as count
           from ingestion_source_fetches
           where credential_uuid = ${candidate.credential.uuid}
-            and created_at >= now() - make_interval(hours => ${SIMPLEFIN_FETCH_WINDOW_HOURS})
+            and created_at >= now() - make_interval(hours => ${candidate.skill.fetchPolicy.windowHours})
         `;
-        assertSimpleFinFetchAllowance(recent?.count ?? 0);
+        assertCredentialFetchAllowance(candidate.skill, recent?.count ?? 0);
 
         await connection`
           insert into ingestion_source_fetches (
@@ -984,6 +1103,7 @@ export class ImportService {
             owner_uuid,
             credential_uuid,
             operation_uuid,
+            connector_version,
             parser_version,
             source_state_digest
           ) values (
@@ -992,6 +1112,7 @@ export class ImportService {
             ${ownerUuid},
             ${candidate.credential.uuid},
             ${operationUuid},
+            ${candidate.source.connectorVersion},
             ${candidate.source.parserVersion},
             ${candidate.sourceStateDigest}
           )
@@ -1371,15 +1492,28 @@ export class ImportService {
         )
         .for(lock);
       if (!source) throw notFound("Ingestion source");
-      if (credential.provider !== SIMPLEFIN_PROVIDER || source.parser !== SIMPLEFIN_PARSER_NAME) {
+      if (
+        !source.skillId ||
+        source.skillId !== credential.skillId ||
+        source.connectorVersion !== credential.connectorVersion
+      ) {
+        throw new Error("Credential ingestion source has an inconsistent implementation identity");
+      }
+      const skill = this.credentialedSources.forSource(credential.skillId, source.parser);
+      if (!skill) {
         throw new Problem(
           422,
           "parser_unsupported",
-          "Source provider unsupported",
-          credential.provider,
+          "Source skill unsupported",
+          credential.skillId,
         );
       }
-      assertPinnedParser(source);
+      if (skill.parser.version !== source.parserVersion) {
+        throw new Error("Pinned parser version is unavailable");
+      }
+      if (skill.manifest.connector_version !== credential.connectorVersion) {
+        throw new Error("Pinned connector version is unavailable");
+      }
 
       const [baselineFetch] = await database
         .select()
@@ -1400,6 +1534,12 @@ export class ImportService {
         if (!baselineFetch.originUuid) {
           throw new Error("Committed connected fetch has no OriginArtifact");
         }
+        if (
+          baselineFetch.connectorVersion !== source.connectorVersion ||
+          baselineFetch.parserVersion !== source.parserVersion
+        ) {
+          throw new Error("Committed connected baseline uses an unavailable source version");
+        }
         const [origin] = await database
           .select()
           .from(originArtifacts)
@@ -1415,7 +1555,7 @@ export class ImportService {
         baseline = { fetch: baselineFetch, origin };
       }
       const sourceStateDigest = await credentialSourceStateDigest(source, credential, baseline);
-      return { kind: "credential", source, credential, baseline, sourceStateDigest };
+      return { kind: "credential", source, credential, skill, baseline, sourceStateDigest };
     }
 
     const [source] = await database
@@ -1430,7 +1570,7 @@ export class ImportService {
         ),
       )
       .for(lock);
-    if (!source || !source.originUuid || source.credentialUuid) {
+    if (!source || !source.originUuid || source.credentialUuid || !source.skillId) {
       throw notFound("Ingestion source");
     }
 
@@ -1446,7 +1586,7 @@ export class ImportService {
       )
       .for(lock);
     if (!origin) throw notFound("Ingestion source");
-    assertPinnedParser(source);
+    assertPinnedFileSkill(source, this.fileSources);
     return {
       kind: "origin",
       source,
@@ -1487,6 +1627,7 @@ export class ImportService {
       eq(ingestionSourceFetches.operationUuid, operationUuid),
       eq(ingestionSourceFetches.sourceUuid, resolved.source.uuid),
       eq(ingestionSourceFetches.originUuid, originUuid),
+      eq(ingestionSourceFetches.connectorVersion, resolved.source.connectorVersion),
       eq(ingestionSourceFetches.parserVersion, resolved.source.parserVersion),
       eq(ingestionSourceFetches.sourceStateDigest, sourceStateDigest),
       eq(ingestionSourceFetches.status, "verified"),
@@ -1532,6 +1673,36 @@ function sourceUuidOf(source: string): string {
   return source.slice("source:".length);
 }
 
+function operationContinuationAction(
+  request: DbOperation["request"],
+): ConnectedSourceActionKind | undefined {
+  const action = request.continuation_action;
+  if (action === undefined) return undefined;
+  if (action === "review_import") return action;
+  throw invalidReview("The preview continuation action is malformed");
+}
+
+function delegatedSourceActionError(skillId: string): ConnectedSourceError {
+  const title = "Connected source requires owner review";
+  const detail = "The connected source owner must review an import before pulling again.";
+  return new ConnectedSourceError(skillId, {
+    status: 422,
+    code: "source_action_required",
+    title,
+    detail,
+    extensions: { action: "review_import", owner_action_required: true },
+  });
+}
+
+function invalidContinuation(): Problem {
+  return new Problem(
+    422,
+    "schema_violation",
+    "Continuation invalid",
+    "The source continuation token is invalid or expired",
+  );
+}
+
 const ORIGIN_URI_PATTERN = new RegExp(rnetUriPattern("origin"));
 
 function originUuidOf(origin: string): string {
@@ -1539,14 +1710,31 @@ function originUuidOf(origin: string): string {
   return origin.slice("rnet://origin/".length);
 }
 
-function assertPinnedParser(source: DbIngestionSource): void {
-  const parser = transactionParserFor(source.parser);
-  if (!parser) {
-    throw new Problem(422, "parser_unsupported", "Parser unsupported", source.parser);
+function assertPinnedFileSkill(
+  source: DbIngestionSource,
+  catalog: FileSourceCatalog,
+): FileSourceSkill {
+  const skill = source.skillId ? catalog.forSkillId(source.skillId) : undefined;
+  if (!skill) {
+    throw new Problem(
+      422,
+      "parser_unsupported",
+      "Source skill unsupported",
+      source.skillId ?? "missing skill id",
+    );
   }
-  if (parser.version !== source.parserVersion) {
+  if (skill.parser.name !== source.parser || skill.parser.version !== source.parserVersion) {
     throw new Problem(422, "parser_unsupported", "Pinned parser unavailable", source.parserVersion);
   }
+  if (skill.manifest.connector_version !== source.connectorVersion) {
+    throw new Problem(
+      422,
+      "parser_unsupported",
+      "Pinned connector unavailable",
+      source.connectorVersion,
+    );
+  }
+  return skill;
 }
 
 async function originSourceStateDigest(
@@ -1556,6 +1744,8 @@ async function originSourceStateDigest(
   return digest({
     source: source.uuid,
     kind: source.kind,
+    skill_id: source.skillId,
+    connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
     config: source.config ?? {},
@@ -1572,14 +1762,16 @@ async function credentialSourceStateDigest(
   return digest({
     source: source.uuid,
     kind: source.kind,
+    connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
     config: source.config ?? {},
     credential: credential.uuid,
-    provider: credential.provider,
+    skill_id: source.skillId,
     baseline: baseline
       ? {
           fetch: baseline.fetch.uuid,
+          connector_version: baseline.fetch.connectorVersion,
           parser_version: baseline.fetch.parserVersion,
           origin: baseline.origin.uuid,
           content_hash: baseline.origin.contentHash,
@@ -1588,261 +1780,30 @@ async function credentialSourceStateDigest(
   });
 }
 
-function simpleFinConfig(value: unknown): SimpleFinSourceConfig {
-  if (value === null || value === undefined) return {};
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Stored SimpleFIN source configuration is invalid");
+function assertCredentialFetchAllowance(
+  skill: CredentialedSourceSkill,
+  recentAttemptCount: number,
+): void {
+  if (!Number.isSafeInteger(recentAttemptCount) || recentAttemptCount < 0) {
+    throw new Error("Connected-source fetch attempt count is invalid");
   }
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => key !== "accounts" && key !== "include_pending")) {
-    throw new Error("Stored SimpleFIN source configuration is invalid");
-  }
-  if (record.include_pending !== undefined && typeof record.include_pending !== "boolean") {
-    throw new Error("Stored SimpleFIN source configuration is invalid");
-  }
-  let accounts: SimpleFinSourceConfig["accounts"];
-  if (record.accounts !== undefined) {
-    if (
-      !Array.isArray(record.accounts) ||
-      record.accounts.length === 0 ||
-      record.accounts.length > 100
-    ) {
-      throw new Error("Stored SimpleFIN source configuration is invalid");
-    }
-    const seen = new Set<string>();
-    accounts = record.accounts.map((value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new Error("Stored SimpleFIN source configuration is invalid");
-      }
-      const selector = value as Record<string, unknown>;
-      if (
-        Object.keys(selector).some((key) => key !== "connection_id" && key !== "account_id") ||
-        typeof selector.connection_id !== "string" ||
-        selector.connection_id.length === 0 ||
-        selector.connection_id.length > 512 ||
-        typeof selector.account_id !== "string" ||
-        selector.account_id.length === 0 ||
-        selector.account_id.length > 512
-      ) {
-        throw new Error("Stored SimpleFIN source configuration is invalid");
-      }
-      const composite = JSON.stringify([selector.connection_id, selector.account_id]);
-      if (seen.has(composite)) {
-        throw new Error("Stored SimpleFIN source configuration is invalid");
-      }
-      seen.add(composite);
-      return {
-        connection_id: selector.connection_id,
-        account_id: selector.account_id,
-      };
+  if (recentAttemptCount >= skill.fetchPolicy.attempts) {
+    throw new ConnectedSourceError(skill.skillId, {
+      status: 429,
+      code: "rate_limited",
+      title: `${skill.displayName} fetch limit reached`,
+      detail: `This credential has already attempted ${skill.fetchPolicy.attempts} fetches in the last ${skill.fetchPolicy.windowHours} hours`,
     });
   }
-  return {
-    ...(accounts ? { accounts } : {}),
-    ...(record.include_pending === undefined ? {} : { include_pending: record.include_pending }),
-  };
 }
 
-/**
- * Plans one exact SimpleFIN response. The ordinary 45-day range grows to include the oldest
- * selected-account balance plus a 15-day overlap, but never exceeds the provider's documented
- * 90-day limit. Crossing that boundary requires a separately reviewed rebaseline preview.
- */
-export function planSimpleFinHistory(
-  previous: ParsedTransactions | undefined,
-  endDateEpoch: number,
-  rebaseline: boolean,
-  ownerSource?: string,
-): SimpleFinHistoryPlan {
-  if (!Number.isSafeInteger(endDateEpoch) || endDateEpoch <= 0) {
-    throw new Error("SimpleFIN history end date is invalid");
+function assertDeclaredReviewAction(
+  skill: CredentialedSourceSkill,
+  action: ConnectedSourceActionKind,
+): void {
+  if (!skill.manifest.review_actions.includes(action)) {
+    throw new Error(`Connected-source ${skill.skillId} emitted undeclared review action ${action}`);
   }
-  const rollingStart = Math.max(0, endDateEpoch - SIMPLEFIN_HISTORY_WINDOW_SECONDS);
-  if (!previous) {
-    if (rebaseline) {
-      throw new Problem(
-        422,
-        "schema_violation",
-        "SimpleFIN source has no baseline to replace",
-        "Start a normal import preview for this new connected source",
-      );
-    }
-    return { startDateEpoch: rollingStart };
-  }
-
-  const balances = previous.accountBalances ?? [];
-  if (!balances.length) throw new Error("Previous connected capture has no account balances");
-  const oldestBalanceAt = Math.min(...balances.map(({ balanceAtEpoch }) => balanceAtEpoch));
-  if (!Number.isSafeInteger(oldestBalanceAt) || oldestBalanceAt <= 0) {
-    throw new Error("Previous connected capture has an invalid balance date");
-  }
-  const preferredStart = Math.max(0, oldestBalanceAt - SIMPLEFIN_HISTORY_OVERLAP_SECONDS);
-  const earliestSupportedStart = Math.max(0, endDateEpoch - SIMPLEFIN_MAX_HISTORY_WINDOW_SECONDS);
-  const previousBalanceAt = new Date(oldestBalanceAt * 1_000).toISOString();
-
-  if (rebaseline) {
-    return {
-      startDateEpoch: rollingStart,
-      historyRecovery: {
-        mode: "rebaseline",
-        reason:
-          oldestBalanceAt < earliestSupportedStart
-            ? "simplefin_history_gap"
-            : "unreconciled_backdated_activity",
-        previous_balance_at: previousBalanceAt,
-        history_resumes_at: new Date(rollingStart * 1_000).toISOString(),
-      },
-    };
-  }
-
-  if (oldestBalanceAt < earliestSupportedStart) {
-    throw new Problem(
-      422,
-      "simplefin_history_gap",
-      "SimpleFIN history gap requires review",
-      `The previous connected balance at ${previousBalanceAt} cannot be reconciled inside SimpleFIN's 90-day retrieval limit. Start an import preview with rebaseline=true to review and acknowledge a new baseline; the omitted interval will not be imported automatically.`,
-      {
-        previous_balance_at: previousBalanceAt,
-        earliest_supported_start: new Date(earliestSupportedStart * 1_000).toISOString(),
-        recovery: "reviewed_rebaseline",
-        ...(ownerSource ? { source: ownerSource } : {}),
-      },
-    );
-  }
-
-  return {
-    previous,
-    // Preserve the preferred 15-day overlap when possible, then shrink only the overlap as the
-    // balance approaches the provider boundary. The balance interval itself is never omitted.
-    startDateEpoch: Math.max(earliestSupportedStart, Math.min(rollingStart, preferredStart)),
-  };
-}
-
-/** Removes owner-only banking timestamps/source references from pull errors visible to grantees. */
-export function redactSimpleFinHistoryGapForPull(error: unknown): unknown {
-  if (!(error instanceof Problem) || error.code !== "simplefin_history_gap") return error;
-  return new Problem(
-    422,
-    "simplefin_history_gap",
-    "SimpleFIN history gap requires owner review",
-    "The connected source cannot be reconciled inside the provider history window. Its owner must review a rebaseline import preview.",
-    { recovery: "owner_reviewed_rebaseline" },
-  );
-}
-
-/**
- * Turns the one VERIFY failure that owner review can resolve into the same typed recovery signal
- * used by provider-window preflight failures. Other VERIFY failures remain ordinary rejections:
- * rebaselining must never bypass malformed records, duplicate IDs, or provider errors.
- */
-function unreconciledSimpleFinActivity(
-  report: VerifyReport,
-  sourceUuid: string,
-): Problem | undefined {
-  const failed = report.checks.filter(({ ok }) => !ok);
-  if (failed.length !== 1 || failed[0]?.name !== "balance_delta") return undefined;
-  return new Problem(
-    422,
-    "simplefin_history_gap",
-    "SimpleFIN history requires owner review",
-    "The connected account balances cannot be reconciled with the returned transaction history. Review and acknowledge a new baseline before pulling this source again.",
-    {
-      reason: "unreconciled_backdated_activity",
-      recovery: "reviewed_rebaseline",
-      source: `source:${sourceUuid}`,
-    },
-  );
-}
-
-/** Stores owner-only recovery metadata on an asynchronously failed operation. */
-function simpleFinRecoveryResult(error: unknown): Record<string, unknown> | null {
-  if (
-    !(error instanceof Problem) ||
-    error.code !== "simplefin_history_gap" ||
-    error.extensions.recovery !== "reviewed_rebaseline" ||
-    error.extensions.reason !== "unreconciled_backdated_activity" ||
-    typeof error.extensions.source !== "string" ||
-    !new RegExp(SOURCE_ID_PATTERN).test(error.extensions.source)
-  ) {
-    return null;
-  }
-  return {
-    code: error.code,
-    reason: error.extensions.reason,
-    recovery: error.extensions.recovery,
-    source: error.extensions.source,
-  };
-}
-
-export function assertSimpleFinFetchAllowance(recentAttemptCount: number): void {
-  if (!Number.isSafeInteger(recentAttemptCount) || recentAttemptCount < 0) {
-    throw new Error("SimpleFIN fetch attempt count is invalid");
-  }
-  if (recentAttemptCount >= SIMPLEFIN_FETCH_LIMIT) {
-    throw new Problem(
-      429,
-      "rate_limited",
-      "SimpleFIN fetch limit reached",
-      `This credential has already attempted ${SIMPLEFIN_FETCH_LIMIT} account fetches in the last ${SIMPLEFIN_FETCH_WINDOW_HOURS} hours`,
-    );
-  }
-}
-
-/** Applies the owner-selected composite account and pending policy deterministically. */
-export function filterSimpleFinTransactions(
-  parsed: ParsedTransactions,
-  config: SimpleFinSourceConfig,
-): ParsedTransactions {
-  const selectedAccounts = config.accounts
-    ? new Set(
-        config.accounts.map(({ connection_id, account_id }) =>
-          JSON.stringify([connection_id, account_id]),
-        ),
-      )
-    : undefined;
-  const hasProviderErrors =
-    (parsed.providerErrors?.structured.length ?? 0) > 0 ||
-    (parsed.providerErrors?.legacyCount ?? 0) > 0;
-  if (selectedAccounts && !hasProviderErrors) {
-    const returnedAccounts = new Set(
-      (parsed.accountBalances ?? [])
-        .map(({ accountIdentity }) => accountIdentity)
-        .filter((identity): identity is string => Boolean(identity)),
-    );
-    const missingAccountCount = [...selectedAccounts].filter(
-      (identity) => !returnedAccounts.has(identity),
-    ).length;
-    if (missingAccountCount > 0) {
-      throw new Error(
-        `SimpleFIN response omitted ${missingAccountCount} selected account${missingAccountCount === 1 ? "" : "s"}`,
-      );
-    }
-  }
-  const includesAccount = (accountIdentity: string | undefined): boolean =>
-    Boolean(accountIdentity) &&
-    (!selectedAccounts || selectedAccounts.has(accountIdentity as string));
-  const transactions = parsed.transactions.filter(
-    (transaction) =>
-      includesAccount(transaction.accountIdentity) &&
-      (config.include_pending === true || transaction.pending !== true),
-  );
-  const countByAccount = new Map<string, number>();
-  for (const transaction of transactions) {
-    const identity = transaction.accountIdentity!;
-    countByAccount.set(identity, (countByAccount.get(identity) ?? 0) + 1);
-  }
-  const accountBalances: ParsedAccountBalance[] | undefined = parsed.accountBalances
-    ?.filter((balance) => includesAccount(balance.accountIdentity))
-    .map((balance) => ({
-      ...balance,
-      sourceRecordCount: countByAccount.get(balance.accountIdentity) ?? 0,
-    }));
-  return {
-    ...parsed,
-    transactions,
-    sourceRecordCount: transactions.length,
-    ...(accountBalances ? { accountBalances } : {}),
-  };
 }
 
 function failedChecks(report: VerifyReport): string {
@@ -1856,6 +1817,7 @@ async function candidatesFromParsed(
   origin: DbOriginArtifact,
   ownerUuid: string,
   parserVersion: string,
+  identitySourceProperties: IdentitySourceProperties = identityProperties,
 ): Promise<StagedCandidate[]> {
   const candidates: StagedCandidate[] = [];
   for (const transaction of parsed.transactions) {
@@ -1894,7 +1856,7 @@ async function candidatesFromParsed(
     }
     candidates.push({
       candidate,
-      candidate_digest: await candidateSemanticDigest(candidate, []),
+      candidate_digest: await candidateSemanticDigest(candidate, [], identitySourceProperties),
       elements: [],
       identity: await identityForCandidate(candidate),
       origin_uuid: origin.uuid,
@@ -1931,18 +1893,11 @@ async function identityForCandidate(candidate: MediaObject): Promise<string> {
 export function candidateSemanticDigest(
   candidate: MediaObject,
   elements: readonly StagedElement[] = [],
+  identitySourceProperties: IdentitySourceProperties = identityProperties,
 ): Promise<string> {
   const { uri: _uri, source, elements: _elementUris, ...content } = candidate;
   const { origins: _origins, retrieved_at: _retrievedAt, properties, ...sourceIdentity } = source;
-  // Account-level snapshots can change while the transaction itself is unchanged. They remain
-  // on the persisted source provenance; only this semantic comparison projection omits them.
-  const {
-    account_balance: _accountBalance,
-    account_balance_date: _accountBalanceDate,
-    account_balance_date_epoch: _accountBalanceDateEpoch,
-    simplefin_account_extra: _simpleFinAccountExtra,
-    ...semanticProperties
-  } = properties;
+  const semanticProperties = identitySourceProperties(properties);
   const semanticSource = { ...sourceIdentity, properties: semanticProperties };
   const semanticElements = elements.map(({ role, kind, mime, byte_size, content_hash }) => ({
     role,
@@ -1952,6 +1907,12 @@ export function candidateSemanticDigest(
     content_hash,
   }));
   return digest({ ...content, elements: semanticElements, source: semanticSource });
+}
+
+type IdentitySourceProperties = (properties: Record<string, unknown>) => Record<string, unknown>;
+
+function identityProperties(properties: Record<string, unknown>): Record<string, unknown> {
+  return properties;
 }
 
 export function canonicalJson(value: unknown): string {
@@ -1985,42 +1946,24 @@ function importPreviewResult(value: unknown): ImportPreviewResult {
     throw invalidReview("The staged result is malformed");
   }
   if (
-    result.verify.history_recovery !== undefined &&
-    !validHistoryRecoveryEvidence(result.verify.history_recovery)
+    result.action_evidence !== undefined &&
+    !validConnectedSourceActionEvidence(result.action_evidence)
   ) {
-    throw invalidReview("The staged history-recovery evidence is malformed");
+    throw invalidReview("The staged action evidence is malformed");
   }
   return result as ImportPreviewResult;
 }
 
-function validHistoryRecoveryEvidence(value: unknown): value is HistoryRecoveryEvidence {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const evidence = value as Record<string, unknown>;
-  if (
-    Object.keys(evidence).some(
-      (key) =>
-        key !== "mode" &&
-        key !== "reason" &&
-        key !== "previous_balance_at" &&
-        key !== "history_resumes_at",
-    ) ||
-    evidence.mode !== "rebaseline" ||
-    (evidence.reason !== "simplefin_history_gap" &&
-      evidence.reason !== "unreconciled_backdated_activity") ||
-    typeof evidence.previous_balance_at !== "string" ||
-    typeof evidence.history_resumes_at !== "string"
-  ) {
-    return false;
-  }
+function validConnectedSourceActionEvidence(
+  value: unknown,
+): value is ConnectedSourceActionEvidence {
   return (
-    isCanonicalIsoTimestamp(evidence.previous_balance_at) &&
-    isCanonicalIsoTimestamp(evidence.history_resumes_at)
+    Boolean(value) &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length === 1 &&
+    (value as Record<string, unknown>).kind === "review_import"
   );
-}
-
-function isCanonicalIsoTimestamp(value: string): boolean {
-  const parsed = new Date(value);
-  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
 }
 
 function assertCandidate(

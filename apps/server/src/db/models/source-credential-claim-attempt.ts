@@ -36,7 +36,7 @@ export const sourceCredentialClaimAttempts = pgTable(
     userUuid: uuid("user_uuid")
       .notNull()
       .references(() => users.uuid, { onDelete: "cascade" }),
-    provider: text("provider").notNull(),
+    skillId: text("skill_id").notNull(),
     tokenFingerprint: text("token_fingerprint").notNull(),
     status: text("status", { enum: SOURCE_CREDENTIAL_CLAIM_STATUSES })
       .notNull()
@@ -64,7 +64,7 @@ export const sourceCredentialClaimAttempts = pgTable(
       )`,
     ),
     uniqueIndex("source_credential_claim_attempts_token_unique_idx").on(
-      attempt.provider,
+      attempt.skillId,
       attempt.tokenFingerprint,
     ),
     index("source_credential_claim_attempts_user_created_idx").on(

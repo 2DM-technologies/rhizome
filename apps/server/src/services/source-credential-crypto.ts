@@ -3,6 +3,9 @@ const GCM_IV_BYTES = 12;
 const LEGACY_SEALED_SECRET_VERSION = 1;
 const SEALED_SECRET_VERSION = 2;
 const MAX_KEY_ID_BYTES = 64;
+const CLAIM_FINGERPRINT_HKDF_INFO = "rhizome:source-credential-claim-fingerprint:v1";
+const LEGACY_SIMPLEFIN_FINGERPRINT_HKDF_INFO = "rhizome:simplefin-setup-token-fingerprint:v1";
+const LEGACY_SIMPLEFIN_SKILL_ID = "simplefin";
 
 export interface CredentialKeyring {
   activeKeyId: string;
@@ -11,7 +14,7 @@ export interface CredentialKeyring {
 
 export type CredentialEncryptionKeys = Uint8Array | CredentialKeyring;
 
-export interface CredentialTokenFingerprints {
+export interface CredentialClaimFingerprints {
   active: string;
   all: readonly string[];
 }
@@ -26,7 +29,10 @@ export interface PreparedCredentialSecretSeal {
  * consuming a one-time provider token; development and tests use the local keyring adapter.
  */
 export interface SourceCredentialCrypto {
-  fingerprintSetupToken(setupToken: string): Promise<CredentialTokenFingerprints>;
+  fingerprintConnectionClaim(
+    skillId: string,
+    replayKey: string,
+  ): Promise<CredentialClaimFingerprints>;
   open(sealed: Uint8Array, associatedData: string): Promise<string>;
   prepareSeal(associatedData: string): Promise<PreparedCredentialSecretSeal>;
 }
@@ -36,7 +42,8 @@ export function createLocalSourceCredentialCrypto(
 ): SourceCredentialCrypto {
   const keyring = normalizeKeyring(encryptionKeys);
   return {
-    fingerprintSetupToken: (setupToken) => fingerprintCredentialSetupToken(setupToken, keyring),
+    fingerprintConnectionClaim: (skillId, replayKey) =>
+      fingerprintCredentialConnectionClaim(skillId, replayKey, keyring),
     open: (sealed, associatedData) => openCredentialSecret(sealed, keyring, associatedData),
     async prepareSeal(associatedData) {
       let available = true;
@@ -162,11 +169,14 @@ export async function openCredentialSecret(
   return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
 }
 
-export async function fingerprintCredentialSetupToken(
-  setupToken: string,
+export async function fingerprintCredentialConnectionClaim(
+  skillId: string,
+  replayKey: string,
   encryptionKeys: CredentialEncryptionKeys,
-): Promise<CredentialTokenFingerprints> {
-  const token = setupToken.trim();
+): Promise<CredentialClaimFingerprints> {
+  const message = credentialClaimFingerprintMessage(skillId, replayKey);
+  const legacySimpleFinMessage =
+    skillId === LEGACY_SIMPLEFIN_SKILL_ID ? new TextEncoder().encode(replayKey.trim()) : undefined;
   const keyring = normalizeKeyring(encryptionKeys);
   const keyIds = [
     keyring.activeKeyId,
@@ -178,11 +188,23 @@ export async function fingerprintCredentialSetupToken(
   for (const keyId of keyIds) {
     const keyBytes = keyring.keys.get(keyId);
     if (!keyBytes) continue;
-    const hmacKey = await deriveFingerprintKey(keyBytes);
-    const signature = await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(token));
+    const hmacKey = await deriveFingerprintKey(keyBytes, CLAIM_FINGERPRINT_HKDF_INFO);
+    const signature = await crypto.subtle.sign("HMAC", hmacKey, message);
     // Fingerprint identity deliberately excludes the configuration key id. Renaming a
     // retained key during rotation must not make the same one-time token claimable again.
     fingerprints.push(`hmac-sha256-hkdf-v1:${Buffer.from(signature).toString("hex")}`);
+  }
+  if (legacySimpleFinMessage) {
+    // Claims made before credential skills were generalized used a SimpleFIN-specific HKDF
+    // domain and signed the canonical token without a skill-id prefix. Retain those exact
+    // aliases so an already-consumed one-time token still resolves to its existing ledger row.
+    for (const keyId of keyIds) {
+      const keyBytes = keyring.keys.get(keyId);
+      if (!keyBytes) continue;
+      const hmacKey = await deriveFingerprintKey(keyBytes, LEGACY_SIMPLEFIN_FINGERPRINT_HKDF_INFO);
+      const signature = await crypto.subtle.sign("HMAC", hmacKey, legacySimpleFinMessage);
+      fingerprints.push(`hmac-sha256-hkdf-v1:${Buffer.from(signature).toString("hex")}`);
+    }
   }
   const uniqueFingerprints = [...new Set(fingerprints)];
   const active = uniqueFingerprints[0];
@@ -193,9 +215,9 @@ export async function fingerprintCredentialSetupToken(
 export function credentialAssociatedData(
   credentialUuid: string,
   ownerUuid: string,
-  provider: string,
+  skillId: string,
 ): string {
-  return `rhizome:source-credential:v1:${credentialUuid}:${ownerUuid}:${provider}`;
+  return `rhizome:source-credential:v1:${credentialUuid}:${ownerUuid}:${skillId}`;
 }
 
 async function importKey(keyBytes: Uint8Array, usages: KeyUsage[]): Promise<CryptoKey> {
@@ -205,7 +227,7 @@ async function importKey(keyBytes: Uint8Array, usages: KeyUsage[]): Promise<Cryp
   return crypto.subtle.importKey("raw", Uint8Array.from(keyBytes), "AES-GCM", false, usages);
 }
 
-async function deriveFingerprintKey(keyBytes: Uint8Array): Promise<CryptoKey> {
+async function deriveFingerprintKey(keyBytes: Uint8Array, info: string): Promise<CryptoKey> {
   if (keyBytes.byteLength !== AES_KEY_BYTES) {
     throw new Error(`Credential encryption keys must be ${AES_KEY_BYTES} bytes`);
   }
@@ -217,13 +239,23 @@ async function deriveFingerprintKey(keyBytes: Uint8Array): Promise<CryptoKey> {
       name: "HKDF",
       hash: "SHA-256",
       salt: new Uint8Array(32),
-      info: new TextEncoder().encode("rhizome:simplefin-setup-token-fingerprint:v1"),
+      info: new TextEncoder().encode(info),
     },
     material,
     { name: "HMAC", hash: "SHA-256", length: 256 },
     false,
     ["sign"],
   );
+}
+
+function credentialClaimFingerprintMessage(skillId: string, replayKey: string): ArrayBuffer {
+  if (!skillId || skillId !== skillId.trim() || skillId.includes("\0")) {
+    throw new Error("Credential skill id must be a non-empty canonical identifier");
+  }
+  if (!replayKey || replayKey.includes("\0")) {
+    throw new Error("Credential claim replay key must be non-empty");
+  }
+  return new TextEncoder().encode(`${skillId}\0${replayKey}`).buffer;
 }
 
 function normalizeKeyring(encryptionKeys: CredentialEncryptionKeys): CredentialKeyring {

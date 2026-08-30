@@ -92,11 +92,17 @@
           "primaryKey": false,
           "notNull": true
         },
-        "provider": {
-          "name": "provider",
+        "skill_id": {
+          "name": "skill_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "connector_version": {
+          "name": "connector_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "parser": {
           "name": "parser",
@@ -172,17 +178,21 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "ingestion_sources_credential_owner_fk": {
-          "name": "ingestion_sources_credential_owner_fk",
+        "ingestion_sources_credential_owner_skill_connector_fk": {
+          "name": "ingestion_sources_credential_owner_skill_connector_fk",
           "tableFrom": "ingestion_sources",
           "tableTo": "source_credentials",
           "columnsFrom": [
             "credential_uuid",
-            "owner_uuid"
+            "owner_uuid",
+            "skill_id",
+            "connector_version"
           ],
           "columnsTo": [
             "uuid",
-            "user_uuid"
+            "user_uuid",
+            "skill_id",
+            "connector_version"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -203,7 +213,7 @@
       "checkConstraints": {
         "ingestion_sources_reference_check": {
           "name": "ingestion_sources_reference_check",
-          "value": "(\n        (\"ingestion_sources\".\"kind\" = 'origin' AND \"ingestion_sources\".\"origin_uuid\" IS NOT NULL AND \"ingestion_sources\".\"credential_uuid\" IS NULL AND \"ingestion_sources\".\"provider\" IS NULL) OR\n        (\"ingestion_sources\".\"kind\" = 'credential' AND \"ingestion_sources\".\"credential_uuid\" IS NOT NULL AND \"ingestion_sources\".\"origin_uuid\" IS NULL AND \"ingestion_sources\".\"provider\" IS NULL) OR\n        (\"ingestion_sources\".\"kind\" = 'remote' AND \"ingestion_sources\".\"origin_uuid\" IS NULL AND \"ingestion_sources\".\"credential_uuid\" IS NULL AND \"ingestion_sources\".\"provider\" = 'arena')\n      )"
+          "value": "(\n        (\"ingestion_sources\".\"kind\" = 'origin' AND \"ingestion_sources\".\"origin_uuid\" IS NOT NULL AND \"ingestion_sources\".\"credential_uuid\" IS NULL) OR\n        (\"ingestion_sources\".\"kind\" = 'credential' AND \"ingestion_sources\".\"credential_uuid\" IS NOT NULL AND \"ingestion_sources\".\"origin_uuid\" IS NULL) OR\n        (\"ingestion_sources\".\"kind\" = 'remote' AND \"ingestion_sources\".\"origin_uuid\" IS NULL AND \"ingestion_sources\".\"credential_uuid\" IS NULL)\n      )"
         }
       },
       "isRLSEnabled": false
@@ -247,6 +257,12 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
+        },
+        "connector_version": {
+          "name": "connector_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "parser_version": {
           "name": "parser_version",
@@ -1632,8 +1648,14 @@
           "primaryKey": false,
           "notNull": true
         },
-        "provider": {
-          "name": "provider",
+        "skill_id": {
+          "name": "skill_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "connector_version": {
+          "name": "connector_version",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1689,6 +1711,16 @@
             "uuid",
             "user_uuid"
           ]
+        },
+        "source_credentials_uuid_user_uuid_skill_connector_unique": {
+          "name": "source_credentials_uuid_user_uuid_skill_connector_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "uuid",
+            "user_uuid",
+            "skill_id",
+            "connector_version"
+          ]
         }
       },
       "policies": {},
@@ -1711,8 +1743,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "provider": {
-          "name": "provider",
+        "skill_id": {
+          "name": "skill_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1762,7 +1794,7 @@
           "name": "source_credential_claim_attempts_token_unique_idx",
           "columns": [
             {
-              "expression": "provider",
+              "expression": "skill_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1850,8 +1882,8 @@
       "name": "source_credential_claim_fingerprints",
       "schema": "",
       "columns": {
-        "provider": {
-          "name": "provider",
+        "skill_id": {
+          "name": "skill_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -1912,7 +1944,7 @@
         "source_credential_claim_fingerprints_pk": {
           "name": "source_credential_claim_fingerprints_pk",
           "columns": [
-            "provider",
+            "skill_id",
             "fingerprint"
           ]
         }

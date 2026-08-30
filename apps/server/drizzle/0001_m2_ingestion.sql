@@ -2,7 +2,8 @@ CREATE TABLE "ingestion_sources" (
 	"uuid" uuid PRIMARY KEY NOT NULL,
 	"owner_uuid" uuid NOT NULL,
 	"kind" text NOT NULL,
-	"provider" text,
+	"skill_id" text NOT NULL,
+	"connector_version" text NOT NULL,
 	"parser" text NOT NULL,
 	"parser_version" text NOT NULL,
 	"origin_uuid" uuid,
@@ -12,9 +13,9 @@ CREATE TABLE "ingestion_sources" (
 	"revoked_at" timestamp with time zone,
 	CONSTRAINT "ingestion_sources_uuid_owner_uuid_unique" UNIQUE("uuid","owner_uuid"),
 	CONSTRAINT "ingestion_sources_reference_check" CHECK ((
-        ("ingestion_sources"."kind" = 'origin' AND "ingestion_sources"."origin_uuid" IS NOT NULL AND "ingestion_sources"."credential_uuid" IS NULL AND "ingestion_sources"."provider" IS NULL) OR
-        ("ingestion_sources"."kind" = 'credential' AND "ingestion_sources"."credential_uuid" IS NOT NULL AND "ingestion_sources"."origin_uuid" IS NULL AND "ingestion_sources"."provider" IS NULL) OR
-        ("ingestion_sources"."kind" = 'remote' AND "ingestion_sources"."origin_uuid" IS NULL AND "ingestion_sources"."credential_uuid" IS NULL AND "ingestion_sources"."provider" = 'arena')
+        ("ingestion_sources"."kind" = 'origin' AND "ingestion_sources"."origin_uuid" IS NOT NULL AND "ingestion_sources"."credential_uuid" IS NULL) OR
+        ("ingestion_sources"."kind" = 'credential' AND "ingestion_sources"."credential_uuid" IS NOT NULL AND "ingestion_sources"."origin_uuid" IS NULL) OR
+        ("ingestion_sources"."kind" = 'remote' AND "ingestion_sources"."origin_uuid" IS NULL AND "ingestion_sources"."credential_uuid" IS NULL)
       ))
 );
 --> statement-breakpoint
@@ -25,6 +26,7 @@ CREATE TABLE "ingestion_source_fetches" (
 	"credential_uuid" uuid,
 	"operation_uuid" uuid NOT NULL,
 	"origin_uuid" uuid,
+	"connector_version" text NOT NULL,
 	"parser_version" text NOT NULL,
 	"source_state_digest" text NOT NULL,
 	"status" text DEFAULT 'fetching' NOT NULL,
@@ -49,18 +51,20 @@ CREATE TABLE "ingestion_source_objects" (
 CREATE TABLE "source_credentials" (
 	"uuid" uuid PRIMARY KEY NOT NULL,
 	"user_uuid" uuid NOT NULL,
-	"provider" text NOT NULL,
+	"skill_id" text NOT NULL,
+	"connector_version" text NOT NULL,
 	"secret" "bytea" NOT NULL,
 	"metadata" jsonb,
 	"connected_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"revoked_at" timestamp with time zone,
-	CONSTRAINT "source_credentials_uuid_user_uuid_unique" UNIQUE("uuid","user_uuid")
+	CONSTRAINT "source_credentials_uuid_user_uuid_unique" UNIQUE("uuid","user_uuid"),
+	CONSTRAINT "source_credentials_uuid_user_uuid_skill_connector_unique" UNIQUE("uuid","user_uuid","skill_id","connector_version")
 );
 --> statement-breakpoint
 CREATE TABLE "source_credential_claim_attempts" (
 	"uuid" uuid PRIMARY KEY NOT NULL,
 	"user_uuid" uuid NOT NULL,
-	"provider" text NOT NULL,
+	"skill_id" text NOT NULL,
 	"token_fingerprint" text NOT NULL,
 	"status" text DEFAULT 'claiming' NOT NULL,
 	"credential_uuid" uuid,
@@ -75,11 +79,11 @@ CREATE TABLE "source_credential_claim_attempts" (
 );
 --> statement-breakpoint
 CREATE TABLE "source_credential_claim_fingerprints" (
-	"provider" text NOT NULL,
+	"skill_id" text NOT NULL,
 	"fingerprint" text NOT NULL,
 	"attempt_uuid" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "source_credential_claim_fingerprints_pk" PRIMARY KEY("provider","fingerprint")
+	CONSTRAINT "source_credential_claim_fingerprints_pk" PRIMARY KEY("skill_id","fingerprint")
 );
 --> statement-breakpoint
 ALTER TABLE "operations" DROP CONSTRAINT "operations_vibe_uuid_vibes_uuid_fk";
@@ -89,7 +93,7 @@ ALTER TABLE "operations" ADD COLUMN "committed_at" timestamp with time zone;--> 
 ALTER TABLE "origins" ADD CONSTRAINT "origins_uuid_owner_uuid_unique" UNIQUE("uuid","owner_uuid");--> statement-breakpoint
 ALTER TABLE "ingestion_sources" ADD CONSTRAINT "ingestion_sources_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_sources" ADD CONSTRAINT "ingestion_sources_origin_owner_fk" FOREIGN KEY ("origin_uuid","owner_uuid") REFERENCES "public"."origins"("uuid","owner_uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "ingestion_sources" ADD CONSTRAINT "ingestion_sources_credential_owner_fk" FOREIGN KEY ("credential_uuid","owner_uuid") REFERENCES "public"."source_credentials"("uuid","user_uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingestion_sources" ADD CONSTRAINT "ingestion_sources_credential_owner_skill_connector_fk" FOREIGN KEY ("credential_uuid","owner_uuid","skill_id","connector_version") REFERENCES "public"."source_credentials"("uuid","user_uuid","skill_id","connector_version") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_source_fetches" ADD CONSTRAINT "ingestion_source_fetches_owner_uuid_users_uuid_fk" FOREIGN KEY ("owner_uuid") REFERENCES "public"."users"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_source_fetches" ADD CONSTRAINT "ingestion_source_fetches_operation_uuid_operations_uuid_fk" FOREIGN KEY ("operation_uuid") REFERENCES "public"."operations"("uuid") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingestion_source_fetches" ADD CONSTRAINT "ingestion_source_fetches_source_owner_fk" FOREIGN KEY ("source_uuid","owner_uuid") REFERENCES "public"."ingestion_sources"("uuid","owner_uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -107,7 +111,7 @@ CREATE INDEX "ingestion_source_fetches_source_status_idx" ON "ingestion_source_f
 CREATE INDEX "ingestion_source_fetches_credential_created_idx" ON "ingestion_source_fetches" USING btree ("credential_uuid","created_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "ingestion_source_objects_source_object_unique_idx" ON "ingestion_source_objects" USING btree ("source_uuid","media_object_uuid");--> statement-breakpoint
 CREATE INDEX "ingestion_source_objects_object_idx" ON "ingestion_source_objects" USING btree ("media_object_uuid");--> statement-breakpoint
-CREATE UNIQUE INDEX "source_credential_claim_attempts_token_unique_idx" ON "source_credential_claim_attempts" USING btree ("provider","token_fingerprint");--> statement-breakpoint
+CREATE UNIQUE INDEX "source_credential_claim_attempts_token_unique_idx" ON "source_credential_claim_attempts" USING btree ("skill_id","token_fingerprint");--> statement-breakpoint
 CREATE INDEX "source_credential_claim_attempts_user_created_idx" ON "source_credential_claim_attempts" USING btree ("user_uuid","created_at");--> statement-breakpoint
 CREATE INDEX "source_credential_claim_fingerprints_attempt_idx" ON "source_credential_claim_fingerprints" USING btree ("attempt_uuid");--> statement-breakpoint
 ALTER TABLE "operations" ADD CONSTRAINT "operations_vibe_uuid_vibes_uuid_fk" FOREIGN KEY ("vibe_uuid") REFERENCES "public"."vibes"("uuid") ON DELETE set null ON UPDATE no action;--> statement-breakpoint

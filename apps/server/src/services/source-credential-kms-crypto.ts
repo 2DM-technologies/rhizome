@@ -14,7 +14,7 @@ import {
 import {
   createLocalSourceCredentialCrypto,
   type CredentialEncryptionKeys,
-  type CredentialTokenFingerprints,
+  type CredentialClaimFingerprints,
   type PreparedCredentialSecretSeal,
   type SourceCredentialCrypto,
 } from "./source-credential-crypto.ts";
@@ -27,7 +27,9 @@ const KMS_ENVELOPE_HEADER_BYTES = 7;
 const MAX_KMS_KEY_ID_BYTES = 2_048;
 const MAX_KMS_CIPHERTEXT_BLOB_BYTES = 6_144;
 const MAX_LOCAL_CIPHERTEXT_BYTES = 64 * 1_024;
-const FINGERPRINT_DOMAIN = "rhizome:simplefin-setup-token-fingerprint:kms-v1";
+const FINGERPRINT_DOMAIN = "rhizome:source-credential-claim-fingerprint:kms-v1";
+const LEGACY_SIMPLEFIN_FINGERPRINT_DOMAIN = "rhizome:simplefin-setup-token-fingerprint:kms-v1";
+const LEGACY_SIMPLEFIN_SKILL_ID = "simplefin";
 
 export interface CredentialKms {
   decrypt(input: DecryptCommandInput): Promise<DecryptCommandOutput>;
@@ -152,10 +154,33 @@ export class AwsKmsSourceCredentialCrypto implements SourceCredentialCrypto {
     return this.#openEnvelope(envelope, associatedData);
   }
 
-  async fingerprintSetupToken(setupToken: string): Promise<CredentialTokenFingerprints> {
-    const token = setupToken.trim();
-    const message = await fingerprintMessage(token);
-    const kmsFingerprints = await Promise.all(
+  async fingerprintConnectionClaim(
+    skillId: string,
+    replayKey: string,
+  ): Promise<CredentialClaimFingerprints> {
+    const message = await fingerprintMessage(skillId, replayKey);
+    const kmsFingerprints = await this.#fingerprintsForMessage(message);
+    const legacySimpleFinFingerprints =
+      skillId === LEGACY_SIMPLEFIN_SKILL_ID
+        ? await this.#fingerprintsForMessage(await legacySimpleFinFingerprintMessage(replayKey))
+        : [];
+    const legacyFingerprints = this.#legacy
+      ? await this.#legacy.fingerprintConnectionClaim(skillId, replayKey)
+      : undefined;
+    const all = [
+      ...new Set([
+        ...kmsFingerprints,
+        ...legacySimpleFinFingerprints,
+        ...(legacyFingerprints?.all ?? []),
+      ]),
+    ];
+    const active = kmsFingerprints[0];
+    if (!active) throw new Error("Active credential fingerprint KMS key is unavailable");
+    return { active, all };
+  }
+
+  async #fingerprintsForMessage(message: Uint8Array): Promise<string[]> {
+    return Promise.all(
       this.#fingerprintKeyIds.map(async (keyId) => {
         const response = await this.#callKms(() =>
           this.#kms.generateMac({
@@ -168,13 +193,6 @@ export class AwsKmsSourceCredentialCrypto implements SourceCredentialCrypto {
         return `hmac-sha256-kms-v1:${Buffer.from(response.Mac).toString("hex")}`;
       }),
     );
-    const legacyFingerprints = this.#legacy
-      ? await this.#legacy.fingerprintSetupToken(token)
-      : undefined;
-    const all = [...new Set([...kmsFingerprints, ...(legacyFingerprints?.all ?? [])])];
-    const active = kmsFingerprints[0];
-    if (!active) throw new Error("Active credential fingerprint KMS key is unavailable");
-    return { active, all };
   }
 
   async #callKms<T>(operation: () => Promise<T>): Promise<T> {
@@ -341,8 +359,22 @@ async function credentialKmsEncryptionContext(
   };
 }
 
-async function fingerprintMessage(token: string): Promise<Uint8Array> {
-  const material = new TextEncoder().encode(`${FINGERPRINT_DOMAIN}\0${token}`);
+async function fingerprintMessage(skillId: string, replayKey: string): Promise<Uint8Array> {
+  if (!skillId || skillId !== skillId.trim() || skillId.includes("\0")) {
+    throw new Error("Credential skill id must be a non-empty canonical identifier");
+  }
+  if (!replayKey || replayKey.includes("\0")) {
+    throw new Error("Credential claim replay key must be non-empty");
+  }
+  const material = new TextEncoder().encode(`${FINGERPRINT_DOMAIN}\0${skillId}\0${replayKey}`);
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", material));
+}
+
+async function legacySimpleFinFingerprintMessage(replayKey: string): Promise<Uint8Array> {
+  // Exact pre-generalization KMS input: SHA-256(domain NUL canonical-setup-token).
+  const material = new TextEncoder().encode(
+    `${LEGACY_SIMPLEFIN_FINGERPRINT_DOMAIN}\0${replayKey.trim()}`,
+  );
   return new Uint8Array(await crypto.subtle.digest("SHA-256", material));
 }
 

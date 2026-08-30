@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { MediaObject } from "@rnet/types";
 import {
-  SIMPLEFIN_PARSER_NAME,
-  SIMPLEFIN_PROVIDER,
   type IngestionSourceDocument,
   type OperationDocument,
   type SourceCredentialDocument,
@@ -14,6 +12,13 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import S3rver from "s3rver";
 import { v7 as uuidv7 } from "uuid";
 
+import { CredentialedSourceCatalog } from "../../ingest/connected-sources/types.ts";
+import {
+  SIMPLEFIN_CONNECTOR_VERSION,
+  SIMPLEFIN_PARSER_NAME,
+  SIMPLEFIN_SKILL_ID,
+} from "../../ingest/skills/simplefin/contracts.ts";
+import { createSimpleFinSkill } from "../../ingest/skills/simplefin/source.ts";
 import { createApp } from "../src/app.ts";
 import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../src/auth.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
@@ -26,7 +31,6 @@ import { operations } from "../src/db/models/operation.ts";
 import { originArtifacts } from "../src/db/models/origin-artifact.ts";
 import { sourceCredentials } from "../src/db/models/source-credential.ts";
 import { seedDb } from "../src/db/seedDb.ts";
-import { SimpleFinClient } from "../src/services/simplefin-client.ts";
 import {
   createCredentialKeyring,
   credentialAssociatedData,
@@ -97,7 +101,7 @@ beforeAll(async () => {
         driver: "local",
         keyring: credentialEncryptionKeys,
       },
-      simpleFinAllowedHosts: ["bridge.simplefin.test"],
+      sources: { simplefin: { allowedHosts: ["bridge.simplefin.test"] } },
     },
     blob: {
       driver: "r2",
@@ -112,26 +116,28 @@ beforeAll(async () => {
     config,
     db,
     blobs: createBlobStore(config),
-    simpleFinClient: new SimpleFinClient({
-      allowedHosts: config.sourceCredentials.simpleFinAllowedHosts,
-      fetch: async (input, init) => {
-        const request = new Request(input, init);
-        simpleFinRequests.push(request);
-        if (request.url.endsWith("/claim/compromised")) {
-          return new Response(null, { status: 403 });
-        }
-        if (request.method === "GET") {
-          const fetch = simpleFinAccountFetches.shift();
-          const bytes = fetch ? await fetch() : simpleFinAccountResponses.shift();
-          return bytes
-            ? new Response(bytes.slice().buffer as ArrayBuffer, {
-                headers: { "Content-Type": "application/json" },
-              })
-            : new Response(null, { status: 503 });
-        }
-        return new Response(`${simpleFinAccessUrl}\n`);
-      },
-    }),
+    credentialedSources: new CredentialedSourceCatalog([
+      createSimpleFinSkill({
+        allowedHosts: ["bridge.simplefin.test"],
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          simpleFinRequests.push(request);
+          if (request.url.endsWith("/claim/compromised")) {
+            return new Response(null, { status: 403 });
+          }
+          if (request.method === "GET") {
+            const fetch = simpleFinAccountFetches.shift();
+            const bytes = fetch ? await fetch() : simpleFinAccountResponses.shift();
+            return bytes
+              ? new Response(bytes.slice().buffer as ArrayBuffer, {
+                  headers: { "Content-Type": "application/json" },
+                })
+              : new Response(null, { status: 503 });
+          }
+          return new Response(`${simpleFinAccessUrl}\n`);
+        },
+      }),
+    ]),
   });
   app = created.app;
   await seedDb(db);
@@ -208,7 +214,8 @@ describe("rNet M1 store", () => {
     });
     expect(connectResponse.status).toBe(201);
     const credential = (await connectResponse.json()) as SourceCredentialDocument;
-    expect(credential.provider).toBe(SIMPLEFIN_PROVIDER);
+    expect(credential.skill_id).toBe(SIMPLEFIN_SKILL_ID);
+    expect(credential.connector_version).toBe(SIMPLEFIN_CONNECTOR_VERSION);
     expect(credential.status).toBe("active");
     const credentialResponseText = JSON.stringify(credential);
     expect(credentialResponseText).not.toContain(simpleFinAccessUrl);
@@ -243,7 +250,7 @@ describe("rNet M1 store", () => {
       await openCredentialSecret(
         storedCredential!.secret,
         credentialEncryptionKeys,
-        credentialAssociatedData(credentialUuid, DEV_USER_UUID, SIMPLEFIN_PROVIDER),
+        credentialAssociatedData(credentialUuid, DEV_USER_UUID, SIMPLEFIN_SKILL_ID),
       ),
     ).toBe(simpleFinAccessUrl);
 
@@ -288,7 +295,8 @@ describe("rNet M1 store", () => {
     await db.insert(sourceCredentials).values({
       uuid: unsupportedCredentialUuid,
       userUuid: DEV_USER_UUID,
-      provider: "unsupported-provider",
+      skillId: "unsupported-provider",
+      connectorVersion: "unsupported-provider-connector@1.0.0",
       secret: Uint8Array.of(1),
     });
     const unsupportedSource = await request("/rnet/v0/ingestion-sources", {
@@ -658,9 +666,8 @@ describe("rNet M1 store", () => {
     expect(tombstonedConfirm.status).toBe(422);
     expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
 
-    // Concurrent previews repeat the same provider snapshot. Removing transactions while leaving
-    // their balance effects intact is not a response a conforming provider can return and should
-    // (correctly) fail the stronger identity-union balance reconciliation.
+    // Concurrent previews may repeat the same conforming provider snapshot. Both can stage from
+    // one committed baseline, but confirming either one makes the other's review stale.
     simpleFinAccountResponses.push(currentBytes);
     const firstConcurrentResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
       method: "POST",
@@ -718,7 +725,7 @@ describe("rNet M1 store", () => {
     expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
   });
 
-  test("requires reviewed rebaselines for SimpleFIN history gaps and unreconciled activity", async () => {
+  test("uses opaque reviewed-action continuations for SimpleFIN history recovery", async () => {
     const fixture = await createStoredSimpleFinCredential(1);
     const source = fixture.sources[0]!;
     const vibeResponse = await request("/rnet/v0/vibes", {
@@ -766,10 +773,38 @@ describe("rNet M1 store", () => {
       json: { source: source.source },
     });
     expect(gapResponse.status).toBe(422);
-    expect(await gapResponse.json()).toMatchObject({
-      code: "simplefin_history_gap",
-      recovery: "reviewed_rebaseline",
-      source: source.source,
+    const gap = (await gapResponse.json()) as {
+      code: string;
+      required_action: {
+        action: string;
+        continuation_token: string;
+        kind: string;
+        source: string;
+      };
+    };
+    expect(gap).toMatchObject({
+      code: "source_action_required",
+      required_action: {
+        kind: "source_action_required",
+        action: "review_import",
+        source: source.source,
+      },
+    });
+    expect(gap.required_action.continuation_token.length).toBeGreaterThan(32);
+
+    const tamperedContinuation =
+      gap.required_action.continuation_token.slice(0, -1) +
+      (gap.required_action.continuation_token.endsWith("A") ? "B" : "A");
+    const tamperedResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source, continuation_token: tamperedContinuation },
+    });
+    expect(tamperedResponse.status).toBe(422);
+    expect(await tamperedResponse.json()).toMatchObject({
+      code: "schema_violation",
+      title: "Continuation invalid",
+      detail: "The source continuation token is invalid or expired",
     });
     const ownerPullGapResponse = await request(`/rnet/v0/vibes/${vibeUuid}/pull`, {
       method: "POST",
@@ -779,11 +814,15 @@ describe("rNet M1 store", () => {
     expect(ownerPullGapResponse.status).toBe(422);
     const ownerPullGap = await ownerPullGapResponse.json();
     expect(ownerPullGap).toMatchObject({
-      code: "simplefin_history_gap",
-      recovery: "reviewed_rebaseline",
-      source: source.source,
-      previous_balance_at: new Date(previousBalanceAt * 1_000).toISOString(),
+      code: "source_action_required",
+      required_action: {
+        action: "review_import",
+        source: source.source,
+      },
     });
+    expect(JSON.stringify(ownerPullGap)).not.toContain(
+      new Date(previousBalanceAt * 1_000).toISOString(),
+    );
 
     const delegatedPullGapResponse = await request(`/rnet/v0/vibes/${vibeUuid}/pull`, {
       method: "POST",
@@ -793,9 +832,11 @@ describe("rNet M1 store", () => {
     expect(delegatedPullGapResponse.status).toBe(422);
     const delegatedPullGap = await delegatedPullGapResponse.json();
     expect(delegatedPullGap).toMatchObject({
-      code: "simplefin_history_gap",
-      recovery: "owner_reviewed_rebaseline",
+      action: "review_import",
+      code: "source_action_required",
+      owner_action_required: true,
     });
+    expect(delegatedPullGap).not.toHaveProperty("required_action");
     expect(JSON.stringify(delegatedPullGap)).not.toContain(source.source);
     expect(JSON.stringify(delegatedPullGap)).not.toContain(
       new Date(previousBalanceAt * 1_000).toISOString(),
@@ -813,12 +854,20 @@ describe("rNet M1 store", () => {
     const recoveryResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
       method: "POST",
       headers: owner,
-      json: { source: source.source, rebaseline: true },
+      json: {
+        source: source.source,
+        continuation_token: gap.required_action.continuation_token,
+      },
     });
     expect(recoveryResponse.status).toBe(202);
     const recovery = await waitForOperation(await recoveryResponse.json(), owner);
     expect(recovery.status).toBe("done");
-    expect(recovery.request).toMatchObject({ rebaseline: true });
+    expect(recovery.request).toEqual({
+      mode: "import_preview",
+      source: source.source,
+      continuation_action: "review_import",
+    });
+    expect(JSON.stringify(recovery.request)).not.toContain(gap.required_action.continuation_token);
     const recoveryResult = recovery.result as {
       staged_origin: string;
       verify: {
@@ -842,6 +891,7 @@ describe("rNet M1 store", () => {
       },
       balance_delta_baselines: [{ account_index: 1 }],
     });
+    expect(recovery.result).toMatchObject({ action_evidence: { kind: "review_import" } });
     expect(recoveryResult.verify.checks).toContainEqual(
       expect.objectContaining({ name: "history_recovery", ok: true }),
     );
@@ -888,13 +938,20 @@ describe("rNet M1 store", () => {
     expect(unreconciled).toMatchObject({
       status: "failed",
       result: {
-        code: "simplefin_history_gap",
-        reason: "unreconciled_backdated_activity",
-        recovery: "reviewed_rebaseline",
-        source: source.source,
+        code: "source_action_required",
+        required_action: {
+          kind: "source_action_required",
+          action: "review_import",
+          source: source.source,
+        },
       },
     });
-    expect(unreconciled.error).toContain("cannot be reconciled");
+    expect(unreconciled.error).toContain("Review and acknowledge");
+    const activityContinuation = (
+      unreconciled.result as {
+        required_action: { continuation_token: string };
+      }
+    ).required_action.continuation_token;
 
     const delegatedUnreconciledResponse = await request(
       `/rnet/v0/operations/${unreconciled.operation_id}`,
@@ -903,23 +960,29 @@ describe("rNet M1 store", () => {
     expect(delegatedUnreconciledResponse.status).toBe(200);
     const delegatedUnreconciled = await delegatedUnreconciledResponse.json();
     expect(delegatedUnreconciled.result).toEqual({
-      code: "simplefin_history_gap",
-      recovery: "owner_reviewed_rebaseline",
+      action: "review_import",
+      code: "source_action_required",
+      owner_action_required: true,
     });
+    expect(delegatedUnreconciled.error).toBe(
+      "The connected source owner must review an import before pulling again.",
+    );
     expect(JSON.stringify(delegatedUnreconciled)).not.toContain(source.source);
     expect(JSON.stringify(delegatedUnreconciled)).not.toContain("unreconciled_backdated_activity");
+    expect(JSON.stringify(delegatedUnreconciled)).not.toContain(activityContinuation);
 
     simpleFinAccountResponses.push(unreconciledBytes);
     const activityRecoveryResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
       method: "POST",
       headers: owner,
-      json: { source: source.source, rebaseline: true },
+      json: { source: source.source, continuation_token: activityContinuation },
     });
     expect(activityRecoveryResponse.status).toBe(202);
     const activityRecovery = await waitForOperation(await activityRecoveryResponse.json(), owner);
     expect(activityRecovery).toMatchObject({
       status: "done",
       result: {
+        action_evidence: { kind: "review_import" },
         verify: {
           ok: true,
           history_recovery: {
@@ -1059,6 +1122,7 @@ describe("rNet M1 store", () => {
         ownerUuid: DEV_USER_UUID,
         credentialUuid: fixture.credentialUuid,
         operationUuid,
+        connectorVersion: SIMPLEFIN_CONNECTOR_VERSION,
         parserVersion: "simplefin@2.0.0",
         sourceStateDigest: "sha256:rate-limit-fixture",
         status: "rejected" as const,
@@ -1260,7 +1324,7 @@ describe("rNet M1 store", () => {
         await request("/rnet/v0/ingestion-sources", {
           method: "POST",
           headers: otherOwner,
-          json: { origin: csvOrigin.uri, parser: "csv" },
+          json: { origin: csvOrigin.uri, skill_id: "csv" },
         })
       ).status,
     ).toBe(404);
@@ -1269,7 +1333,7 @@ describe("rNet M1 store", () => {
         await request("/rnet/v0/ingestion-sources", {
           method: "POST",
           headers: dmachine,
-          json: { origin: csvOrigin.uri, parser: "csv" },
+          json: { origin: csvOrigin.uri, skill_id: "csv" },
         })
       ).status,
     ).toBe(403);
@@ -1277,12 +1341,13 @@ describe("rNet M1 store", () => {
     const csvSourceResponse = await request("/rnet/v0/ingestion-sources", {
       method: "POST",
       headers: owner,
-      json: { origin: csvOrigin.uri, parser: "csv" },
+      json: { origin: csvOrigin.uri, skill_id: "csv" },
     });
     expect(csvSourceResponse.status).toBe(201);
     const csvSource = await csvSourceResponse.json();
     expect(csvSource).toMatchObject({
       kind: "origin",
+      skill_id: "csv",
       parser: "csv",
       parser_version: "csv@1.1.0",
       origin: csvOrigin.uri,
@@ -1359,7 +1424,7 @@ describe("rNet M1 store", () => {
     const qfxSourceResponse = await request("/rnet/v0/ingestion-sources", {
       method: "POST",
       headers: owner,
-      json: { origin: qfxOrigin.uri, parser: "ofx" },
+      json: { origin: qfxOrigin.uri, skill_id: "ofx" },
     });
     const qfxSource = await qfxSourceResponse.json();
     const qfxPreviewResponse = await request(`/rnet/v0/vibes/${importVibeId}/imports`, {
@@ -2478,7 +2543,7 @@ async function createCsvSourceFixture(label: string): Promise<{
   const sourceResponse = await request("/rnet/v0/ingestion-sources", {
     method: "POST",
     headers: owner,
-    json: { origin: origin.uri, parser: "csv" },
+    json: { origin: origin.uri, skill_id: "csv" },
   });
   expect(sourceResponse.status).toBe(201);
   return {
@@ -2495,11 +2560,12 @@ async function createStoredSimpleFinCredential(sourceCount: number): Promise<{
   await db.insert(sourceCredentials).values({
     uuid: credentialUuid,
     userUuid: DEV_USER_UUID,
-    provider: SIMPLEFIN_PROVIDER,
+    skillId: SIMPLEFIN_SKILL_ID,
+    connectorVersion: SIMPLEFIN_CONNECTOR_VERSION,
     secret: await sealCredentialSecret(
       simpleFinAccessUrl,
       credentialEncryptionKeys,
-      credentialAssociatedData(credentialUuid, DEV_USER_UUID, SIMPLEFIN_PROVIDER),
+      credentialAssociatedData(credentialUuid, DEV_USER_UUID, SIMPLEFIN_SKILL_ID),
     ),
   });
   const sources: IngestionSourceDocument[] = [];

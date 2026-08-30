@@ -9,7 +9,7 @@ import { sourceCredentialClaimAttempts } from "./source-credential-claim-attempt
 export const sourceCredentialClaimFingerprints = pgTable(
   "source_credential_claim_fingerprints",
   {
-    provider: text("provider").notNull(),
+    skillId: text("skill_id").notNull(),
     fingerprint: text("fingerprint").notNull(),
     attemptUuid: uuid("attempt_uuid").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -17,7 +17,7 @@ export const sourceCredentialClaimFingerprints = pgTable(
   (fingerprint) => [
     primaryKey({
       name: "source_credential_claim_fingerprints_pk",
-      columns: [fingerprint.provider, fingerprint.fingerprint],
+      columns: [fingerprint.skillId, fingerprint.fingerprint],
     }),
     foreignKey({
       name: "source_credential_claim_fingerprints_attempt_fk",

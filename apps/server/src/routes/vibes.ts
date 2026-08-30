@@ -10,13 +10,15 @@ import {
 } from "@rhizome/store-contract";
 import { UUIDV7_PATTERN } from "@rnet/types/patterns";
 
+import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
+import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
 import { VibesService } from "../services/vibe-service.ts";
-import { ImportService, type SimpleFinAccountsFetcher } from "../services/import-service.ts";
+import { ImportService } from "../services/import-service.ts";
 import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
 import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
@@ -58,8 +60,9 @@ export function createVibeRoutes(
   blobs: BlobStore,
   connectedSources: {
     baseUrl: string;
+    credentialedSources: CredentialedSourceCatalog;
     credentialCrypto: SourceCredentialCrypto;
-    simpleFin: SimpleFinAccountsFetcher;
+    fileSources: FileSourceCatalog;
   },
 ) {
   const router = createRhizomeRouter();

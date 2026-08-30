@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { getTableConfig } from "drizzle-orm/pg-core";
 
+import { CredentialedSourceCatalog } from "../../ingest/connected-sources/types.ts";
+import { SIMPLEFIN_CONNECTOR_VERSION } from "../../ingest/skills/simplefin/contracts.ts";
+import { createSimpleFinSkill } from "../../ingest/skills/simplefin/source.ts";
+import { installedFileSourceSkills } from "../../ingest/src/source-skill-catalog.ts";
 import type { Database } from "../src/db/index.ts";
-import type { DbIngestionSource } from "../src/db/models/ingestion-source.ts";
+import { ingestionSources, type DbIngestionSource } from "../src/db/models/ingestion-source.ts";
 import type { DbOriginArtifact } from "../src/db/models/origin-artifact.ts";
+import { sourceCredentials, type DbSourceCredential } from "../src/db/models/source-credential.ts";
 import { Problem } from "../src/errors.ts";
 import {
   IngestionSourcesService,
@@ -12,17 +18,122 @@ import {
 const ownerUuid = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 const originUuid = "0198f2a1-a001-7a01-8001-000000000001";
 const sourceUuid = "0198f2a1-a002-7a02-8002-000000000002";
+const credentialUuid = "0198f2a1-a003-7a03-8003-000000000003";
+const noCredentialedSources = new CredentialedSourceCatalog([]);
+const simpleFinSources = new CredentialedSourceCatalog([
+  createSimpleFinSkill({ allowedHosts: ["bridge.simplefin.test"] }),
+]);
 
-describe("origin ingestion sources", () => {
-  test("serializes the pinned origin, parser, and parser version", () => {
+describe("ingestion sources", () => {
+  test("binds credential sources to credential owner and implementation identity", () => {
+    const credentialConstraints = getTableConfig(sourceCredentials).uniqueConstraints.map(
+      (constraint) => ({
+        name: constraint.name,
+        columns: constraint.columns.map((column) => column.name),
+      }),
+    );
+    expect(credentialConstraints).toContainEqual({
+      name: "source_credentials_uuid_user_uuid_unique",
+      columns: ["uuid", "user_uuid"],
+    });
+    expect(credentialConstraints).toContainEqual({
+      name: "source_credentials_uuid_user_uuid_skill_connector_unique",
+      columns: ["uuid", "user_uuid", "skill_id", "connector_version"],
+    });
+
+    const credentialSourceReference = getTableConfig(ingestionSources)
+      .foreignKeys.find(
+        (constraint) =>
+          constraint.getName() === "ingestion_sources_credential_owner_skill_connector_fk",
+      )
+      ?.reference();
+    expect(credentialSourceReference?.columns.map((column) => column.name)).toEqual([
+      "credential_uuid",
+      "owner_uuid",
+      "skill_id",
+      "connector_version",
+    ]);
+    expect(credentialSourceReference?.foreignColumns.map((column) => column.name)).toEqual([
+      "uuid",
+      "user_uuid",
+      "skill_id",
+      "connector_version",
+    ]);
+  });
+
+  test("serializes the pinned origin, connector, parser, and parser version", () => {
     expect(serializeIngestionSource(source())).toEqual({
       source: `source:${sourceUuid}`,
       kind: "origin",
+      skill_id: "csv",
+      connector_version: "origin-upload@1.0.0",
       parser: "csv",
       parser_version: "csv@1.1.0",
       origin: `rnet://origin/${originUuid}`,
       created_at: "2026-08-29T12:00:00.000Z",
     });
+  });
+
+  test("serializes a credential source with its pinned connector and parser versions", () => {
+    expect(
+      serializeIngestionSource(
+        source({
+          kind: "credential",
+          skillId: "simplefin",
+          connectorVersion: "simplefin-connector@1.0.0",
+          parser: "simplefin",
+          parserVersion: "simplefin@1.0.0",
+          originUuid: null,
+          credentialUuid,
+          config: { include_pending: false },
+        }),
+      ),
+    ).toEqual({
+      source: `source:${sourceUuid}`,
+      kind: "credential",
+      skill_id: "simplefin",
+      connector_version: "simplefin-connector@1.0.0",
+      parser: "simplefin",
+      parser_version: "simplefin@1.0.0",
+      config: { include_pending: false },
+      created_at: "2026-08-29T12:00:00.000Z",
+    });
+  });
+
+  test("copies a matching credential connector pin and rejects unavailable pins", async () => {
+    let inserted: Record<string, unknown> | undefined;
+    const matching = credential();
+    const service = ownedService(
+      databaseWithCredential(matching, (candidate) => {
+        inserted = candidate;
+      }),
+      simpleFinSources,
+    );
+
+    await service.create({ credential: `credential:${credentialUuid}` });
+    expect(inserted).toMatchObject({
+      skillId: "simplefin",
+      connectorVersion: SIMPLEFIN_CONNECTOR_VERSION,
+      credentialUuid,
+    });
+
+    let mismatchInserted = false;
+    const mismatched = ownedService(
+      databaseWithCredential(credential({ connectorVersion: "simplefin-connector@0.9.0" }), () => {
+        mismatchInserted = true;
+      }),
+      simpleFinSources,
+    );
+    const problem = await capturedProblem(
+      mismatched.create({ credential: `credential:${credentialUuid}` }),
+    );
+    expect(problem).toMatchObject({
+      status: 422,
+      code: "parser_unsupported",
+      title: "Pinned connector unavailable",
+      detail: "simplefin-connector@0.9.0",
+    });
+    expect(mismatchInserted).toBe(false);
   });
 
   test("refuses internally inconsistent rows instead of emitting an invalid document", () => {
@@ -32,9 +143,15 @@ describe("origin ingestion sources", () => {
         originUuid: undefined,
       } as unknown as DbIngestionSource),
     ).toThrow("internally inconsistent");
-    expect(() =>
-      serializeIngestionSource(source({ parser: "simplefin", parserVersion: "simplefin@1.0.0" })),
-    ).toThrow("internally inconsistent");
+    expect(() => serializeIngestionSource(source({ parser: "" }))).toThrow(
+      "internally inconsistent",
+    );
+    expect(() => serializeIngestionSource(source({ skillId: "" }))).toThrow(
+      "internally inconsistent",
+    );
+    expect(() => serializeIngestionSource(source({ connectorVersion: "" }))).toThrow(
+      "internally inconsistent",
+    );
   });
 
   test("requires a user owner before touching persistence", async () => {
@@ -53,16 +170,21 @@ describe("origin ingestion sources", () => {
         name: "rbudget",
         subject: "client:rbudget",
       },
+      credentialedSources: noCredentialedSources,
+      fileSources: installedFileSourceSkills,
     });
 
     const problem = await capturedProblem(
-      service.create({ origin: `rnet://origin/${originUuid}`, parser: "csv" }),
+      service.create({
+        origin: `rnet://origin/${originUuid}`,
+        skill_id: "csv",
+      }),
     );
     expect(problem).toMatchObject({ status: 403, code: "grant_missing" });
     expect(databaseTouched).toBe(false);
   });
 
-  test("rejects unsupported and connected-provider parsers before touching persistence", async () => {
+  test("rejects unknown and non-file skills before touching persistence", async () => {
     let databaseTouched = false;
     const db = new Proxy({} as Database, {
       get() {
@@ -75,16 +197,16 @@ describe("origin ingestion sources", () => {
     const unsupported = await capturedProblem(
       service.create({
         origin: `rnet://origin/${originUuid}`,
-        parser: "unknown",
-      } as unknown as Parameters<IngestionSourcesService["create"]>[0]),
+        skill_id: "unknown",
+      }),
     );
     expect(unsupported).toMatchObject({ status: 422, code: "parser_unsupported" });
 
     const connected = await capturedProblem(
       service.create({
         origin: `rnet://origin/${originUuid}`,
-        parser: "simplefin",
-      } as unknown as Parameters<IngestionSourcesService["create"]>[0]),
+        skill_id: "simplefin",
+      }),
     );
     expect(connected).toMatchObject({ status: 422, code: "parser_unsupported" });
     expect(databaseTouched).toBe(false);
@@ -98,7 +220,10 @@ describe("origin ingestion sources", () => {
     const service = ownedService(db);
 
     const problem = await capturedProblem(
-      service.create({ origin: `rnet://origin/${originUuid}`, parser: "csv" }),
+      service.create({
+        origin: `rnet://origin/${originUuid}`,
+        skill_id: "csv",
+      }),
     );
     expect(problem).toMatchObject({
       status: 404,
@@ -117,12 +242,14 @@ describe("origin ingestion sources", () => {
 
     const created = await service.create({
       origin: `rnet://origin/${originUuid}`,
-      parser: "ofx",
+      skill_id: "ofx",
     });
 
     expect(inserted).toMatchObject({
       ownerUuid,
       kind: "origin",
+      skillId: "ofx",
+      connectorVersion: "origin-upload@1.0.0",
       parser: "ofx",
       parserVersion: "ofx@1.1.0",
       originUuid,
@@ -132,11 +259,48 @@ describe("origin ingestion sources", () => {
   });
 });
 
-function ownedService(db: Database): IngestionSourcesService {
+function ownedService(
+  db: Database,
+  credentialedSources: CredentialedSourceCatalog = noCredentialedSources,
+): IngestionSourcesService {
   return new IngestionSourcesService({
     db,
     actor: { kind: "user", uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` },
+    credentialedSources,
+    fileSources: installedFileSourceSkills,
   });
+}
+
+function databaseWithCredential(
+  foundCredential: DbSourceCredential,
+  onInsert: (candidate: Record<string, unknown>) => void,
+): Database {
+  const transaction = {
+    select: () => ({
+      from: () => ({
+        where: () => ({ for: async () => [foundCredential] }),
+      }),
+    }),
+    insert: () => ({
+      values: (candidate: Record<string, unknown>) => ({
+        returning: async () => {
+          onInsert(candidate);
+          return [
+            source({
+              ...(candidate as Partial<DbIngestionSource>),
+              originUuid: null,
+              createdAt: new Date("2026-08-29T12:00:00.000Z"),
+              revokedAt: null,
+            }),
+          ];
+        },
+      }),
+    }),
+  };
+  return {
+    transaction: async (callback: (database: typeof transaction) => unknown) =>
+      callback(transaction),
+  } as unknown as Database;
 }
 
 function databaseWithOrigin(
@@ -186,13 +350,28 @@ function source(overrides: Partial<DbIngestionSource> = {}): DbIngestionSource {
     uuid: sourceUuid,
     ownerUuid,
     kind: "origin",
+    skillId: "csv",
+    connectorVersion: "origin-upload@1.0.0",
     parser: "csv",
     parserVersion: "csv@1.1.0",
     originUuid,
     credentialUuid: null,
-    provider: null,
     config: null,
     createdAt: new Date("2026-08-29T12:00:00.000Z"),
+    revokedAt: null,
+    ...overrides,
+  };
+}
+
+function credential(overrides: Partial<DbSourceCredential> = {}): DbSourceCredential {
+  return {
+    uuid: credentialUuid,
+    userUuid: ownerUuid,
+    skillId: "simplefin",
+    connectorVersion: SIMPLEFIN_CONNECTOR_VERSION,
+    secret: Uint8Array.of(1),
+    metadata: null,
+    connectedAt: new Date("2026-08-29T11:00:00.000Z"),
     revokedAt: null,
     ...overrides,
   };

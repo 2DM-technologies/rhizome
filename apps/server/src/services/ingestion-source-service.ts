@@ -1,15 +1,12 @@
 import {
-  FILE_PARSERS,
-  SIMPLEFIN_PARSER_NAME,
-  SIMPLEFIN_PROVIDER,
   type CreateIngestionSourceRequest,
   type IngestionSourceDocument,
-  type SimpleFinSourceConfig,
 } from "@rhizome/store-contract";
 import { and, eq, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import { transactionParserFor } from "../../../ingest/src/parser-catalog.ts";
+import { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
+import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { Database } from "../db/index.ts";
 import {
   ingestionSources,
@@ -17,29 +14,33 @@ import {
   type NewDbIngestionSource,
 } from "../db/models/ingestion-source.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
+import type { JsonObject } from "../db/models/shared.ts";
 import { sourceCredentials } from "../db/models/source-credential.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
-const fileParserNames: ReadonlySet<string> = new Set(FILE_PARSERS);
-
-function isFileParserName(name: string): name is (typeof FILE_PARSERS)[number] {
-  return fileParserNames.has(name);
-}
-
 export class IngestionSourcesService {
   private readonly db: Database;
   private readonly actor: ServiceContext["actor"];
+  private readonly credentialedSources: CredentialedSourceCatalog;
+  private readonly fileSources: FileSourceCatalog;
 
-  constructor(context: ServiceContext) {
+  constructor(
+    context: ServiceContext & {
+      credentialedSources: CredentialedSourceCatalog;
+      fileSources: FileSourceCatalog;
+    },
+  ) {
     this.db = context.db;
     this.actor = context.actor;
+    this.credentialedSources = context.credentialedSources;
+    this.fileSources = context.fileSources;
   }
 
   async create(input: CreateIngestionSourceRequest): Promise<DbIngestionSource> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
-    if ("credential" in input) return this.createSimpleFin(input);
+    if ("credential" in input) return this.createCredentialSource(input);
     if (!("origin" in input)) {
       throw new Problem(
         422,
@@ -49,12 +50,9 @@ export class IngestionSourcesService {
       );
     }
 
-    if (!isFileParserName(input.parser)) {
-      throw new Problem(422, "parser_unsupported", "Parser unsupported", input.parser);
-    }
-    const parser = transactionParserFor(input.parser);
-    if (!parser) {
-      throw new Problem(422, "parser_unsupported", "Parser unsupported", input.parser);
+    const skill = this.fileSources.forSkillId(input.skill_id);
+    if (!skill) {
+      throw new Problem(422, "parser_unsupported", "Source skill unsupported", input.skill_id);
     }
     const originUuid = uriId(input.origin);
     const origin = await this.db.query.originArtifacts.findFirst({
@@ -70,8 +68,10 @@ export class IngestionSourcesService {
       uuid: uuidv7(),
       ownerUuid: this.actor.uuid,
       kind: "origin",
-      parser: parser.name,
-      parserVersion: parser.version,
+      skillId: skill.manifest.skill_id,
+      connectorVersion: skill.manifest.connector_version,
+      parser: skill.parser.name,
+      parserVersion: skill.parser.version,
       originUuid,
     };
     const [source] = await this.db.insert(ingestionSources).values(candidate).returning();
@@ -79,14 +79,10 @@ export class IngestionSourcesService {
     return source;
   }
 
-  private async createSimpleFin(
+  private async createCredentialSource(
     input: Extract<CreateIngestionSourceRequest, { credential: string }>,
   ): Promise<DbIngestionSource> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
-    const parser = transactionParserFor(SIMPLEFIN_PARSER_NAME);
-    if (!parser) {
-      throw new Problem(422, "parser_unsupported", "Parser unsupported", SIMPLEFIN_PARSER_NAME);
-    }
 
     const ownerUuid = this.actor.uuid;
     const credentialUuid = input.credential.slice("credential:".length);
@@ -103,12 +99,34 @@ export class IngestionSourcesService {
         )
         .for("update");
       if (!credential) throw notFound("Source credential");
-      if (credential.provider !== SIMPLEFIN_PROVIDER) {
+      const skill = this.credentialedSources.forSkillId(credential.skillId);
+      if (!skill) {
         throw new Problem(
           422,
           "parser_unsupported",
-          "Source provider unsupported",
-          credential.provider,
+          "Source skill unsupported",
+          credential.skillId,
+        );
+      }
+      if (skill.manifest.connector_version !== credential.connectorVersion) {
+        throw new Problem(
+          422,
+          "parser_unsupported",
+          "Pinned connector unavailable",
+          credential.connectorVersion,
+        );
+      }
+      let config: JsonObject;
+      try {
+        config = storedConfig(skill.parseConfig(input.config ?? {}));
+      } catch (error) {
+        throw new Problem(
+          422,
+          "schema_violation",
+          "Source configuration invalid",
+          error instanceof Error
+            ? error.message
+            : `${skill.displayName} source configuration is invalid`,
         );
       }
 
@@ -116,10 +134,12 @@ export class IngestionSourcesService {
         uuid: uuidv7(),
         ownerUuid,
         kind: "credential",
-        parser: parser.name,
-        parserVersion: parser.version,
+        skillId: skill.manifest.skill_id,
+        connectorVersion: credential.connectorVersion,
+        parser: skill.parser.name,
+        parserVersion: skill.parser.version,
         credentialUuid,
-        config: input.config ?? {},
+        config,
       };
       const [source] = await transaction.insert(ingestionSources).values(candidate).returning();
       if (!source) throw new Error("Ingestion source insert did not return a row");
@@ -146,29 +166,59 @@ export function serializeIngestionSource(source: DbIngestionSource): IngestionSo
     if (
       !source.credentialUuid ||
       source.originUuid ||
-      source.provider ||
-      source.parser !== SIMPLEFIN_PARSER_NAME
+      !source.skillId ||
+      !source.connectorVersion ||
+      !source.parser
     ) {
       throw new Error("Credential ingestion source is internally inconsistent");
     }
     return {
       source: `source:${source.uuid}`,
       kind: "credential",
-      parser: SIMPLEFIN_PARSER_NAME,
+      skill_id: source.skillId,
+      connector_version: source.connectorVersion,
+      parser: source.parser,
       parser_version: source.parserVersion,
-      config: (source.config ?? {}) as SimpleFinSourceConfig,
+      config: source.config ?? {},
       created_at: source.createdAt.toISOString(),
     };
   }
-  if (source.kind !== "origin" || !source.originUuid || !isFileParserName(source.parser)) {
+  if (
+    source.kind !== "origin" ||
+    !source.originUuid ||
+    source.credentialUuid ||
+    !source.skillId ||
+    !source.connectorVersion ||
+    !source.parser
+  ) {
     throw new Error("Origin ingestion source is internally inconsistent");
   }
   return {
     source: `source:${source.uuid}`,
     kind: "origin",
+    skill_id: source.skillId,
+    connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
     origin: `rnet://origin/${source.originUuid}`,
     created_at: source.createdAt.toISOString(),
   };
+}
+
+function storedConfig(value: unknown): JsonObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Connected source configuration must be an object");
+  }
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw new Error("Connected source configuration must contain JSON values");
+  }
+  if (!encoded) throw new Error("Connected source configuration must contain JSON values");
+  const decoded: unknown = JSON.parse(encoded);
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new Error("Connected source configuration must be an object");
+  }
+  return decoded as JsonObject;
 }

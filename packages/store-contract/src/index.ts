@@ -6,12 +6,41 @@ import {
   originArtifactSchema,
   vibeSchema,
 } from "@rnet/types/schemas";
-import { TASK_PATTERN, UUIDV7_PATTERN } from "@rnet/types/patterns";
+import { TASK_PATTERN } from "@rnet/types/patterns";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
-import { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
+import {
+  SOURCE_SKILL_ID_PATTERN,
+  SOURCE_CREDENTIAL_ID_PATTERN,
+  SOURCE_ID_PATTERN,
+  reviewImportContinuationRequestSchema,
+  sourceActionRequiredSchema,
+  sourceSkillManifestsResponseSchema,
+} from "./source-skills.ts";
 
-export { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
+export {
+  SOURCE_ACTION_KINDS,
+  SOURCE_CREDENTIAL_CLAIM_POLICIES,
+  SOURCE_CREDENTIAL_ID_PATTERN,
+  SOURCE_ID_PATTERN,
+  SOURCE_SKILL_ID_PATTERN,
+  SOURCE_SKILL_INPUT_CONTROLS,
+  SOURCE_SKILL_INPUT_TARGETS,
+  SOURCE_SKILL_KINDS,
+  SOURCE_SKILL_REVIEW_ACTIONS,
+  reviewImportContinuationRequestSchema,
+  sourceCredentialClaimPolicySchema,
+  sourceActionRequiredSchema,
+  sourceSkillInputFieldSchema,
+  sourceSkillInputOptionSchema,
+  sourceSkillConnectionManifestSchema,
+  sourceSkillManifestSchema,
+  sourceSkillManifestsResponseSchema,
+  type ReviewImportContinuationRequest,
+  type SourceActionRequired,
+  type SourceSkillManifest,
+  type SourceSkillManifestsResponse,
+} from "./source-skills.ts";
 
 /** Protocol-visible problem codes emitted by the Rhizome HTTP API. */
 export const PROBLEM_CODES = [
@@ -27,7 +56,7 @@ export const PROBLEM_CODES = [
   "parser_unsupported",
   "rate_limited",
   "schema_violation",
-  "simplefin_history_gap",
+  "source_action_required",
   "source_connection_failed",
   "writer_namespace_mismatch",
 ] as const;
@@ -43,6 +72,9 @@ export const problemDocumentSchema = {
     status: { type: "integer", minimum: 400, maximum: 599 },
     detail: { type: "string" },
     code: { enum: PROBLEM_CODES },
+    required_action: sourceActionRequiredSchema,
+    owner_action_required: { const: true },
+    action: sourceActionRequiredSchema.properties.action,
   },
   additionalProperties: true,
 } as const satisfies JSONSchema;
@@ -72,25 +104,13 @@ export const operationDocumentSchema = {
 
 export type OperationDocument = FromSchema<typeof operationDocumentSchema>;
 
-export const SIMPLEFIN_PROVIDER = "simplefin" as const;
-export const SOURCE_ID_PATTERN = `^source:${UUIDV7_PATTERN.slice(1, -1)}$`;
-export const SOURCE_CREDENTIAL_ID_PATTERN = `^credential:${UUIDV7_PATTERN.slice(1, -1)}$`;
-
-export const connectSimpleFinRequestSchema = {
-  type: "object",
-  required: ["setup_token"],
-  properties: {
-    setup_token: { type: "string", minLength: 1, maxLength: 8_192 },
-  },
-  additionalProperties: false,
-} as const satisfies JSONSchema;
-
 export const sourceCredentialDocumentSchema = {
   type: "object",
-  required: ["credential", "provider", "status", "connected_at"],
+  required: ["credential", "skill_id", "connector_version", "status", "connected_at"],
   properties: {
     credential: { type: "string", pattern: SOURCE_CREDENTIAL_ID_PATTERN },
-    provider: { const: SIMPLEFIN_PROVIDER },
+    skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+    connector_version: { type: "string", minLength: 1 },
     status: { enum: ["active", "revoked"] },
     connected_at: { type: "string", format: "date-time" },
     revoked_at: { type: "string", format: "date-time" },
@@ -98,60 +118,49 @@ export const sourceCredentialDocumentSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
-export const simpleFinSourceConfigSchema = {
-  type: "object",
-  properties: {
-    accounts: {
-      type: "array",
-      minItems: 1,
-      maxItems: 100,
-      uniqueItems: true,
-      items: {
-        type: "object",
-        required: ["connection_id", "account_id"],
-        properties: {
-          connection_id: { type: "string", minLength: 1, maxLength: 512 },
-          account_id: { type: "string", minLength: 1, maxLength: 512 },
-        },
-        additionalProperties: false,
-      },
-    },
-    include_pending: { type: "boolean" },
-  },
-  additionalProperties: false,
-} as const satisfies JSONSchema;
-
 export const createFileIngestionSourceRequestSchema = {
   type: "object",
-  required: ["origin", "parser"],
+  required: ["origin", "skill_id"],
   properties: {
     origin: originArtifactSchema.properties.uri,
-    parser: { enum: FILE_PARSERS },
+    skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
-export const createSimpleFinIngestionSourceRequestSchema = {
+/** Provider-neutral credential source shape; the installed skill validates `config`. */
+export const createCredentialIngestionSourceRequestSchema = {
   type: "object",
   required: ["credential"],
   properties: {
     credential: { type: "string", pattern: SOURCE_CREDENTIAL_ID_PATTERN },
-    config: simpleFinSourceConfigSchema,
+    config: { type: "object" },
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
 export const createIngestionSourceRequestSchema = {
-  oneOf: [createFileIngestionSourceRequestSchema, createSimpleFinIngestionSourceRequestSchema],
+  oneOf: [createFileIngestionSourceRequestSchema, createCredentialIngestionSourceRequestSchema],
 } as const satisfies JSONSchema;
 
 export const fileIngestionSourceDocumentSchema = {
   type: "object",
-  required: ["source", "kind", "parser", "parser_version", "origin", "created_at"],
+  required: [
+    "source",
+    "kind",
+    "skill_id",
+    "connector_version",
+    "parser",
+    "parser_version",
+    "origin",
+    "created_at",
+  ],
   properties: {
     source: { type: "string", pattern: SOURCE_ID_PATTERN },
     kind: { const: "origin" },
-    parser: { enum: FILE_PARSERS },
+    skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+    connector_version: { type: "string", minLength: 1 },
+    parser: { type: "string", minLength: 1 },
     parser_version: { type: "string", minLength: 1 },
     origin: originArtifactSchema.properties.uri,
     created_at: { type: "string", format: "date-time" },
@@ -159,24 +168,34 @@ export const fileIngestionSourceDocumentSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
-export const simpleFinIngestionSourceDocumentSchema = {
+/** Provider-neutral credential source document; parser/config semantics come from its skill. */
+export const credentialIngestionSourceDocumentSchema = {
   type: "object",
-  required: ["source", "kind", "parser", "parser_version", "config", "created_at"],
+  required: [
+    "source",
+    "kind",
+    "skill_id",
+    "connector_version",
+    "parser",
+    "parser_version",
+    "config",
+    "created_at",
+  ],
   properties: {
     source: { type: "string", pattern: SOURCE_ID_PATTERN },
     kind: { const: "credential" },
-    parser: { const: SIMPLEFIN_PARSER_NAME },
-    // A source stays pinned to the parser version used when it was created. Do not
-    // make the response schema reject older pins after the current parser advances.
+    skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+    connector_version: { type: "string", minLength: 1 },
+    parser: { type: "string", minLength: 1 },
     parser_version: { type: "string", minLength: 1 },
-    config: simpleFinSourceConfigSchema,
+    config: { type: "object" },
     created_at: { type: "string", format: "date-time" },
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
 export const ingestionSourceDocumentSchema = {
-  oneOf: [fileIngestionSourceDocumentSchema, simpleFinIngestionSourceDocumentSchema],
+  oneOf: [fileIngestionSourceDocumentSchema, credentialIngestionSourceDocumentSchema],
 } as const satisfies JSONSchema;
 
 export const createImportPreviewRequestSchema = {
@@ -184,12 +203,7 @@ export const createImportPreviewRequestSchema = {
   required: ["source"],
   properties: {
     source: { type: "string", pattern: SOURCE_ID_PATTERN },
-    /**
-     * Owner-reviewed recovery for a SimpleFIN source whose last committed balance is older than
-     * the provider's retrievable history window. The resulting preview carries explicit recovery
-     * evidence and does not advance the baseline until that preview is confirmed.
-     */
-    rebaseline: { type: "boolean", default: false },
+    continuation_token: reviewImportContinuationRequestSchema.properties.continuation_token,
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
@@ -202,9 +216,7 @@ export const pullVibeRequestSchema = {
 
 export type CreateIngestionSourceRequest = ContractValue<typeof createIngestionSourceRequestSchema>;
 export type IngestionSourceDocument = ContractValue<typeof ingestionSourceDocumentSchema>;
-export type ConnectSimpleFinRequest = ContractValue<typeof connectSimpleFinRequestSchema>;
 export type SourceCredentialDocument = ContractValue<typeof sourceCredentialDocumentSchema>;
-export type SimpleFinSourceConfig = ContractValue<typeof simpleFinSourceConfigSchema>;
 export type CreateImportPreviewRequest = ContractValue<typeof createImportPreviewRequestSchema>;
 export type PullVibeRequest = ContractValue<typeof pullVibeRequestSchema>;
 
@@ -457,7 +469,9 @@ export const STORE_SCHEMA_COMPONENTS = {
   Problem: problemDocumentSchema,
   Operation: operationDocumentSchema,
   SourceCredential: sourceCredentialDocumentSchema,
-  ConnectSimpleFinRequest: connectSimpleFinRequestSchema,
+  SourceSkillManifestsResponse: sourceSkillManifestsResponseSchema,
+  SourceActionRequired: sourceActionRequiredSchema,
+  ReviewImportContinuationRequest: reviewImportContinuationRequestSchema,
   IngestionSource: ingestionSourceDocumentSchema,
   CreateIngestionSourceRequest: createIngestionSourceRequestSchema,
   CreateImportPreviewRequest: createImportPreviewRequestSchema,

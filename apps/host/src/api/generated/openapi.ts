@@ -12,7 +12,9 @@ import type {
   ProblemDocument as StoreProblemDocument,
   OperationDocument as StoreOperationDocument,
   SourceCredentialDocument as StoreSourceCredentialDocument,
-  ConnectSimpleFinRequest as StoreConnectSimpleFinRequest,
+  SourceSkillManifestsResponse as StoreSourceSkillManifestsResponse,
+  SourceActionRequired as StoreSourceActionRequired,
+  ReviewImportContinuationRequest as StoreReviewImportContinuationRequest,
   IngestionSourceDocument as StoreIngestionSourceDocument,
   CreateIngestionSourceRequest as StoreCreateIngestionSourceRequest,
   CreateImportPreviewRequest as StoreCreateImportPreviewRequest,
@@ -155,7 +157,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/rnet/v0/source-credentials/simplefin": {
+  "/rnet/v0/source-credentials/{skill_id}": {
     parameters: {
       query?: never;
       header?: never;
@@ -164,7 +166,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    post: operations["connectSimpleFin"];
+    post: operations["connectSourceCredential"];
     delete?: never;
     options?: never;
     head?: never;
@@ -182,6 +184,22 @@ export interface paths {
     put?: never;
     post?: never;
     delete: operations["revokeSourceCredential"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rnet/v0/source-skills": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["listSourceSkills"];
+    put?: never;
+    post?: never;
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -410,7 +428,9 @@ export interface components {
     Problem: StoreProblemDocument;
     Operation: StoreOperationDocument;
     SourceCredential: StoreSourceCredentialDocument;
-    ConnectSimpleFinRequest: StoreConnectSimpleFinRequest;
+    SourceSkillManifestsResponse: StoreSourceSkillManifestsResponse;
+    SourceActionRequired: StoreSourceActionRequired;
+    ReviewImportContinuationRequest: StoreReviewImportContinuationRequest;
     IngestionSource: StoreIngestionSourceDocument;
     CreateIngestionSourceRequest: StoreCreateIngestionSourceRequest;
     CreateImportPreviewRequest: StoreCreateImportPreviewRequest;
@@ -1410,16 +1430,20 @@ export interface operations {
       };
     };
   };
-  connectSimpleFin: {
+  connectSourceCredential: {
     parameters: {
       query?: never;
       header?: never;
-      path?: never;
+      path: {
+        skill_id: string;
+      };
       cookie?: never;
     };
     requestBody: {
       content: {
-        "application/json": components["schemas"]["ConnectSimpleFinRequest"];
+        "application/json": {
+          [key: string]: unknown;
+        };
       };
     };
     responses: {
@@ -1638,6 +1662,53 @@ export interface operations {
       };
       /** @description Problem response */
       422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
+  listSourceSkills: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SourceSkillManifestsResponse"];
+        };
+      };
+      /** @description Problem response */
+      413: {
         headers: {
           [name: string]: unknown;
         };

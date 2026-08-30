@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { SimpleFinClient } from "../src/services/simplefin-client.ts";
+import { SimpleFinClient } from "./client.ts";
 
 const allowedHosts = ["bridge.simplefin.test"];
 const claimUrl = "https://bridge.simplefin.test/simplefin/claim/once";
@@ -26,7 +26,7 @@ describe("SimpleFIN HTTP client", () => {
 
   test("fetches v2 accounts with Basic Auth and returns the exact response bytes", async () => {
     const requests: Request[] = [];
-    const payload = '{"errlist":[],"connections":[],"accounts":[]}\n';
+    const payload = await Bun.file(fixture("accounts-current-v2.json")).text();
     const client = new SimpleFinClient({
       allowedHosts,
       fetch: async (input, init) => {
@@ -198,3 +198,7 @@ describe("SimpleFIN HTTP client", () => {
     });
   });
 });
+
+function fixture(name: string): URL {
+  return new URL(`./fixtures/${name}`, import.meta.url);
+}

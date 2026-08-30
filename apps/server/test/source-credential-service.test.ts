@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { SIMPLEFIN_PROVIDER } from "@rhizome/store-contract";
 
+import {
+  CredentialConnectionError,
+  type CredentialClaimPolicy,
+  type CredentialSourceConnector,
+  type SourceJsonObject,
+} from "../../ingest/connected-sources/types.ts";
 import type { Database } from "../src/db/index.ts";
 import type {
   DbSourceCredential,
   NewDbSourceCredential,
 } from "../src/db/models/source-credential.ts";
 import { Problem } from "../src/errors.ts";
-import { SimpleFinClient } from "../src/services/simplefin-client.ts";
 import {
   createCredentialKeyring,
   createLocalSourceCredentialCrypto,
@@ -22,71 +26,78 @@ import {
 } from "../src/services/source-credential-service.ts";
 
 const ownerUuid = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
+const skillId = "test-provider";
+const connectorVersion = "test-provider-connector@1.0.0";
+const replayKey = "opaque-one-time-claim";
+const providerSecret = "opaque-provider-secret";
 const key = Uint8Array.from({ length: 32 }, (_, index) => index);
-const claimUrl = "https://bridge.simplefin.test/claim/once";
-const setupToken = Buffer.from(claimUrl).toString("base64");
-const accessUrl = "https://alice:very-secret@bridge.simplefin.test/simplefin";
 
 describe("source credential service", () => {
-  test("persists only owner-bound ciphertext and returns a non-secret document", async () => {
+  test("persists only owner-bound ciphertext and deduplicates a skill's canonical replay key", async () => {
     const inserted: NewDbSourceCredential[] = [];
-    let exchanges = 0;
-    const simpleFin = new SimpleFinClient({
-      allowedHosts: ["bridge.simplefin.test"],
-      fetch: async () => {
-        exchanges += 1;
-        return new Response(accessUrl);
+    let acquisitions = 0;
+    const skill = fakeCredentialedSkill({
+      async acquire() {
+        acquisitions += 1;
+        return { secret: providerSecret, publicMetadata: { account_count: 2 } };
       },
     });
-    const claimStore = memoryClaimStore(inserted);
     const service = new SourceCredentialsService({
-      db: insertionDatabase(inserted),
-      actor: { kind: "user", uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` },
-      claimStore,
+      db: emptyDatabase(),
+      actor: ownerActor(),
+      claimStore: memoryClaimStore(inserted),
       credentialEncryptionKey: key,
-      simpleFin,
     });
 
-    const credential = await service.connectSimpleFin({ setup_token: setupToken });
-    expect(await service.connectSimpleFin({ setup_token: setupToken })).toEqual(credential);
-    expect(await service.connectSimpleFin({ setup_token: setupToken.replace(/=+$/, "") })).toEqual(
-      credential,
-    );
-    expect(exchanges).toBe(1);
+    const credential = await service.connect(skill, { claim: ` ${replayKey} ` });
+    expect(await service.connect(skill, { claim: replayKey })).toEqual(credential);
+    expect(acquisitions).toBe(1);
     expect(inserted).toHaveLength(1);
     const stored = inserted[0]!;
-    expect(stored.userUuid).toBe(ownerUuid);
-    expect(stored.provider).toBe(SIMPLEFIN_PROVIDER);
-    expect(new TextDecoder().decode(stored.secret)).not.toContain("very-secret");
-    expect(JSON.stringify(stored)).not.toContain(setupToken);
+    expect(stored).toMatchObject({
+      userUuid: ownerUuid,
+      skillId,
+      connectorVersion,
+      metadata: { account_count: 2 },
+    });
+    expect(new TextDecoder().decode(stored.secret)).not.toContain(providerSecret);
+    expect(JSON.stringify(stored)).not.toContain(replayKey);
     expect(
       await openCredentialSecret(
         stored.secret,
         key,
-        credentialAssociatedData(credential.uuid, ownerUuid, SIMPLEFIN_PROVIDER),
+        credentialAssociatedData(credential.uuid, ownerUuid, skillId),
       ),
-    ).toBe(accessUrl);
+    ).toBe(providerSecret);
 
     const document = serializeSourceCredential(credential);
-    expect(document).toMatchObject({ provider: SIMPLEFIN_PROVIDER, status: "active" });
-    expect(JSON.stringify(document)).not.toContain("very-secret");
-    expect(JSON.stringify(document)).not.toContain(accessUrl);
+    expect(document).toMatchObject({
+      skill_id: skillId,
+      connector_version: connectorVersion,
+      status: "active",
+    });
+    expect(JSON.stringify(document)).not.toContain(providerSecret);
   });
 
-  test("rejects clients before exchange and preserves compromised-token guidance", async () => {
-    let exchanges = 0;
-    const simpleFin = new SimpleFinClient({
-      allowedHosts: ["bridge.simplefin.test"],
-      fetch: async () => {
-        exchanges += 1;
-        return new Response(null, { status: 403 });
+  test("rejects clients before skill preparation and preserves only provider-safe failures", async () => {
+    let preparations = 0;
+    let acquisitions = 0;
+    const safeDetail =
+      "The provider rejected these one-time connection details; disable them before trying again";
+    const skill = fakeCredentialedSkill({
+      onPrepare() {
+        preparations += 1;
+      },
+      async acquire() {
+        acquisitions += 1;
+        throw new CredentialConnectionError("claim_rejected", "rejected", safeDetail);
       },
     });
     const inserted: NewDbSourceCredential[] = [];
-    const db = insertionDatabase(inserted);
-    const claimStore = memoryClaimStore(inserted);
+    const failures: RecordedClaimFailure[] = [];
+    const claimStore = memoryClaimStore(inserted, failures);
     const clientService = new SourceCredentialsService({
-      db,
+      db: emptyDatabase(),
       actor: {
         kind: "client",
         uuid: "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48",
@@ -95,23 +106,23 @@ describe("source credential service", () => {
       },
       claimStore,
       credentialEncryptionKey: key,
-      simpleFin,
     });
-    await expect(clientService.connectSimpleFin({ setup_token: setupToken })).rejects.toMatchObject(
-      { status: 403, code: "grant_missing" },
-    );
-    expect(exchanges).toBe(0);
+    await expect(clientService.connect(skill, { claim: replayKey })).rejects.toMatchObject({
+      status: 403,
+      code: "grant_missing",
+    });
+    expect(preparations).toBe(0);
+    expect(acquisitions).toBe(0);
 
     const ownerService = new SourceCredentialsService({
-      db,
-      actor: { kind: "user", uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` },
+      db: emptyDatabase(),
+      actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
-      simpleFin,
     });
     let failure: unknown;
     try {
-      await ownerService.connectSimpleFin({ setup_token: setupToken });
+      await ownerService.connect(skill, { claim: replayKey });
     } catch (error) {
       failure = error;
     }
@@ -119,63 +130,99 @@ describe("source credential service", () => {
     expect(failure).toMatchObject({
       status: 422,
       code: "source_connection_failed",
-      detail: expect.stringContaining("compromised"),
+      detail: safeDetail,
     });
-    expect((failure as Error).message).toContain("disable");
-    expect((failure as Error).message).not.toContain(setupToken);
+    expect((failure as Error).message).not.toContain(replayKey);
+    expect(failures).toContainEqual(
+      expect.objectContaining({ errorCode: "claim_rejected", status: "rejected" }),
+    );
     expect(inserted).toHaveLength(0);
   });
 
-  test("prepares credential protection before consuming the one-time provider token", async () => {
+  test("records unknown acquisition failures as ambiguous without exposing their details", async () => {
+    const privateFailure = "upstream response carried private account details";
+    const failures: RecordedClaimFailure[] = [];
+    const service = new SourceCredentialsService({
+      db: emptyDatabase(),
+      actor: ownerActor(),
+      claimStore: memoryClaimStore([], failures),
+      credentialEncryptionKey: key,
+    });
+    const skill = fakeCredentialedSkill({
+      async acquire() {
+        throw new Error(privateFailure);
+      },
+    });
+
+    let failure: unknown;
+    try {
+      await service.connect(skill, { claim: replayKey });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      status: 422,
+      code: "source_connection_failed",
+      detail:
+        "The source could not complete the connection request; verify the connection and try again",
+    });
+    expect((failure as Error).message).not.toContain(privateFailure);
+    expect(failures).toContainEqual(
+      expect.objectContaining({
+        errorCode: "connection_acquire_failed",
+        status: "ambiguous",
+      }),
+    );
+  });
+
+  test("prepares credential protection before acquiring a one-time provider secret", async () => {
     const inserted: NewDbSourceCredential[] = [];
     const claimStore = memoryClaimStore(inserted);
     const localCrypto = createLocalSourceCredentialCrypto(key);
-    let prepares = 0;
-    let exchanges = 0;
+    let keyPreparations = 0;
+    let acquisitions = 0;
     const credentialCrypto: SourceCredentialCrypto = {
-      fingerprintSetupToken: (token) => localCrypto.fingerprintSetupToken(token),
+      fingerprintConnectionClaim: (claimProvider, claim) =>
+        localCrypto.fingerprintConnectionClaim(claimProvider, claim),
       open: (sealed, associatedData) => localCrypto.open(sealed, associatedData),
       async prepareSeal(associatedData) {
-        prepares += 1;
-        if (prepares === 1) throw new Error("key service unavailable");
+        keyPreparations += 1;
+        if (keyPreparations === 1) throw new Error("key service unavailable");
         return localCrypto.prepareSeal(associatedData);
       },
     };
+    const skill = fakeCredentialedSkill({
+      async acquire() {
+        acquisitions += 1;
+        return { secret: providerSecret };
+      },
+    });
     const service = new SourceCredentialsService({
-      db: insertionDatabase(inserted),
-      actor: { kind: "user", uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` },
+      db: emptyDatabase(),
+      actor: ownerActor(),
       claimStore,
       credentialCrypto,
-      simpleFin: new SimpleFinClient({
-        allowedHosts: ["bridge.simplefin.test"],
-        fetch: async () => {
-          exchanges += 1;
-          return new Response(accessUrl);
-        },
-      }),
     });
 
-    await expect(service.connectSimpleFin({ setup_token: setupToken })).rejects.toThrow(
+    await expect(service.connect(skill, { claim: replayKey })).rejects.toThrow(
       "key service unavailable",
     );
-    expect(exchanges).toBe(0);
+    expect(acquisitions).toBe(0);
 
-    await expect(service.connectSimpleFin({ setup_token: setupToken })).resolves.toBeDefined();
-    expect(exchanges).toBe(1);
+    await expect(service.connect(skill, { claim: replayKey })).resolves.toBeDefined();
+    expect(acquisitions).toBe(1);
     expect(inserted).toHaveLength(1);
   });
 
-  test("rejects rate-limited claims before fingerprinting, key preparation, or provider exchange", async () => {
-    const inserted: NewDbSourceCredential[] = [];
-    const backingClaimStore = memoryClaimStore(inserted);
+  test("rejects rate-limited claims before fingerprinting, key preparation, or acquisition", async () => {
     let fingerprints = 0;
     let keyPreparations = 0;
-    let exchanges = 0;
+    let acquisitions = 0;
     const localCrypto = createLocalSourceCredentialCrypto(key);
     const credentialCrypto: SourceCredentialCrypto = {
-      async fingerprintSetupToken(token) {
+      async fingerprintConnectionClaim(claimProvider, claim) {
         fingerprints += 1;
-        return localCrypto.fingerprintSetupToken(token);
+        return localCrypto.fingerprintConnectionClaim(claimProvider, claim);
       },
       open: (sealed, associatedData) => localCrypto.open(sealed, associatedData),
       async prepareSeal(associatedData) {
@@ -184,79 +231,288 @@ describe("source credential service", () => {
       },
     };
     const claimStore: SourceCredentialClaimStore = {
-      ...backingClaimStore,
+      ...memoryClaimStore([]),
       async assertCanAttempt() {
         throw new Problem(
           429,
           "rate_limited",
           "Too many connection attempts",
-          "Wait before submitting another SimpleFIN setup token",
+          "Wait before submitting another source connection",
         );
       },
     };
-    const service = new SourceCredentialsService({
-      db: insertionDatabase(inserted),
-      actor: { kind: "user", uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` },
-      claimStore,
-      credentialCrypto,
-      simpleFin: {
-        canonicalizeSetupToken: () => claimUrl,
-        async claimSetupToken() {
-          exchanges += 1;
-          return accessUrl;
-        },
+    const skill = fakeCredentialedSkill({
+      async acquire() {
+        acquisitions += 1;
+        return { secret: providerSecret };
       },
     });
+    const service = new SourceCredentialsService({
+      db: emptyDatabase(),
+      actor: ownerActor(),
+      claimStore,
+      credentialCrypto,
+    });
 
-    await expect(service.connectSimpleFin({ setup_token: setupToken })).rejects.toMatchObject({
+    await expect(service.connect(skill, { claim: replayKey })).rejects.toMatchObject({
       status: 429,
       code: "rate_limited",
     });
     expect(fingerprints).toBe(0);
     expect(keyPreparations).toBe(0);
-    expect(exchanges).toBe(0);
-    expect(inserted).toHaveLength(0);
+    expect(acquisitions).toBe(0);
+  });
+
+  test("enforces the installed skill's connection-attempt policy in every claim-store check", async () => {
+    const inserted: NewDbSourceCredential[] = [];
+    const underlying = memoryClaimStore(inserted);
+    const observed: Array<{ attemptLimit: number; windowHours: number }> = [];
+    const claimPolicy = {
+      kind: "single_use_global" as const,
+      attempts: 3,
+      windowHours: 24,
+    };
+    const claimStore: SourceCredentialClaimStore = {
+      ...underlying,
+      async assertCanAttempt(input) {
+        observed.push({ attemptLimit: input.attemptLimit, windowHours: input.windowHours });
+        claimPolicy.attempts = 999;
+        claimPolicy.windowHours = 720;
+        return underlying.assertCanAttempt(input);
+      },
+      reserve(input) {
+        observed.push({ attemptLimit: input.attemptLimit, windowHours: input.windowHours });
+        return underlying.reserve(input);
+      },
+    };
+    const service = new SourceCredentialsService({
+      db: emptyDatabase(),
+      actor: ownerActor(),
+      claimStore,
+      credentialEncryptionKey: key,
+    });
+
+    await service.connect(fakeCredentialedSkill({ claimPolicy }), { claim: replayKey });
+
+    expect(observed).toEqual([
+      { attemptLimit: 3, windowHours: 24 },
+      { attemptLimit: 3, windowHours: 24 },
+    ]);
+    expect(inserted).toHaveLength(1);
+  });
+
+  test("fails closed on an unsupported runtime claim policy before touching the provider", async () => {
+    let preparations = 0;
+    let acquisitions = 0;
+    const skill = fakeCredentialedSkill({
+      onPrepare() {
+        preparations += 1;
+      },
+      async acquire() {
+        acquisitions += 1;
+        return { secret: providerSecret };
+      },
+    });
+    const unsupported = {
+      ...skill,
+      connection: {
+        ...skill.connection,
+        claimPolicy: { kind: "owner_reusable", attempts: 10, windowHours: 1 },
+      },
+    } as unknown as CredentialSourceConnector;
+    const service = new SourceCredentialsService({
+      db: emptyDatabase(),
+      actor: ownerActor(),
+      claimStore: memoryClaimStore([]),
+      credentialEncryptionKey: key,
+    });
+
+    await expect(service.connect(unsupported, { claim: replayKey })).rejects.toThrow(
+      "unsupported claim policy",
+    );
+    expect(preparations).toBe(0);
+    expect(acquisitions).toBe(0);
+  });
+
+  test("rejects public credential metadata that is oversized, too deep, or not JSON", async () => {
+    const tooDeep: Record<string, unknown> = {};
+    let cursor = tooDeep;
+    for (let depth = 0; depth < 9; depth += 1) {
+      const nested: Record<string, unknown> = {};
+      cursor.nested = nested;
+      cursor = nested;
+    }
+    const invalidMetadata = [
+      { payload: "x".repeat(16 * 1_024) },
+      tooDeep,
+      { not_a_number: Number.NaN },
+    ];
+
+    for (const [index, publicMetadata] of invalidMetadata.entries()) {
+      const inserted: NewDbSourceCredential[] = [];
+      const failures: RecordedClaimFailure[] = [];
+      const service = new SourceCredentialsService({
+        db: emptyDatabase(),
+        actor: ownerActor(),
+        claimStore: memoryClaimStore(inserted, failures),
+        credentialEncryptionKey: key,
+      });
+      const skill = fakeCredentialedSkill({
+        async acquire() {
+          return {
+            secret: providerSecret,
+            publicMetadata: publicMetadata as SourceJsonObject,
+          };
+        },
+      });
+
+      await expect(service.connect(skill, { claim: `${replayKey}-${index}` })).rejects.toThrow(
+        "public metadata",
+      );
+      expect(inserted).toHaveLength(0);
+      expect(failures).toContainEqual(
+        expect.objectContaining({
+          errorCode: "credential_persist_failed",
+          status: "ambiguous",
+        }),
+      );
+    }
   });
 
   test("deduplicates claims across instances with different active rotation keys", async () => {
     const inserted: NewDbSourceCredential[] = [];
     const claimStore = memoryClaimStore(inserted);
-    let exchanges = 0;
-    const simpleFin = new SimpleFinClient({
-      allowedHosts: ["bridge.simplefin.test"],
-      fetch: async () => {
-        exchanges += 1;
-        return new Response(accessUrl);
+    let acquisitions = 0;
+    const skill = fakeCredentialedSkill({
+      async acquire() {
+        acquisitions += 1;
+        return { secret: providerSecret };
       },
     });
-    const actor = { kind: "user" as const, uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` };
     const currentKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
     const rotating = new SourceCredentialsService({
-      db: insertionDatabase(inserted),
-      actor,
+      db: emptyDatabase(),
+      actor: ownerActor(),
       claimStore,
       credentialEncryptionKeys: createCredentialKeyring("current", {
         current: currentKey,
         "renamed-previous": key,
       }),
-      simpleFin,
     });
     const legacy = new SourceCredentialsService({
-      db: insertionDatabase(inserted),
-      actor,
+      db: emptyDatabase(),
+      actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
-      simpleFin,
     });
 
-    const connected = await rotating.connectSimpleFin({ setup_token: setupToken });
-    expect(await legacy.connectSimpleFin({ setup_token: setupToken })).toEqual(connected);
-    expect(exchanges).toBe(1);
+    const connected = await rotating.connect(skill, { claim: replayKey });
+    expect(await legacy.connect(skill, { claim: replayKey })).toEqual(connected);
+    expect(acquisitions).toBe(1);
     expect(inserted).toHaveLength(1);
+  });
+
+  test("serializes credentials for skills not installed in the current catalog", () => {
+    const credential = storedCredential({
+      uuid: "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b49",
+      userUuid: ownerUuid,
+      skillId: "uninstalled-provider",
+      connectorVersion: "uninstalled-provider-connector@1.0.0",
+      secret: new Uint8Array([1, 2, 3]),
+    });
+
+    expect(serializeSourceCredential(credential)).toMatchObject({
+      skill_id: "uninstalled-provider",
+      connector_version: "uninstalled-provider-connector@1.0.0",
+      status: "active",
+    });
   });
 });
 
-function memoryClaimStore(inserted: NewDbSourceCredential[]): SourceCredentialClaimStore {
+interface FakeSkillOptions {
+  acquire?: () => Promise<{ secret: string; publicMetadata?: SourceJsonObject }>;
+  claimPolicy?: CredentialClaimPolicy;
+  onPrepare?: () => void;
+}
+
+function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSourceConnector {
+  const claimPolicy = options.claimPolicy ?? {
+    kind: "single_use_global",
+    attempts: 10,
+    windowHours: 1,
+  };
+  return {
+    skillId,
+    displayName: "Test Provider",
+    manifest: {
+      skill_id: skillId,
+      label: "Test Provider",
+      description: "Test credentialed source",
+      source_kind: "credentialed_remote",
+      connector_version: connectorVersion,
+      parser: { name: "csv", version: "test-provider@1.0.0" },
+      connection: {
+        claim_policy: {
+          kind: claimPolicy.kind,
+          attempts: claimPolicy.attempts,
+          window_hours: claimPolicy.windowHours,
+        },
+      },
+      input_fields: [
+        {
+          name: "claim",
+          label: "Claim",
+          target: "connection",
+          control: "text",
+          required: true,
+          secret: true,
+        },
+      ],
+      review_actions: ["review_import", "refresh_source"],
+    },
+    connection: {
+      claimPolicy,
+      requestSchema: {
+        type: "object",
+        required: ["claim"],
+        properties: { claim: { type: "string", minLength: 1 } },
+        additionalProperties: false,
+      },
+      prepare(input) {
+        options.onPrepare?.();
+        if (
+          !input ||
+          typeof input !== "object" ||
+          !("claim" in input) ||
+          typeof input.claim !== "string" ||
+          !input.claim.trim()
+        ) {
+          throw new CredentialConnectionError(
+            "invalid_connection_details",
+            "rejected",
+            "Connection details are invalid",
+          );
+        }
+        return {
+          replayKey: input.claim.trim(),
+          acquire: options.acquire ?? (async () => ({ secret: providerSecret })),
+        };
+      },
+    },
+  };
+}
+
+interface RecordedClaimFailure {
+  attemptUuid: string;
+  errorCode: string;
+  ownerUuid: string;
+  status: "ambiguous" | "rejected";
+}
+
+function memoryClaimStore(
+  inserted: NewDbSourceCredential[],
+  failures: RecordedClaimFailure[] = [],
+): SourceCredentialClaimStore {
   const attempts = new Map<
     string,
     {
@@ -267,8 +523,9 @@ function memoryClaimStore(inserted: NewDbSourceCredential[]): SourceCredentialCl
   >();
   return {
     async assertCanAttempt() {},
-    async reserve({ fingerprints }) {
-      const existing = fingerprints.all
+    async reserve({ fingerprints, skillId: claimSkillId }) {
+      const keys = fingerprints.all.map((fingerprint) => `${claimSkillId}:${fingerprint}`);
+      const existing = keys
         .map((fingerprint) => attempts.get(fingerprint))
         .find((attempt) => attempt !== undefined);
       if (existing?.status === "succeeded" && existing.credential) {
@@ -277,12 +534,13 @@ function memoryClaimStore(inserted: NewDbSourceCredential[]): SourceCredentialCl
       if (existing) throw new Error("claim already consumed");
       const attemptUuid = `attempt-${attempts.size + 1}`;
       const attempt = { attemptUuid, status: "claiming" as const };
-      for (const fingerprint of fingerprints.all) attempts.set(fingerprint, attempt);
+      for (const fingerprint of keys) attempts.set(fingerprint, attempt);
       return { kind: "reserved", attemptUuid };
     },
-    async fail({ attemptUuid, status }) {
+    async fail(input) {
+      failures.push(input);
       for (const attempt of attempts.values()) {
-        if (attempt.attemptUuid === attemptUuid) attempt.status = status;
+        if (attempt.attemptUuid === input.attemptUuid) attempt.status = input.status;
       }
     },
     async release({ attemptUuid }) {
@@ -292,12 +550,7 @@ function memoryClaimStore(inserted: NewDbSourceCredential[]): SourceCredentialCl
     },
     async succeed({ attemptUuid, credential: candidate }) {
       inserted.push(candidate);
-      const credential: DbSourceCredential = {
-        ...candidate,
-        metadata: candidate.metadata ?? null,
-        connectedAt: candidate.connectedAt ?? new Date("2026-08-29T00:00:00.000Z"),
-        revokedAt: candidate.revokedAt ?? null,
-      };
+      const credential = storedCredential(candidate);
       for (const attempt of attempts.values()) {
         if (attempt.attemptUuid === attemptUuid) {
           attempt.status = "succeeded";
@@ -309,26 +562,19 @@ function memoryClaimStore(inserted: NewDbSourceCredential[]): SourceCredentialCl
   };
 }
 
-function insertionDatabase(inserted: NewDbSourceCredential[]): Database {
+function storedCredential(candidate: NewDbSourceCredential): DbSourceCredential {
   return {
-    insert() {
-      return {
-        values(candidate: NewDbSourceCredential) {
-          inserted.push(candidate);
-          return {
-            async returning(): Promise<DbSourceCredential[]> {
-              return [
-                {
-                  ...candidate,
-                  metadata: candidate.metadata ?? null,
-                  connectedAt: candidate.connectedAt ?? new Date("2026-08-29T00:00:00.000Z"),
-                  revokedAt: candidate.revokedAt ?? null,
-                },
-              ];
-            },
-          };
-        },
-      };
-    },
-  } as unknown as Database;
+    ...candidate,
+    metadata: candidate.metadata ?? null,
+    connectedAt: candidate.connectedAt ?? new Date("2026-08-29T00:00:00.000Z"),
+    revokedAt: candidate.revokedAt ?? null,
+  };
+}
+
+function ownerActor() {
+  return { kind: "user" as const, uuid: ownerUuid, subject: `id:rnet://id/${ownerUuid}` };
+}
+
+function emptyDatabase(): Database {
+  return {} as Database;
 }

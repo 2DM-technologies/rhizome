@@ -1,5 +1,3 @@
-import { SIMPLEFIN_PARSER_NAME } from "../../../../../packages/store-contract/src/ingestion.ts";
-
 import type {
   ParsedAccountBalance,
   ParsedProviderErrors,
@@ -8,6 +6,7 @@ import type {
   ParsedTransactions,
   TransactionParser,
 } from "../../../transactions/types.ts";
+import { SIMPLEFIN_PARSER_NAME } from "../contracts.ts";
 
 interface ParsedConnection {
   connId: string;

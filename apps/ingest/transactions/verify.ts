@@ -75,7 +75,7 @@ export interface ProviderErrorEvidence {
 /** Owner-reviewed evidence that a connected source intentionally started a new balance baseline. */
 export interface HistoryRecoveryEvidence {
   mode: "rebaseline";
-  reason: "simplefin_history_gap" | "unreconciled_backdated_activity";
+  reason: string;
   previous_balance_at: string;
   history_resumes_at: string;
 }

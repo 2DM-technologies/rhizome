@@ -25,7 +25,8 @@ const activeFingerprintKey =
   "arn:aws:kms:us-east-1:111122223333:key/aaaaaaaa-1234-1234-1234-123456789012";
 const previousFingerprintKey =
   "arn:aws:kms:us-east-1:111122223333:key/bbbbbbbb-1234-1234-1234-123456789012";
-const associatedData = "rhizome:source-credential:v1:credential-uuid:owner-private-uuid:simplefin";
+const associatedData =
+  "rhizome:source-credential:v1:credential-uuid:owner-private-uuid:test-provider";
 const dataKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 
 describe("AWS KMS source credential crypto", () => {
@@ -46,11 +47,11 @@ describe("AWS KMS source credential crypto", () => {
 
     const prepared = await credentialCrypto.prepareSeal(associatedData);
     expect(kms.generatedPlaintexts[0]).toEqual(new Uint8Array(32));
-    const sealed = await prepared.seal("https://alice:very-secret@bridge.simplefin.test/simplefin");
+    const sealed = await prepared.seal("opaque-provider-secret");
 
     expect(sealed[0]).toBe(3);
-    expect(new TextDecoder().decode(sealed)).not.toContain("very-secret");
-    expect(await credentialCrypto.open(sealed, associatedData)).toContain("very-secret");
+    expect(new TextDecoder().decode(sealed)).not.toContain("opaque-provider-secret");
+    expect(await credentialCrypto.open(sealed, associatedData)).toBe("opaque-provider-secret");
     expect(kms.decryptInputs[0]?.KeyId).toBe(wrappingKeyArn);
     expect(kms.decryptInputs[0]?.EncryptionContext).toEqual(
       kms.generateDataKeyInputs[0]?.EncryptionContext,
@@ -69,10 +70,10 @@ describe("AWS KMS source credential crypto", () => {
   test("uses dedicated active and retained KMS HMAC keys without sending the token to KMS", async () => {
     const kms = new FakeCredentialKms();
     const credentialCrypto = createKmsCrypto(kms);
-    const token = "https://bridge.simplefin.test/claim/one-time-secret";
+    const replayKey = "canonical-one-time-claim";
 
-    const first = await credentialCrypto.fingerprintSetupToken(` ${token} `);
-    const second = await credentialCrypto.fingerprintSetupToken(token);
+    const first = await credentialCrypto.fingerprintConnectionClaim("test-provider", replayKey);
+    const second = await credentialCrypto.fingerprintConnectionClaim("test-provider", replayKey);
 
     expect(first).toEqual(second);
     expect(first.active).toStartWith("hmac-sha256-kms-v1:");
@@ -83,8 +84,32 @@ describe("AWS KMS source credential crypto", () => {
     ]);
     for (const input of kms.generateMacInputs) {
       expect(input.Message).toHaveLength(32);
-      expect(new TextDecoder().decode(input.Message)).not.toContain("one-time-secret");
+      expect(new TextDecoder().decode(input.Message)).not.toContain(replayKey);
     }
+  });
+
+  test("retains exact pre-generalization SimpleFIN aliases for every KMS key", async () => {
+    const kms = new FakeCredentialKms();
+    const credentialCrypto = createKmsCrypto(kms);
+    const fingerprints = await credentialCrypto.fingerprintConnectionClaim(
+      "simplefin",
+      "canonical-one-time-claim",
+    );
+    const legacyActive =
+      "hmac-sha256-kms-v1:561a574a33374fe9ab4e9e3ef80feac290b02b78b1b9ffcb6fdcebc21a44f748";
+    const legacyPrevious =
+      "hmac-sha256-kms-v1:1d736ba469cf728bbf1b76221a31898eaa01facbec25762dcab7640a20ed3e5d";
+
+    expect(fingerprints.all[0]).toBe(fingerprints.active);
+    expect(fingerprints.active).not.toBe(legacyActive);
+    expect(fingerprints.all).toHaveLength(4);
+    expect(fingerprints.all).toEqual(expect.arrayContaining([legacyActive, legacyPrevious]));
+    expect(kms.generateMacInputs.map(({ KeyId }) => KeyId)).toEqual([
+      activeFingerprintKey,
+      previousFingerprintKey,
+      activeFingerprintKey,
+      previousFingerprintKey,
+    ]);
   });
 
   test("reads v1/v2 local envelopes during migration while every new write is v3", async () => {
@@ -107,7 +132,9 @@ describe("AWS KMS source credential crypto", () => {
     expect(kms.decryptInputs).toHaveLength(0);
     const prepared = await credentialCrypto.prepareSeal(associatedData);
     expect((await prepared.seal("new-access-url"))[0]).toBe(3);
-    expect((await credentialCrypto.fingerprintSetupToken("token")).all).toHaveLength(2);
+    expect(
+      (await credentialCrypto.fingerprintConnectionClaim("test-provider", "claim")).all,
+    ).toHaveLength(2);
   });
 
   test("fails closed on malformed envelopes and invalid or unavailable KMS responses", async () => {

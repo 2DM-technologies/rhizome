@@ -1,8 +1,3 @@
-import type {
-  FILE_PARSERS,
-  SIMPLEFIN_PARSER_NAME,
-} from "../../../packages/store-contract/src/ingestion.ts";
-
 /**
  * Normalized transaction intermediate representation shared by committed parsers, VERIFY, and the
  * ingestion runtime. Provider-specific capture types stay with their owning skill.
@@ -20,7 +15,7 @@ export interface ParsedTransaction {
   sourceProperties?: Record<string, unknown>;
 }
 
-/** Connected-source balance snapshot used to reconcile consecutive SimpleFIN responses. */
+/** Connected-source balance snapshot used to reconcile consecutive provider responses. */
 export interface ParsedAccountBalance {
   accountIdentity: string;
   currency: string;
@@ -68,7 +63,7 @@ export interface ParsedTransactions {
 }
 
 export interface TransactionParser {
-  readonly name: (typeof FILE_PARSERS)[number] | typeof SIMPLEFIN_PARSER_NAME;
+  readonly name: string;
   readonly version: string;
   parse(bytes: Uint8Array): Promise<ParsedTransactions>;
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import openapiTS, { astToString, type OpenAPI3 } from "openapi-typescript";
 import ts from "typescript";
 
+import { FileSourceCatalog } from "../../ingest/file-sources/types.ts";
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
@@ -20,7 +21,7 @@ const config: ServerConfig = {
       driver: "local",
       keyring: createCredentialKeyring("test", { test: new Uint8Array(32) }),
     },
-    simpleFinAllowedHosts: ["bridge.simplefin.test"],
+    sources: { simplefin: { allowedHosts: ["bridge.simplefin.test"] } },
   },
   blob: {
     driver: "r2",
@@ -48,7 +49,9 @@ describe("OpenAPI", () => {
     const serialized = JSON.stringify(openApiDocument);
     expect(serialized).toContain('"operationId":"createMediaObjects"');
     expect(serialized).toContain('"operationId":"createIngestionSource"');
-    expect(serialized).toContain('"operationId":"connectSimpleFin"');
+    expect(serialized).toContain('"operationId":"connectSourceCredential"');
+    expect(serialized).not.toContain('"operationId":"connectSimpleFin"');
+    expect(serialized).toContain('"operationId":"listSourceSkills"');
     expect(serialized).toContain('"operationId":"getSourceCredential"');
     expect(serialized).toContain('"operationId":"revokeSourceCredential"');
     expect(serialized).toContain('"operationId":"createImportPreview"');
@@ -100,6 +103,84 @@ describe("OpenAPI", () => {
     expect(await response.json()).toEqual(openApiDocument);
   });
 
+  test("serves serializable source-skill manifests without provider code in the host", async () => {
+    const response = await app.request("http://rhizome.test/rnet/v0/source-skills", {
+      headers: { Authorization: "Bearer dev:user" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      skills: [
+        expect.objectContaining({
+          skill_id: "csv",
+          source_kind: "file",
+          parser: { name: "csv", version: "csv@1.1.0" },
+        }),
+        expect.objectContaining({
+          skill_id: "ofx",
+          source_kind: "file",
+          parser: { name: "ofx", version: "ofx@1.1.0" },
+        }),
+        expect.objectContaining({
+          skill_id: "simplefin",
+          label: "SimpleFIN",
+          source_kind: "credentialed_remote",
+          connector_version: "simplefin-connector@1.0.0",
+          parser: { name: "simplefin", version: "simplefin@2.0.0" },
+          review_actions: ["review_import", "refresh_source"],
+        }),
+      ],
+    });
+  });
+
+  test("uses one injected file catalog for manifests and source creation", async () => {
+    const parser = {
+      name: "custom-file-parser",
+      version: "custom-file-parser@test",
+      async parse() {
+        return { transactions: [], sourceRecordCount: 0 };
+      },
+    };
+    const fileSources = new FileSourceCatalog([
+      {
+        manifest: {
+          skill_id: "custom_file",
+          label: "Custom file",
+          description: "A custom injected file source",
+          source_kind: "file",
+          connector_version: "origin-upload@test",
+          parser: { name: parser.name, version: parser.version },
+          input_fields: [],
+          review_actions: ["review_import"],
+        },
+        parser,
+      },
+    ]);
+    const injected = createApp({
+      config,
+      db: {} as Database,
+      blobs: {} as BlobStore,
+      fileSources,
+    }).app;
+
+    const manifests = (await (
+      await injected.request("http://rhizome.test/rnet/v0/source-skills", {
+        headers: { Authorization: "Bearer dev:user" },
+      })
+    ).json()) as { skills: Array<{ skill_id: string }> };
+    expect(manifests.skills.map(({ skill_id }) => skill_id)).toEqual(["custom_file", "simplefin"]);
+
+    const omittedBuiltIn = await injected.request("http://rhizome.test/rnet/v0/ingestion-sources", {
+      method: "POST",
+      headers: { Authorization: "Bearer dev:user", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        origin: "rnet://origin/0198f2a1-a001-7a01-8001-000000000001",
+        skill_id: "csv",
+      }),
+    });
+    expect(omittedBuiltIn.status).toBe(422);
+  });
+
   test("enforces owner-only SimpleFIN connection input at the route boundary", async () => {
     const clientResponse = await app.request(
       "http://rhizome.test/rnet/v0/source-credentials/simplefin",
@@ -127,7 +208,20 @@ describe("OpenAPI", () => {
     );
     expect(invalidResponse.status).toBe(422);
 
-    const ambiguousAccountSelector = await app.request(
+    const uninstalledResponse = await app.request(
+      "http://rhizome.test/rnet/v0/source-credentials/uninstalled",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer dev:user",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ claim: "unused" }),
+      },
+    );
+    expect(uninstalledResponse.status).toBe(422);
+
+    const invalidProviderConfig = await app.request(
       "http://rhizome.test/rnet/v0/ingestion-sources",
       {
         method: "POST",
@@ -137,11 +231,11 @@ describe("OpenAPI", () => {
         },
         body: JSON.stringify({
           credential: "credential:0198f2a1-f5d0-7bee-aacd-4ba0aa096e07",
-          config: { accounts: ["checking"] },
+          config: [],
         }),
       },
     );
-    expect(ambiguousAccountSelector.status).toBe(422);
+    expect(invalidProviderConfig.status).toBe(422);
   });
 
   test("can generate a TypeScript client contract in memory", async () => {

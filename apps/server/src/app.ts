@@ -3,6 +3,16 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { logger } from "hono/logger";
 
+import {
+  ConnectedSourceError,
+  type CredentialedSourceCatalog,
+} from "../../ingest/connected-sources/types.ts";
+import type { FileSourceCatalog } from "../../ingest/file-sources/types.ts";
+import { createCredentialedSourceCatalog } from "../../ingest/src/credentialed-source-catalog.ts";
+import {
+  createSourceSkillManifestCatalog,
+  installedFileSourceSkills,
+} from "../../ingest/src/source-skill-catalog.ts";
 import { devAuth } from "./auth.ts";
 import type { BlobStore } from "./blobs/index.ts";
 import type { ServerConfig } from "./config.ts";
@@ -15,20 +25,19 @@ import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
 import { createSourceCredentialRoutes } from "./routes/source-credentials.ts";
+import { createSourceSkillRoutes } from "./routes/source-skills.ts";
 import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
-import { SimpleFinClient } from "./services/simplefin-client.ts";
-import type { SimpleFinAccountsFetcher } from "./services/import-service.ts";
 import type { SourceCredentialCrypto } from "./services/source-credential-crypto.ts";
 import { createSourceCredentialCrypto } from "./services/source-credential-crypto-factory.ts";
-import type { SimpleFinTokenExchange } from "./services/source-credential-service.ts";
 
 export interface AppDependencies {
   config: ServerConfig;
   db: Database;
   blobs: BlobStore;
-  simpleFinClient?: SimpleFinTokenExchange & SimpleFinAccountsFetcher;
+  credentialedSources?: CredentialedSourceCatalog;
+  fileSources?: FileSourceCatalog;
   sourceCredentialCrypto?: SourceCredentialCrypto;
 }
 
@@ -36,13 +45,18 @@ export function createApp({
   config,
   db,
   blobs,
-  simpleFinClient,
+  credentialedSources,
+  fileSources,
   sourceCredentialCrypto,
 }: AppDependencies) {
   const app = new Hono<AppEnvironment>();
-  const resolvedSimpleFinClient =
-    simpleFinClient ??
-    new SimpleFinClient({ allowedHosts: config.sourceCredentials.simpleFinAllowedHosts });
+  const resolvedCredentialedSources =
+    credentialedSources ?? createCredentialedSourceCatalog(config.sourceCredentials.sources);
+  const resolvedFileSources = fileSources ?? installedFileSourceSkills;
+  const sourceSkillManifests = createSourceSkillManifestCatalog(
+    resolvedFileSources,
+    resolvedCredentialedSources,
+  );
   const credentialCrypto =
     sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
 
@@ -77,6 +91,12 @@ export function createApp({
   if (config.authMode === "dev") app.use("/rnet/*", devAuth);
 
   app.onError((error, context) => {
+    if (error instanceof ConnectedSourceError) {
+      return problemResponse(
+        context,
+        new Problem(error.status, error.code, error.title, error.detail, error.extensions),
+      );
+    }
     if (error instanceof Problem) return problemResponse(context, error);
     if (error instanceof HTTPException && error.status === 400) {
       return problemResponse(
@@ -104,16 +124,21 @@ export function createApp({
       router: createVibeRoutes(db, blobs, {
         baseUrl: config.baseUrl,
         credentialCrypto,
-        simpleFin: resolvedSimpleFinClient,
+        credentialedSources: resolvedCredentialedSources,
+        fileSources: resolvedFileSources,
       }),
     },
     {
       basePath: "/rnet/v0/ingestion-sources",
-      router: createIngestionSourceRoutes(db),
+      router: createIngestionSourceRoutes(db, resolvedFileSources, resolvedCredentialedSources),
     },
     {
       basePath: "/rnet/v0/source-credentials",
-      router: createSourceCredentialRoutes(db, resolvedSimpleFinClient, credentialCrypto),
+      router: createSourceCredentialRoutes(db, resolvedCredentialedSources, credentialCrypto),
+    },
+    {
+      basePath: "/rnet/v0/source-skills",
+      router: createSourceSkillRoutes(sourceSkillManifests),
     },
     { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
     {

@@ -3,6 +3,8 @@ import {
   ingestionSourceDocumentSchema,
 } from "@rhizome/store-contract";
 
+import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
+import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { Database } from "../db/index.ts";
 import {
   IngestionSourcesService,
@@ -14,7 +16,11 @@ import { createRhizomeRouter } from "./rhizome-router.ts";
 const CreateIngestionSourceRequestSchema = jsonSchema(createIngestionSourceRequestSchema);
 const IngestionSourceDocumentSchema = jsonSchema(ingestionSourceDocumentSchema);
 
-export function createIngestionSourceRoutes(db: Database) {
+export function createIngestionSourceRoutes(
+  db: Database,
+  fileSources: FileSourceCatalog,
+  credentialedSources: CredentialedSourceCatalog,
+) {
   const router = createRhizomeRouter();
   router.post(
     "/",
@@ -31,7 +37,12 @@ export function createIngestionSourceRoutes(db: Database) {
       },
     },
     async (context) => {
-      const service = new IngestionSourcesService({ db, actor: context.get("actor") });
+      const service = new IngestionSourcesService({
+        db,
+        actor: context.get("actor"),
+        fileSources,
+        credentialedSources,
+      });
       const source = await service.create(context.req.valid("json"));
       return context.json(serializeIngestionSource(source), 201);
     },

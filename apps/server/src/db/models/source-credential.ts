@@ -14,7 +14,8 @@ export const sourceCredentials = pgTable(
     userUuid: uuid("user_uuid")
       .notNull()
       .references(() => users.uuid, { onDelete: "cascade" }),
-    provider: text("provider").notNull(),
+    skillId: text("skill_id").notNull(),
+    connectorVersion: text("connector_version").notNull(),
     secret: bytea("secret").notNull(),
     metadata: jsonb("metadata").$type<JsonObject>(),
     connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
@@ -22,6 +23,12 @@ export const sourceCredentials = pgTable(
   },
   (credential) => [
     unique("source_credentials_uuid_user_uuid_unique").on(credential.uuid, credential.userUuid),
+    unique("source_credentials_uuid_user_uuid_skill_connector_unique").on(
+      credential.uuid,
+      credential.userUuid,
+      credential.skillId,
+      credential.connectorVersion,
+    ),
   ],
 );
 

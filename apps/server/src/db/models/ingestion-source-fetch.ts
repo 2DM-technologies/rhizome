@@ -46,6 +46,7 @@ export const ingestionSourceFetches = pgTable(
       .notNull()
       .references(() => operations.uuid),
     originUuid: uuid("origin_uuid"),
+    connectorVersion: text("connector_version").notNull(),
     parserVersion: text("parser_version").notNull(),
     sourceStateDigest: text("source_state_digest").notNull(),
     status: text("status", { enum: INGESTION_SOURCE_FETCH_STATUSES }).notNull().default("fetching"),

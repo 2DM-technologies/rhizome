@@ -90,7 +90,7 @@ beforeAll(async () => {
         driver: "local",
         keyring: createCredentialKeyring("test", { test: new Uint8Array(32) }),
       },
-      simpleFinAllowedHosts: ["bridge.simplefin.test"],
+      sources: { simplefin: { allowedHosts: ["bridge.simplefin.test"] } },
     },
     blob: {
       driver: "r2",

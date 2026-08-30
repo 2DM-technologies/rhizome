@@ -1,34 +1,50 @@
-import {
-  connectSimpleFinRequestSchema,
-  sourceCredentialDocumentSchema,
-} from "@rhizome/store-contract";
+import { SOURCE_SKILL_ID_PATTERN, sourceCredentialDocumentSchema } from "@rhizome/store-contract";
 
+import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
 import type { Database } from "../db/index.ts";
 import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
+import { Problem } from "../errors.ts";
+import { schemaProblem } from "../services/problems.ts";
 import {
   SourceCredentialsService,
   serializeSourceCredential,
-  type SimpleFinTokenExchange,
 } from "../services/source-credential-service.ts";
-import { ProblemSchema, RecordIdParamsSchema, jsonSchema } from "./contracts.ts";
+import { ProblemSchema, RecordIdParamsSchema, jsonSchema, jsonSchemaValue } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
-const ConnectSimpleFinRequestSchema = jsonSchema(connectSimpleFinRequestSchema);
 const SourceCredentialDocumentSchema = jsonSchema(sourceCredentialDocumentSchema);
+const SourceSkillParamsSchema = jsonSchema({
+  type: "object",
+  required: ["skill_id"],
+  properties: { skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN } },
+  additionalProperties: false,
+});
+const SourceConnectionRequestSchema = jsonSchema({
+  type: "object",
+  additionalProperties: true,
+});
 
 export function createSourceCredentialRoutes(
   db: Database,
-  simpleFin: SimpleFinTokenExchange,
+  catalog: CredentialedSourceCatalog,
   credentialCrypto: SourceCredentialCrypto,
 ) {
   const router = createRhizomeRouter();
+  const connectionSchemas = new Map(
+    catalog
+      .all()
+      .map((skill) => [
+        skill.skillId,
+        jsonSchemaValue<Record<string, unknown>>(skill.connection.requestSchema),
+      ]),
+  );
 
   router.post(
-    "/simplefin",
+    "/:skill_id",
     {
-      operationId: "connectSimpleFin",
+      operationId: "connectSourceCredential",
       auth: "user",
-      request: { json: ConnectSimpleFinRequestSchema },
+      request: { param: SourceSkillParamsSchema, json: SourceConnectionRequestSchema },
       responses: {
         201: SourceCredentialDocumentSchema,
         401: ProblemSchema,
@@ -38,13 +54,26 @@ export function createSourceCredentialRoutes(
       },
     },
     async (context) => {
+      const skillId = context.req.valid("param").skill_id;
+      const skill = catalog.forSkillId(skillId);
+      if (!skill) {
+        throw new Problem(
+          422,
+          "parser_unsupported",
+          "Source skill unsupported",
+          `Source skill ${skillId} is not installed`,
+        );
+      }
+      const validation = connectionSchemas
+        .get(skillId)!
+        .validate(context.req.valid("json"), context.get("actor"));
+      if (!validation.ok) throw schemaProblem(validation.issues);
       const service = new SourceCredentialsService({
         db,
         actor: context.get("actor"),
         credentialCrypto,
-        simpleFin,
       });
-      const credential = await service.connectSimpleFin(context.req.valid("json"));
+      const credential = await service.connect(skill, validation.value);
       return context.json(serializeSourceCredential(credential), 201);
     },
   );
@@ -68,7 +97,6 @@ export function createSourceCredentialRoutes(
         db,
         actor: context.get("actor"),
         credentialCrypto,
-        simpleFin,
       });
       const credential = await service.getOwned(context.req.valid("param").id);
       return context.json(serializeSourceCredential(credential));
@@ -94,7 +122,6 @@ export function createSourceCredentialRoutes(
         db,
         actor: context.get("actor"),
         credentialCrypto,
-        simpleFin,
       });
       await service.revoke(context.req.valid("param").id);
       return context.body(null, 204);

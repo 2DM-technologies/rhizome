@@ -23,7 +23,7 @@ export class SimpleFinClientError extends Error {
   }
 }
 
-interface SimpleFinClientOptions {
+export interface SimpleFinClientOptions {
   allowedHosts: readonly string[];
   fetch?: FetchLike;
   maxAccountsBytes?: number;
