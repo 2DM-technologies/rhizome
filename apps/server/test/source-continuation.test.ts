@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { SOURCE_ACTION_KINDS } from "../../../packages/store-contract/src/index.ts";
 import { createLocalSourceCredentialCrypto } from "../src/services/source-credential-crypto.ts";
 import {
   SourceContinuationCodec,
@@ -15,20 +16,48 @@ const context: SourceContinuationContext = {
 };
 
 describe("source action continuations", () => {
-  test("round-trips only with the bound owner, Vibe, source, and state digest", async () => {
-    const codec = new SourceContinuationCodec(createLocalSourceCredentialCrypto(key));
-    const token = await codec.seal({
-      ...context,
-      kind: "review_import",
-      resume: { mode: "rebaseline", private_marker: "never-plaintext" },
+  test("round-trips every action with action-independent context binding", async () => {
+    const actualCrypto = createLocalSourceCredentialCrypto(key);
+    const associatedDataCalls: string[] = [];
+    const codec = new SourceContinuationCodec({
+      ...actualCrypto,
+      open(sealed, associatedData) {
+        associatedDataCalls.push(associatedData);
+        return actualCrypto.open(sealed, associatedData);
+      },
+      prepareSeal(associatedData) {
+        associatedDataCalls.push(associatedData);
+        return actualCrypto.prepareSeal(associatedData);
+      },
     });
 
-    expect(token).not.toContain("rebaseline");
-    expect(token).not.toContain("never-plaintext");
-    await expect(codec.open(token, context)).resolves.toEqual({
-      expectedSourceStateDigest: context.sourceStateDigest,
-      kind: "review_import",
-      resume: { mode: "rebaseline", private_marker: "never-plaintext" },
+    for (const kind of SOURCE_ACTION_KINDS) {
+      const token = await codec.seal({
+        ...context,
+        kind,
+        resume: { mode: "rebaseline", private_marker: "never-plaintext" },
+      });
+
+      expect(token).not.toContain("rebaseline");
+      expect(token).not.toContain("never-plaintext");
+      await expect(codec.open(token, context)).resolves.toEqual({
+        expectedSourceStateDigest: context.sourceStateDigest,
+        kind,
+        resume: { mode: "rebaseline", private_marker: "never-plaintext" },
+      });
+    }
+
+    expect(new Set(associatedDataCalls)).toEqual(
+      new Set([
+        `rhizome:source-continuation:v1:${context.ownerUuid}:${context.vibeUuid}:${context.source}`,
+      ]),
+    );
+    expect(associatedDataCalls).toHaveLength(SOURCE_ACTION_KINDS.length * 2);
+
+    const token = await codec.seal({
+      ...context,
+      kind: SOURCE_ACTION_KINDS[0],
+      resume: { mode: "rebaseline" },
     });
 
     for (const changed of [

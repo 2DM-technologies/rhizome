@@ -2,6 +2,7 @@ import type {
   ConnectedSourceActionKind,
   SourceJsonValue,
 } from "../../../ingest/connected-sources/types.ts";
+import { isConnectedSourceActionKind } from "../../../ingest/connected-sources/types.ts";
 
 import type { SourceCredentialCrypto } from "./source-credential-crypto.ts";
 
@@ -64,7 +65,7 @@ export class SourceContinuationCodec {
       source_state_digest: input.sourceStateDigest,
       v: TOKEN_VERSION,
     };
-    const prepared = await this.crypto.prepareSeal(associatedData(input, input.kind));
+    const prepared = await this.crypto.prepareSeal(associatedData(input));
     try {
       const sealed = await prepared.seal(JSON.stringify(payload));
       const token = Buffer.from(sealed).toString("base64url");
@@ -83,7 +84,7 @@ export class SourceContinuationCodec {
   ): Promise<ConnectedSourceContinuation> {
     try {
       const sealed = tokenBytes(token);
-      const plaintext = await this.crypto.open(sealed, associatedData(context, "review_import"));
+      const plaintext = await this.crypto.open(sealed, associatedData(context));
       const payload = continuationPayload(plaintext, Math.floor(this.now() / 1_000));
       if (payload.source_state_digest !== context.sourceStateDigest) throw tokenError();
       return {
@@ -99,9 +100,10 @@ export class SourceContinuationCodec {
 
 function associatedData(
   context: Pick<SourceContinuationContext, "ownerUuid" | "source" | "vibeUuid">,
-  action: ConnectedSourceActionKind,
 ): string {
-  return `rhizome:source-continuation:v1:${context.ownerUuid}:${context.vibeUuid}:${context.source}:${action}`;
+  // The action stays inside authenticated ciphertext so open() never has to guess it before
+  // decryption. AAD binds only the caller-controlled context available at both codec edges.
+  return `rhizome:source-continuation:v1:${context.ownerUuid}:${context.vibeUuid}:${context.source}`;
 }
 
 function tokenBytes(token: string): Uint8Array {
@@ -128,7 +130,7 @@ function continuationPayload(plaintext: string, now: number): SourceContinuation
     ) ||
     Object.keys(payload).length !== 5 ||
     payload.v !== TOKEN_VERSION ||
-    payload.action !== "review_import" ||
+    !isConnectedSourceActionKind(payload.action) ||
     !Number.isSafeInteger(payload.expires_at) ||
     (payload.expires_at as number) <= now ||
     (payload.expires_at as number) > now + TOKEN_TTL_SECONDS ||

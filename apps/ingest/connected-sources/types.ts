@@ -1,4 +1,5 @@
 import {
+  SOURCE_ACTION_KINDS,
   SOURCE_CREDENTIAL_CLAIM_POLICIES,
   SOURCE_SKILL_INPUT_CONTROLS,
   SOURCE_SKILL_INPUT_TARGETS,
@@ -17,7 +18,11 @@ export type SourceJsonValue =
 
 export type SourceJsonObject = { [key: string]: SourceJsonValue };
 
-export type ConnectedSourceActionKind = "review_import";
+export type ConnectedSourceActionKind = (typeof SOURCE_ACTION_KINDS)[number];
+
+export function isConnectedSourceActionKind(value: unknown): value is ConnectedSourceActionKind {
+  return (SOURCE_ACTION_KINDS as readonly unknown[]).includes(value);
+}
 
 export interface ConnectedSourceActionEvidence {
   readonly kind: ConnectedSourceActionKind;
