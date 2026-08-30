@@ -56,6 +56,7 @@ jobs:
           repository: 2DM-technologies/rnet
           ref: 403a70c2a628a7f492ee9de1af01fc218fcfd8f1
           path: rnet
+          ssh-key: ${{ secrets.RNET_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Set up Bun
@@ -99,6 +100,7 @@ jobs:
           repository: 2DM-technologies/rnet
           ref: 403a70c2a628a7f492ee9de1af01fc218fcfd8f1
           path: rnet
+          ssh-key: ${{ secrets.RNET_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Set up Bun
