@@ -8,6 +8,7 @@ import {
   NEW_VIBE_ID,
   OBJECT_ID,
   OBJECT_URI,
+  PAYLOAD_TEXT,
   VIBE_ID,
   type MockStore,
 } from "./support/mockStore.ts";
@@ -520,6 +521,10 @@ test("Vibe CRUD and membership use the existing Store object", async ({ page }) 
   await page.getByRole("button", { name: "Confirm delete Vibe" }).click();
   await expect(page).toHaveURL(/\/$/);
 
+  await page.getByRole("searchbox", { name: "Search everything" }).click();
+  await expect(page.getByRole("button", { name: "Summer trip", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Spending", exact: true })).toBeVisible();
+
   await page.goto("/vibes");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Vibe Summer trip" })).toHaveCount(0);
@@ -543,6 +548,22 @@ test("a granted Vibe is browseable without exposing owner-only controls", async 
   await page.getByRole("button", { name: `Open object ${OBJECT_URI}` }).click();
   await expect(page.getByRole("button", { name: "Save user properties" })).toHaveCount(0);
   await expect(page.getByText('"reviewed": false')).toBeVisible();
+});
+
+test("an owner can refresh configured sources and see the deduplication result", async ({
+  page,
+}) => {
+  await page.goto(`/vibes/${VIBE_ID}`);
+
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+  await expect(page.getByRole("status")).toContainText("Checked 1 transactions · added 0");
+  await expect(page.getByRole("status")).toContainText("1 already known · 0 new records");
+
+  const pullRequest = mockStore.requests.find(
+    (request) =>
+      request.method() === "POST" && request.url().endsWith(`/rnet/v0/vibes/${VIBE_ID}/pull`),
+  );
+  expect(pullRequest?.postDataJSON()).toEqual({});
 });
 
 test("user-property edits survive a reload", async ({ page }) => {
@@ -587,11 +608,48 @@ test("an existing element payload is fetched and presented", async ({ page }) =>
   await payloadResponse;
 
   const label = `Payload for ${ELEMENT_URI}`;
-  await expect(page.getByTitle(label)).toBeVisible();
+  const preview = page.getByTitle(label);
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveCSS("color-scheme", "light");
+  await expect(preview.contentFrame().locator("body")).toContainText(PAYLOAD_TEXT.trim());
   const download = page.getByRole("link", { name: `Download payload ${ELEMENT_URI}` });
   await download.scrollIntoViewIfNeeded();
   await expect(download).toBeInViewport();
   await expect(download).toHaveAttribute("href", /^blob:/);
+});
+
+test("an image payload remains decodable when its previewing surface is replaced", async ({
+  page,
+}) => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const element = mockStore.elements.get(ELEMENT_ID);
+  const object = mockStore.objects.get(OBJECT_ID);
+  if (!element) throw new Error("Missing seeded element");
+  if (!object) throw new Error("Missing seeded object");
+  element.kind = "image";
+  element.mime = "image/png";
+  element.byte_size = png.byteLength;
+  mockStore.elementPayloads.set(ELEMENT_ID, png);
+  object.type = "arena.block";
+
+  await page.goto(`/vibes/${VIBE_ID}`);
+  const preview = page.getByRole("img", { name: "Monthly plan" });
+  await expect
+    .poll(() => preview.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  const previewUrl = await preview.getAttribute("src");
+
+  await page.getByRole("button", { name: "Open Are.na block Monthly plan" }).click();
+
+  const image = page.getByRole("img", { name: `Payload for ${ELEMENT_URI}` });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(image).not.toHaveAttribute("src", previewUrl ?? "");
 });
 
 test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
