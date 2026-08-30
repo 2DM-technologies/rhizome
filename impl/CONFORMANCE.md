@@ -34,3 +34,7 @@ Milestone-scheduled gaps:
   results retain their manifests, but no reference-aware collector removes payloads that have no live
   MediaElement or unexpired preview reference; that collector ships with the M7 background job
   infrastructure.
+- Import preview and pull jobs run in-process via `queueMicrotask` with no durable queue: a restart
+  mid-run strands its operation in `queued` or `running`, no reaper reconciles it, and the host polls
+  that state indefinitely. Durable background execution ships in M7 alongside the reference-aware
+  staged-payload collection above.
