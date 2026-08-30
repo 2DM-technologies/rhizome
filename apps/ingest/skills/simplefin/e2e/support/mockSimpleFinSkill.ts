@@ -1,6 +1,7 @@
 import accountsCurrentFixture from "../../fixtures/accounts-current-v2.json";
 import providerErrorsFixture from "../../fixtures/provider-errors-v2.json";
-import { filterSimpleFinTransactions, createSimpleFinSkill } from "../../source.ts";
+import { simpleFinSourceSkillManifest } from "../../manifest.ts";
+import { filterSimpleFinTransactions } from "../../source.ts";
 import { simpleFinParser } from "../../scripts/parse-simplefin.ts";
 import { stageMockTransactions } from "../../../../../host/e2e/support/mockTransactionSkill.ts";
 import type {
@@ -13,9 +14,7 @@ export const SIMPLEFIN_IMPORT_SOURCE_ID = "0198f2a1-0701-7f01-8f01-000000000001"
 export const SIMPLEFIN_IMPORT_OPERATION_ID = "0198f2a1-0801-7001-9001-000000000001";
 export const COMPROMISED_SIMPLEFIN_TOKEN = "compromised-simplefin-setup-token";
 
-const manifest = createSimpleFinSkill({
-  allowedHosts: ["bridge.simplefin.test"],
-}).manifest;
+const manifest = simpleFinSourceSkillManifest;
 
 export const mockSimpleFinSourceSkill = createMockSimpleFinSourceSkill(accountsCurrentFixture);
 
