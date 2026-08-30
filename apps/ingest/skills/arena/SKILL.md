@@ -9,8 +9,11 @@ and final response URL that produced them. Each asset also retains its requested
 ordered status/from/location/to provenance for every approved redirect hop. Parsing validates the
 chain and never accesses the network.
 
-Every available top-level Block becomes one `arena.block` candidate in ascending connection
-position. Nested channels remain counted source records but are not traversed. Stable keys are
+Every available top-level Block from a current capture becomes one `arena.block` candidate in
+Are.na's displayed board order (descending connection position). For reproducible replay under the
+same pinned parser version, historical `position_asc` captures remain accepted and preserve their
+captured order; the capture client always writes new artifacts with `position_desc`. Nested
+channels remain counted source records but are not traversed. Stable keys are
 `arena_block_id` and `arena_channel_id`. Source properties preserve provider type, title,
 description markdown, timestamps, connection ID/position/pinned state, connecting user, block
 author, destination/source attribution, and relevant provider file/image metadata.

@@ -10,7 +10,7 @@ import { ArenaClient, type ArenaFetchLike } from "../src/services/arena-client.t
 
 const SLUG = "mixed-media";
 const CHANNEL_URL = `https://api.are.na/v3/channels/${SLUG}`;
-const PAGE_1_URL = `https://api.are.na/v3/channels/${SLUG}/contents?per=100&page=1&sort=position_asc`;
+const PAGE_1_URL = `https://api.are.na/v3/channels/${SLUG}/contents?per=100&page=1&sort=position_desc`;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -141,13 +141,17 @@ describe("Are.na capture HTTP client", () => {
     const linkPreviewUrl = "https://images.are.na/link-preview.jpg";
     const attachmentUrl = "https://attachments.are.na/report.pdf";
     const embedPreviewUrl = "https://images.are.na/embed-preview.webp";
-    const page2Url = `https://api.are.na/v3/channels/${SLUG}/contents?per=100&page=2&sort=position_asc`;
+    const page2Url = `https://api.are.na/v3/channels/${SLUG}/contents?per=100&page=2&sort=position_desc`;
     const channel = `${channelBody(6, 5, 1)}\n`;
     const page1 = `${pageBody(
       [
-        block(101, "Text", { content: "**hello**" }),
-        block(102, "Image", { image: { large: { src: imageUrl } } }),
+        block(101, "Text", { connection: { position: 60 }, content: "**hello**" }),
+        block(102, "Image", {
+          connection: { position: 50 },
+          image: { large: { src: imageUrl } },
+        }),
         block(103, "Link", {
+          connection: { position: 40 },
           source: { url: "https://example.test/article" },
           image: { large: { src: linkPreviewUrl } },
         }),
@@ -157,13 +161,21 @@ describe("Are.na capture HTTP client", () => {
     const page2 = `${pageBody(
       [
         block(104, "Attachment", {
+          connection: { position: 30 },
           attachment: { url: attachmentUrl, content_type: "application/pdf" },
         }),
         block(105, "Embed", {
+          connection: { position: 20 },
           embed: { url: "https://video.example.test/watch/5", html: "<iframe>ignored</iframe>" },
           image: { large: { src: embedPreviewUrl } },
         }),
-        { id: 201, base_type: "Channel", type: "Channel", state: "available" },
+        {
+          id: 201,
+          base_type: "Channel",
+          type: "Channel",
+          state: "available",
+          connection: { position: 10 },
+        },
       ],
       {
         currentPage: 2,

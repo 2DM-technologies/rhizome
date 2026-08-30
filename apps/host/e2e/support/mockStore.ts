@@ -79,14 +79,40 @@ type MockParser = MockFileParser | "simplefin" | "arena";
 
 const ARENA_BLOCKS = [
   {
+    objectId: "0198f2a1-0d01-7d01-8d01-000000000005",
+    elementId: "0198f2a1-0e01-7e01-8e01-000000000005",
+    blockId: "49552365",
+    blockType: "Attachment",
+    title: "Planning notes",
+    position: 5,
+    kind: "document",
+    mime: "application/pdf",
+    payload: "%PDF-1.7\nRhizome fixture\n%%EOF\n",
+    sourceUrl: "https://attachments.are.na/planning-notes.pdf",
+  },
+  {
     objectId: "0198f2a1-0d01-7d01-8d01-000000000001",
     elementId: "0198f2a1-0e01-7e01-8e01-000000000001",
     blockId: "49552361",
     blockType: "Text",
     title: "Manifesto",
+    position: 4,
     kind: "text",
     mime: "text/markdown",
     payload: "# Love always wins\n\nA deterministic markdown block.",
+  },
+  {
+    objectId: "0198f2a1-0d01-7d01-8d01-000000000004",
+    elementId: "0198f2a1-0e01-7e01-8e01-000000000004",
+    blockId: "49552364",
+    blockType: "Link",
+    title: "A saved link with a preview",
+    position: 3,
+    kind: "image",
+    mime: "image/png",
+    payload:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    sourceUrl: "https://example.com/with-preview",
   },
   {
     objectId: "0198f2a1-0d01-7d01-8d01-000000000002",
@@ -94,6 +120,7 @@ const ARENA_BLOCKS = [
     blockId: "49552362",
     blockType: "Image",
     title: "A still image",
+    position: 2,
     kind: "image",
     mime: "image/png",
     payload:
@@ -104,30 +131,8 @@ const ARENA_BLOCKS = [
     blockId: "49552363",
     blockType: "Link",
     title: "A saved link without a preview",
+    position: 1,
     sourceUrl: "https://example.com/no-preview",
-  },
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000004",
-    elementId: "0198f2a1-0e01-7e01-8e01-000000000004",
-    blockId: "49552364",
-    blockType: "Link",
-    title: "A saved link with a preview",
-    kind: "image",
-    mime: "image/png",
-    payload:
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    sourceUrl: "https://example.com/with-preview",
-  },
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000005",
-    elementId: "0198f2a1-0e01-7e01-8e01-000000000005",
-    blockId: "49552365",
-    blockType: "Attachment",
-    title: "Planning notes",
-    kind: "document",
-    mime: "application/pdf",
-    payload: "%PDF-1.7\nRhizome fixture\n%%EOF\n",
-    sourceUrl: "https://attachments.are.na/planning-notes.pdf",
   },
 ] as const;
 
@@ -168,7 +173,7 @@ function importCandidates(parser: MockParser, origin: string): MediaObject[] {
         properties: {
           title: block.title,
           arena_block_type: block.blockType,
-          connection_position: index + 1,
+          connection_position: block.position,
           ...("sourceUrl" in block ? { source_url: block.sourceUrl } : {}),
         },
       },
@@ -265,7 +270,7 @@ function verifyFor(parser: MockParser) {
         {
           name: "connection_order",
           ok: true,
-          detail: "Top-level source and candidate connection order is strictly ascending",
+          detail: "Top-level source and candidate order matches the descending Are.na board order",
         },
         {
           name: "element_accounting",
@@ -533,11 +538,11 @@ export async function installMockStore(page: Page): Promise<MockStore> {
       id: 5_549_005,
       slug: "love-always-wins",
       title: "Love always wins",
-      contents: ARENA_BLOCKS.map((block, index) => ({
+      contents: ARENA_BLOCKS.map((block) => ({
         id: Number(block.blockId),
         type: "Image",
         title: block.title,
-        position: index + 1,
+        position: block.position,
       })),
     });
     const document = {

@@ -473,7 +473,7 @@ function contentsEndpoint(slug: string, pageNumber: number): URL {
   const url = new URL(`/v3/channels/${slug}/contents`, ARENA_API_ORIGIN);
   url.searchParams.set("per", String(CONTENTS_PER_PAGE));
   url.searchParams.set("page", String(pageNumber));
-  url.searchParams.set("sort", "position_asc");
+  url.searchParams.set("sort", "position_desc");
   return url;
 }
 

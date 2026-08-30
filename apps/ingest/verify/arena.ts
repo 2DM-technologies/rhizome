@@ -49,7 +49,6 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
   let elementIntegrity = true;
   let totalElementBytes = 0;
   let elementCount = 0;
-  let previousBlockPosition = 0;
 
   for (const block of parsed.blocks) {
     blockCounts.set(block.blockType, (blockCounts.get(block.blockType) ?? 0) + 1);
@@ -62,13 +61,11 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
       Boolean(block.title.trim()) &&
       Number.isSafeInteger(block.position) &&
       block.position > 0 &&
-      block.position > previousBlockPosition &&
       block.keys.arena_block_id === block.blockId &&
       block.keys.arena_channel_id === parsed.channelId &&
       block.sourceProperties.arena_block_type === block.blockType &&
       block.sourceProperties.title === block.title &&
       block.sourceProperties.connection_position === block.position;
-    previousBlockPosition = block.position;
 
     elementAccounting &&= hasExpectedElements(block);
     for (const element of block.elements) {
@@ -87,14 +84,16 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
     }
   }
 
+  const blockPositions = parsed.blocks.map(({ position }) => position);
+  const sourcePositionsAreAscending = isStrictlyOrdered(parsed.sourcePositions, "asc");
+  const sourcePositionsAreDescending = isStrictlyOrdered(parsed.sourcePositions, "desc");
+  const blockPositionsMatchSourceOrder =
+    (sourcePositionsAreAscending && isStrictlyOrdered(blockPositions, "asc")) ||
+    (sourcePositionsAreDescending && isStrictlyOrdered(blockPositions, "desc"));
   const sourcePositionsValid =
     parsed.sourcePositions.length === parsed.sourceRecordCount &&
-    parsed.sourcePositions.every(
-      (position, index) =>
-        Number.isSafeInteger(position) &&
-        position > 0 &&
-        (index === 0 || position > parsed.sourcePositions[index - 1]!),
-    ) &&
+    parsed.sourcePositions.every((position) => Number.isSafeInteger(position) && position > 0) &&
+    blockPositionsMatchSourceOrder &&
     parsed.blocks.every((block) => parsed.sourcePositions.includes(block.position));
   const recordCountValid =
     Number.isSafeInteger(parsed.sourceRecordCount) &&
@@ -154,7 +153,9 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
       name: "connection_order",
       ok: sourcePositionsValid,
       detail: sourcePositionsValid
-        ? "Top-level source and candidate connection order is strictly ascending"
+        ? sourcePositionsAreDescending
+          ? "Top-level source and candidate order matches the descending Are.na board order"
+          : "Top-level source and candidate order preserves a legacy ascending Are.na capture"
         : "Top-level source or candidate connection order is missing, duplicate, or inconsistent",
     },
     {
@@ -185,6 +186,14 @@ export function verifyArena(parsed: ParsedArenaChannel): ArenaVerifyReport {
     counts_by_element_kind: sortedCounts(elementCounts),
     checks,
   };
+}
+
+function isStrictlyOrdered(values: readonly number[], order: "asc" | "desc"): boolean {
+  return values.every((value, index) => {
+    if (!Number.isSafeInteger(value) || value <= 0) return false;
+    if (index === 0) return true;
+    return order === "asc" ? value > values[index - 1]! : value < values[index - 1]!;
+  });
 }
 
 function hasExpectedElements(block: ParsedArenaBlock): boolean {

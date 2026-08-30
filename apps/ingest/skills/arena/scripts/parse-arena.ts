@@ -120,6 +120,8 @@ interface AssetEntry {
   bytes: Uint8Array;
 }
 
+type ArenaConnectionOrder = "asc" | "desc";
+
 const BLOCK_TYPES = new Set<ArenaBlockType>(["Text", "Image", "Attachment", "Link", "Embed"]);
 const JSON_MIME = "application/json";
 const MIME = /^[a-z]+\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
@@ -195,9 +197,14 @@ export function parseArenaCapture(bytes: Uint8Array): ParsedArenaChannel {
 
   const sourceRecords: JsonRecord[] = [];
   let declaredPageTotal: number | undefined;
+  let contentsOrder: ArenaConnectionOrder | undefined;
   for (const [pageIndex, response] of capture.contents_pages.entries()) {
     const pageNumber = pageIndex + 1;
-    assertApiResponseUrl(response.url, "contents", channelSlug, pageNumber);
+    const pageOrder = assertApiResponseUrl(response.url, "contents", channelSlug, pageNumber);
+    if (contentsOrder !== undefined && pageOrder !== contentsOrder) {
+      throw new Error("Are.na contents pages disagree about connection order");
+    }
+    contentsOrder = pageOrder;
     const page = decodeJsonResponse(response, `Are.na contents page ${pageNumber}`);
     if (!Array.isArray(page.data)) {
       throw new Error(`Are.na contents page ${pageNumber} is missing its data array`);
@@ -246,13 +253,19 @@ export function parseArenaCapture(bytes: Uint8Array): ParsedArenaChannel {
   const sourcePositions: number[] = [];
   const blocks: ParsedArenaBlock[] = [];
   let nestedChannelCount = 0;
-  let previousPosition = 0;
+  const expectedOrder = contentsOrder ?? "desc";
+  let previousPosition = expectedOrder === "desc" ? Number.POSITIVE_INFINITY : 0;
 
   for (const [recordIndex, sourceRecord] of sourceRecords.entries()) {
     const label = `Are.na content ${recordIndex + 1}`;
     const connection = parseConnection(sourceRecord.connection, label);
-    if (connection.position <= previousPosition || seenPositions.has(connection.position)) {
-      throw new Error("Are.na contents are not in unique ascending connection order");
+    const outOfOrder =
+      expectedOrder === "desc"
+        ? connection.position >= previousPosition
+        : connection.position <= previousPosition;
+    if (outOfOrder || seenPositions.has(connection.position)) {
+      const orderLabel = expectedOrder === "desc" ? "descending board" : "ascending connection";
+      throw new Error(`Are.na contents are not in unique ${orderLabel} order`);
     }
     previousPosition = connection.position;
     seenPositions.add(connection.position);
@@ -896,12 +909,19 @@ function normalizeChannelUrl(value: string): { url: string; slug: string } {
   return { url: `https://www.are.na/${segments[0]}/${segments[1]}`, slug: segments[1]! };
 }
 
+function assertApiResponseUrl(value: string, kind: "channel", channelLocator: string): void;
+function assertApiResponseUrl(
+  value: string,
+  kind: "contents",
+  channelLocator: string,
+  page: number,
+): ArenaConnectionOrder;
 function assertApiResponseUrl(
   value: string,
   kind: "channel" | "contents",
   channelLocator: string,
   page?: number,
-): void {
+): ArenaConnectionOrder | undefined {
   let url: URL;
   try {
     url = new URL(value);
@@ -927,14 +947,16 @@ function assertApiResponseUrl(
     return;
   }
   const keys = [...url.searchParams.keys()].sort();
+  const sort = url.searchParams.get("sort");
   if (
     keys.join(",") !== "page,per,sort" ||
     url.searchParams.get("page") !== String(page) ||
     url.searchParams.get("per") !== "100" ||
-    url.searchParams.get("sort") !== "position_asc"
+    (sort !== "position_desc" && sort !== "position_asc")
   ) {
     throw new Error(`Are.na contents page ${page} URL is inconsistent with the capture`);
   }
+  return sort === "position_desc" ? "desc" : "asc";
 }
 
 function approvedAssetUrl(value: string, label: string): string {

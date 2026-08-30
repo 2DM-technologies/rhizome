@@ -32,16 +32,16 @@ describe("M2 committed Are.na v3 parser", () => {
       channelDescription: "A synthetic mixed-media channel.",
       sourceRecordCount: 5,
       nestedChannelCount: 0,
-      sourcePositions: [1, 2, 3, 4, 5],
+      sourcePositions: [5, 4, 3, 2, 1],
     });
     expect(
       first.blocks.map(({ blockId, blockType, position }) => [blockId, blockType, position]),
     ).toEqual([
-      ["1101", "Text", 1],
-      ["1102", "Image", 2],
+      ["1101", "Text", 5],
+      ["1102", "Image", 4],
       ["1103", "Link", 3],
-      ["1104", "Attachment", 4],
-      ["1105", "Embed", 5],
+      ["1104", "Attachment", 2],
+      ["1105", "Embed", 1],
     ]);
 
     const [text, image, link, attachment, embed] = first.blocks;
@@ -119,6 +119,30 @@ describe("M2 committed Are.na v3 parser", () => {
     });
   });
 
+  test("replays legacy ascending captures without changing the pinned parser version", async () => {
+    const capture = await fixtureCapture();
+    capture.contents_pages[0]!.url = capture.contents_pages[0]!.url.replace(
+      "sort=position_desc",
+      "sort=position_asc",
+    );
+    mutatePage(capture, (page) => {
+      for (const [index, value] of array(page.data, "page data").entries()) {
+        record(record(value, "block").connection, "connection").position = index + 1;
+      }
+    });
+
+    const parsed = parseArenaCapture(captureBytes(capture));
+    expect(parsed.sourcePositions).toEqual([1, 2, 3, 4, 5]);
+    expect(parsed.blocks.map(({ blockId, position }) => [blockId, position])).toEqual([
+      ["1101", 1],
+      ["1102", 2],
+      ["1103", 3],
+      ["1104", 4],
+      ["1105", 5],
+    ]);
+    expect(verifyArena(parsed)).toMatchObject({ ok: true });
+  });
+
   test("counts nested channels without traversing or emitting them", async () => {
     const capture = await fixtureCapture();
     const channel = decodedBody(capture.channel);
@@ -127,7 +151,7 @@ describe("M2 committed Are.na v3 parser", () => {
     counts.channels = 1;
     counts.contents = 6;
     const data = array(page.data, "page data");
-    data.push({
+    data.unshift({
       id: 2201,
       type: "Channel",
       slug: "nested-synthetic-channel",
@@ -151,7 +175,7 @@ describe("M2 committed Are.na v3 parser", () => {
       sourceRecordCount: 6,
       nestedChannelCount: 1,
       declaredNestedChannelCount: 1,
-      sourcePositions: [1, 2, 3, 4, 5, 6],
+      sourcePositions: [6, 5, 4, 3, 2, 1],
     });
     expect(parsed.blocks).toHaveLength(5);
     expect(verifyArena(parsed)).toMatchObject({ ok: true, nested_channel_count: 1 });
@@ -187,7 +211,7 @@ describe("M2 committed Are.na v3 parser", () => {
       const data = array(page.data, "data");
       const repeated = structuredClone(record(data[0], "block"));
       record(repeated.connection, "connection").position = 6;
-      data.push(repeated);
+      data.unshift(repeated);
       record(page.meta, "meta").total_count = 6;
     });
     expect(() => parseArenaCapture(captureBytes(duplicate))).toThrow(
@@ -278,10 +302,10 @@ describe("M2 committed Are.na v3 parser", () => {
 
     const order = await fixtureCapture();
     mutatePage(order, (page) => {
-      record(record(array(page.data, "data")[1], "block").connection, "connection").position = 1;
+      record(record(array(page.data, "data")[1], "block").connection, "connection").position = 5;
     });
     expect(() => parseArenaCapture(captureBytes(order))).toThrow(
-      "not in unique ascending connection order",
+      "not in unique descending board order",
     );
 
     const unsupported = await fixtureCapture();
@@ -305,7 +329,7 @@ describe("M2 committed Are.na v3 parser", () => {
     const parsed = parseArenaCapture(await fixtureBytes());
     parsed.blocks[0]!.elements[0]!.contentHash = `sha256:${"0".repeat(64)}`;
     parsed.blocks[0]!.elements[0]!.role = "content";
-    parsed.blocks[1]!.position = 1;
+    parsed.blocks[1]!.position = 5;
     parsed.blocks[1]!.blockId = parsed.blocks[0]!.blockId;
     parsed.blocks[1]!.keys.arena_block_id = parsed.blocks[0]!.blockId;
     const report = verifyArena(parsed);

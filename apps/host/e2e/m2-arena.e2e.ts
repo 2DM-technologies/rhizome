@@ -8,6 +8,13 @@ import {
 } from "./support/mockStore.ts";
 
 const CHANNEL_URL = "https://www.are.na/noah-putnam/love-always-wins";
+const BOARD_TITLES = [
+  "Planning notes",
+  "Manifesto",
+  "A saved link with a preview",
+  "A still image",
+  "A saved link without a preview",
+] as const;
 
 let mockStore: MockStore;
 
@@ -39,7 +46,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   );
 
   const candidates = page.getByRole("list", { name: "Candidate Are.na blocks" });
-  await expect(candidates.locator("[data-import-candidate]")).toHaveCount(5);
+  const candidateRows = candidates.locator("[data-import-candidate]");
+  await expect(candidateRows).toHaveCount(5);
+  await expect(candidateRows).toContainText([...BOARD_TITLES]);
   await expect(candidates.locator("[data-import-candidate] img")).toHaveCount(2);
   await expect(candidates).toContainText("Manifesto");
   await expect(candidates).toContainText("A saved link without a preview");
@@ -90,7 +99,11 @@ test("a public Are.na channel follows element-aware review and commits atomicall
     "Imported 5 Are.na blocks from Are.na / love-always-wins.",
   );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Open Are.na block/ })).toHaveCount(5);
+  const importedCards = page.getByRole("button", { name: /^Open Are.na block/ });
+  await expect(importedCards).toHaveCount(5);
+  for (const [index, title] of BOARD_TITLES.entries()) {
+    await expect(importedCards.nth(index)).toHaveAccessibleName(`Open Are.na block ${title}`);
+  }
   await expect(page.getByText("5 blocks", { exact: true })).toBeVisible();
   await expect(page.getByTitle("Markdown content for Manifesto")).toBeVisible();
   await expect(page.getByRole("img", { name: "A still image" })).toBeVisible();

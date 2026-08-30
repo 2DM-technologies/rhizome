@@ -1307,7 +1307,8 @@ describe("rNet M1 store", () => {
     });
   });
 
-  test("reviews and atomically commits mixed Are.na elements, then deduplicates an unchanged pull", async () => {
+  test("reviews and atomically commits mixed Are.na elements in board order, then deduplicates an unchanged pull", async () => {
+    const expectedBoardBlockIds = ["103", "101", "104", "102"];
     const capture = mixedArenaCaptureBytes();
     arenaCaptureResponses.push(capture, capture, capture);
     const sourceResponse = await request("/rnet/v0/ingestion-sources", {
@@ -1378,17 +1379,13 @@ describe("rNet M1 store", () => {
         preview_url: string;
       }>;
     };
-    expect(review.candidates.map(({ keys }) => keys.arena_block_id)).toEqual([
-      "101",
-      "102",
-      "103",
-      "104",
-    ]);
+    expect(review.candidates.map(({ keys }) => keys.arena_block_id)).toEqual(expectedBoardBlockIds);
+    const expectedBoardObjectUris = review.candidates.map(({ uri }) => uri);
     expect(review.elements).toHaveLength(8);
     expect(await mediaObjectCount()).toBe(beforeObjects);
     expect(await mediaElementCount()).toBe(beforeElements);
 
-    const textCandidate = review.candidates[0]!;
+    const textCandidate = review.candidates.find(({ keys }) => keys.arena_block_id === "101")!;
     const titleElement = review.elements.find(({ uri }) => uri === textCandidate.elements[0]);
     const contentElement = review.elements.find(({ uri }) => uri === textCandidate.elements[1]);
     expect(titleElement).toMatchObject({ role: "title", kind: "text", mime: "text/plain" });
@@ -1426,6 +1423,7 @@ describe("rNet M1 store", () => {
     expect(confirm.status).toBe(200);
     const confirmedVibe = await confirm.json();
     expect(confirmedVibe.objects).toHaveLength(4);
+    expect(confirmedVibe.objects).toEqual(expectedBoardObjectUris);
     expect(confirmedVibe.pull.sources).toContain(source.source);
     expect(await mediaObjectCount()).toBe(beforeObjects + 4);
     expect(await mediaElementCount()).toBe(beforeElements + 8);
@@ -1436,12 +1434,9 @@ describe("rNet M1 store", () => {
     const objects = (await objectsResponse.json()) as {
       mediaObjects: Array<{ keys: Record<string, string>; elements: string[] }>;
     };
-    expect(objects.mediaObjects.map(({ keys }) => keys.arena_block_id)).toEqual([
-      "101",
-      "102",
-      "103",
-      "104",
-    ]);
+    expect(objects.mediaObjects.map(({ keys }) => keys.arena_block_id)).toEqual(
+      expectedBoardBlockIds,
+    );
     for (const elementUri of objects.mediaObjects.flatMap(({ elements }) => elements)) {
       const elementId = elementUri.slice("rnet://element/".length);
       const elementResponse = await request(`/rnet/v0/elements/${elementId}`, { headers: owner });
@@ -2555,23 +2550,25 @@ function mixedArenaCaptureBytes(): Uint8Array {
   const pdfBytes = new TextEncoder().encode("%PDF-1.7\nRhizome fixture\n%%EOF\n");
   const records = [
     {
-      ...common(101, "Text", 1),
-      title: "Manifesto",
-      content: { markdown: "# Love always wins\n\nA deterministic markdown block." },
-    },
-    {
-      ...common(102, "Image", 2),
-      title: "A still image",
-      image: image(102),
-    },
-    {
-      ...common(103, "Link", 3),
+      ...common(103, "Link", 90),
       title: "A link with an Are.na preview",
       source: { url: "https://example.com/reference", title: "Reference" },
       image: image(103),
     },
     {
-      ...common(104, "Attachment", 4),
+      id: 201,
+      base_type: "Channel",
+      type: "Channel",
+      state: "available",
+      connection: connection(1_201, 80),
+    },
+    {
+      ...common(101, "Text", 70),
+      title: "Manifesto",
+      content: { markdown: "# Love always wins\n\nA deterministic markdown block." },
+    },
+    {
+      ...common(104, "Attachment", 60),
       title: "Planning notes",
       attachment: {
         url: "https://attachments.are.na/104/planning-notes.pdf",
@@ -2583,11 +2580,9 @@ function mixedArenaCaptureBytes(): Uint8Array {
       },
     },
     {
-      id: 201,
-      base_type: "Channel",
-      type: "Channel",
-      state: "available",
-      connection: connection(1_201, 5),
+      ...common(102, "Image", 50),
+      title: "A still image",
+      image: image(102),
     },
   ];
   const channel = {
@@ -2637,7 +2632,7 @@ function mixedArenaCaptureBytes(): Uint8Array {
     channel: capturedJson("https://api.are.na/v3/channels/mixed-media", channel),
     contents_pages: [
       capturedJson(
-        "https://api.are.na/v3/channels/mixed-media/contents?per=100&page=1&sort=position_asc",
+        "https://api.are.na/v3/channels/mixed-media/contents?per=100&page=1&sort=position_desc",
         contents,
       ),
     ],
