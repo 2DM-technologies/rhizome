@@ -1100,7 +1100,7 @@ describe("rNet M1 store", () => {
     });
   });
 
-  test("serializes and limits account fetches across every source sharing a credential", async () => {
+  test("serializes and limits fetches across every source sharing a credential", async () => {
     const fixture = await createStoredSimpleFinCredential(2);
     const firstSourceUuid = fixture.sources[0]!.source.slice("source:".length);
     const seededOperations = Array.from({ length: 23 }, () => uuidv7());
@@ -1191,7 +1191,7 @@ describe("rNet M1 store", () => {
     });
     const limited = await waitForOperation(await limitedResponse.json(), owner);
     expect(limited.status).toBe("failed");
-    expect(limited.error).toContain("24 account fetches");
+    expect(limited.error).toContain("24 fetches");
     expect(simpleFinRequests.filter((request) => request.method === "GET")).toHaveLength(
       accountRequestsBefore + 1,
     );
