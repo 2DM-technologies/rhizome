@@ -9,12 +9,12 @@ import type { HistoryRecoveryEvidence, VerifyReport } from "../../transactions/v
 import { SimpleFinClient, SimpleFinClientError, type SimpleFinClientOptions } from "./client.ts";
 import {
   connectSimpleFinRequestSchema,
-  SIMPLEFIN_CONNECTOR_VERSION,
   SIMPLEFIN_SKILL_ID,
   simpleFinSourceConfigSchema,
   type ConnectSimpleFinRequest,
   type SimpleFinSourceConfig,
 } from "./contracts.ts";
+import { simpleFinSourceSkillManifest } from "./manifest.ts";
 import { simpleFinParser } from "./scripts/parse-simplefin.ts";
 
 const FETCH_ATTEMPTS = 24;
@@ -33,39 +33,19 @@ export interface SimpleFinHistoryPlan {
 
 export function createSimpleFinSkill(options: SimpleFinClientOptions): CredentialedSourceSkill {
   const client = new SimpleFinClient(options);
+  const claimPolicy = simpleFinSourceSkillManifest.connection.claim_policy;
 
   return {
     skillId: SIMPLEFIN_SKILL_ID,
-    displayName: "SimpleFIN",
-    manifest: {
-      skill_id: SIMPLEFIN_SKILL_ID,
-      label: "SimpleFIN",
-      description:
-        "Connect financial accounts with a one-time SimpleFIN Bridge setup token, then review transactions before importing them.",
-      source_kind: "credentialed_remote",
-      connector_version: SIMPLEFIN_CONNECTOR_VERSION,
-      parser: { name: simpleFinParser.name, version: simpleFinParser.version },
-      connection: {
-        claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
-      },
-      input_fields: [
-        {
-          name: "setup_token",
-          label: "SimpleFIN setup token",
-          target: "connection",
-          control: "text",
-          required: true,
-          secret: true,
-          placeholder: "Paste setup token",
-          help_text: "Create a one-time token in SimpleFIN Bridge.",
-          help_url: "https://bridge.simplefin.org/simplefin/create",
-        },
-      ],
-      review_actions: ["review_import", "refresh_source"],
-    },
+    displayName: simpleFinSourceSkillManifest.label,
+    manifest: simpleFinSourceSkillManifest,
     parser: simpleFinParser,
     connection: {
-      claimPolicy: { kind: "single_use_global", attempts: 10, windowHours: 1 },
+      claimPolicy: {
+        kind: claimPolicy.kind,
+        attempts: claimPolicy.attempts,
+        windowHours: claimPolicy.window_hours,
+      },
       requestSchema: connectSimpleFinRequestSchema,
       prepare(value) {
         const input = connectRequest(value);

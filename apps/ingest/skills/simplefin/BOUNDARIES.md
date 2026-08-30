@@ -9,9 +9,10 @@ Auth fetching, source-config normalization, account filtering, fetch limits, his
 reviewed recovery policy. These entrypoints may use a credential only when the generic server
 lifecycle supplies its decrypted secret for one reserved fetch.
 
-`definition.ts` is the only bootstrap export: it couples the stable skill ID, settings loader, and
-factory. The data-only manifest declares safe host fields, versions, review actions, and the
-single-use claim policy; the catalog validates and freezes it before publication.
+`manifest.ts` is the serializable, data-only host contract: it declares safe input fields, versions,
+review actions, and the single-use claim policy. `definition.ts` is the only executable bootstrap
+export: it couples the manifest's stable skill ID to the settings loader and factory. The catalog
+validates and freezes the manifest before publication.
 
 The server owns only the provider-neutral `CredentialedSourceSkill` lifecycle: authentication and
 ownership, replay-key fingerprinting and reservation, credential encryption and revocation, fetch

@@ -1,5 +1,6 @@
 export const SIMPLEFIN_SKILL_ID = "simplefin" as const;
 export const SIMPLEFIN_PARSER_NAME = "simplefin" as const;
+export const SIMPLEFIN_PARSER_VERSION = "simplefin@2.0.0" as const;
 export const SIMPLEFIN_CONNECTOR_VERSION = "simplefin-connector@1.0.0" as const;
 
 export const connectSimpleFinRequestSchema = {

@@ -6,7 +6,7 @@ import type {
   ParsedTransactions,
   TransactionParser,
 } from "../../../transactions/types.ts";
-import { SIMPLEFIN_PARSER_NAME } from "../contracts.ts";
+import { SIMPLEFIN_PARSER_NAME, SIMPLEFIN_PARSER_VERSION } from "../contracts.ts";
 
 interface ParsedConnection {
   connId: string;
@@ -16,8 +16,6 @@ interface ParsedConnection {
 const DECIMAL = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 const ISO_CURRENCY = /^[A-Z]{3}$/;
 const PROVIDER_ERROR_CODE = /^(?:gen|con|act)\.(?:[A-Za-z0-9_-]+)?$/;
-
-export const SIMPLEFIN_PARSER_VERSION = "simplefin@2.0.0" as const;
 
 export const simpleFinParser: TransactionParser = {
   name: SIMPLEFIN_PARSER_NAME,

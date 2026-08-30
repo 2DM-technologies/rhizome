@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { ParsedTransactions } from "../../transactions/types.ts";
 import { verifyTransactions } from "../../transactions/verify.ts";
+import { simpleFinSourceSkillManifest } from "./manifest.ts";
 import { simpleFinParser } from "./scripts/parse-simplefin.ts";
 import {
   createSimpleFinSkill,
@@ -14,6 +15,8 @@ const allowedHost = "bridge.simplefin.test";
 describe("SimpleFIN connected-source skill", () => {
   test("declares its parser, capture, connection, and credential-wide fetch policy", () => {
     const skill = createSimpleFinSkill({ allowedHosts: [allowedHost] });
+
+    expect(skill.manifest).toBe(simpleFinSourceSkillManifest);
 
     expect(skill).toMatchObject({
       skillId: "simplefin",
