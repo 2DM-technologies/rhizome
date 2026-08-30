@@ -9,7 +9,7 @@ import { v7 as uuidv7 } from "uuid";
 
 import { transactionParserFor } from "../../../ingest/src/parser-catalog.ts";
 import type { ParsedTransactions } from "../../../ingest/transactions/types.ts";
-import { verifyTransactions, type VerifyReport } from "../../../ingest/verify/transactions.ts";
+import { verifyTransactions, type VerifyReport } from "../../../ingest/transactions/verify.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
