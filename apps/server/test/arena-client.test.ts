@@ -136,8 +136,9 @@ describe("Are.na capture HTTP client", () => {
   });
 
   test("captures mixed blocks exactly, in source order, without crawling destinations", async () => {
-    const imageUrl = "https://d2w9rnfcy7mm78.cloudfront.net/image-large.jpg";
-    const redirectedImageUrl = "https://images.are.na/image-large.jpg";
+    const originalImageUrl = "https://d2w9rnfcy7mm78.cloudfront.net/image-original.jpg";
+    const redirectedImageUrl = "https://images.are.na/image-original.jpg";
+    const largeImageUrl = "https://images.are.na/image-large.jpg";
     const linkPreviewUrl = "https://images.are.na/link-preview.jpg";
     const attachmentUrl = "https://attachments.are.na/report.pdf";
     const embedPreviewUrl = "https://images.are.na/embed-preview.webp";
@@ -148,7 +149,7 @@ describe("Are.na capture HTTP client", () => {
         block(101, "Text", { connection: { position: 60 }, content: "**hello**" }),
         block(102, "Image", {
           connection: { position: 50 },
-          image: { large: { src: imageUrl } },
+          image: { src: originalImageUrl, large: { src: largeImageUrl } },
         }),
         block(103, "Link", {
           connection: { position: 40 },
@@ -191,7 +192,7 @@ describe("Are.na capture HTTP client", () => {
         [PAGE_1_URL, [{ body: page1, headers: { "Content-Type": "application/json" } }]],
         [page2Url, [{ body: page2, headers: { "Content-Type": "application/json" } }]],
         [
-          imageUrl,
+          originalImageUrl,
           [
             {
               status: 307,
@@ -199,7 +200,14 @@ describe("Are.na capture HTTP client", () => {
             },
           ],
         ],
-        [redirectedImageUrl, [{ body: "image-body", headers: { "Content-Type": "image/jpeg" } }]],
+        [
+          redirectedImageUrl,
+          [{ body: "original-image-body", headers: { "Content-Type": "image/jpeg" } }],
+        ],
+        [
+          largeImageUrl,
+          [{ body: "resized-image-body", headers: { "Content-Type": "image/jpeg" } }],
+        ],
         [
           linkPreviewUrl,
           [{ body: "link-body", headers: { "Content-Type": "image/jpeg; charset=binary" } }],
@@ -240,17 +248,17 @@ describe("Are.na capture HTTP client", () => {
         {
           url: redirectedImageUrl,
           content_type: "image/jpeg",
-          body_base64: base64("image-body"),
+          body_base64: base64("original-image-body"),
           block_id: 102,
           redirects: [
             {
               status: 307,
-              from_url: imageUrl,
+              from_url: originalImageUrl,
               location: redirectedImageUrl,
               to_url: redirectedImageUrl,
             },
           ],
-          requested_url: imageUrl,
+          requested_url: originalImageUrl,
           role: "content",
         },
         {
@@ -287,7 +295,7 @@ describe("Are.na capture HTTP client", () => {
       CHANNEL_URL,
       PAGE_1_URL,
       page2Url,
-      imageUrl,
+      originalImageUrl,
       redirectedImageUrl,
       linkPreviewUrl,
       attachmentUrl,
@@ -301,12 +309,16 @@ describe("Are.na capture HTTP client", () => {
     expect(requests.slice(3).every(({ redirect }) => redirect === "manual")).toBe(true);
     expect(requests[0]?.headers.get("Accept")).toBe("application/json");
     expect(requests[3]?.headers.get("Accept")).toBe("*/*");
+    expect(requests.some(({ url }) => url === largeImageUrl)).toBe(false);
     expect(requests.some(({ url }) => url.includes("example.test"))).toBe(false);
   });
 
   test("rejects unsafe asset sources and unsafe redirect targets", async () => {
     const unsafeBlock = block(101, "Image", {
-      image: { large: { src: "https://example.test/private" } },
+      image: {
+        src: "https://example.test/private",
+        large: { src: "https://images.are.na/safe-resize.jpg" },
+      },
     });
     const unsafeSource = twoResponseClient(channelBody(1), pageBody([unsafeBlock]));
     await expect(unsafeSource.client.fetchChannelCapture(SLUG)).rejects.toMatchObject({
@@ -327,7 +339,11 @@ describe("Are.na capture HTTP client", () => {
             PAGE_1_URL,
             [
               {
-                body: pageBody([block(102, "Image", { image: { large: { src: imageUrl } } })]),
+                body: pageBody([
+                  block(102, "Image", {
+                    image: { src: imageUrl, large: { src: "https://images.are.na/large.jpg" } },
+                  }),
+                ]),
                 headers: { "Content-Type": "application/json" },
               },
             ],
@@ -341,6 +357,22 @@ describe("Are.na capture HTTP client", () => {
       kind: "unsafe_endpoint",
     });
     expect(requests).toHaveLength(3);
+  });
+
+  test("fails closed when an image block omits its original asset", async () => {
+    for (const src of [undefined, ""] as const) {
+      const image: JsonRecord = {
+        ...(src === undefined ? {} : { src }),
+        large: { src: "https://images.are.na/available-resize.jpg" },
+      };
+      const capture = twoResponseClient(channelBody(1), pageBody([block(101, "Image", { image })]));
+
+      await expect(capture.client.fetchChannelCapture(SLUG)).rejects.toMatchObject({
+        kind: "invalid_response",
+        message: expect.stringContaining("original image URL"),
+      });
+      expect(capture.requests).toHaveLength(2);
+    }
   });
 
   test("fails closed on malformed API status, JSON, top-level shape, and page metadata", async () => {
@@ -444,7 +476,11 @@ describe("Are.na capture HTTP client", () => {
         PAGE_1_URL,
         [
           {
-            body: pageBody([block(1, "Image", { image: { large: { src: imageUrl } } })]),
+            body: pageBody([
+              block(1, "Image", {
+                image: { src: imageUrl, large: { src: "https://images.are.na/large.jpg" } },
+              }),
+            ]),
             headers: { "Content-Type": "application/json" },
           },
         ],
@@ -465,7 +501,11 @@ describe("Are.na capture HTTP client", () => {
         PAGE_1_URL,
         [
           {
-            body: pageBody([block(1, "Image", { image: { large: { src: imageUrl } } })]),
+            body: pageBody([
+              block(1, "Image", {
+                image: { src: imageUrl, large: { src: "https://images.are.na/large.jpg" } },
+              }),
+            ]),
             headers: { "Content-Type": "application/json" },
           },
         ],

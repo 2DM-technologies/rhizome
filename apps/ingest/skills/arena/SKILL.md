@@ -24,7 +24,8 @@ Payload mapping is closed and deterministic:
   the canonical block title. If Are.na omits the title, the parser's deterministic fallback title
   is used. Its role is `title`, and it is always first.
 - `Text`: original Markdown UTF-8 bytes → one `text` / `text/markdown` content element.
-- `Image`: captured original or declared Are.na rendition → one `image` content element.
+- `Image`: captured original Are.na asset → one `image` content element. Resized renditions are
+  accepted only as `Link` or `Embed` previews.
 - `Attachment`: captured attachment URL → one content element; validated MIME selects
   `image`, `audio`, `video`, or `document`.
 - `Link` and `Embed`: destination URLs remain source properties. They produce no destination

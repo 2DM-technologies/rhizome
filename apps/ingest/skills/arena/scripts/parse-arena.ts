@@ -396,7 +396,7 @@ function parseBlock(
   } else if (blockType === "Image") {
     const image = parseImage(block.image, label);
     const entry = takeRequiredAsset(assets, blockId, "content", label);
-    assertImageAsset(entry, image, label);
+    assertOriginalImageAsset(entry, image, label);
     elements.push(
       elementFromBytes(
         "content",
@@ -759,6 +759,17 @@ function assertImageAsset(entry: AssetEntry, image: ParsedImageDescriptor, label
     entry.bytes.byteLength !== image.fileSize
   ) {
     throw new Error(`${label} captured original image byte size does not match its block`);
+  }
+}
+
+function assertOriginalImageAsset(
+  entry: AssetEntry,
+  image: ParsedImageDescriptor,
+  label: string,
+): void {
+  assertImageAsset(entry, image, label);
+  if (canonicalUrl(entry.asset.requested_url) !== canonicalUrl(image.originalUrl)) {
+    throw new Error(`${label} captured image URL does not match its original asset`);
   }
 }
 

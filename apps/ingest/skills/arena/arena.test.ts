@@ -13,6 +13,11 @@ import {
 } from "../skills/arena/scripts/parse-arena.ts";
 import { verifyArena } from "../verify/arena.ts";
 
+const ORIGINAL_IMAGE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlDoAAAAASUVORK5CYII=";
+const LARGE_RENDITION_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 describe("M2 committed Are.na v3 parser", () => {
   test("parses the synthetic mixed channel deterministically with element payloads", async () => {
     const bytes = await fixtureBytes();
@@ -68,7 +73,18 @@ describe("M2 committed Are.na v3 parser", () => {
       kind: "image",
       mime: "image/png",
       byteSize: 68,
-      sourceUrl: "https://images.are.na/synthetic/primary/large.png",
+      contentHash: "sha256:cce5b145575b2e1d0b0b388d3eace85093518c6240834b0c9e093b568f493152",
+      sourceUrl: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
+    });
+    expect([...image!.elements[1]!.bytes]).toEqual([
+      ...Buffer.from(ORIGINAL_IMAGE_PNG_BASE64, "base64"),
+    ]);
+    expect([...image!.elements[1]!.bytes]).not.toEqual([
+      ...Buffer.from(LARGE_RENDITION_PNG_BASE64, "base64"),
+    ]);
+    expect(image?.sourceProperties).toMatchObject({
+      original_asset_url: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
+      imported_asset_url: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
     });
     expect(link?.elements[1]).toMatchObject({ role: "preview", kind: "image" });
     expect(link?.sourceProperties).toMatchObject({
@@ -219,6 +235,13 @@ describe("M2 committed Are.na v3 parser", () => {
   });
 
   test("rejects missing, duplicate, unapproved, and block-inconsistent assets", async () => {
+    const missingOriginal = await fixtureCapture();
+    mutatePage(missingOriginal, (page) => {
+      const imageBlock = record(array(page.data, "data")[1], "image block");
+      delete record(imageBlock.image, "image").src;
+    });
+    expect(() => parseArenaCapture(captureBytes(missingOriginal))).toThrow("original image URL");
+
     const missing = await fixtureCapture();
     missing.assets = missing.assets.filter(({ block_id }) => block_id !== 1102);
     expect(() => parseArenaCapture(captureBytes(missing))).toThrow(
@@ -242,6 +265,14 @@ describe("M2 committed Are.na v3 parser", () => {
       "does not match an approved block rendition",
     );
 
+    const resizedImage = await fixtureCapture();
+    resizedImage.assets[0]!.requested_url = "https://images.are.na/synthetic/primary/large.png";
+    resizedImage.assets[0]!.url = "https://images.are.na/synthetic/primary/large.png";
+    resizedImage.assets[0]!.body_base64 = LARGE_RENDITION_PNG_BASE64;
+    expect(() => parseArenaCapture(captureBytes(resizedImage))).toThrow(
+      "captured image URL does not match its original asset",
+    );
+
     const wrongMime = await fixtureCapture();
     wrongMime.assets.find(({ block_id }) => block_id === 1104)!.content_type = "image/png";
     expect(() => parseArenaCapture(captureBytes(wrongMime))).toThrow(
@@ -259,7 +290,7 @@ describe("M2 committed Are.na v3 parser", () => {
       {
         status: 302,
         from_url: requestedUrl,
-        location: "/synthetic/redirected/large.png",
+        location: finalUrl,
         to_url: finalUrl,
       },
     ];

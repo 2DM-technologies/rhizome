@@ -496,10 +496,15 @@ function assetSourceForBlock(
     };
   }
   if (blockType === "Image") {
-    return { role: "content", url: largeImageUrl(block.image, label) };
+    return { role: "content", url: originalImageUrl(block.image, label) };
   }
   if (block.image === undefined || block.image === null) return undefined;
   return { role: "preview", url: largeImageUrl(block.image, label) };
+}
+
+function originalImageUrl(value: unknown, label: string): string {
+  const image = record(value, `${label} image`);
+  return requiredString(image.src, `${label} original image URL`);
 }
 
 function largeImageUrl(value: unknown, label: string): string {

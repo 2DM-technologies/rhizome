@@ -18,11 +18,11 @@
     {
       "block_id": 1102,
       "role": "content",
-      "requested_url": "https://images.are.na/synthetic/primary/large.png",
-      "url": "https://images.are.na/synthetic/primary/large.png",
+      "requested_url": "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
+      "url": "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
       "redirects": [],
       "content_type": "image/png",
-      "body_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      "body_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZlDoAAAAASUVORK5CYII="
     },
     {
       "block_id": 1103,
