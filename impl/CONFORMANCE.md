@@ -29,4 +29,8 @@ Milestone-scheduled gaps:
 - M2 credentialed-remote execution is transaction-specific: `CredentialedSourceSkill` requires the transaction parser, intermediate representation, and VERIFY pipeline, and the server always builds transaction candidates. Before installing a credentialed media or other non-transaction skill, M5 must split the generic credential lifecycle from a capability-dispatched parse, verify, and candidate pipeline; dispatch must use a platform capability kind, never a skill or provider ID.
 - M2 installed credentialed skills execute inside the server process and load skill-owned settings from that process's environment, such as `RHIZOME_SIMPLEFIN_ALLOWED_HOSTS`. Before separately packaged skill discovery, M5 must introduce bounded deployment configuration keyed by skill ID and implementation pin and validated by each installed skill. Endpoint policy remains skill-owned and fail-closed.
 - Production phone OTP and passkey authentication replace the development bearer identities in M7.
-- Content-addressed payloads staged before a failed database transaction are unreachable but are not yet garbage-collected; reference-aware staged-payload collection ships with the background job infrastructure.
+- Content-addressed payloads staged by a failed preview/transaction, or retained by a successful
+  preview that is later canceled, expires, or is abandoned, are not yet garbage-collected. Operation
+  results retain their manifests, but no reference-aware collector removes payloads that have no live
+  MediaElement or unexpired preview reference; that collector ships with the M7 background job
+  infrastructure.
