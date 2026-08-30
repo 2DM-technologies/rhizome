@@ -1,6 +1,7 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 
 const actualReactQuery = { ...(await import("@tanstack/react-query")) };
+const actualClient = { ...(await import("../src/api/client.ts")) };
 
 const invalidateQueries = mock(async () => undefined);
 const removeQueries = mock(() => undefined);
@@ -19,6 +20,7 @@ mock.module("@tanstack/react-query", () => ({
 }));
 
 mock.module("../src/api/client.ts", () => ({
+  ...actualClient,
   api: { queryOptions, useMutation, useQuery },
 }));
 
