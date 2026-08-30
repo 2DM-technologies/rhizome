@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const host = "127.0.0.1";
 const port = 4173;
 const baseURL = `http://${host}:${port}`;
+const externallyManagedServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === "1";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -25,15 +26,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: {
-    // Run the test server through Vite's Node entry point. Fresh Linux runners intermittently
-    // left the Bun-hosted process alive without accepting Playwright's readiness probe.
-    command: `node node_modules/vite/bin/vite.js --host ${host} --port ${port}`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-    stdout: "pipe",
-    // Keep Store requests on the page origin. The mocked lane intercepts them before Vite.
-    env: { VITE_RHIZOME_API_URL: baseURL },
-  },
+  webServer: externallyManagedServer
+    ? undefined
+    : {
+        command: `node node_modules/vite/bin/vite.js --host ${host} --port ${port} --strictPort`,
+        url: baseURL,
+        reuseExistingServer: false,
+        timeout: 120_000,
+        stdout: "pipe",
+        // Keep Store requests on the page origin. The mocked lane intercepts them before Vite.
+        env: { VITE_RHIZOME_API_URL: baseURL },
+      },
 });
