@@ -1242,10 +1242,14 @@ test("launcher sections scroll horizontally beyond three items", async ({ page }
   await expect(items).toHaveCount(5);
   const dimensions = await rail.evaluate((element) => ({
     clientWidth: element.clientWidth,
+    scrollbarWidth: getComputedStyle(element).getPropertyValue("scrollbar-width"),
     scrollWidth: element.scrollWidth,
+    webkitScrollbarDisplay: getComputedStyle(element, "::-webkit-scrollbar").display,
   }));
   expect(dimensions.clientWidth).toBe(260);
   expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
+  expect(dimensions.scrollbarWidth).toBe("none");
+  expect(dimensions.webkitScrollbarDisplay).toBe("none");
 
   const itemYs = await items.evaluateAll((buttons) =>
     buttons.map((button) => button.getBoundingClientRect().y),

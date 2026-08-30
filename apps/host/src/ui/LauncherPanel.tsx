@@ -158,7 +158,7 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
                 </span>
                 <div
                   data-launcher-item-rail
-                  className="flex gap-[22px] overflow-x-auto overflow-y-hidden"
+                  className="flex gap-[22px] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
                   {section.items}
                 </div>
