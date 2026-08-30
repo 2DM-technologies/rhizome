@@ -1,4 +1,6 @@
 export * from "./models/grant.ts";
+export * from "./models/ingestion-source.ts";
+export * from "./models/ingestion-source-object.ts";
 export * from "./models/dmachine.ts";
 export * from "./models/media-element.ts";
 export * from "./models/media-object-element.ts";

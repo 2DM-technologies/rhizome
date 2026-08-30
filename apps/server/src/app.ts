@@ -10,6 +10,7 @@ import type { Database } from "./db/index.ts";
 import { notFound, Problem, problemResponse } from "./errors.ts";
 import { createOpenApiDocument } from "./openapi.ts";
 import { createMediaElementRoutes } from "./routes/media-elements.ts";
+import { createIngestionSourceRoutes } from "./routes/ingestion-sources.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
@@ -79,7 +80,14 @@ export function createApp({ config, db, blobs }: AppDependencies) {
 
   app.get("/health", (context) => context.json({ ok: true, service: "rhizome" }));
   const routeGroups = [
-    { basePath: "/rnet/v0/vibes", router: createVibeRoutes(db) },
+    {
+      basePath: "/rnet/v0/vibes",
+      router: createVibeRoutes(db, blobs),
+    },
+    {
+      basePath: "/rnet/v0/ingestion-sources",
+      router: createIngestionSourceRoutes(db),
+    },
     { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
     {
       basePath: "/rnet/v0/elements",
