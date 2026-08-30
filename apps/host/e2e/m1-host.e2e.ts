@@ -943,11 +943,20 @@ test("the Vibes index participates in the same three-item MRU rail as individual
   for (const [uuid] of priorVibes) {
     await page.goto(`/vibes/${uuid}`);
     await expect(page).toHaveURL(new RegExp(`/vibes/${uuid}$`));
+    await expect(page.locator("[data-surface-window]")).toHaveAttribute(
+      "data-surface-id",
+      `vibe:${uuid}`,
+    );
   }
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page.locator("[data-surface-window]")).toHaveAttribute("data-surface-id", "vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page.locator("[data-surface-window]")).toHaveAttribute(
+    "data-surface-id",
+    `vibe:${VIBE_ID}`,
+  );
 
   const rail = page.locator("[data-dock-recent-vibes]");
   const items = rail.getByRole("button");
