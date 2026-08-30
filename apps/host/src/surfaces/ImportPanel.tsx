@@ -1,21 +1,25 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import type { SourceActionRequired, SourceSkillManifest } from "@rhizome/store-contract";
+import { useMemo, useRef, useState, type FormEvent, type Ref } from "react";
 
+import { isStoreError } from "../api/client.ts";
+import { uuidOf } from "../api/uris.ts";
 import {
-  useConnectSimpleFin,
+  useConnectSourceCredential,
   useConfirmImportPreview,
   useCreateImportPreview,
   useCreateIngestionSource,
   useCreateOriginArtifact,
+  useForgetOperation,
   useImportPreviewPayloadUrl,
   useOperation,
   usePullVibe,
+  useSourceSkills,
 } from "../queries/index.ts";
-import { uuidOf } from "../api/uris.ts";
 import { Button } from "../ui/index.ts";
 import { Failed } from "./provisional.tsx";
-import { simpleFinHistoryRecoverySource } from "./simpleFinHistoryRecovery.ts";
+import { sourceActionRequired } from "./sourceActionRequired.ts";
 
-type FileParser = "csv" | "ofx";
+type SourceSkillInputField = SourceSkillManifest["input_fields"][number];
 
 interface CandidateSummary {
   uri: string;
@@ -40,26 +44,633 @@ interface PreviewElementSummary {
   previewUrl?: string;
 }
 
-function primaryPreviewElement(
-  elements: PreviewElementSummary[],
-): PreviewElementSummary | undefined {
+interface VerifyCheckSummary {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface ImportPreview {
+  verify: {
+    ok: boolean;
+    sourceRecordCount: number;
+    candidateCount: number;
+    totalsByCurrency: Record<string, string>;
+    checks: VerifyCheckSummary[];
+  };
+  candidates: CandidateSummary[];
+}
+
+export function ImportPanel({
+  vibeUuid,
+  configuredSources,
+}: {
+  vibeUuid: string;
+  configuredSources: readonly string[];
+}) {
+  const sourceForm = useRef<HTMLFormElement>(null);
+  const sourceSkills = useSourceSkills();
+  const createOrigin = useCreateOriginArtifact();
+  const connectCredential = useConnectSourceCredential();
+  const createSource = useCreateIngestionSource();
+  const createPreview = useCreateImportPreview();
+  const confirm = useConfirmImportPreview();
+  const pull = usePullVibe();
+  const forgetOperation = useForgetOperation();
+  const [skillSearch, setSkillSearch] = useState("");
+  const [selectedSkillId, setSelectedSkillId] = useState<string>();
+  const [operationId, setOperationId] = useState<string>();
+  const [operationMode, setOperationMode] = useState<"import" | "pull">("import");
+  const [activeSkillId, setActiveSkillId] = useState<string>();
+  const [sourceLabel, setSourceLabel] = useState<string>();
+  const [localError, setLocalError] = useState<string>();
+  const [outcome, setOutcome] = useState<string>();
+
+  const importSkills = useMemo(
+    () =>
+      (sourceSkills.data ?? []).filter((skill) => skill.review_actions.includes("review_import")),
+    [sourceSkills.data],
+  );
+  const selectedSkill =
+    importSkills.find((skill) => skill.skill_id === selectedSkillId) ?? importSkills[0];
+  const skillChoices = useMemo(() => {
+    const query = skillSearch.trim().toLocaleLowerCase();
+    if (!query) return importSkills;
+    const matches = importSkills.filter((skill) =>
+      `${skill.label} ${skill.description} ${skill.skill_id}`.toLocaleLowerCase().includes(query),
+    );
+    return selectedSkill && !matches.some((skill) => skill.skill_id === selectedSkill.skill_id)
+      ? [selectedSkill, ...matches]
+      : matches;
+  }, [importSkills, selectedSkill, skillSearch]);
+
+  const operation = useOperation(operationId, vibeUuid);
+  const preview = previewResult(operation.data?.result);
+  const pullSummary = pullResult(operation.data?.result);
+  const operationInFlight = Boolean(
+    operation.data && ["queued", "running"].includes(operation.data.status),
+  );
+  const busy =
+    createOrigin.isPending ||
+    connectCredential.isPending ||
+    createSource.isPending ||
+    createPreview.isPending ||
+    pull.isPending ||
+    confirm.isPending ||
+    operationInFlight;
+  const malformedImportResult =
+    operationMode === "import" && operation.data?.status === "done" && !preview;
+  const malformedPullResult =
+    operationMode === "pull" && operation.data?.status === "done" && !pullSummary;
+  const failedPullResult =
+    operationMode === "pull" && operation.data?.status === "failed"
+      ? operation.data.result
+      : undefined;
+  const requiredAction = sourceActionRequired(pull.error, failedPullResult, configuredSources);
+  const activeSkill = importSkills.find((skill) => skill.skill_id === activeSkillId);
+
+  function resetMutationErrors() {
+    createOrigin.reset();
+    connectCredential.reset();
+    createSource.reset();
+    createPreview.reset();
+    confirm.reset();
+    pull.reset();
+  }
+
+  function clearReview() {
+    setOperationId(undefined);
+    setSourceLabel(undefined);
+    setActiveSkillId(undefined);
+    setLocalError(undefined);
+  }
+
+  function selectSkill(skillId: string) {
+    clearSecretFields(sourceForm.current, selectedSkill);
+    clearReview();
+    resetMutationErrors();
+    setSelectedSkillId(skillId);
+    setOutcome(undefined);
+  }
+
+  async function stageSelectedSource(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const manifest = selectedSkill;
+    if (!manifest) return;
+    resetMutationErrors();
+    setOutcome(undefined);
+    setOperationId(undefined);
+    setSourceLabel(undefined);
+    setLocalError(undefined);
+    setOperationMode("import");
+    setActiveSkillId(manifest.skill_id);
+
+    const form = event.currentTarget;
+    try {
+      // Extract the form synchronously so the secret-bearing FormData is not retained across any
+      // network await. Credential fields are scrubbed again as soon as the connection request
+      // settles below.
+      const sourceInput = sourceInputForManifest(manifest, new FormData(form));
+      const source = await createSourceForManifest(manifest, sourceInput, {
+        connectCredential: async (skillId, body) => {
+          try {
+            return await connectCredential.mutateAsync({
+              params: { path: { skill_id: skillId } },
+              body,
+            });
+          } catch (error) {
+            // This mutation is reset immediately to evict its secret-bearing variables, so retain
+            // only the server's safe display message outside TanStack state.
+            throw new CredentialRequestError(errorMessage(error));
+          } finally {
+            clearSecretFields(form, manifest);
+            scrubRecord(body);
+            // TanStack mutations retain variables for inspection. Detach this observer as soon as
+            // the one request containing a source secret settles, before source creation or
+            // preview staging begins.
+            connectCredential.reset();
+          }
+        },
+        createOrigin: (file) =>
+          createOrigin.mutateAsync({
+            body: file,
+            params: { header: { "x-rnet-label": file.name } },
+          }),
+        createSource: (body) => createSource.mutateAsync({ body }),
+      });
+      setSourceLabel(source.displayLabel ?? manifest.label);
+      const staged = await createPreview.mutateAsync({
+        params: { path: { id: vibeUuid } },
+        body: { source: source.source },
+      });
+      setOperationId(staged.operation_id);
+    } catch (error) {
+      if (error instanceof ManifestInputError || error instanceof CredentialRequestError) {
+        setLocalError(error.message);
+      }
+    } finally {
+      // Covers local validation failures that happen before a credential request starts.
+      clearSecretFields(form, manifest);
+      connectCredential.reset();
+    }
+  }
+
+  async function refreshSources() {
+    resetMutationErrors();
+    setOutcome(undefined);
+    setLocalError(undefined);
+    setSourceLabel(undefined);
+    setActiveSkillId(undefined);
+    setOperationId(undefined);
+    setOperationMode("pull");
+    try {
+      const next = await pull.mutateAsync({
+        params: { path: { id: vibeUuid } },
+        body: {},
+      });
+      setOperationId(next.operation_id);
+    } catch {
+      // The mutation's typed store error is rendered below.
+    }
+  }
+
+  async function reviewRequiredAction(action: SourceActionRequired) {
+    const actionOperationId = operationId;
+    resetMutationErrors();
+    setOutcome(undefined);
+    setLocalError(undefined);
+    setOperationId(undefined);
+    setOperationMode("import");
+    setActiveSkillId(undefined);
+    setSourceLabel(action.title);
+    try {
+      const staged = await createPreview.mutateAsync({
+        params: { path: { id: vibeUuid } },
+        body: { source: action.source, continuation_token: action.continuation_token },
+      });
+      setOperationId(staged.operation_id);
+    } catch (error) {
+      // The preview mutation is reset below to evict the continuation bearer, so retain only the
+      // safe server message needed by the UI.
+      setLocalError(errorMessage(error));
+    } finally {
+      createPreview.reset();
+      if (actionOperationId) forgetOperation(actionOperationId);
+    }
+  }
+
+  function cancelReview() {
+    clearReview();
+    confirm.reset();
+    setOutcome("Review canceled. Nothing was imported.");
+  }
+
+  function confirmReview() {
+    if (!operationId || !preview?.verify.ok || operation.data?.status !== "done") return;
+    const importedCount = preview.verify.candidateCount;
+    const importedSource = sourceLabel;
+    const importedObjects = candidateCountLabel(preview.candidates, importedCount);
+    confirm.mutate(
+      { params: { path: { id: vibeUuid, operation_id: operationId } } },
+      {
+        onSuccess: () => {
+          clearReview();
+          setOutcome(
+            `Imported ${importedCount} ${importedObjects}${
+              importedSource ? ` from ${importedSource}` : ""
+            }.`,
+          );
+        },
+      },
+    );
+  }
+
   return (
-    elements.find((element) => element.role === "content") ??
-    elements.find((element) => element.role === "preview") ??
-    elements.find((element) => element.role !== "title")
+    <section className="flex max-w-[52rem] flex-col gap-4 rounded-card border border-hairline bg-surface p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-label text-primary">Import into this Vibe</h2>
+          <p className="mt-1 text-body text-secondary">
+            Choose an installed source, review what it found, then explicitly confirm before
+            anything derived is saved.
+          </p>
+        </div>
+        {configuredSources.length > 0 ? (
+          <Button variant="secondary" disabled={busy} onClick={() => void refreshSources()}>
+            {operationMode === "pull" && busy ? "Refreshing…" : "Refresh sources"}
+          </Button>
+        ) : null}
+      </div>
+
+      <section aria-labelledby="source-skill-heading" className="border-t border-hairline pt-4">
+        <h3 id="source-skill-heading" className="text-label text-primary">
+          Source
+        </h3>
+        {sourceSkills.isPending ? (
+          <span className="mt-2 block text-caption text-tertiary">Loading installed sources…</span>
+        ) : sourceSkills.isError ? (
+          <div className="mt-2">
+            <Failed error={sourceSkills.error} />
+          </div>
+        ) : importSkills.length === 0 ? (
+          <span role="status" className="mt-2 block text-caption text-secondary">
+            No installed source supports reviewed import.
+          </span>
+        ) : (
+          <>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+              <label>
+                <span className="sr-only">Search import sources</span>
+                <input
+                  type="search"
+                  aria-label="Search import sources"
+                  value={skillSearch}
+                  onChange={(event) => setSkillSearch(event.target.value)}
+                  placeholder="Search installed sources"
+                  className="w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent"
+                />
+              </label>
+              <label>
+                <span className="sr-only">Import source</span>
+                <select
+                  aria-label="Import source"
+                  value={selectedSkill?.skill_id ?? ""}
+                  onChange={(event) => selectSkill(event.target.value)}
+                  className="w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none focus-visible:outline-2 focus-visible:outline-accent"
+                >
+                  {skillChoices.map((skill) => (
+                    <option key={skill.skill_id} value={skill.skill_id}>
+                      {skill.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {selectedSkill ? (
+              <SourceSkillForm
+                key={selectedSkill.skill_id}
+                ref={sourceForm}
+                manifest={selectedSkill}
+                busy={busy}
+                active={activeSkillId === selectedSkill.skill_id && operationInFlight}
+                onSubmit={stageSelectedSource}
+                onInput={() => {
+                  setLocalError(undefined);
+                  connectCredential.reset();
+                  createOrigin.reset();
+                  createSource.reset();
+                }}
+              />
+            ) : null}
+          </>
+        )}
+      </section>
+
+      {sourceLabel ? <span className="text-caption text-tertiary">{sourceLabel}</span> : null}
+      {outcome ? (
+        <span role="status" className="text-body text-secondary">
+          {outcome}
+        </span>
+      ) : null}
+      {operationInFlight ? (
+        <span className="text-body text-tertiary">
+          {operationMode === "pull"
+            ? "Refreshing configured sources…"
+            : `Running ${activeSkill?.label ?? "source"} and VERIFY…`}
+        </span>
+      ) : null}
+      {operation.data?.status === "failed" ? (
+        <span role="alert" className="text-body text-error">
+          {operation.data.error ??
+            (operationMode === "pull"
+              ? "The source refresh failed."
+              : "The import preview failed.")}
+        </span>
+      ) : null}
+      {operation.data?.status === "aborted" ? (
+        <span role="alert" className="text-body text-error">
+          {operationMode === "pull" ? "The source refresh was aborted." : "The import was aborted."}
+        </span>
+      ) : null}
+      {requiredAction ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-hairline bg-canvas p-4">
+          <div className="min-w-0 flex-1">
+            <span className="text-label text-primary">{requiredAction.title}</span>
+            <span className="mt-1 block text-caption text-secondary">{requiredAction.detail}</span>
+          </div>
+          <Button disabled={busy} onClick={() => void reviewRequiredAction(requiredAction)}>
+            Review import
+          </Button>
+        </div>
+      ) : null}
+      {malformedImportResult ? (
+        <span role="alert" className="text-body text-error">
+          The completed import did not contain a valid review. Start the import again to retry.
+        </span>
+      ) : null}
+      {malformedPullResult ? (
+        <span role="alert" className="text-body text-error">
+          The completed source refresh did not contain a valid summary.
+        </span>
+      ) : null}
+
+      {preview ? (
+        <ImportReview
+          preview={preview}
+          operationId={operationId}
+          confirming={confirm.isPending}
+          onCancel={cancelReview}
+          onConfirm={confirmReview}
+        />
+      ) : null}
+
+      {operationMode === "pull" && pullSummary && operation.data?.status === "done" ? (
+        <div className="rounded-card bg-canvas p-4" role="status">
+          <span className="text-label text-primary">
+            Checked {pullSummary.candidate_count} candidates · added {pullSummary.added_count}
+          </span>
+          <span className="mt-1 block text-caption text-secondary">
+            {pullSummary.duplicate_count} already known · {pullSummary.created_count} new objects
+          </span>
+        </div>
+      ) : null}
+
+      {localError ? (
+        <span role="alert" className="text-body text-error">
+          {localError}
+        </span>
+      ) : null}
+      {createOrigin.isError ? <Failed error={createOrigin.error} /> : null}
+      {createSource.isError ? <Failed error={createSource.error} /> : null}
+      {createPreview.isError ? <Failed error={createPreview.error} /> : null}
+      {pull.isError && !requiredAction ? <Failed error={pull.error} /> : null}
+      {operation.isError ? <Failed error={operation.error} /> : null}
+      {confirm.isError ? <Failed error={confirm.error} /> : null}
+    </section>
   );
 }
 
-function ArenaCandidateReview({
+function SourceSkillForm({
+  ref,
+  manifest,
+  busy,
+  active,
+  onSubmit,
+  onInput,
+}: {
+  ref: Ref<HTMLFormElement>;
+  manifest: SourceSkillManifest;
+  busy: boolean;
+  active: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onInput: () => void;
+}) {
+  return (
+    <form ref={ref} className="mt-4 flex flex-col gap-3" onSubmit={onSubmit} onInput={onInput}>
+      <div>
+        <span className="text-label text-primary">{manifest.label}</span>
+        <span className="mt-1 block text-caption text-secondary">{manifest.description}</span>
+      </div>
+      {manifest.input_fields.map((field) => (
+        <ManifestField
+          key={`${field.target}:${field.name}`}
+          manifest={manifest}
+          field={field}
+          disabled={busy}
+        />
+      ))}
+      <div className="flex justify-end">
+        <Button type="submit" disabled={busy}>
+          {active ? "Preparing review…" : `Review ${manifest.label}`}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function ManifestField({
+  manifest,
+  field,
+  disabled,
+}: {
+  manifest: SourceSkillManifest;
+  field: SourceSkillInputField;
+  disabled: boolean;
+}) {
+  const id = `source-${manifest.skill_id}-${field.target}-${field.name}`;
+  const helpId = field.help_text ? `${id}-help` : undefined;
+  const shared = {
+    id,
+    name: fieldFormName(field),
+    // `required` means the boolean field must exist, not that its value must be true. A required
+    // unchecked checkbox is false; an optional unchecked checkbox is omitted for server defaults.
+    required: field.control === "checkbox" ? undefined : field.required,
+    disabled,
+    "aria-describedby": helpId,
+  };
+  return (
+    <label htmlFor={id} className="block">
+      <span className="text-caption text-primary">{field.label}</span>
+      {field.control === "checkbox" ? (
+        <input {...shared} type="checkbox" className="ml-3 align-middle accent-accent" />
+      ) : field.control === "select" ? (
+        <select
+          {...shared}
+          defaultValue=""
+          className="mt-1 w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <option value="" disabled={field.required}>
+            {field.placeholder ?? `Choose ${field.label.toLocaleLowerCase()}`}
+          </option>
+          {field.options?.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : field.control === "file" ? (
+        <input
+          {...shared}
+          type="file"
+          accept={field.accept?.join(",")}
+          className="mt-1 block w-full rounded-card border border-hairline bg-canvas px-4 py-3 text-caption text-secondary file:mr-3 file:rounded-pill file:border-0 file:bg-accent file:px-4 file:py-2 file:text-caption file:text-white"
+        />
+      ) : (
+        <input
+          {...shared}
+          type={field.secret ? "password" : field.control === "url" ? "url" : "text"}
+          placeholder={field.placeholder}
+          autoComplete={field.secret ? "off" : field.control === "url" ? "url" : "off"}
+          autoCapitalize="none"
+          spellCheck={false}
+          className={`mt-1 w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent${
+            field.secret ? " font-mono" : ""
+          }`}
+        />
+      )}
+      {field.help_text ? (
+        <span id={helpId} className="mt-1 block text-caption text-tertiary">
+          {field.help_text}
+        </span>
+      ) : null}
+      {field.help_url ? (
+        <a
+          href={field.help_url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-caption text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          Learn more ↗
+        </a>
+      ) : null}
+    </label>
+  );
+}
+
+function ImportReview({
+  preview,
+  operationId,
+  confirming,
+  onCancel,
+  onConfirm,
+}: {
+  preview: ImportPreview;
+  operationId: string | undefined;
+  confirming: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const elementCount = preview.candidates.reduce(
+    (total, candidate) => total + candidate.elementCount,
+    0,
+  );
+  const totals = Object.entries(preview.verify.totalsByCurrency);
+  return (
+    <div className="flex flex-col gap-4">
+      <div aria-label="VERIFY reconciliation" className="rounded-card bg-canvas p-4">
+        <span className="text-label text-primary">
+          {preview.verify.ok
+            ? `${preview.verify.candidateCount} ${candidateCountLabel(
+                preview.candidates,
+                preview.verify.candidateCount,
+              )} passed VERIFY`
+            : "VERIFY did not pass"}
+        </span>
+        <span className="mt-1 block text-caption text-secondary">
+          {preview.verify.sourceRecordCount} source records → {preview.verify.candidateCount}{" "}
+          candidates
+        </span>
+        <span className="mt-1 block text-caption text-secondary">
+          {totals.length > 0
+            ? totals.map(([currency, amount]) => `${currency} ${amount}`).join(" · ")
+            : elementCount > 0
+              ? `${elementCount} ${elementCount === 1 ? "element" : "elements"} staged`
+              : "No aggregate totals"}
+        </span>
+        <ul aria-label="VERIFY checks" className="mt-3 flex flex-col gap-2">
+          {preview.verify.checks.map((check) => (
+            <li
+              key={check.name}
+              data-verify-check={check.name}
+              className="flex items-start gap-2 text-caption text-secondary"
+            >
+              <span aria-hidden className={check.ok ? "text-success" : "text-error"}>
+                {check.ok ? "✓" : "×"}
+              </span>
+              <span>{check.detail}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <ul
+        aria-label="Candidate media objects"
+        className="max-h-72 overflow-auto border-y border-hairline"
+      >
+        {preview.candidates.map((candidate) => (
+          <CandidateReview key={candidate.uri} candidate={candidate} operationId={operationId} />
+        ))}
+      </ul>
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={onCancel} disabled={confirming}>
+          Cancel
+        </Button>
+        <Button disabled={confirming || !operationId || !preview.verify.ok} onClick={onConfirm}>
+          {confirming ? "Importing…" : "Confirm import"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CandidateReview({
   candidate,
   operationId,
 }: {
   candidate: CandidateSummary;
   operationId: string | undefined;
 }) {
+  if (candidate.type === "transaction") {
+    return (
+      <li
+        data-import-candidate
+        className="flex items-baseline gap-3 border-b border-hairline py-3 last:border-b-0"
+      >
+        <span className="min-w-24 font-mono text-caption text-primary">
+          {String(candidate.amount ?? "")}
+        </span>
+        <span className="text-caption text-tertiary">{String(candidate.currency ?? "")}</span>
+        <span className="min-w-0 flex-1 truncate text-body text-secondary">
+          {String(candidate.description ?? candidate.title)}
+        </span>
+        {candidate.postedAt ? (
+          <span className="shrink-0 text-caption text-tertiary">{String(candidate.postedAt)}</span>
+        ) : null}
+      </li>
+    );
+  }
+
   const primaryElement = primaryPreviewElement(candidate.elements);
   const metadataElement = primaryElement ?? candidate.elements[0];
-
   return (
     <li
       data-import-candidate
@@ -74,7 +685,7 @@ function ArenaCandidateReview({
           />
         ) : (
           <span aria-hidden className="text-mono-label text-tertiary">
-            {primaryElement?.kind ?? "block"}
+            {primaryElement?.kind ?? "object"}
           </span>
         )}
       </span>
@@ -94,23 +705,6 @@ function ArenaCandidateReview({
   );
 }
 
-interface VerifyCheckSummary {
-  name: string;
-  ok: boolean;
-  detail: string;
-}
-
-interface ImportPreview {
-  verify: {
-    ok: boolean;
-    sourceRecordCount: number;
-    candidateCount: number;
-    totalsByCurrency: Record<string, string>;
-    checks: VerifyCheckSummary[];
-  };
-  candidates: CandidateSummary[];
-}
-
 function ImportPreviewImage({
   element,
   operationId,
@@ -124,7 +718,6 @@ function ImportPreviewImage({
     element.previewUrl ? operationId : undefined,
     element.previewUrl ? uuidOf(element.uri) : undefined,
   );
-
   return payload.data ? (
     <img src={payload.data} alt={`${title} preview`} className="size-full object-cover" />
   ) : (
@@ -134,582 +727,158 @@ function ImportPreviewImage({
   );
 }
 
-export function ImportPanel({
-  vibeUuid,
-  configuredSources,
-}: {
-  vibeUuid: string;
-  configuredSources: readonly string[];
-}) {
-  const input = useRef<HTMLInputElement>(null);
-  const simpleFinToken = useRef<HTMLInputElement>(null);
-  const createOrigin = useCreateOriginArtifact();
-  const connectSimpleFin = useConnectSimpleFin();
-  const createSource = useCreateIngestionSource();
-  const createPreview = useCreateImportPreview();
-  const confirm = useConfirmImportPreview();
-  const pull = usePullVibe();
-  const [operationId, setOperationId] = useState<string>();
-  const [operationMode, setOperationMode] = useState<"import" | "pull">("import");
-  const [importKind, setImportKind] = useState<"arena" | "file" | "simplefin">("file");
-  const [sourceLabel, setSourceLabel] = useState<string>();
-  const [arenaChannelUrl, setArenaChannelUrl] = useState("");
-  const [reviewRequiresHistoryRecovery, setReviewRequiresHistoryRecovery] = useState(false);
-  const [localError, setLocalError] = useState<string>();
-  const [outcome, setOutcome] = useState<string>();
-  const operation = useOperation(operationId, vibeUuid);
-  const preview = previewResult(operation.data?.result);
-  const pullSummary = pullResult(operation.data?.result);
-  const operationInFlight = Boolean(
-    operation.data && ["queued", "running"].includes(operation.data.status),
-  );
-  const busy =
-    createOrigin.isPending ||
-    connectSimpleFin.isPending ||
-    createSource.isPending ||
-    createPreview.isPending ||
-    pull.isPending ||
-    confirm.isPending ||
-    operationInFlight;
-  const malformedImportResult =
-    operationMode === "import" && operation.data?.status === "done" && !preview;
-  const malformedPullResult =
-    operationMode === "pull" && operation.data?.status === "done" && !pullSummary;
-  const arenaReview = operationMode === "import" && importKind === "arena";
-  const failedPullResult =
-    operationMode === "pull" && operation.data?.status === "failed"
-      ? operation.data.result
-      : undefined;
-  const historyRecoverySource = simpleFinHistoryRecoverySource(
-    pull.error,
-    failedPullResult,
-    configuredSources,
-  );
-  const hasHistoryRecoveryEvidence = Boolean(
-    preview?.verify.checks.some((check) => check.name === "history_recovery" && check.ok),
-  );
+interface ManifestSourceDependencies {
+  connectCredential(
+    skillId: string,
+    body: Record<string, unknown>,
+  ): Promise<{ credential: string }>;
+  createOrigin(file: File): Promise<{ uri: string }>;
+  createSource(body: CreateSourceBody): Promise<{ source: string }>;
+}
 
-  function resetMutationErrors() {
-    createOrigin.reset();
-    connectSimpleFin.reset();
-    createSource.reset();
-    createPreview.reset();
-    confirm.reset();
-    pull.reset();
-  }
+type CreateSourceBody =
+  | { origin: string; skill_id: string }
+  | { credential: string; config?: Record<string, unknown> }
+  | { skill_id: string; config: Record<string, unknown> };
 
-  function clearReview() {
-    setOperationId(undefined);
-    setSourceLabel(undefined);
-    setReviewRequiresHistoryRecovery(false);
-    setLocalError(undefined);
-  }
+class ManifestInputError extends Error {}
 
-  async function selectFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    resetMutationErrors();
-    setOutcome(undefined);
-    setOperationId(undefined);
-    const parser = parserForFilename(file.name);
-    if (!parser) {
-      setSourceLabel(undefined);
-      setLocalError("Choose a .csv, .qfx, or .ofx transaction export.");
-      event.target.value = "";
-      return;
+class CredentialRequestError extends Error {}
+
+type ManifestSourceInput =
+  | { kind: "file"; file: File }
+  | {
+      kind: "credentialed_remote";
+      connection: Record<string, unknown>;
+      source: Record<string, unknown>;
     }
-    setLocalError(undefined);
-    setSourceLabel(file.name);
-    setReviewRequiresHistoryRecovery(false);
-    setOperationMode("import");
-    setImportKind("file");
-    setOperationId(undefined);
+  | { kind: "public_remote"; source: Record<string, unknown> };
+
+function errorMessage(error: unknown): string {
+  if (isStoreError(error)) return error.detail;
+  return error instanceof Error ? error.message : "The source could not be connected.";
+}
+
+async function createSourceForManifest(
+  manifest: SourceSkillManifest,
+  input: ManifestSourceInput,
+  dependencies: ManifestSourceDependencies,
+): Promise<{ source: string; displayLabel?: string }> {
+  if (input.kind === "file") {
+    const origin = await dependencies.createOrigin(input.file);
+    const created = await dependencies.createSource({
+      origin: origin.uri,
+      skill_id: manifest.skill_id,
+    });
+    return { ...created, displayLabel: input.file.name };
+  }
+  if (input.kind === "credentialed_remote") {
+    let credential: { credential: string };
     try {
-      const origin = await createOrigin.mutateAsync({
-        body: file,
-        params: { header: { "x-rnet-label": file.name } },
-      });
-      const source = await createSource.mutateAsync({
-        body: { origin: origin.uri, parser },
-      });
-      const staged = await createPreview.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: { source: source.source },
-      });
-      setOperationId(staged.operation_id);
-    } catch {
-      // The mutation's typed store error is rendered below.
+      credential = await dependencies.connectCredential(manifest.skill_id, input.connection);
     } finally {
-      event.target.value = "";
+      // Do not keep the source secret reachable while the credential token is exchanged for an
+      // ingestion source. The dependency also clears any transport-library mutation state.
+      scrubRecord(input.connection);
     }
+    return dependencies.createSource({
+      credential: credential.credential,
+      ...(Object.keys(input.source).length > 0 ? { config: input.source } : {}),
+    });
   }
+  return dependencies.createSource({ skill_id: manifest.skill_id, config: input.source });
+}
 
-  async function exchangeSimpleFinToken() {
-    const tokenInput = simpleFinToken.current;
-    const setupToken = tokenInput?.value.trim();
-    if (!tokenInput || !setupToken) {
-      setLocalError("Paste a SimpleFIN setup token to connect an account.");
-      return undefined;
+function sourceInputForManifest(
+  manifest: SourceSkillManifest,
+  formData: FormData,
+): ManifestSourceInput {
+  const source = fieldsForTarget(manifest, formData, "source");
+  if (manifest.source_kind === "file") {
+    const fileField = manifest.input_fields.find((field) => field.control === "file");
+    const file = fileField ? formData.get(fieldFormName(fileField)) : undefined;
+    if (!(file instanceof File) || file.size === 0) {
+      throw new ManifestInputError(`Choose ${fileField?.label.toLocaleLowerCase() ?? "a file"}.`);
     }
-    try {
-      return await connectSimpleFin.mutateAsync({ body: { setup_token: setupToken } });
-    } finally {
-      // Setup tokens are one-time secrets. Keep them out of React state and erase the DOM value
-      // as soon as the exchange request settles, before creating a source or preview operation.
-      tokenInput.value = "";
+    if (fileField?.accept?.length && !fileMatchesAccept(file, fileField.accept)) {
+      throw new ManifestInputError(`Choose a file accepted by ${manifest.label}.`);
     }
+    return { kind: "file", file };
   }
-
-  async function connectSimpleFinAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    resetMutationErrors();
-    setOutcome(undefined);
-    setOperationId(undefined);
-    setSourceLabel(undefined);
-    setLocalError(undefined);
-    setOperationMode("import");
-    setImportKind("simplefin");
-    setReviewRequiresHistoryRecovery(false);
-    try {
-      const credential = await exchangeSimpleFinToken();
-      if (!credential) return;
-      setSourceLabel("SimpleFIN");
-      const source = await createSource.mutateAsync({
-        body: { credential: credential.credential },
-      });
-      const staged = await createPreview.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: { source: source.source },
-      });
-      setOperationId(staged.operation_id);
-    } catch {
-      // The mutation's typed store error is rendered below. The token is already cleared.
-    }
+  if (manifest.source_kind === "credentialed_remote") {
+    return {
+      kind: "credentialed_remote",
+      connection: fieldsForTarget(manifest, formData, "connection"),
+      source,
+    };
   }
+  return { kind: "public_remote", source };
+}
 
-  async function importArenaChannel(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    resetMutationErrors();
-    setOutcome(undefined);
-    setOperationId(undefined);
-    setSourceLabel(undefined);
-    setLocalError(undefined);
-    setOperationMode("import");
-    setImportKind("arena");
-    setReviewRequiresHistoryRecovery(false);
-    const channelUrl = arenaChannelUrl.trim();
-    const channelSlug = arenaChannelSlug(channelUrl);
-    if (!channelSlug) {
-      setLocalError("Paste a public Are.na channel URL, like https://www.are.na/owner/channel.");
-      return;
+function fieldsForTarget(
+  manifest: SourceSkillManifest,
+  formData: FormData,
+  target: SourceSkillInputField["target"],
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const field of manifest.input_fields) {
+    if (field.target !== target || field.control === "file") continue;
+    if (field.secret && target === "source") {
+      throw new ManifestInputError("An installed source attempted to persist a secret field.");
     }
-    try {
-      const source = await createSource.mutateAsync({
-        body: { provider: "arena", channel_url: channelUrl },
-      });
-      setSourceLabel(`Are.na / ${channelSlug}`);
-      const staged = await createPreview.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: { source: source.source },
-      });
-      setOperationId(staged.operation_id);
-    } catch {
-      // The mutation's typed store error is rendered below.
+    if (field.control === "checkbox") {
+      const checked = formData.has(fieldFormName(field));
+      if (field.required || checked) result[field.name] = checked;
+      continue;
     }
-  }
-
-  async function refreshSources() {
-    resetMutationErrors();
-    setOutcome(undefined);
-    setLocalError(undefined);
-    setSourceLabel(undefined);
-    setOperationId(undefined);
-    setOperationMode("pull");
-    setReviewRequiresHistoryRecovery(false);
-    try {
-      const operation = await pull.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: {},
-      });
-      setOperationId(operation.operation_id);
-    } catch {
-      // The mutation's typed store error is rendered below.
+    const value = formData.get(fieldFormName(field));
+    if (typeof value !== "string") {
+      if (field.required) throw new ManifestInputError(`${field.label} is required.`);
+      continue;
     }
+    if (value === "" && !field.required) continue;
+    if (value === "") throw new ManifestInputError(`${field.label} is required.`);
+    result[field.name] = value;
   }
+  return result;
+}
 
-  async function reviewSimpleFinHistoryRecovery() {
-    if (!historyRecoverySource) return;
-    resetMutationErrors();
-    setOutcome(undefined);
-    setLocalError(undefined);
-    setOperationId(undefined);
-    setOperationMode("import");
-    setImportKind("simplefin");
-    setReviewRequiresHistoryRecovery(true);
-    setSourceLabel("SimpleFIN history recovery");
-    try {
-      const staged = await createPreview.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: { source: historyRecoverySource, rebaseline: true },
-      });
-      setOperationId(staged.operation_id);
-    } catch {
-      // The mutation's typed store error is rendered below.
-    }
+function clearSecretFields(
+  form: HTMLFormElement | null,
+  manifest: SourceSkillManifest | undefined,
+): void {
+  if (!form || !manifest) return;
+  for (const field of manifest.input_fields) {
+    if (!field.secret) continue;
+    const element = form.elements.namedItem(fieldFormName(field));
+    if (element instanceof HTMLInputElement) element.value = "";
   }
+}
 
-  function cancelReview() {
-    clearReview();
-    confirm.reset();
-    setOutcome(
-      arenaReview
-        ? "Review canceled. No Are.na blocks were imported."
-        : "Review canceled. No transactions were imported.",
-    );
-  }
+function scrubRecord(record: Record<string, unknown>): void {
+  for (const key of Object.keys(record)) record[key] = undefined;
+}
 
-  function confirmReview() {
-    if (
-      !operationId ||
-      !preview?.verify.ok ||
-      operation.data?.status !== "done" ||
-      (reviewRequiresHistoryRecovery && !hasHistoryRecoveryEvidence)
-    ) {
-      return;
-    }
-    const importedCount = preview.verify.candidateCount;
-    const importedSource = sourceLabel;
-    const importedArenaBlocks = arenaReview;
-    confirm.mutate(
-      { params: { path: { id: vibeUuid, operation_id: operationId } } },
-      {
-        onSuccess: () => {
-          clearReview();
-          setOutcome(
-            importedArenaBlocks
-              ? `Imported ${importedCount} Are.na ${importedCount === 1 ? "block" : "blocks"}${
-                  importedSource ? ` from ${importedSource}` : ""
-                }.`
-              : `Imported ${importedCount} ${importedCount === 1 ? "transaction" : "transactions"}${
-                  importedSource ? ` from ${importedSource}` : ""
-                }.`,
-          );
-        },
-      },
-    );
-  }
+function fieldFormName(field: SourceSkillInputField): string {
+  return `${field.target}:${field.name}`;
+}
 
-  return (
-    <section className="flex max-w-[52rem] flex-col gap-4 rounded-card border border-hairline bg-surface p-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-label text-primary">Import into this Vibe</h2>
-          <p className="mt-1 text-body text-secondary">
-            Add a public Are.na channel, connect SimpleFIN, or choose a CSV/QFX export. Every source
-            gets a review, and nothing derived is saved until you confirm.
-          </p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          {configuredSources.length > 0 ? (
-            <Button variant="secondary" disabled={busy} onClick={() => void refreshSources()}>
-              {operationMode === "pull" && busy ? "Refreshing…" : "Refresh sources"}
-            </Button>
-          ) : null}
-          <Button variant="secondary" disabled={busy} onClick={() => input.current?.click()}>
-            {busy && operationMode === "import" && importKind === "file"
-              ? "Preparing review…"
-              : "Choose file"}
-          </Button>
-        </div>
-        <input
-          ref={input}
-          className="sr-only"
-          type="file"
-          aria-label="Transaction export file"
-          disabled={busy}
-          accept=".csv,.qfx,.ofx,text/csv,application/x-ofx"
-          onChange={(event) => void selectFile(event)}
-        />
-      </div>
+function fileMatchesAccept(file: File, accepted: readonly string[]): boolean {
+  const filename = file.name.toLocaleLowerCase();
+  const mime = file.type.toLocaleLowerCase();
+  return accepted.some((rawToken) => {
+    const token = rawToken.trim().toLocaleLowerCase();
+    if (token.startsWith(".")) return filename.endsWith(token);
+    if (token.endsWith("/*")) return mime.startsWith(token.slice(0, -1));
+    return token.includes("/") && mime === token;
+  });
+}
 
-      <section aria-labelledby="arena-import" className="border-t border-hairline pt-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h3 id="arena-import" className="text-label text-primary">
-              Import an Are.na channel
-            </h3>
-            <p id="arena-channel-help" className="mt-1 text-caption text-secondary">
-              Paste a public channel URL to stage its blocks and media for review.
-            </p>
-          </div>
-          <form
-            aria-label="Import Are.na channel"
-            className="flex min-w-[20rem] flex-1 items-center gap-2"
-            onSubmit={(event) => void importArenaChannel(event)}
-          >
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">Are.na channel URL</span>
-              <input
-                type="url"
-                name="arena-channel-url"
-                aria-label="Are.na channel URL"
-                aria-describedby="arena-channel-help"
-                autoComplete="url"
-                autoCapitalize="none"
-                spellCheck={false}
-                disabled={busy}
-                placeholder="https://www.are.na/owner/channel"
-                value={arenaChannelUrl}
-                onChange={(event) => {
-                  setArenaChannelUrl(event.target.value);
-                  setLocalError(undefined);
-                  createSource.reset();
-                }}
-                className="w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent"
-              />
-            </label>
-            <Button type="submit" disabled={busy || !arenaChannelUrl.trim()}>
-              {importKind === "arena" && busy ? "Preparing…" : "Review channel"}
-            </Button>
-          </form>
-        </div>
-      </section>
-
-      <section aria-labelledby="simplefin-connect" className="border-t border-hairline pt-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h3 id="simplefin-connect" className="text-label text-primary">
-              Connect SimpleFIN
-            </h3>
-            <p id="simplefin-token-help" className="mt-1 text-caption text-secondary">
-              Exchange a one-time setup token, then review the fetched transactions before saving
-              anything derived.
-            </p>
-            <a
-              href="https://bridge.simplefin.org/simplefin/create"
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-block text-caption text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              Create a setup token in SimpleFIN Bridge ↗
-            </a>
-          </div>
-          <form
-            aria-label="Connect SimpleFIN"
-            className="flex min-w-[20rem] flex-1 items-center gap-2"
-            onSubmit={(event) => void connectSimpleFinAccount(event)}
-          >
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">SimpleFIN setup token</span>
-              <input
-                ref={simpleFinToken}
-                type="password"
-                name="simplefin-setup-token"
-                aria-label="SimpleFIN setup token"
-                aria-describedby="simplefin-token-help"
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                disabled={busy}
-                placeholder="Paste setup token"
-                onChange={() => {
-                  setLocalError(undefined);
-                  connectSimpleFin.reset();
-                }}
-                className="w-full rounded-pill border border-hairline bg-canvas px-5 py-3 font-mono text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent"
-              />
-            </label>
-            <Button type="submit" disabled={busy}>
-              {importKind === "simplefin" && busy ? "Connecting…" : "Connect"}
-            </Button>
-          </form>
-        </div>
-        {connectSimpleFin.isError ? (
-          <div role="alert" className="mt-3">
-            <Failed error={connectSimpleFin.error} />
-          </div>
-        ) : null}
-      </section>
-
-      {sourceLabel ? <span className="text-caption text-tertiary">{sourceLabel}</span> : null}
-      {outcome ? (
-        <span role="status" className="text-body text-secondary">
-          {outcome}
-        </span>
-      ) : null}
-      {operationInFlight ? (
-        <span className="text-body text-tertiary">
-          {operationMode === "pull"
-            ? "Refreshing configured sources…"
-            : importKind === "simplefin"
-              ? "Fetching connected accounts and running VERIFY…"
-              : importKind === "arena"
-                ? "Fetching the Are.na channel and staging its media…"
-                : "Parsing and running VERIFY…"}
-        </span>
-      ) : null}
-      {operation.data?.status === "failed" ? (
-        <span role="alert" className="text-body text-error">
-          {operation.data.error ??
-            (operationMode === "pull"
-              ? "The source refresh failed."
-              : "The import preview failed.")}
-        </span>
-      ) : null}
-      {operation.data?.status === "aborted" ? (
-        <span role="alert" className="text-body text-error">
-          {operationMode === "pull" ? "The source refresh was aborted." : "The import was aborted."}
-        </span>
-      ) : null}
-      {historyRecoverySource ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-hairline bg-canvas p-4">
-          <div className="min-w-0 flex-1">
-            <span className="text-label text-primary">SimpleFIN history needs a new baseline</span>
-            <span className="mt-1 block text-caption text-secondary">
-              Review the currently available account history and explicitly acknowledge the omitted
-              interval before refreshing this source again.
-            </span>
-          </div>
-          <Button disabled={busy} onClick={() => void reviewSimpleFinHistoryRecovery()}>
-            Review new baseline
-          </Button>
-        </div>
-      ) : null}
-      {malformedImportResult ? (
-        <span role="alert" className="text-body text-error">
-          The completed import did not contain a valid review. Start the import again to retry.
-        </span>
-      ) : null}
-      {malformedPullResult ? (
-        <span role="alert" className="text-body text-error">
-          The completed source refresh did not contain a valid summary.
-        </span>
-      ) : null}
-
-      {preview ? (
-        <div className="flex flex-col gap-4">
-          <div aria-label="VERIFY reconciliation" className="rounded-card bg-canvas p-4">
-            <span className="text-label text-primary">
-              {preview.verify.ok
-                ? arenaReview
-                  ? `${preview.verify.candidateCount} Are.na ${
-                      preview.verify.candidateCount === 1 ? "block" : "blocks"
-                    } passed VERIFY`
-                  : `${preview.verify.candidateCount} transactions passed VERIFY`
-                : "VERIFY did not pass"}
-            </span>
-            <span className="mt-1 block text-caption text-secondary">
-              {preview.verify.sourceRecordCount} {arenaReview ? "source blocks" : "source records"}{" "}
-              → {preview.verify.candidateCount} candidates
-            </span>
-            <span className="mt-1 block text-caption text-secondary">
-              {arenaReview
-                ? `${preview.candidates.reduce((total, candidate) => total + candidate.elementCount, 0)} media elements staged`
-                : Object.entries(preview.verify.totalsByCurrency).length > 0
-                  ? Object.entries(preview.verify.totalsByCurrency)
-                      .map(([currency, amount]) => `${currency} ${amount}`)
-                      .join(" · ")
-                  : "No monetary totals"}
-            </span>
-            <ul aria-label="VERIFY checks" className="mt-3 flex flex-col gap-2">
-              {preview.verify.checks.map((check) => (
-                <li
-                  key={check.name}
-                  data-verify-check={check.name}
-                  className="flex items-start gap-2 text-caption text-secondary"
-                >
-                  <span aria-hidden className={check.ok ? "text-success" : "text-error"}>
-                    {check.ok ? "✓" : "×"}
-                  </span>
-                  <span>{check.detail}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <ul
-            aria-label={arenaReview ? "Candidate Are.na blocks" : "Candidate transactions"}
-            className="max-h-72 overflow-auto border-y border-hairline"
-          >
-            {preview.candidates.map((candidate) =>
-              arenaReview ? (
-                <ArenaCandidateReview
-                  key={candidate.uri}
-                  candidate={candidate}
-                  operationId={operationId}
-                />
-              ) : (
-                <li
-                  key={candidate.uri}
-                  data-import-candidate
-                  className="flex items-baseline gap-3 border-b border-hairline py-3 last:border-b-0"
-                >
-                  <span className="min-w-24 font-mono text-caption text-primary">
-                    {String(candidate.amount ?? "")}
-                  </span>
-                  <span className="text-caption text-tertiary">
-                    {String(candidate.currency ?? "")}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-body text-secondary">
-                    {String(candidate.description ?? "Transaction")}
-                  </span>
-                  {candidate.postedAt ? (
-                    <span className="shrink-0 text-caption text-tertiary">
-                      {String(candidate.postedAt)}
-                    </span>
-                  ) : null}
-                </li>
-              ),
-            )}
-          </ul>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={cancelReview} disabled={confirm.isPending}>
-              Cancel
-            </Button>
-            <Button
-              disabled={
-                confirm.isPending ||
-                !operationId ||
-                !preview.verify.ok ||
-                (reviewRequiresHistoryRecovery && !hasHistoryRecoveryEvidence)
-              }
-              onClick={confirmReview}
-            >
-              {confirm.isPending ? "Importing…" : "Confirm import"}
-            </Button>
-          </div>
-          {reviewRequiresHistoryRecovery && !hasHistoryRecoveryEvidence ? (
-            <span role="alert" className="text-caption text-error">
-              This preview is missing the required history recovery evidence and cannot be
-              confirmed.
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {operationMode === "pull" && pullSummary && operation.data?.status === "done" ? (
-        <div className="rounded-card bg-canvas p-4" role="status">
-          <span className="text-label text-primary">
-            Checked {pullSummary.candidate_count} transactions · added {pullSummary.added_count}
-          </span>
-          <span className="mt-1 block text-caption text-secondary">
-            {pullSummary.duplicate_count} already known · {pullSummary.created_count} new records
-          </span>
-        </div>
-      ) : null}
-
-      {localError ? (
-        <span role="alert" className="text-body text-error">
-          {localError}
-        </span>
-      ) : null}
-      {createOrigin.isError ? <Failed error={createOrigin.error} /> : null}
-      {createSource.isError ? <Failed error={createSource.error} /> : null}
-      {createPreview.isError ? <Failed error={createPreview.error} /> : null}
-      {pull.isError ? <Failed error={pull.error} /> : null}
-      {operation.isError ? <Failed error={operation.error} /> : null}
-      {confirm.isError ? <Failed error={confirm.error} /> : null}
-    </section>
-  );
+function candidateCountLabel(candidates: readonly CandidateSummary[], count: number): string {
+  const transactionOnly =
+    candidates.length > 0 && candidates.every(({ type }) => type === "transaction");
+  if (transactionOnly) return count === 1 ? "transaction" : "transactions";
+  return count === 1 ? "object" : "objects";
 }
 
 function pullResult(value: unknown):
@@ -738,31 +907,14 @@ function pullResult(value: unknown):
   };
 }
 
-function parserForFilename(filename: string): FileParser | undefined {
-  const extension = filename.toLowerCase().split(".").at(-1);
-  if (extension === "csv") return "csv";
-  if (extension === "qfx" || extension === "ofx") return "ofx";
-  return undefined;
-}
-
-function arenaChannelSlug(value: string): string | undefined {
-  try {
-    const url = new URL(value);
-    if (
-      url.protocol !== "https:" ||
-      !["are.na", "www.are.na"].includes(url.hostname.toLowerCase()) ||
-      url.username ||
-      url.password ||
-      url.port
-    ) {
-      return undefined;
-    }
-    const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length !== 2 || url.search || url.hash) return undefined;
-    return parts[1];
-  } catch {
-    return undefined;
-  }
+function primaryPreviewElement(
+  elements: PreviewElementSummary[],
+): PreviewElementSummary | undefined {
+  return (
+    elements.find((element) => element.role === "content") ??
+    elements.find((element) => element.role === "preview") ??
+    elements.find((element) => element.role !== "title")
+  );
 }
 
 function formatByteSize(bytes: number): string {
@@ -795,9 +947,7 @@ function previewResult(value: unknown): ImportPreview | undefined {
       typeof amount === "string" ? [[currency, amount]] : [],
     ),
   );
-  if (Object.keys(totalsByCurrency).length !== Object.keys(rawTotals).length) {
-    return undefined;
-  }
+  if (Object.keys(totalsByCurrency).length !== Object.keys(rawTotals).length) return undefined;
   const checks = verify.checks.flatMap((check): VerifyCheckSummary[] => {
     if (!check || typeof check !== "object") return [];
     const candidate = check as Record<string, unknown>;

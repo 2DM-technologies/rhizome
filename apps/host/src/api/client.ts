@@ -15,8 +15,11 @@ const store: Middleware = {
   },
 };
 
+const defaultStoreBaseUrl =
+  typeof window === "undefined" ? "http://localhost" : window.location.origin;
+
 const fetchClient = createFetchClient<paths>({
-  baseUrl: import.meta.env.VITE_RHIZOME_API_URL ?? window.location.origin,
+  baseUrl: import.meta.env.VITE_RHIZOME_API_URL ?? defaultStoreBaseUrl,
   bodySerializer: serializeRequestBody,
   Request: StoreRequest,
 });

@@ -20,10 +20,12 @@ export {
 export { useCreateMediaElement, useDeleteMediaElement, useMediaElement } from "./mediaElements.ts";
 export { useCreateOriginArtifact, useDeleteOriginArtifact, useOriginArtifact } from "./origins.ts";
 export {
-  useConnectSimpleFin,
+  useConnectSourceCredential,
   useConfirmImportPreview,
   useCreateImportPreview,
   useCreateIngestionSource,
+  useForgetOperation,
   useOperation,
   usePullVibe,
+  useSourceSkills,
 } from "./imports.ts";

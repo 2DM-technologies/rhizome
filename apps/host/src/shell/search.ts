@@ -22,10 +22,10 @@ export interface ShellSearchResult {
 
 const STATIC_COMMANDS: readonly ShellSearchResult[] = [
   {
-    id: "command:import-transactions",
+    id: "command:import",
     group: "Commands",
-    label: "Import transactions",
-    keywords: ["bank", "csv", "file", "ofx", "qfx", "upload"],
+    label: "Import",
+    keywords: ["connect", "file", "media", "source", "upload"],
     action: { kind: "open", surface: { kind: "import" } },
   },
   {

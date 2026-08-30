@@ -2658,6 +2658,12 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
         return parseSyntheticPublicCapture(JSON.parse(text));
       },
     },
+    sourceRequestSchema: {
+      type: "object",
+      required: ["url"],
+      properties: { url: { type: "string" } },
+      additionalProperties: false,
+    },
     fetchPolicy: { attempts: 100, windowHours: 1 },
     networkPolicy: {
       capabilities: [{ kind: "safe_public_https" }],

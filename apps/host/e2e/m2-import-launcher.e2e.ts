@@ -1,16 +1,17 @@
-import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 
 import { NEW_VIBE_ID, VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
-
-const CSV_FIXTURE = fileURLToPath(
-  new URL("../../ingest/skills/csv/fixtures/rhizome-bank.csv", import.meta.url),
-);
+import {
+  mockSyntheticFileSourceSkill,
+  SYNTHETIC_FILE_FIXTURE,
+  SYNTHETIC_FILE_INPUT_LABEL,
+  syntheticFileSourceSkillManifest,
+} from "./support/syntheticSourceSkills.ts";
 
 let mockStore: MockStore;
 
 test.beforeEach(async ({ page }) => {
-  mockStore = await installMockStore(page);
+  mockStore = await installMockStore(page, { sourceSkills: [mockSyntheticFileSourceSkill] });
 });
 
 async function openImportFromLauncher(page: Page): Promise<void> {
@@ -18,7 +19,7 @@ async function openImportFromLauncher(page: Page): Promise<void> {
   await page.getByRole("searchbox", { name: "Search everything" }).click();
   await page
     .locator('[data-launcher-section="Commands"]')
-    .getByRole("button", { name: "Import transactions", exact: true })
+    .getByRole("button", { name: "Import", exact: true })
     .click();
 }
 
@@ -27,9 +28,7 @@ test("the start-something-new launcher opens a retained import surface", async (
 
   await expect(page).toHaveURL(/\/imports$/);
   await expect(page.locator('[data-surface-id="import"][data-view-mode]')).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Import transactions", exact: true, level: 1 }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Import", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("list", { name: "Owned Vibes" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Import into Spending" })).toBeVisible();
   await expect(page.getByLabel("New import Vibe title")).toBeVisible();
@@ -42,7 +41,7 @@ test("an existing owner Vibe hands off to the shared review and survives surface
   await page.getByRole("button", { name: "Import into Spending" }).click();
 
   await expect(page.getByText("Target Vibe: Spending", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Transaction export file")).toBeAttached();
+  await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
 
   await page.getByRole("button", { name: "Home" }).click();
   await expect(page).toHaveURL(/\/vibes$/);
@@ -50,9 +49,12 @@ test("an existing owner Vibe hands off to the shared review and survives surface
   await expect(page).toHaveURL(/\/imports$/);
   await expect(page.getByText("Target Vibe: Spending", { exact: true })).toBeVisible();
 
-  await page.getByLabel("Transaction export file").setInputFiles(CSV_FIXTURE);
+  await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
+  await page
+    .getByRole("button", { name: `Review ${syntheticFileSourceSkillManifest.label}` })
+    .click();
   await expect(page.getByLabel("VERIFY reconciliation")).toContainText(
-    "3 source records → 3 candidates",
+    "2 source records → 2 candidates",
   );
   expect(
     mockStore.requests.some(
@@ -72,12 +74,15 @@ test("creating a target Vibe continues directly into the shared import review", 
 
   await expect(page).toHaveURL(/\/imports$/);
   await expect(page.getByText("Target Vibe: Quarterly taxes", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Transaction export file")).toBeAttached();
+  await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
   expect(mockStore.vibes.some((vibe) => vibe.title === "Quarterly taxes")).toBe(true);
 
-  await page.getByLabel("Transaction export file").setInputFiles(CSV_FIXTURE);
+  await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
+  await page
+    .getByRole("button", { name: `Review ${syntheticFileSourceSkillManifest.label}` })
+    .click();
   await expect(page.getByLabel("VERIFY reconciliation")).toContainText(
-    "3 source records → 3 candidates",
+    "2 source records → 2 candidates",
   );
   expect(
     mockStore.requests.some(

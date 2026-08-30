@@ -1,6 +1,6 @@
 import type { SourceSkillManifest } from "../../../packages/store-contract/src/source-skills.ts";
 
-import { SourceSkillManifestCatalog } from "../connected-sources/types.ts";
+import { SourceSkillManifestCatalog } from "../source-skills/manifest-catalog.ts";
 import type { TransactionParser } from "../transactions/types.ts";
 
 export interface FileSourceSkill {

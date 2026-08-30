@@ -96,7 +96,7 @@ export function labelOf(
 ): string {
   switch (surface.kind) {
     case "import":
-      return "Import transactions";
+      return "Import";
     case "vibes":
       return "Vibes";
     case "vibe":

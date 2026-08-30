@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api/client.ts";
 
 const operationPath = "/rnet/v0/operations/{id}";
+const sourceCredentialPath = "/rnet/v0/source-credentials/{skill_id}";
+const sourceSkillsPath = "/rnet/v0/source-skills";
 
 function operationQuery(id: string) {
   return api.queryOptions("get", operationPath, { params: { path: { id } } });
@@ -13,13 +15,22 @@ export function useCreateIngestionSource() {
   return api.useMutation("post", "/rnet/v0/ingestion-sources");
 }
 
-export function useConnectSimpleFin() {
-  return api.useMutation("post", "/rnet/v0/source-credentials/simplefin");
+/** The serializable capabilities used to render provider-neutral source forms. */
+export function useSourceSkills() {
+  return api.useQuery("get", sourceSkillsPath, undefined, {
+    select: (response) => response.skills,
+  });
+}
+
+/** Connects any installed credentialed source through its generated `skill_id` path parameter. */
+export function useConnectSourceCredential() {
+  return api.useMutation("post", sourceCredentialPath, { gcTime: 0 });
 }
 
 export function useCreateImportPreview() {
   const client = useQueryClient();
   return api.useMutation("post", "/rnet/v0/vibes/{id}/imports", {
+    gcTime: 0,
     onSuccess: (operation) =>
       client.setQueryData(operationQuery(operation.operation_id).queryKey, operation),
   });
@@ -28,6 +39,7 @@ export function useCreateImportPreview() {
 export function usePullVibe() {
   const client = useQueryClient();
   return api.useMutation("post", "/rnet/v0/vibes/{id}/pull", {
+    gcTime: 0,
     onSuccess: (operation) =>
       client.setQueryData(operationQuery(operation.operation_id).queryKey, operation),
   });
@@ -42,6 +54,9 @@ export function useOperation(id: string | undefined, refreshVibeUuid?: string) {
     { params: { path: { id: id ?? "" } } },
     {
       enabled: Boolean(id),
+      // Owner operation results can contain a short-lived continuation bearer. Do not retain
+      // them after the surface stops observing the operation.
+      gcTime: 0,
       refetchInterval: (query) =>
         query.state.data && ["queued", "running"].includes(query.state.data.status) ? 250 : false,
     },
@@ -70,6 +85,15 @@ export function useOperation(id: string | undefined, refreshVibeUuid?: string) {
     });
   }, [client, query.data?.committed_at, query.data?.operation_id, refreshVibeUuid]);
   return query;
+}
+
+/** Removes an operation result immediately after its continuation bearer has been consumed. */
+export function useForgetOperation() {
+  const client = useQueryClient();
+  return useCallback(
+    (id: string) => client.removeQueries({ queryKey: operationQuery(id).queryKey, exact: true }),
+    [client],
+  );
 }
 
 export function useConfirmImportPreview() {

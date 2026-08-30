@@ -6,9 +6,9 @@ const baseURL = `http://${host}:${port}`;
 const externallyManagedServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === "1";
 
 export default defineConfig({
-  testDir: "./e2e",
-  // Bun discovers *.spec.ts itself. A distinct suffix keeps the browser suite in its own lane.
-  testMatch: "**/*.e2e.ts",
+  testDir: "../..",
+  // Skill suites live with their installed skills; host-wide flows remain under apps/host/e2e.
+  testMatch: ["**/apps/host/e2e/**/*.e2e.ts", "**/apps/ingest/skills/*/e2e/**/*.e2e.ts"],
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

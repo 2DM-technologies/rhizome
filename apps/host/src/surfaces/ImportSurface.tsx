@@ -8,7 +8,7 @@ import { ImportPanel } from "./ImportPanel.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 
 /**
- * Host-owned entry point for transaction files that do not start inside a Vibe.
+ * Host-owned entry point for reviewed sources that do not start inside a Vibe.
  *
  * Target selection is local surface state on purpose. The `/imports` surface remains mounted
  * while another URL is focused, just like every other host surface, so a chosen target and a
@@ -51,11 +51,11 @@ export function ImportSurface() {
 
   return (
     <StoreSurface
-      title="Import transactions"
+      title="Import"
       detail={
         target.data && targetIsOwned
           ? `Target Vibe: ${target.data.title}`
-          : "Choose an owned Vibe before selecting a transaction export."
+          : "Choose an owned Vibe before selecting a source."
       }
       actions={
         targetUuid ? (
@@ -71,7 +71,7 @@ export function ImportSurface() {
           {target.isError ? <Failed error={target.error} /> : null}
           {target.data && !targetIsOwned ? (
             <span role="alert" className="text-body text-error">
-              You must own the target Vibe to import transactions.
+              You must own the target Vibe to import into it.
             </span>
           ) : null}
           {target.data && targetIsOwned ? (

@@ -456,7 +456,7 @@ test("closing a surface animates its dock icon out", async ({ page }) => {
 
 test("back and forward focus surfaces without remounting their local state", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
-  await page.getByRole("button").filter({ hasText: OBJECT_URI }).click();
+  await page.getByRole("button", { name: `Open object ${OBJECT_URI}` }).click();
 
   const editor = page.getByLabel("User properties, as JSON");
   await expect(editor).toBeVisible();
@@ -556,8 +556,11 @@ test("an owner can refresh configured sources and see the deduplication result",
   await page.goto(`/vibes/${VIBE_ID}`);
 
   await page.getByRole("button", { name: "Refresh sources" }).click();
-  await expect(page.getByRole("status")).toContainText("Checked 1 transactions · added 0");
-  await expect(page.getByRole("status")).toContainText("1 already known · 0 new records");
+  const pullSummary = page
+    .getByRole("status")
+    .filter({ hasText: "Checked 1 candidates · added 0" });
+  await expect(pullSummary).toContainText("Checked 1 candidates · added 0");
+  await expect(pullSummary).toContainText("1 already known · 0 new objects");
 
   const pullRequest = mockStore.requests.find(
     (request) =>
@@ -626,14 +629,11 @@ test("an image payload remains decodable when its previewing surface is replaced
     "base64",
   );
   const element = mockStore.elements.get(ELEMENT_ID);
-  const object = mockStore.objects.get(OBJECT_ID);
   if (!element) throw new Error("Missing seeded element");
-  if (!object) throw new Error("Missing seeded object");
   element.kind = "image";
   element.mime = "image/png";
   element.byte_size = png.byteLength;
   mockStore.elementPayloads.set(ELEMENT_ID, png);
-  object.type = "arena.block";
 
   await page.goto(`/vibes/${VIBE_ID}`);
   const preview = page.getByRole("img", { name: "Monthly plan" });
@@ -642,7 +642,7 @@ test("an image payload remains decodable when its previewing surface is replaced
     .toBeGreaterThan(0);
   const previewUrl = await preview.getAttribute("src");
 
-  await page.getByRole("button", { name: "Open Are.na block Monthly plan" }).click();
+  await page.getByRole("button", { name: `Open object ${OBJECT_URI}` }).click();
 
   const image = page.getByRole("img", { name: `Payload for ${ELEMENT_URI}` });
   await expect(image).toBeVisible();

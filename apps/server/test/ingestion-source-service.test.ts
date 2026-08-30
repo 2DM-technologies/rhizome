@@ -363,6 +363,12 @@ function syntheticPublicSkill(): PublicRemoteSourceSkill {
       review_actions: ["review_import"],
     },
     parser,
+    sourceRequestSchema: {
+      type: "object",
+      required: ["url"],
+      properties: { url: { type: "string" } },
+      additionalProperties: false,
+    },
     fetchPolicy: { attempts: 10, windowHours: 24 },
     networkPolicy: {
       capabilities: [{ kind: "safe_public_https" }],

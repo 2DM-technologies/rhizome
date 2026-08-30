@@ -73,5 +73,9 @@ export function Failed({ error }: { error: unknown }) {
     : error instanceof Error
       ? error.message
       : String(error);
-  return <span className="text-body text-error">{message}</span>;
+  return (
+    <span role="alert" className="text-body text-error">
+      {message}
+    </span>
+  );
 }

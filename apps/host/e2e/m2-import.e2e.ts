@@ -1,33 +1,30 @@
-import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 
 import { VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
+import {
+  SYNTHETIC_FILE_FIXTURE,
+  SYNTHETIC_FILE_INPUT_LABEL,
+  SYNTHETIC_FILE_SKILL_LABEL,
+  mockSyntheticFileSourceSkill,
+} from "./support/syntheticSourceSkills.ts";
 
 const cases = [
   {
-    name: "CSV",
-    path: fileURLToPath(
-      new URL("../../ingest/skills/csv/fixtures/rhizome-bank.csv", import.meta.url),
-    ),
-    filename: "rhizome-bank.csv",
-    parser: "csv",
-    candidateCount: 3,
-    total: "USD 2410.25",
-  },
-  {
-    name: "QFX",
-    path: fileURLToPath(new URL("../../ingest/skills/ofx/fixtures/checking.qfx", import.meta.url)),
-    filename: "checking.qfx",
-    parser: "ofx",
+    name: "synthetic file",
+    path: SYNTHETIC_FILE_FIXTURE,
+    filename: "synthetic-source.json",
+    parser: "synthetic-records",
     candidateCount: 2,
-    total: "USD 2493.50",
+    total: "No aggregate totals",
   },
 ] as const;
 
 let mockStore: MockStore;
 
 test.beforeEach(async ({ page }) => {
-  mockStore = await installMockStore(page);
+  mockStore = await installMockStore(page, {
+    sourceSkills: [mockSyntheticFileSourceSkill],
+  });
   const target = mockStore.vibes[0];
   if (!target) throw new Error("Missing mocked target Vibe");
   delete target.pull;
@@ -35,26 +32,32 @@ test.beforeEach(async ({ page }) => {
 
 async function stageFile(page: Page, fixture: (typeof cases)[number]): Promise<void> {
   await page.goto(`/vibes/${VIBE_ID}`);
-  await page.getByLabel("Transaction export file").setInputFiles(fixture.path);
+  await page
+    .getByLabel("Import source", { exact: true })
+    .selectOption({ label: SYNTHETIC_FILE_SKILL_LABEL });
+  await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(fixture.path);
+  await page
+    .getByRole("button", { name: `Review ${SYNTHETIC_FILE_SKILL_LABEL}`, exact: true })
+    .click();
 
   const reconciliation = page.getByLabel("VERIFY reconciliation");
   await expect(reconciliation).toBeVisible();
-  await expect(reconciliation).toContainText(
-    `${fixture.candidateCount} transactions passed VERIFY`,
-  );
+  await expect(reconciliation).toContainText(`${fixture.candidateCount} objects passed VERIFY`);
   await expect(reconciliation).toContainText(
     `${fixture.candidateCount} source records → ${fixture.candidateCount} candidates`,
   );
   await expect(reconciliation).toContainText(fixture.total);
   await expect(page.getByRole("list", { name: "VERIFY checks" }).getByRole("listitem")).toHaveCount(
-    4,
+    2,
   );
-  await expect(page.locator("[data-import-candidate]")).toHaveCount(fixture.candidateCount);
+  await expect(
+    page.getByRole("list", { name: "Candidate media objects" }).locator("[data-import-candidate]"),
+  ).toHaveCount(fixture.candidateCount);
   await expect(page.getByText(fixture.filename, { exact: true })).toBeVisible();
 }
 
 for (const fixture of cases) {
-  test(`${fixture.name} follows the reviewed path and refreshes membership only after confirm`, async ({
+  test(`${fixture.name} follows the generic reviewed path and refreshes membership only after confirm`, async ({
     page,
   }) => {
     const initialMembership = [...(mockStore.vibes[0]?.objects ?? [])];
@@ -94,7 +97,7 @@ for (const fixture of cases) {
     await page.getByRole("button", { name: "Confirm import" }).click();
 
     await expect(page.getByRole("status")).toContainText(
-      `Imported ${fixture.candidateCount} transactions from ${fixture.filename}.`,
+      `Imported ${fixture.candidateCount} objects from ${fixture.filename}.`,
     );
     await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Open object rnet:/ })).toHaveCount(
@@ -115,7 +118,7 @@ for (const fixture of cases) {
   });
 }
 
-test("cancel abandons the staged CSV review without committing or deleting its raw records", async ({
+test("cancel abandons a staged generic file review without deleting its raw records", async ({
   page,
 }) => {
   const initialMembership = [...(mockStore.vibes[0]?.objects ?? [])];
@@ -124,9 +127,7 @@ test("cancel abandons the staged CSV review without committing or deleting its r
 
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
-  await expect(page.getByRole("status")).toHaveText(
-    "Review canceled. No transactions were imported.",
-  );
+  await expect(page.getByRole("status")).toHaveText("Review canceled. Nothing was imported.");
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toEqual(initialMembership);
   expect(mockStore.objects.size).toBe(initialObjectCount);
@@ -140,17 +141,25 @@ test("cancel abandons the staged CSV review without committing or deleting its r
   ).toHaveLength(0);
 });
 
-test("an unsupported file fails locally before any origin is uploaded", async ({ page }) => {
+test("an unsupported synthetic file fails locally before any origin is uploaded", async ({
+  page,
+}) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page
+    .getByLabel("Import source", { exact: true })
+    .selectOption({ label: SYNTHETIC_FILE_SKILL_LABEL });
 
-  await page.getByLabel("Transaction export file").setInputFiles({
-    name: "transactions.txt",
+  await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles({
+    name: "unsupported.txt",
     mimeType: "text/plain",
-    buffer: Buffer.from("not a supported transaction export"),
+    buffer: Buffer.from("not a supported synthetic source"),
   });
+  await page
+    .getByRole("button", { name: `Review ${SYNTHETIC_FILE_SKILL_LABEL}`, exact: true })
+    .click();
 
   await expect(page.getByRole("alert")).toHaveText(
-    "Choose a .csv, .qfx, or .ofx transaction export.",
+    `Choose a file accepted by ${SYNTHETIC_FILE_SKILL_LABEL}.`,
   );
   expect(mockStore.origins.size).toBe(0);
   expect(mockStore.ingestionSources.size).toBe(0);

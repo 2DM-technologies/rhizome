@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  CredentialedSourceCatalog,
-  SourceSkillManifestCatalog,
-  type CredentialedSourceSkill,
-} from "./types.ts";
+import { CredentialedSourceCatalog, type CredentialedSourceSkill } from "./types.ts";
 import { installedCredentialedSourceSkillDefinitions } from "../src/credentialed-source-catalog.ts";
 import { TransactionParserCatalog, transactionParserFor } from "../src/parser-catalog.ts";
 
@@ -34,6 +30,7 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
         return { transactions: [], sourceRecordCount: 0 };
       },
     },
+    sourceRequestSchema: { type: "object", properties: {}, additionalProperties: false },
     connection: {
       claimPolicy: { kind: "single_use_global", attempts: 10, windowHours: 1 },
       requestSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -158,6 +155,39 @@ describe("CredentialedSourceCatalog", () => {
     expect(() => new CredentialedSourceCatalog([plaintextSecret])).toThrow(
       "cannot store a secret in source config",
     );
+
+    const wrongControl = fakeSkill("third", "csv");
+    wrongControl.manifest.input_fields.push({
+      name: "enabled",
+      label: "Enabled",
+      target: "connection",
+      control: "checkbox",
+      required: true,
+      secret: false,
+    });
+    (wrongControl.connection.requestSchema as Record<string, unknown>).properties = {
+      enabled: { type: "string" },
+    };
+    (wrongControl.connection.requestSchema as Record<string, unknown>).required = ["enabled"];
+    expect(() => new CredentialedSourceCatalog([wrongControl])).toThrow(
+      "field enabled does not match its connection schema",
+    );
+
+    const wrongSourceControl = fakeSkill("fourth", "csv");
+    wrongSourceControl.manifest.input_fields.push({
+      name: "pending",
+      label: "Pending",
+      target: "source",
+      control: "checkbox",
+      required: false,
+      secret: false,
+    });
+    (wrongSourceControl.sourceRequestSchema as Record<string, unknown>).properties = {
+      pending: { type: "string" },
+    };
+    expect(() => new CredentialedSourceCatalog([wrongSourceControl])).toThrow(
+      "field pending does not match its source request schema",
+    );
   });
 });
 
@@ -170,36 +200,5 @@ describe("TransactionParserCatalog", () => {
     expect(
       () => new TransactionParserCatalog([parser, { ...parser, version: "csv@other" }]),
     ).toThrow("Conflicting transaction parser registration: csv");
-  });
-});
-
-describe("SourceSkillManifestCatalog", () => {
-  test("rejects duplicate ids, unknown fields, and unsafe help links", () => {
-    const manifest = fakeSkill("first", "csv").manifest;
-    expect(() => new SourceSkillManifestCatalog([manifest, manifest])).toThrow(
-      "Duplicate source-skill manifest: first",
-    );
-    expect(() => new SourceSkillManifestCatalog([{ ...manifest, executable: "surprise" }])).toThrow(
-      "unknown properties",
-    );
-    expect(
-      () =>
-        new SourceSkillManifestCatalog([
-          {
-            ...manifest,
-            input_fields: [
-              {
-                name: "claim",
-                label: "Claim",
-                target: "connection",
-                control: "text",
-                required: true,
-                secret: true,
-                help_url: "http://provider.test/connect",
-              },
-            ],
-          },
-        ]),
-    ).toThrow("field claim is invalid");
   });
 });

@@ -9,6 +9,7 @@ import type {
 import { ARENA_API_ORIGIN, ArenaClient, type ArenaClientOptions } from "./client.ts";
 import {
   ARENA_SKILL_ID,
+  arenaSourceConfigSchema,
   normalizeArenaChannelLocator,
   parseArenaSourceConfig,
   type ArenaSourceConfig,
@@ -28,6 +29,7 @@ export function createArenaSourceSkill(
     displayName: arenaSourceSkillManifest.label,
     manifest: arenaSourceSkillManifest,
     parser: arenaParser,
+    sourceRequestSchema: arenaSourceConfigSchema,
     fetchPolicy: { attempts: 24, windowHours: 24 },
     networkPolicy: {
       capabilities: [

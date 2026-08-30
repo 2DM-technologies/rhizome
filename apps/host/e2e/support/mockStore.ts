@@ -4,7 +4,9 @@ import type {
   CreateImportPreviewRequest,
   IngestionSourceDocument,
   OperationDocument,
+  SourceActionRequired,
   SourceCredentialDocument,
+  SourceSkillManifest,
 } from "@rhizome/store-contract";
 
 export const OWNER_ID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
@@ -14,19 +16,6 @@ export const OBJECT_ID = "0198f2a1-b19c-77bb-a6e9-0d6c66c52ae3";
 export const ELEMENT_ID = "0198f2a1-c2ad-78cc-b7fa-1e7d77d63bf4";
 export const PULL_OPERATION_ID = "0198f2a1-e4cf-7add-99bc-3a9f99f85df6";
 export const SOURCE_ID = "0198f2a1-f5d0-7bee-aacd-4ba0aa096e07";
-export const CSV_ORIGIN_ID = "0198f2a1-0101-7a01-8a01-000000000001";
-export const OFX_ORIGIN_ID = "0198f2a1-0102-7a02-8a02-000000000002";
-export const CSV_IMPORT_SOURCE_ID = "0198f2a1-0201-7b01-8b01-000000000001";
-export const OFX_IMPORT_SOURCE_ID = "0198f2a1-0202-7b02-8b02-000000000002";
-export const CSV_IMPORT_OPERATION_ID = "0198f2a1-0301-7c01-8c01-000000000001";
-export const OFX_IMPORT_OPERATION_ID = "0198f2a1-0302-7c02-8c02-000000000002";
-export const SIMPLEFIN_CREDENTIAL_ID = "0198f2a1-0601-7e01-8e01-000000000001";
-export const SIMPLEFIN_IMPORT_SOURCE_ID = "0198f2a1-0701-7f01-8f01-000000000001";
-export const SIMPLEFIN_IMPORT_OPERATION_ID = "0198f2a1-0801-7001-9001-000000000001";
-export const ARENA_IMPORT_SOURCE_ID = "0198f2a1-0a01-7a01-8a01-000000000001";
-export const ARENA_IMPORT_OPERATION_ID = "0198f2a1-0b01-7b01-8b01-000000000001";
-export const ARENA_ORIGIN_ID = "0198f2a1-0c01-7c01-8c01-000000000001";
-export const COMPROMISED_SIMPLEFIN_TOKEN = "compromised-simplefin-setup-token";
 
 export const VIBE_URI = `rnet://vibe/${VIBE_ID}` as const;
 export const OBJECT_URI = `rnet://object/${OBJECT_ID}` as const;
@@ -75,273 +64,10 @@ const fixtureElement = {
   created_at: "2026-08-27T12:00:00.000Z",
 } satisfies MediaElement;
 
-type MockFileParser = "csv" | "ofx";
-type MockParser = MockFileParser | "simplefin" | "arena";
-
-const ARENA_BLOCKS = [
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000005",
-    elementId: "0198f2a1-0e01-7e01-8e01-000000000005",
-    blockId: "49552365",
-    blockType: "Attachment",
-    title: "Planning notes",
-    position: 5,
-    kind: "document",
-    mime: "application/pdf",
-    payload: "%PDF-1.7\nRhizome fixture\n%%EOF\n",
-    sourceUrl: "https://attachments.are.na/planning-notes.pdf",
-  },
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000001",
-    elementId: "0198f2a1-0e01-7e01-8e01-000000000001",
-    blockId: "49552361",
-    blockType: "Text",
-    title: "Manifesto",
-    position: 4,
-    kind: "text",
-    mime: "text/markdown",
-    payload: "# Love always wins\n\nA deterministic markdown block.",
-  },
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000004",
-    elementId: "0198f2a1-0e01-7e01-8e01-000000000004",
-    blockId: "49552364",
-    blockType: "Link",
-    title: "A saved link with a preview",
-    position: 3,
-    kind: "image",
-    mime: "image/png",
-    payload:
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    sourceUrl: "https://example.com/with-preview",
-  },
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000002",
-    elementId: "0198f2a1-0e01-7e01-8e01-000000000002",
-    blockId: "49552362",
-    blockType: "Image",
-    title: "A still image",
-    position: 2,
-    kind: "image",
-    mime: "image/png",
-    payload:
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-  },
-  {
-    objectId: "0198f2a1-0d01-7d01-8d01-000000000003",
-    blockId: "49552363",
-    blockType: "Link",
-    title: "A saved link without a preview",
-    position: 1,
-    sourceUrl: "https://example.com/no-preview",
-  },
-] as const;
-
-type MockArenaBlock = (typeof ARENA_BLOCKS)[number];
-
-function hasArenaElement(block: MockArenaBlock): block is MockArenaBlock & {
-  elementId: string;
-  kind: "text" | "image" | "document";
-  mime: string;
-  payload: string;
-} {
-  return "elementId" in block;
-}
-
-function arenaPayload(block: MockArenaBlock & { kind: string; payload: string }): Buffer {
-  return Buffer.from(block.payload, block.kind === "image" ? "base64" : "utf8");
-}
-
-function arenaTitleElementId(index: number): string {
-  return `0198f2a1-0f01-7f01-8f01-${String(index + 1).padStart(12, "0")}`;
-}
-
-function importCandidates(parser: MockParser, origin: string): MediaObject[] {
-  if (parser === "arena") {
-    return ARENA_BLOCKS.map((block, index): MediaObject => ({
-      rnet_schema: "0.1",
-      uri: `rnet://object/${block.objectId}`,
-      owner: `rnet://id/${OWNER_ID}`,
-      type: "arena.block",
-      elements: [
-        `rnet://element/${arenaTitleElementId(index)}`,
-        ...(hasArenaElement(block) ? [`rnet://element/${block.elementId}`] : []),
-      ],
-      keys: { arena_block_id: block.blockId },
-      source: {
-        ingest: { method: "parser", reproducible: true, skill: "arena@test" },
-        origins: [origin],
-        properties: {
-          title: block.title,
-          arena_block_type: block.blockType,
-          connection_position: block.position,
-          ...("sourceUrl" in block ? { source_url: block.sourceUrl } : {}),
-        },
-      },
-    }));
-  }
-  const rows =
-    parser === "csv"
-      ? [
-          { amount: "-42.50", description: "Neighborhood Market", postedAt: "2026-08-01" },
-          { amount: "2500.00", description: "Payroll", postedAt: "2026-08-02" },
-          { amount: "-47.25", description: "Electric Utility", postedAt: "2026-08-03" },
-        ]
-      : parser === "ofx"
-        ? [
-            { amount: "2500.00", description: "PAYROLL DEPOSIT", postedAt: "2026-08-04" },
-            { amount: "-6.50", description: "COFFEE SHOP", postedAt: "2026-08-05" },
-          ]
-        : [
-            { amount: "-64.25", description: "Grocery Co-op", postedAt: "2026-08-06" },
-            { amount: "-27.50", description: "Transit Pass", postedAt: "2026-08-07" },
-          ];
-  const idPrefix =
-    parser === "csv" ? "0401-7d01-8d01" : parser === "ofx" ? "0402-7d02-8d02" : "0403-7d03-8d03";
-  return rows.map((row, index): MediaObject => ({
-    rnet_schema: "0.1",
-    uri: `rnet://object/0198f2a1-${idPrefix}-${String(index + 1).padStart(12, "0")}`,
-    owner: `rnet://id/${OWNER_ID}`,
-    type: "transaction",
-    elements: [],
-    keys:
-      parser === "simplefin"
-        ? {
-            simplefin_connection_id: "connection-1",
-            simplefin_account_id: "account-1",
-            simplefin_transaction_id: `transaction-${index + 1}`,
-          }
-        : { fitid: `${parser.toUpperCase()}-${index + 1}` },
-    source: {
-      ingest: { method: "parser", reproducible: true, skill: `${parser}@test` },
-      origins: [origin],
-      properties: {
-        amount: row.amount,
-        currency: "USD",
-        posted_at: row.postedAt,
-        raw_description: row.description,
-      },
-    },
-  }));
-}
-
-function verifyFor(parser: MockParser, historyRecovery = false) {
-  const candidateCount = parser === "arena" ? ARENA_BLOCKS.length : parser === "csv" ? 3 : 2;
-  if (parser === "arena") {
-    const elementBlocks = ARENA_BLOCKS.filter(hasArenaElement);
-    const elementCount = ARENA_BLOCKS.length + elementBlocks.length;
-    return {
-      ok: true,
-      source_record_count: candidateCount,
-      candidate_count: candidateCount,
-      nested_channel_count: 0,
-      element_count: elementCount,
-      total_element_bytes:
-        ARENA_BLOCKS.reduce((total, block) => total + Buffer.byteLength(block.title), 0) +
-        elementBlocks.reduce((total, block) => total + arenaPayload(block).byteLength, 0),
-      counts_by_block_type: { Attachment: 1, Image: 1, Link: 2, Text: 1 },
-      counts_by_element_kind: { document: 1, image: 2, text: 6 },
-      totals_by_currency: {} as Record<string, string>,
-      checks: [
-        {
-          name: "non_empty",
-          ok: true,
-          detail: `${candidateCount} importable top-level blocks`,
-        },
-        {
-          name: "record_count",
-          ok: true,
-          detail: `${candidateCount} top-level source records: ${candidateCount} blocks and 0 nested channels`,
-        },
-        {
-          name: "object_count",
-          ok: true,
-          detail: `${candidateCount} candidates from ${candidateCount} declared blocks`,
-        },
-        {
-          name: "required_fields",
-          ok: true,
-          detail: "Every candidate preserves its channel, block type, stable ID, and title",
-        },
-        {
-          name: "unique_block_ids",
-          ok: true,
-          detail: "Are.na block IDs are unique",
-        },
-        {
-          name: "connection_order",
-          ok: true,
-          detail: "Top-level source and candidate order matches the descending Are.na board order",
-        },
-        {
-          name: "element_accounting",
-          ok: true,
-          detail: `${elementCount} elements match their block types and roles`,
-        },
-        {
-          name: "element_integrity",
-          ok: true,
-          detail: `${elementCount} element payloads have matching MIME, size, and SHA-256`,
-        },
-      ],
-    };
-  }
-  const total = parser === "csv" ? "2410.25" : parser === "ofx" ? "2493.50" : "-91.75";
-  const checks = [
-    {
-      name: "object_count",
-      ok: true,
-      detail: `${candidateCount} candidates from ${candidateCount} source records`,
-    },
-    {
-      name: "required_fields",
-      ok: true,
-      detail: "Every transaction has amount and currency",
-    },
-    {
-      name: "unique_transaction_ids",
-      ok: true,
-      detail: "Transaction IDs are unique per account",
-    },
-    { name: "amount_totals", ok: true, detail: `USD ${total}` },
-  ];
-  if (parser === "simplefin") {
-    checks.push({
-      name: "provider_errors",
-      ok: true,
-      detail: "SimpleFIN returned no connection or account errors",
-    });
-    if (historyRecovery) {
-      checks.push({
-        name: "history_recovery",
-        ok: true,
-        detail:
-          "Owner-reviewed rebaseline resumes connected history at 2026-08-01T00:00:00.000Z after the previous balance at 2026-04-01T00:00:00.000Z",
-      });
-    }
-  }
-  return {
-    ok: true,
-    source_record_count: candidateCount,
-    candidate_count: candidateCount,
-    totals_by_currency: { USD: total },
-    checks,
-    ...(historyRecovery
-      ? {
-          history_recovery: {
-            mode: "rebaseline" as const,
-            reason: "simplefin_history_gap" as const,
-            previous_balance_at: "2026-04-01T00:00:00.000Z",
-            history_resumes_at: "2026-08-01T00:00:00.000Z",
-          },
-        }
-      : {}),
-  };
-}
-
 export interface MockOriginUpload {
   byteLength: number;
   document: OriginArtifact;
+  payload: Buffer;
 }
 
 interface MockImportOperation {
@@ -350,16 +76,19 @@ interface MockImportOperation {
   elements: MockStagedElement[];
   polls: number;
   source: string;
-  verify: {
-    ok: boolean;
-    source_record_count: number;
-    candidate_count: number;
-    totals_by_currency: Record<string, string>;
-    checks: Array<{ name: string; ok: boolean; detail: string }>;
-  };
+  verify: MockImportVerification;
 }
 
-interface MockStagedElement {
+export interface MockImportVerification {
+  ok: boolean;
+  source_record_count: number;
+  candidate_count: number;
+  totals_by_currency: Record<string, string>;
+  checks: Array<{ name: string; ok: boolean; detail: string }>;
+  readonly [key: string]: unknown;
+}
+
+export interface MockStagedElement {
   document: MediaElement;
   object_uri: string;
   preview_url: string;
@@ -367,51 +96,143 @@ interface MockStagedElement {
   payload: Buffer;
 }
 
-function arenaStagedElements(): MockStagedElement[] {
-  return ARENA_BLOCKS.flatMap((block, index) => {
-    const titleElementId = arenaTitleElementId(index);
-    const titlePayload = Buffer.from(block.title, "utf8");
-    const titleElement: MockStagedElement = {
-      document: {
-        rnet_schema: "0.1",
-        kind: "text",
-        uri: `rnet://element/${titleElementId}`,
-        owner: `rnet://id/${OWNER_ID}`,
-        content_hash: `sha256:${(index + 10).toString(16).repeat(64)}`,
-        mime: "text/plain",
-        bytes: `http://127.0.0.1/rnet/v0/elements/${titleElementId}/bytes`,
-        byte_size: titlePayload.byteLength,
-        created_at: "2026-08-28T12:00:02.000Z",
-      },
-      object_uri: `rnet://object/${block.objectId}`,
-      preview_url: `/rnet/v0/operations/${ARENA_IMPORT_OPERATION_ID}/elements/${titleElementId}/bytes`,
-      role: "title",
-      payload: titlePayload,
-    };
-    if (!hasArenaElement(block)) return [titleElement];
+export interface MockStagedImport {
+  candidates: MediaObject[];
+  elements?: MockStagedElement[];
+  verification: MockImportVerification;
+}
 
-    const payload = arenaPayload(block);
-    return [
-      titleElement,
-      {
-        document: {
-          rnet_schema: "0.1",
-          kind: block.kind,
-          uri: `rnet://element/${block.elementId}`,
-          owner: `rnet://id/${OWNER_ID}`,
-          content_hash: `sha256:${String(index + 1).repeat(64)}`,
-          mime: block.mime,
-          bytes: `http://127.0.0.1/rnet/v0/elements/${block.elementId}/bytes`,
-          byte_size: payload.byteLength,
-          created_at: "2026-08-28T12:00:02.000Z",
-        },
-        object_uri: `rnet://object/${block.objectId}`,
-        preview_url: `/rnet/v0/operations/${ARENA_IMPORT_OPERATION_ID}/elements/${block.elementId}/bytes`,
-        role: block.blockType === "Link" ? "preview" : "content",
-        payload,
-      },
-    ];
-  });
+export interface MockSourceActionDefinition {
+  detail: string;
+  operationError: string;
+  title: string;
+}
+
+export interface MockSourceCaptureContext {
+  nextSequence(skillId: string): number;
+  save(input: {
+    contentHash: string;
+    id: string;
+    label: string;
+    mime: string;
+    payload: string | Uint8Array;
+  }): OriginArtifact;
+}
+
+export interface MockSourceSkillAdapter {
+  readonly credentialId?: string;
+  readonly manifest: SourceSkillManifest;
+  readonly operationId: string;
+  readonly originUpload?: {
+    readonly contentHash: string;
+    readonly id: string;
+    accepts(input: { label: string; mime: string }): boolean;
+  };
+  readonly sourceAction?: MockSourceActionDefinition;
+  readonly sourceId: string;
+  capture?(context: MockSourceCaptureContext): OriginArtifact | Promise<OriginArtifact>;
+  connect?(
+    input: unknown,
+  ):
+    | { ok: true; publicMetadata?: JsonObject }
+    | { ok: false; detail: string }
+    | Promise<{ ok: true; publicMetadata?: JsonObject } | { ok: false; detail: string }>;
+  normalizeConfig?(input: unknown): { ok: true; value: JsonObject } | { ok: false; detail: string };
+  stage(input: {
+    actionResumed: boolean;
+    origin: MockOriginUpload;
+  }): MockStagedImport | Promise<MockStagedImport>;
+}
+
+export interface MockSourceActionRequest {
+  /** `null` models the delegated/redacted ownership boundary. */
+  readonly source: string | null;
+  readonly skillId: string;
+  readonly timing: "pull_problem" | "polled_operation";
+}
+
+export interface MockStoreOptions {
+  readonly sourceSkills?: readonly MockSourceSkillAdapter[];
+}
+
+export interface CredentialedSkillMockConformanceCase {
+  readonly adapter: MockSourceSkillAdapter;
+  readonly config?: unknown;
+  readonly invalidConnectionInput: unknown;
+  readonly validConnectionInput: unknown;
+}
+
+type JsonObject = Record<string, unknown>;
+
+/**
+ * Exercises the behavior every credentialed mock must provide, including rejected and accepted
+ * connection inputs, normalized source config, raw capture persistence, and staged VERIFY output.
+ */
+export async function runCredentialedSkillMockConformance({
+  adapter,
+  config,
+  invalidConnectionInput,
+  validConnectionInput,
+}: CredentialedSkillMockConformanceCase): Promise<void> {
+  if (
+    adapter.manifest.source_kind !== "credentialed_remote" ||
+    !adapter.manifest.connection ||
+    !adapter.credentialId ||
+    !adapter.connect ||
+    !adapter.capture ||
+    !adapter.normalizeConfig
+  ) {
+    throw new Error("Credentialed mock is missing its declared lifecycle capabilities");
+  }
+  const rejected = await adapter.connect(invalidConnectionInput);
+  if (rejected.ok || !rejected.detail) {
+    throw new Error(`${adapter.manifest.skill_id} accepted the invalid conformance credential`);
+  }
+  const connected = await adapter.connect(validConnectionInput);
+  if (!connected.ok) {
+    throw new Error(`${adapter.manifest.skill_id} rejected the valid conformance credential`);
+  }
+  const normalized = adapter.normalizeConfig(config);
+  if (!normalized.ok) {
+    throw new Error(`${adapter.manifest.skill_id} rejected the conformance source config`);
+  }
+
+  const uploads = new Map<string, MockOriginUpload>();
+  let sequence = 0;
+  const context: MockSourceCaptureContext = {
+    nextSequence() {
+      sequence += 1;
+      return sequence;
+    },
+    save({ contentHash, id, label, mime, payload }) {
+      const bytes = typeof payload === "string" ? Buffer.from(payload) : Buffer.from(payload);
+      const document = mockOriginDocument({
+        contentHash,
+        id,
+        label,
+        mime,
+        byteLength: bytes.byteLength,
+      });
+      uploads.set(id, { byteLength: bytes.byteLength, document, payload: bytes });
+      return document;
+    },
+  };
+  const captured = await adapter.capture(context);
+  const upload = uploads.get(captured.uri.split("/").at(-1) ?? "");
+  if (!upload || upload.byteLength === 0) {
+    throw new Error(`${adapter.manifest.skill_id} did not persist its conformance capture`);
+  }
+  const staged = await adapter.stage({ actionResumed: false, origin: upload });
+  if (
+    staged.verification.candidate_count !== staged.candidates.length ||
+    staged.verification.checks.length === 0
+  ) {
+    throw new Error(`${adapter.manifest.skill_id} produced inconsistent conformance VERIFY output`);
+  }
+}
+
+function isRecord(value: unknown): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export interface MockStore {
@@ -423,12 +244,12 @@ export interface MockStore {
   readonly origins: Map<string, MockOriginUpload>;
   readonly ingestionSources: Map<string, IngestionSourceDocument>;
   readonly sourceCredentials: Map<string, SourceCredentialDocument>;
+  /** Hold exactly the next ingestion-source creation until the returned release is called. */
+  holdNextIngestionSourceCreation: () => () => void;
   /** Hold exactly the next user-property write until the returned release function is called. */
   holdNextUserWrite: () => () => void;
-  /** Make exactly the next configured-source refresh return a SimpleFIN history-gap Problem. */
-  failNextPullWithSimpleFinHistoryGap: (source: string | null) => void;
-  /** Make the next refresh fail asynchronously with owner or redacted recovery metadata. */
-  failNextPullWithUnreconciledSimpleFinActivity: (source: string | null) => void;
+  /** Make exactly the next refresh require a registered skill's owner review action. */
+  requireNextSourceAction: (request: MockSourceActionRequest) => void;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -464,33 +285,61 @@ function noContent(route: Route) {
   return route.fulfill({ status: 204 });
 }
 
-function arenaChannelSlug(value: string): string | undefined {
-  try {
-    const url = new URL(value);
-    const parts = url.pathname.split("/").filter(Boolean);
-    return url.protocol === "https:" &&
-      ["are.na", "www.are.na"].includes(url.hostname.toLowerCase()) &&
-      parts.length === 2
-      ? parts[1]
-      : undefined;
-  } catch {
-    return undefined;
-  }
+function mockOriginDocument({
+  byteLength,
+  contentHash,
+  id,
+  label,
+  mime,
+}: {
+  byteLength: number;
+  contentHash: string;
+  id: string;
+  label: string;
+  mime: string;
+}): OriginArtifact {
+  return {
+    rnet_schema: "0.1",
+    uri: `rnet://origin/${id}`,
+    owner: `rnet://id/${OWNER_ID}`,
+    content_hash: contentHash,
+    mime,
+    bytes: `http://127.0.0.1/rnet/v0/origins/${id}/bytes`,
+    byte_size: byteLength,
+    label,
+    uploaded_at: "2026-08-28T12:00:01.000Z",
+  } satisfies OriginArtifact;
 }
 
 /**
  * A stateful Store boundary for browser tests that exercise the real generated client and Query
  * integration without sharing Postgres or object-storage state with the server suites.
  */
-export async function installMockStore(page: Page): Promise<MockStore> {
+export async function installMockStore(
+  page: Page,
+  { sourceSkills = [] }: MockStoreOptions = {},
+): Promise<MockStore> {
+  const installedSourceSkillAdapters = [...sourceSkills];
+  const installedSourceSkillsById = new Map(
+    installedSourceSkillAdapters.map((adapter) => [adapter.manifest.skill_id, adapter]),
+  );
+  if (installedSourceSkillsById.size !== installedSourceSkillAdapters.length) {
+    throw new Error("Mock source-skill registrations must have unique skill IDs");
+  }
+  let pendingIngestionSourceCreation: Promise<void> | null = null;
   let pendingUserWrite: Promise<void> | null = null;
   let pullOperation: Record<string, unknown> | undefined;
-  let nextSimpleFinHistoryGapSource: string | null | undefined;
-  let nextUnreconciledSimpleFinSource: string | null | undefined;
+  let nextSourceAction: MockSourceActionRequest | undefined;
   let pendingPullFailureResult: Record<string, unknown> | undefined;
-  let simpleFinOriginSequence = 0;
+  let pendingPullFailureError: string | undefined;
+  let continuationSequence = 0;
   const importOperations = new Map<string, MockImportOperation>();
   const sourceCredentialBindings = new Map<string, string>();
+  const captureSequences = new Map<string, number>();
+  const continuations = new Map<
+    string,
+    { readonly skillId: string; readonly source: string; readonly vibeId: string }
+  >();
   const elementPayloads = new Map<string, Buffer<ArrayBufferLike>>([
     [ELEMENT_ID, Buffer.from(PAYLOAD_TEXT)],
   ]);
@@ -503,6 +352,16 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     origins: new Map(),
     ingestionSources: new Map(),
     sourceCredentials: new Map(),
+    holdNextIngestionSourceCreation: () => {
+      if (pendingIngestionSourceCreation) {
+        throw new Error("An ingestion-source creation is already held");
+      }
+      let release!: () => void;
+      pendingIngestionSourceCreation = new Promise((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
     holdNextUserWrite: () => {
       if (pendingUserWrite) throw new Error("A user-property write is already held");
       let release!: () => void;
@@ -511,92 +370,60 @@ export async function installMockStore(page: Page): Promise<MockStore> {
       });
       return release;
     },
-    failNextPullWithSimpleFinHistoryGap: (source) => {
-      nextSimpleFinHistoryGapSource = source;
-    },
-    failNextPullWithUnreconciledSimpleFinActivity: (source) => {
-      nextUnreconciledSimpleFinSource = source;
+    requireNextSourceAction: (request) => {
+      const adapter = installedSourceSkillsById.get(request.skillId);
+      if (!adapter?.sourceAction) {
+        throw new Error(`Mock source skill ${request.skillId} has no review action`);
+      }
+      if (nextSourceAction) throw new Error("A mock source action is already queued");
+      nextSourceAction = request;
     },
   };
 
-  function fetchSimpleFinOrigin(): OriginArtifact {
-    simpleFinOriginSequence += 1;
-    const id = `0198f2a1-0901-7101-a001-${String(simpleFinOriginSequence).padStart(12, "0")}`;
-    const payload = JSON.stringify({
-      errlist: [],
-      connections: [
-        {
-          conn_id: "connection-1",
-          name: "Demo bank",
-          org_id: "demo-bank",
-          sfin_url: "https://demo.invalid/simplefin",
-        },
-      ],
-      accounts: [
-        {
-          id: "account-1",
-          conn_id: "connection-1",
-          name: "Checking",
-          currency: "USD",
-          balance: "1200.00",
-          "balance-date": 1786128000,
-          transactions: [
-            {
-              id: "transaction-1",
-              posted: 1785974400,
-              amount: "-64.25",
-              description: "Grocery Co-op",
-            },
-            {
-              id: "transaction-2",
-              posted: 1786060800,
-              amount: "-27.50",
-              description: "Transit Pass",
-            },
-          ],
-        },
-      ],
-    });
-    const document = {
-      rnet_schema: "0.1",
-      uri: `rnet://origin/${id}`,
-      owner: `rnet://id/${OWNER_ID}`,
-      content_hash: `sha256:${String(simpleFinOriginSequence).padStart(64, "e")}`,
-      mime: "application/json",
-      bytes: `http://127.0.0.1/rnet/v0/origins/${id}/bytes`,
-      byte_size: Buffer.byteLength(payload),
-      label: "SimpleFIN accounts response",
-      uploaded_at: "2026-08-28T12:00:01.000Z",
-    } satisfies OriginArtifact;
-    store.origins.set(id, { byteLength: Buffer.byteLength(payload), document });
-    return document;
-  }
+  const captureContext: MockSourceCaptureContext = {
+    nextSequence(skillId) {
+      const sequence = (captureSequences.get(skillId) ?? 0) + 1;
+      captureSequences.set(skillId, sequence);
+      return sequence;
+    },
+    save({ contentHash, id, label, mime, payload }) {
+      const bytes = typeof payload === "string" ? Buffer.from(payload) : Buffer.from(payload);
+      const document = mockOriginDocument({
+        byteLength: bytes.byteLength,
+        contentHash,
+        id,
+        label,
+        mime,
+      });
+      store.origins.set(id, { byteLength: bytes.byteLength, document, payload: bytes });
+      return document;
+    },
+  };
 
-  function fetchArenaOrigin(): OriginArtifact {
-    const payload = JSON.stringify({
-      id: 5_549_005,
-      slug: "love-always-wins",
-      title: "Love always wins",
-      contents: ARENA_BLOCKS.map((block) => ({
-        id: Number(block.blockId),
-        type: "Image",
-        title: block.title,
-        position: block.position,
-      })),
+  function actionExtensions(
+    request: MockSourceActionRequest,
+    vibeId: string,
+  ): Record<string, unknown> {
+    const adapter = installedSourceSkillsById.get(request.skillId);
+    if (!adapter?.sourceAction) throw new Error(`Missing action for ${request.skillId}`);
+    if (!request.source) return { owner_action_required: true, action: "review_import" };
+
+    continuationSequence += 1;
+    const continuationToken = `mock-continuation-${String(continuationSequence).padStart(4, "0")}-${"x".repeat(32)}`;
+    continuations.set(continuationToken, {
+      skillId: request.skillId,
+      source: request.source,
+      vibeId,
     });
-    const document = {
-      rnet_schema: "0.1",
-      uri: `rnet://origin/${ARENA_ORIGIN_ID}`,
-      owner: `rnet://id/${OWNER_ID}`,
-      content_hash: `sha256:${"f".repeat(64)}`,
-      mime: "application/json",
-      bytes: `http://127.0.0.1/rnet/v0/origins/${ARENA_ORIGIN_ID}/bytes`,
-      byte_size: Buffer.byteLength(payload),
-      label: "arena-love-always-wins.json",
-      uploaded_at: "2026-08-28T12:00:01.000Z",
-    } satisfies OriginArtifact;
-    store.origins.set(ARENA_ORIGIN_ID, { byteLength: Buffer.byteLength(payload), document });
-    return document;
+    const requiredAction = {
+      kind: "source_action_required",
+      action: "review_import",
+      title: adapter.sourceAction.title,
+      detail: adapter.sourceAction.detail,
+      source: request.source,
+      continuation_token: continuationToken,
+    } satisfies SourceActionRequired;
+    return { required_action: requiredAction };
   }
 
   await page.route("**/rnet/v0/**", async (route) => {
@@ -626,40 +453,52 @@ export async function installMockStore(page: Page): Promise<MockStore> {
       return json(route, vibe, 201);
     }
 
+    if (method === "GET" && path === "/rnet/v0/source-skills") {
+      return json(route, {
+        skills: installedSourceSkillAdapters.map((adapter) => adapter.manifest),
+      });
+    }
+
     if (method === "POST" && path === "/rnet/v0/origins") {
-      const label = request.headers()["x-rnet-label"] ?? "transaction-export";
-      const extension = label.toLowerCase().split(".").at(-1);
-      const parser: MockFileParser = extension === "qfx" || extension === "ofx" ? "ofx" : "csv";
-      const id = parser === "csv" ? CSV_ORIGIN_ID : OFX_ORIGIN_ID;
-      const body = request.postDataBuffer();
-      const document = {
-        rnet_schema: "0.1",
-        uri: `rnet://origin/${id}`,
-        owner: `rnet://id/${OWNER_ID}`,
-        content_hash: `sha256:${parser === "csv" ? "a".repeat(64) : "b".repeat(64)}`,
-        mime: request.headers()["content-type"] ?? "application/octet-stream",
-        bytes: `http://127.0.0.1/rnet/v0/origins/${id}/bytes`,
-        byte_size: body?.byteLength ?? 0,
+      const label = request.headers()["x-rnet-label"] ?? "source-upload";
+      const mime = request.headers()["content-type"] ?? "application/octet-stream";
+      const upload = installedSourceSkillAdapters
+        .map((adapter) => adapter.originUpload)
+        .find((candidate) => candidate?.accepts({ label, mime }));
+      if (!upload) {
+        return problem(route, 422, "schema_violation", "No installed source accepts this file");
+      }
+      const payload = request.postDataBuffer() ?? Buffer.alloc(0);
+      const document = mockOriginDocument({
+        byteLength: payload.byteLength,
+        contentHash: upload.contentHash,
+        id: upload.id,
         label,
-        uploaded_at: "2026-08-28T12:00:00.000Z",
-      } satisfies OriginArtifact;
-      store.origins.set(id, { byteLength: body?.byteLength ?? 0, document });
+        mime,
+      });
+      store.origins.set(upload.id, {
+        byteLength: payload.byteLength,
+        document,
+        payload: Buffer.from(payload),
+      });
       return json(route, document, 201);
     }
 
-    if (method === "POST" && path === "/rnet/v0/source-credentials/simplefin") {
-      const input = request.postDataJSON() as { setup_token: string };
-      if (input.setup_token === COMPROMISED_SIMPLEFIN_TOKEN) {
-        return problem(
-          route,
-          422,
-          "source_connection_failed",
-          "SimpleFIN rejected this setup token. It may be compromised; disable it in SimpleFIN Bridge and create a new one.",
-        );
+    const sourceCredentialPath = path.match(/^\/rnet\/v0\/source-credentials\/([^/]+)$/);
+    if (method === "POST" && sourceCredentialPath) {
+      const skillId = decodeURIComponent(sourceCredentialPath[1] ?? "");
+      const adapter = installedSourceSkillsById.get(skillId);
+      if (!adapter?.connect || !adapter.credentialId) {
+        return problem(route, 404, "not_found", "The source skill does not exist");
+      }
+      const connection = await adapter.connect(request.postDataJSON());
+      if (!connection.ok) {
+        return problem(route, 422, "source_connection_failed", connection.detail);
       }
       const document = {
-        credential: `credential:${SIMPLEFIN_CREDENTIAL_ID}`,
-        provider: "simplefin",
+        credential: `credential:${adapter.credentialId}`,
+        skill_id: adapter.manifest.skill_id,
+        connector_version: adapter.manifest.connector_version,
         status: "active",
         connected_at: "2026-08-28T12:00:00.000Z",
       } satisfies SourceCredentialDocument;
@@ -668,64 +507,68 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     }
 
     if (method === "POST" && path === "/rnet/v0/ingestion-sources") {
-      const input = request.postDataJSON() as
-        | { origin: string; parser: MockFileParser }
-        | { provider: "arena"; channel_url: string }
-        | {
-            credential: string;
-            config?: {
-              accounts?: Array<{ connection_id: string; account_id: string }>;
-              include_pending?: boolean;
-            };
-          };
-      if ("provider" in input) {
-        const channelSlug = arenaChannelSlug(input.channel_url);
-        if (!channelSlug) {
-          return problem(route, 422, "schema_violation", "Enter a public Are.na channel URL");
-        }
-        const document = {
-          source: `source:${ARENA_IMPORT_SOURCE_ID}`,
-          kind: "remote",
-          provider: "arena",
-          parser: "arena",
-          parser_version: "arena@1.1.0",
-          config: { channel_slug: channelSlug },
-          created_at: "2026-08-28T12:00:01.000Z",
-        } satisfies IngestionSourceDocument;
-        store.ingestionSources.set(document.source, document);
-        return json(route, document, 201);
+      const gate = pendingIngestionSourceCreation;
+      pendingIngestionSourceCreation = null;
+      if (gate) await gate;
+      const input: unknown = request.postDataJSON();
+      if (!isRecord(input)) {
+        return problem(route, 422, "schema_violation", "The source request must be an object");
       }
-      if ("credential" in input) {
-        const credential = store.sourceCredentials.get(input.credential);
+
+      let adapter: MockSourceSkillAdapter | undefined;
+      let config: unknown;
+      let credentialId: string | undefined;
+      let origin: string | undefined;
+
+      if (typeof input.credential === "string") {
+        credentialId = input.credential;
+        const credential = store.sourceCredentials.get(credentialId);
         if (!credential || credential.status !== "active") {
           return problem(route, 404, "not_found", "The source credential does not exist");
         }
-        const document = {
-          source: `source:${SIMPLEFIN_IMPORT_SOURCE_ID}`,
-          kind: "credential",
-          parser: "simplefin",
-          parser_version: "simplefin@2.0.0",
-          config: input.config ?? {},
-          created_at: "2026-08-28T12:00:01.000Z",
-        } satisfies IngestionSourceDocument;
-        store.ingestionSources.set(document.source, document);
-        sourceCredentialBindings.set(document.source, input.credential);
-        return json(route, document, 201);
+        adapter = installedSourceSkillsById.get(credential.skill_id);
+        config = input.config;
+      } else if (typeof input.skill_id === "string") {
+        adapter = installedSourceSkillsById.get(input.skill_id);
+        origin = typeof input.origin === "string" ? input.origin : undefined;
+        config = input.config;
       }
-      const originId = input.origin.split("/").at(-1) ?? "";
-      if (!store.origins.has(originId)) {
-        return problem(route, 404, "not_found", "The OriginArtifact does not exist");
-      }
-      const id = input.parser === "csv" ? CSV_IMPORT_SOURCE_ID : OFX_IMPORT_SOURCE_ID;
-      const document = {
-        source: `source:${id}`,
-        kind: "origin",
-        parser: input.parser,
-        parser_version: input.parser === "csv" ? "csv@1.1.0" : "ofx@1.1.0",
-        origin: input.origin,
+
+      if (!adapter) return problem(route, 404, "not_found", "The source skill does not exist");
+      const manifest = adapter.manifest;
+      const source = `source:${adapter.sourceId}` as const;
+      const common = {
+        source,
+        skill_id: manifest.skill_id,
+        connector_version: manifest.connector_version,
+        parser: manifest.parser.name,
+        parser_version: manifest.parser.version,
         created_at: "2026-08-28T12:00:01.000Z",
-      } satisfies IngestionSourceDocument;
-      store.ingestionSources.set(document.source, document);
+      } as const;
+
+      let document: IngestionSourceDocument;
+      if (manifest.source_kind === "file") {
+        const originId = origin?.split("/").at(-1) ?? "";
+        if (!origin || !store.origins.has(originId)) {
+          return problem(route, 404, "not_found", "The OriginArtifact does not exist");
+        }
+        document = { ...common, kind: "origin", origin };
+      } else {
+        const normalized = adapter.normalizeConfig?.(config) ?? { ok: true as const, value: {} };
+        if (!normalized.ok) {
+          return problem(route, 422, "schema_violation", normalized.detail);
+        }
+        if (manifest.source_kind === "credentialed_remote") {
+          if (!credentialId) {
+            return problem(route, 422, "schema_violation", "A source credential is required");
+          }
+          document = { ...common, kind: "credential", config: normalized.value };
+          sourceCredentialBindings.set(source, credentialId);
+        } else {
+          document = { ...common, kind: "remote", config: normalized.value };
+        }
+      }
+      store.ingestionSources.set(source, document);
       return json(route, document, 201);
     }
 
@@ -788,31 +631,47 @@ export async function installMockStore(page: Page): Promise<MockStore> {
       const input: CreateImportPreviewRequest = request.postDataJSON();
       const source = store.ingestionSources.get(input.source);
       if (!source) return problem(route, 404, "not_found", "The ingestion source does not exist");
-      let origin: string;
+      const adapter = installedSourceSkillsById.get(source.skill_id);
+      if (!adapter) return problem(route, 404, "not_found", "The source skill does not exist");
+
       if (source.kind === "credential") {
         const credentialId = sourceCredentialBindings.get(source.source);
         const credential = credentialId ? store.sourceCredentials.get(credentialId) : undefined;
         if (!credential || credential.status !== "active") {
           return problem(route, 404, "not_found", "The source credential does not exist");
         }
-        origin = fetchSimpleFinOrigin().uri;
-      } else if (source.kind === "remote") {
-        origin = fetchArenaOrigin().uri;
-      } else {
-        origin = source.origin;
       }
-      const parser = source.parser;
-      const operationId =
-        parser === "csv"
-          ? CSV_IMPORT_OPERATION_ID
-          : parser === "ofx"
-            ? OFX_IMPORT_OPERATION_ID
-            : parser === "arena"
-              ? ARENA_IMPORT_OPERATION_ID
-              : SIMPLEFIN_IMPORT_OPERATION_ID;
-      const candidates = importCandidates(parser, origin);
-      const verify = verifyFor(parser, parser === "simplefin" && input.rebaseline === true);
-      const elements = parser === "arena" ? arenaStagedElements() : [];
+
+      let actionResumed = false;
+      if (input.continuation_token) {
+        const continuation = continuations.get(input.continuation_token);
+        if (
+          !continuation ||
+          continuation.source !== source.source ||
+          continuation.skillId !== adapter.manifest.skill_id ||
+          continuation.vibeId !== vibeImports[1]
+        ) {
+          return problem(route, 422, "schema_violation", "The continuation is invalid or expired");
+        }
+        continuations.delete(input.continuation_token);
+        actionResumed = true;
+      }
+
+      const captured =
+        source.kind === "origin" ? undefined : await adapter.capture?.(captureContext);
+      if (source.kind !== "origin" && !captured) {
+        return problem(route, 422, "source_fetch_failed", "The source could not be captured");
+      }
+      const origin = source.kind === "origin" ? source.origin : captured!.uri;
+      const originUpload = store.origins.get(origin.split("/").at(-1) ?? "");
+      if (!originUpload) {
+        return problem(route, 404, "not_found", "The OriginArtifact does not exist");
+      }
+      const operationId = adapter.operationId;
+      const staged = await adapter.stage({ actionResumed, origin: originUpload });
+      const candidates = staged.candidates;
+      const verify = staged.verification;
+      const elements = staged.elements ?? [];
       const document = {
         operation_id: operationId,
         kind: "pull",
@@ -820,7 +679,7 @@ export async function installMockStore(page: Page): Promise<MockStore> {
         request: {
           mode: "import_preview",
           source: source.source,
-          rebaseline: input.rebaseline ?? false,
+          ...(actionResumed ? { action: "review_import" } : {}),
         },
         result: null,
         error: null,
@@ -841,31 +700,23 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     if (method === "POST" && vibePull) {
       const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${vibePull[1]}`));
       if (!vibe) return problem(route, 404, "not_found", "The Vibe does not exist");
-      if (nextSimpleFinHistoryGapSource !== undefined) {
-        const source = nextSimpleFinHistoryGapSource;
-        nextSimpleFinHistoryGapSource = undefined;
-        return problem(
-          route,
-          422,
-          "simplefin_history_gap",
-          "The previous connected balance cannot be reconciled inside SimpleFIN's history window.",
-          source ? { source, recovery: "reviewed_rebaseline" } : {},
-        );
-      }
-      if (nextUnreconciledSimpleFinSource !== undefined) {
-        const source = nextUnreconciledSimpleFinSource;
-        nextUnreconciledSimpleFinSource = undefined;
-        pendingPullFailureResult = source
-          ? {
-              code: "simplefin_history_gap",
-              reason: "unreconciled_backdated_activity",
-              recovery: "reviewed_rebaseline",
-              source,
-            }
-          : {
-              code: "simplefin_history_gap",
-              recovery: "owner_reviewed_rebaseline",
-            };
+      if (nextSourceAction) {
+        const actionRequest = nextSourceAction;
+        nextSourceAction = undefined;
+        const adapter = installedSourceSkillsById.get(actionRequest.skillId);
+        if (!adapter?.sourceAction) throw new Error(`Missing action for ${actionRequest.skillId}`);
+        const extensions = actionExtensions(actionRequest, vibePull[1] ?? "");
+        const publicDetail = actionRequest.source
+          ? adapter.sourceAction.detail
+          : "The connected source owner must review an import before pulling again.";
+        if (actionRequest.timing === "pull_problem") {
+          return problem(route, 422, "source_action_required", publicDetail, extensions);
+        }
+
+        pendingPullFailureResult = { code: "source_action_required", ...extensions };
+        pendingPullFailureError = actionRequest.source
+          ? adapter.sourceAction.operationError
+          : publicDetail;
         pullOperation = {
           operation_id: PULL_OPERATION_ID,
           kind: "pull",
@@ -879,11 +730,8 @@ export async function installMockStore(page: Page): Promise<MockStore> {
       }
       for (const sourceId of vibe.pull?.sources ?? []) {
         const source = store.ingestionSources.get(sourceId);
-        if (source?.kind === "credential") {
-          fetchSimpleFinOrigin();
-        } else if (source?.kind === "remote") {
-          fetchArenaOrigin();
-        }
+        if (!source || source.kind === "origin") continue;
+        await installedSourceSkillsById.get(source.skill_id)?.capture?.(captureContext);
       }
       pullOperation = {
         operation_id: PULL_OPERATION_ID,
@@ -943,10 +791,10 @@ export async function installMockStore(page: Page): Promise<MockStore> {
       if (operationDocument[1] === PULL_OPERATION_ID && pullOperation && pendingPullFailureResult) {
         pullOperation.status = "failed";
         pullOperation.result = pendingPullFailureResult;
-        pullOperation.error =
-          "The connected account balances cannot be reconciled with the returned transaction history.";
+        pullOperation.error = pendingPullFailureError ?? "The source requires owner review.";
         pullOperation.finished_at = "2026-08-27T12:03:00.100Z";
         pendingPullFailureResult = undefined;
+        pendingPullFailureError = undefined;
       }
       return operationDocument[1] === PULL_OPERATION_ID && pullOperation
         ? json(route, pullOperation)

@@ -1,6 +1,6 @@
 import { sourceSkillManifestsResponseSchema } from "@rhizome/store-contract";
 
-import type { SourceSkillManifestCatalog } from "../../../ingest/connected-sources/types.ts";
+import type { SourceSkillManifestCatalog } from "../../../ingest/source-skills/manifest-catalog.ts";
 import { jsonSchema } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 

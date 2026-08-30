@@ -397,7 +397,8 @@ CREATE TABLE credentials (
 CREATE TABLE source_credentials (
   uuid          UUID PRIMARY KEY,       -- UUIDv7
   user_uuid     UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
-  provider      TEXT NOT NULL,          -- 'simplefin' | …
+  skill_id      TEXT NOT NULL,          -- free-form runtime source-skill catalog key
+  connector_version TEXT NOT NULL,      -- immutable implementation pin
   secret        BYTEA NOT NULL,         -- encrypted at rest
   metadata      JSONB,                  -- account ids, scopes, expiry
   connected_at  TIMESTAMPTZ NOT NULL,
@@ -408,13 +409,14 @@ CREATE TABLE source_credentials (
 -- Owner-only product bindings used by pull_config. File sources point at the
 -- immutable uploaded origin; credentialed and allowlisted public-remote sources
 -- mint a fresh OriginArtifact from every fetched response before parsing.
--- Neither credentials nor provider configuration enter a Vibe document.
+-- Neither credentials nor source-skill configuration enter a Vibe document.
 CREATE TABLE ingestion_sources (
   uuid          UUID PRIMARY KEY,       -- serialized as the opaque "source:{uuid}"
   owner_uuid    UUID NOT NULL REFERENCES users(uuid) ON DELETE CASCADE,
   kind          TEXT NOT NULL CHECK (kind IN ('origin','credential','remote')),
-  provider      TEXT,                    -- allowlisted public remote: 'arena' | …
-  parser        TEXT NOT NULL,           -- 'csv' | 'ofx' | 'simplefin' | 'arena' | …
+  skill_id      TEXT NOT NULL,           -- runtime catalog key; deliberately not a DB enum
+  connector_version TEXT NOT NULL,       -- retrieval/config implementation pin
+  parser        TEXT NOT NULL,           -- parser implementation name
   parser_version TEXT NOT NULL,          -- code/config digest pinned for review
   origin_uuid   UUID,
   credential_uuid UUID,
@@ -422,13 +424,13 @@ CREATE TABLE ingestion_sources (
   created_at    TIMESTAMPTZ NOT NULL,
   revoked_at    TIMESTAMPTZ,
   CHECK (
-    (kind = 'origin' AND origin_uuid IS NOT NULL AND credential_uuid IS NULL AND provider IS NULL) OR
-    (kind = 'credential' AND credential_uuid IS NOT NULL AND origin_uuid IS NULL AND provider IS NULL) OR
-    (kind = 'remote' AND origin_uuid IS NULL AND credential_uuid IS NULL AND provider IS NOT NULL)
+    (kind = 'origin' AND origin_uuid IS NOT NULL AND credential_uuid IS NULL) OR
+    (kind = 'credential' AND credential_uuid IS NOT NULL AND origin_uuid IS NULL) OR
+    (kind = 'remote' AND origin_uuid IS NULL AND credential_uuid IS NULL)
   ),
   FOREIGN KEY (origin_uuid, owner_uuid) REFERENCES origins(uuid, owner_uuid),
-  FOREIGN KEY (credential_uuid, owner_uuid)
-    REFERENCES source_credentials(uuid, user_uuid)
+  FOREIGN KEY (credential_uuid, owner_uuid, skill_id, connector_version)
+    REFERENCES source_credentials(uuid, user_uuid, skill_id, connector_version)
 );
 
 CREATE TABLE sessions (                 -- Better Auth-managed
@@ -492,14 +494,18 @@ Semantics that must be real even in alpha:
 - Objects are rejected at POST unless the `source` block passes **schema** validation — enforced from M1.
 - **Ingest-record conformance** (spec §2.3: `parser_hash` required when `generated_parser`, `reproducible: false` forced when `agent`) is enforced from **M5**, when the record first has more than one reachable value. Until then it is a constant stamp — `{method: "parser", reproducible: true}` for ingested objects, `{method: "authored", reproducible: false}` for authored ones — and POST does not reject on it. Log this in `CONFORMANCE.md`.
 
-**M2 source and reviewed-commit contract.** The owner-facing host creates an owner-only `ingestion_source` before starting a file, credentialed-provider, or public-remote preview. A file source pins an immutable OriginArtifact plus parser version; a credential source pins a credential reference and parser version; a remote source pins an allowlisted provider plus a validated opaque locator, never an arbitrary fetch URL. Every provider fetch first stores its response as a new immutable OriginArtifact. A Vibe's `pull_config.sources` contains only opaque `source:{uuid}` identifiers. Composite database constraints require a source and its referenced origin or credential to have the same owner; resolution also rejects revoked sources, revoked credentials, tombstoned origins, unsupported remote providers, and any source whose owner differs from the target Vibe. Credentials and remote provider configuration never enter `pull_config` or an operation result. Canceling an import retains the owner-only source and origin for retry/audit but does not add the source to the Vibe's pull configuration.
+**M2 source and reviewed-commit contract.** The owner-facing host creates an owner-only `ingestion_source` before starting a file, credentialed-remote, or public-remote preview. A file source pins an immutable OriginArtifact; credentialed and public sources pin their source-skill id, connector version, parser name, and parser version. `skill_id` is free-form storage validated against the installed runtime catalog, not a provider enum: installing a skill does not require a database migration. Exactly one current implementation creates new sources, while older fully pinned implementations may remain installed so existing sources stay replayable. Every remote fetch first stores its response as a new immutable OriginArtifact. A Vibe's `pull_config.sources` contains only opaque `source:{uuid}` identifiers. Composite database constraints require a source and its referenced origin or credential to have the same owner and skill/connector identity; resolution also rejects revoked sources, revoked credentials, tombstoned origins, unavailable implementation pins, and any source whose owner differs from the target Vibe. Credentials and source configuration never enter `pull_config` or a public operation result. Canceling an import retains the owner-only source and origin for retry/audit but does not add the source to the Vibe's pull configuration.
+
+Each installed source skill publishes a serializable manifest—label, source kind, connector/parser versions, input fields with explicit secret markers, and supported review actions—beside its executable capability. Registration rejects any form the generic host cannot serialize: a file skill has exactly one required source file field, public-remote skills expose only non-secret source configuration, remote skills cannot declare file controls, and every credential field's control and requiredness must match the skill's closed server-side request schema. The host lists these manifests, renders one selected form generically, sends connection fields to `POST /source-credentials/{skill_id}`, and never imports provider TypeScript. Optional unchecked booleans are omitted so skill-owned server defaults remain authoritative. A skill that needs owner review raises a server-internal action; the server returns only `source_action_required`, `review_import`, and an opaque short-lived continuation bound to the actor, Vibe, source, state digest, and expiry. The host displays the supplied title/detail and submits the token without interpreting provider state or constructing a provider-specific override.
 
 A reviewed import is two-step, and confirmation never reruns the parser. The completed preview operation stores immutable candidate documents, any staged element manifests, the VERIFY report, the source/parser digest, and a digest over that staged result. Element manifests bind ordered element UUIDs, kinds, MIME types, byte sizes, and content hashes; semantic comparison uses the content hashes rather than minted UUIDs so an unchanged pull does not churn objects. Confirmation supplies that preview operation ID. In one transaction the store locks it, verifies the actor and Vibe, checks that the review succeeded, that its source/parser digest is still current, and that it has not already been consumed, then creates the staged MediaElement records, object-element joins, objects, and Vibe membership and adds the source to `pull_config` atomically before marking the review committed. A wrong-Vibe, stale, failed, canceled, or already-consumed review creates none of those records. Content-addressed element blobs may be staged for preview and are unreachable until confirmation; ordinary reference-aware staged-payload collection handles abandoned bytes.
 
 This initial review is an **owner-only Rhizome import binding**, not the protocol's `pull` operation:
 
-- `POST /ingestion-sources` accepts an owned OriginArtifact plus a registered parser name, an owned source credential plus non-secret provider configuration, or an allowlisted public remote provider plus its validated locator. In M2, `arena` is the only remote provider and accepts a channel ID or slug normalized from an Are.na channel URL. The store chooses and returns the pinned parser version and opaque source ID; callers cannot supply a code digest, credential owner, hostname, or request URL.
+- `GET /source-skills` returns only immutable data manifests for the current installed skills; executable connectors, parsers, verifiers, state digests, and network policies remain server-side.
+- `POST /ingestion-sources` accepts an owned OriginArtifact plus `skill_id`, an owned source credential plus non-secret skill configuration, or a public-remote `skill_id` plus its skill-validated configuration. The store chooses and returns the connector/parser pins and opaque source ID; callers cannot supply a code digest, credential owner, network policy, hostname, or implementation version.
 - `POST /vibes/{id}/imports` accepts `{ source }`, starts an asynchronous `kind: "pull"` operation with `request.mode: "import_preview"`, and returns that `Operation`. This reuses the ingestion job lifecycle without pretending the protocol pull route was invoked. Its completed result is `{ candidates, elements, verify, review_digest }`; `elements` contains staged metadata and owner-authorized preview URLs, never inline payload bytes. The ordinary operation polling route reports progress and completion.
+- When a configured source needs explicit owner review, a new preview accepts `{ source, continuation_token }`. The token is an opaque bearer; the server revalidates its bindings and re-snapshots source state before any provider request. Confirmation also verifies action evidence, so UI text or a forged request cannot bypass the review.
 - `POST /vibes/{id}/imports/{operation_id}/confirm` has no request body. It synchronously consumes the staged result in the transaction described above and returns the updated Vibe. Confirmation is intentionally not a second parser job.
 - `POST /vibes/{id}/pull` remains the protocol operation: it asynchronously refreshes only sources already present in `pull_config.sources` and never changes that configuration.
 
@@ -526,6 +532,8 @@ Results are written under the store's writer namespace (`rhizome:{task}`). A dMa
 ### 5.2 Ingestion: skills, agent, sediment
 
 Ingestion skills live in `rhizome/apps/ingest/skills/`, one directory per skill, in our own format — a thin adapter registers them with Pi, so they are not coupled to any harness.
+
+The checked-in installation list is a bootstrap seam, not the long-term distribution mechanism. Catalog consumers depend on manifests and typed capability interfaces, so discovery can later be generated from installed packages—or backed by separately versioned skill packages—without changing the database or host. Registration remains fail-closed: it validates manifest/config consistency, complete implementation pins, connector/fetch behavior, parser, verifier, state digest, and declared egress capabilities before a skill can execute.
 
 **Skills live in two places, with different rules — the distinction is where a skill _executes_, not who wrote it.**
 
@@ -554,7 +562,7 @@ skills/ofx/                          # M2: QFX/OFX file-origin fallback
 skills/arena/                        # M2: public Are.na v3 channel → element-bearing objects
 ├── SKILL.md        # top-level Blocks → arena.block objects; stable ids, order, authorship
 ├── VERIFY.md       # block accounting; unique ids; element kind/MIME/hash/bytes invariants
-├── BOUNDARIES.md   # read-only api.are.na v3 + approved Are.na asset hosts; no link crawling
+├── BOUNDARIES.md   # fixed read-only api.are.na v3 + shared safe-public asset fetch; no crawling
 └── scripts/
     └── parse-arena.ts              # deterministic → method: "parser"
 ```
@@ -582,9 +590,9 @@ Keep the supported CSV/QFX upload path alive as the fallback: it exercises user-
 
 **M2 host file flow:** from “start something new” or an existing Vibe, choose or create the target Vibe → select a supported CSV or QFX/OFX file → store its bytes as an owner-only OriginArtifact → create its source binding → run schema validation and VERIFY through an import-preview operation → show the candidate transactions and reconciliation → cancel or confirm the staged review. Before confirmation, no derived objects, Vibe membership, or pull configuration are committed. Confirmation atomically commits the reviewed result and adds the source to the target Vibe; cancellation or failed validation commits neither. The owner-only source and origin remain retained for audit, retry, or re-ingestion. Later refreshes of that configured source use ordinary `pull`.
 
-**M2 Are.na media flow:** paste a public Are.na channel URL, choose or create the target Vibe, and create a read-only `arena` remote source for exactly that channel. The server calls only the Are.na v3 channel and paginated contents endpoints with bounded page, byte, redirect, and time limits. One framed `arena-capture@1` OriginArtifact retains the exact channel response, exact contents-page bodies, and exact approved asset bodies with their source URLs and content types before canonical parsing; the parser and a later re-run never depend on the live channel. M2 deliberately excludes private channels and OAuth.
+**M2 Are.na media flow:** paste a public Are.na channel URL, choose or create the target Vibe, and create a read-only `arena` source for exactly that channel. The page URL is a semantic locator only: the skill extracts and validates its owner/channel slugs, then calls fixed unauthenticated `https://api.are.na/v3/channels/...` endpoints rather than fetching or scraping the supplied HTML page. One framed capture retains the exact channel response, exact paginated-contents bodies, and exact referenced asset bodies with their request/redirect/final provenance before canonical parsing; the parser and a later re-run never depend on the live channel. M2 deliberately excludes private channels and OAuth.
 
-Each available top-level Are.na Block becomes one custom `arena.block` MediaObject, preserving channel order. `keys.arena_block_id` supplies stable identity; source properties retain the block subtype, title, author attribution, timestamps, and connection position. The Rhizome owner is always the authenticated importing user, never the remote author. Every object starts with a `text/plain` title MediaElement whose bytes exactly equal its canonical title; a deterministic fallback is used when Are.na omits one. Directly consumable payloads follow that title: original Markdown becomes a `text` element, original images become `image` elements, and attachments map by validated MIME to `image`, `audio`, `video`, or `document`. Link and embed destinations remain keys/properties; the importer never crawls destination pages or executes provider HTML, and only a preview served from an approved Are.na asset host may become an `image` element. Nested channels are counted in VERIFY but not traversed recursively; pending or failed Blocks reject the capture rather than disappearing silently.
+Each available top-level Are.na Block becomes one custom `arena.block` MediaObject, preserving channel order. `keys.arena_block_id` supplies stable identity; source properties retain the block subtype, title, author attribution, timestamps, and connection position. The Rhizome owner is always the authenticated importing user, never the remote author. Every object starts with a `text/plain` title MediaElement whose bytes exactly equal its canonical title; a deterministic fallback is used when Are.na omits one. Directly consumable payloads follow that title: original Markdown becomes a `text` element, original images become `image` elements, and attachments map by validated MIME to `image`, `audio`, `video`, or `document`. Link and embed destinations remain keys/properties; the importer never crawls destination pages or executes provider HTML. Referenced assets may live on arbitrary public HTTPS domains, but they cross one server-owned `SafePublicFetcher`: every DNS answer and redirect hop is revalidated against private/loopback/link-local/special IPv4 and IPv6 ranges, the approved address is pinned to the TLS connection, credentials and cookies are stripped, non-identity content encodings are rejected, and byte/time/redirect/concurrency limits are enforced. A production deployment should additionally isolate that public-egress worker from database and private networking. Nested channels are counted in VERIFY but not traversed recursively; pending or failed Blocks reject the capture rather than disappearing silently.
 
 Preview allocates element UUIDs and stages bounded payload bytes without creating protocol records. `review_digest` binds element order, role, kind, MIME, size, and content hash alongside each candidate. Confirmation inserts MediaElements, object-element links, objects, and Vibe membership and adds the source to the Vibe's pull configuration in the same transaction. Cancellation creates none of them. An unchanged pull deduplicates on the Are.na block identity plus semantic object fields and element roles/content hashes, not newly allocated record UUIDs.
 
@@ -772,7 +780,7 @@ usage.onCost(cb): Unsubscribe                   // fires on every billable op
 ui.toast(msg, { detail? }): void                // host-rendered, sandbox-safe
 ui.pickVibe({ types? }): Promise<VibeUri | null> // host-rendered picker
 ui.importToVibe(uri): Promise<Operation | null>  // host-rendered "add data here":
-                                                 // file picker or SimpleFIN connect,
+                                                 // manifest-selected source form,
                                                  // runs the pull, shows the dry-run
                                                  // diff, user confirms. Host-owned
                                                  // because the dry-run gate is a trust

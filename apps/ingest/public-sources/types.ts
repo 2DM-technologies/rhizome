@@ -1,6 +1,9 @@
 import type { SourceSkillManifest } from "../../../packages/store-contract/src/source-skills.ts";
 
-import { SourceSkillManifestCatalog } from "../connected-sources/types.ts";
+import {
+  SourceSkillManifestCatalog,
+  assertManifestTargetSchemaCoverage,
+} from "../source-skills/manifest-catalog.ts";
 
 export type PublicSourceJsonValue =
   | boolean
@@ -100,6 +103,8 @@ export interface PublicRemoteSourceSkill {
   readonly displayName: string;
   readonly manifest: SourceSkillManifest & { readonly source_kind: "public_remote" };
   readonly parser: PublicRemoteParser;
+  /** Closed schema for caller-supplied source configuration. */
+  readonly sourceRequestSchema: Readonly<Record<string, unknown>>;
   readonly fetchPolicy: {
     /** Owner-and-skill scoped attempts allowed inside the rolling window. */
     readonly attempts: number;
@@ -219,6 +224,14 @@ function validatePublicRemoteSourceSkill(value: PublicRemoteSourceSkill): Public
   ) {
     throw new Error(`Public-remote source ${value.skillId} has inconsistent parser metadata`);
   }
+  assertManifestTargetSchemaCoverage({
+    skillId: value.skillId,
+    manifest,
+    target: "source",
+    schema: value.sourceRequestSchema,
+    requireEveryProperty: false,
+    label: "source request",
+  });
   assertPositiveInteger(value.fetchPolicy.attempts, `${value.skillId} fetch attempts`);
   assertPositiveInteger(value.fetchPolicy.windowHours, `${value.skillId} fetch window`);
   assertNetworkPolicy(value.skillId, value.networkPolicy);

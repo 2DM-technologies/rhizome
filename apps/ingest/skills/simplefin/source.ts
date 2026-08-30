@@ -40,6 +40,7 @@ export function createSimpleFinSkill(options: SimpleFinClientOptions): Credentia
     displayName: simpleFinSourceSkillManifest.label,
     manifest: simpleFinSourceSkillManifest,
     parser: simpleFinParser,
+    sourceRequestSchema: simpleFinSourceConfigSchema,
     connection: {
       claimPolicy: {
         kind: claimPolicy.kind,

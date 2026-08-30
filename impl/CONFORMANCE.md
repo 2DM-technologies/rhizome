@@ -14,12 +14,23 @@ Implemented in M2:
   KMS HMAC keyring, local development keeps a private generated key file, and connected fetches
   have bounded deadlines, credential-wide provider limits, and revocation-safe leases. The live
   production KMS smoke test remains part of M8 productionizing.
-- Public Are.na v3 channel ingestion is operational. Public channel URLs become allowlisted remote
-  sources; exact API pages and approved assets are captured before deterministic parsing and
-  VERIFY. Reviewed candidates carry previewable staged MediaElements, confirmation atomically
+- Source skills publish serializable manifests and resolve through separate file, credentialed,
+  and public-remote executable catalogs. The host renders connection/source fields generically,
+  secret fields never enter React state, source rows use free-form catalog-validated skill ids with
+  connector/parser pins, and owner review recovery uses an opaque actor/Vibe/source/state-bound
+  continuation instead of provider-specific protocol fields. Registration rejects source-kind or
+  control/schema combinations the generic host cannot serialize; provider browser fixtures and
+  adapters live beside their skills while the host suite exercises synthetic capabilities.
+- Public Are.na v3 channel ingestion is operational. The supplied page URL is a validated channel
+  locator; exact fixed-origin API pages and referenced assets are captured before deterministic
+  parsing and VERIFY. Arbitrary public asset domains cross the DNS-pinned, redirect-revalidating,
+  private-range-blocking SafePublicFetcher with credential stripping and resource limits. Reviewed
+  candidates carry previewable staged MediaElements, confirmation atomically
   creates object-plus-element bundles and membership, cancellation creates no derived records,
   each imported Block starts with its canonical title as a `text/plain` element, and unchanged
-  pulls deduplicate by block identity plus semantic fields, element roles, and element hashes.
+  pulls deduplicate by block identity plus semantic fields, element roles, and element hashes. Vibe
+  cards choose previews from generic media metadata and defer element/payload fetches until they are
+  near the viewport.
 
 Milestone-scheduled gaps:
 

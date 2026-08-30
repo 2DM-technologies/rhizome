@@ -44,6 +44,12 @@ function syntheticSkill(options: SyntheticSkillOptions = {}): PublicRemoteSource
       review_actions: ["review_import"],
     },
     parser,
+    sourceRequestSchema: {
+      type: "object",
+      required: ["url"],
+      properties: { url: { type: "string" } },
+      additionalProperties: false,
+    },
     fetchPolicy: { attempts: 10, windowHours: 24 },
     networkPolicy: {
       capabilities: options.networkCapabilities ?? [{ kind: "safe_public_https" }],
@@ -126,6 +132,23 @@ describe("public-remote source catalog", () => {
           ],
         }),
     ).toThrow("inconsistent parser metadata");
+
+    expect(
+      () =>
+        new PublicRemoteSourceCatalog({
+          current: [
+            {
+              ...skill,
+              sourceRequestSchema: {
+                type: "object",
+                required: ["url"],
+                properties: { url: { type: "boolean" } },
+                additionalProperties: false,
+              },
+            },
+          ],
+        }),
+    ).toThrow("field url does not match its source request schema");
   });
 
   test("supports fixed-origin, safe-public, and combined network capabilities", () => {

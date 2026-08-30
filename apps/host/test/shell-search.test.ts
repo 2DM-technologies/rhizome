@@ -9,7 +9,7 @@ test("search combines commands and loaded Vibe titles", () => {
   const results = searchShell("", [{ uuid: VIBE_UUID, title: "Spending" }]);
 
   expect(results.map(({ group, label }) => [group, label])).toEqual([
-    ["Commands", "Import transactions"],
+    ["Commands", "Import"],
     ["Commands", "Open Vibes"],
     ["Commands", "Show Desktop"],
     ["Vibes", "Spending"],
@@ -35,7 +35,7 @@ test("surface paths round-trip through the canonical URL parser", () => {
 
   expect(pathOf(importSurface)).toBe("/imports");
   expect(surfaceFromPath(pathOf(importSurface))).toEqual(importSurface);
-  expect(labelOf(importSurface)).toBe("Import transactions");
+  expect(labelOf(importSurface)).toBe("Import");
   expect(pathOf(vibe)).toBe(`/vibes/${VIBE_UUID}`);
   expect(surfaceFromPath(pathOf(vibe))).toEqual(vibe);
   expect(viewModeOf("")).toBe("standard");

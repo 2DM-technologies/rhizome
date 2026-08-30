@@ -1,9 +1,7 @@
-import {
-  CredentialedSourceCatalog,
-  SourceSkillManifestCatalog,
-} from "../connected-sources/types.ts";
+import { CredentialedSourceCatalog } from "../connected-sources/types.ts";
 import { FileSourceCatalog } from "../file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../public-sources/types.ts";
+import { SourceSkillManifestCatalog } from "../source-skills/manifest-catalog.ts";
 import { csvSourceSkill } from "../skills/csv/manifest.ts";
 import { ofxSourceSkill } from "../skills/ofx/manifest.ts";
 

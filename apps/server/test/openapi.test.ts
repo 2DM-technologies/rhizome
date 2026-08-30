@@ -158,7 +158,16 @@ describe("OpenAPI", () => {
           source_kind: "file",
           connector_version: "origin-upload@test",
           parser: { name: parser.name, version: parser.version },
-          input_fields: [],
+          input_fields: [
+            {
+              name: "file",
+              label: "Custom file",
+              target: "source",
+              control: "file",
+              required: true,
+              secret: false,
+            },
+          ],
           review_actions: ["review_import"],
         },
         parser,
