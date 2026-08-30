@@ -1,0 +1,22 @@
+{
+  "errlist": [],
+  "connections": [
+    {
+      "conn_id": "conn-custom",
+      "name": "Synthetic Rewards Bank",
+      "org_id": "org-custom",
+      "sfin_url": "https://synthetic-custom.example.invalid/simplefin"
+    }
+  ],
+  "accounts": [
+    {
+      "id": "acct-custom",
+      "name": "Synthetic Rewards Account",
+      "conn_id": "conn-custom",
+      "currency": "https://rewards.example.invalid/currency",
+      "balance": "100.00",
+      "balance-date": 1786752000,
+      "transactions": []
+    }
+  ]
+}
