@@ -366,8 +366,8 @@ function verifyProviderErrors(errors: ParsedProviderErrors | undefined): {
       name: "provider_errors",
       ok,
       detail: ok
-        ? "SimpleFIN reported no provider errors"
-        : `SimpleFIN reported ${evidence.structured_count} structured and ${evidence.legacy_count} legacy provider errors${codes.length ? ` (${codes.join(", ")})` : ""}`,
+        ? "The connected source reported no provider errors"
+        : `The connected source reported ${evidence.structured_count} structured and ${evidence.legacy_count} legacy provider errors${codes.length ? ` (${codes.join(", ")})` : ""}`,
     },
   };
 }
