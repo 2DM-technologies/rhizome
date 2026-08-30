@@ -13,7 +13,7 @@ import { mediaObjects } from "./media-object.ts";
 
 /**
  * Internal pull bookkeeping. rNet object identity remains the MediaObject UUID; this table
- * remembers which stable parser identity a configured source has already emitted.
+ * remembers which stable provider/file identity a configured source has already emitted.
  */
 export const ingestionSourceObjects = pgTable(
   "ingestion_source_objects",

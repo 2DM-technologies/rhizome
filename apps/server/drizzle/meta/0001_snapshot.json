@@ -1,5 +1,5 @@
 {
-  "id": "b097b6a6-141d-4f00-a30a-064e0895ca52",
+  "id": "6c065466-ccfe-499f-82af-72f25128aef0",
   "prevId": "9897fc4e-fd18-4823-86be-be74f3eb7537",
   "version": "7",
   "dialect": "postgresql",
@@ -92,6 +92,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "parser": {
           "name": "parser",
           "type": "text",
@@ -108,7 +114,19 @@
           "name": "origin_uuid",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
+        },
+        "credential_uuid": {
+          "name": "credential_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "config": {
+          "name": "config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -153,6 +171,21 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "ingestion_sources_credential_owner_fk": {
+          "name": "ingestion_sources_credential_owner_fk",
+          "tableFrom": "ingestion_sources",
+          "tableTo": "source_credentials",
+          "columnsFrom": [
+            "credential_uuid",
+            "owner_uuid"
+          ],
+          "columnsTo": [
+            "uuid",
+            "user_uuid"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -168,9 +201,270 @@
       },
       "policies": {},
       "checkConstraints": {
-        "ingestion_sources_kind_check": {
-          "name": "ingestion_sources_kind_check",
-          "value": "\"ingestion_sources\".\"kind\" = 'origin'"
+        "ingestion_sources_reference_check": {
+          "name": "ingestion_sources_reference_check",
+          "value": "(\n        (\"ingestion_sources\".\"kind\" = 'origin' AND \"ingestion_sources\".\"origin_uuid\" IS NOT NULL AND \"ingestion_sources\".\"credential_uuid\" IS NULL AND \"ingestion_sources\".\"provider\" IS NULL) OR\n        (\"ingestion_sources\".\"kind\" = 'credential' AND \"ingestion_sources\".\"credential_uuid\" IS NOT NULL AND \"ingestion_sources\".\"origin_uuid\" IS NULL AND \"ingestion_sources\".\"provider\" IS NULL) OR\n        (\"ingestion_sources\".\"kind\" = 'remote' AND \"ingestion_sources\".\"origin_uuid\" IS NULL AND \"ingestion_sources\".\"credential_uuid\" IS NULL AND \"ingestion_sources\".\"provider\" = 'arena')\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.ingestion_source_fetches": {
+      "name": "ingestion_source_fetches",
+      "schema": "",
+      "columns": {
+        "uuid": {
+          "name": "uuid",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source_uuid": {
+          "name": "source_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "owner_uuid": {
+          "name": "owner_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credential_uuid": {
+          "name": "credential_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation_uuid": {
+          "name": "operation_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "origin_uuid": {
+          "name": "origin_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parser_version": {
+          "name": "parser_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_state_digest": {
+          "name": "source_state_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'fetching'"
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "retrieved_at": {
+          "name": "retrieved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "committed_at": {
+          "name": "committed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "ingestion_source_fetches_operation_source_unique_idx": {
+          "name": "ingestion_source_fetches_operation_source_unique_idx",
+          "columns": [
+            {
+              "expression": "operation_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ingestion_source_fetches_origin_unique_idx": {
+          "name": "ingestion_source_fetches_origin_unique_idx",
+          "columns": [
+            {
+              "expression": "origin_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ingestion_source_fetches_source_status_idx": {
+          "name": "ingestion_source_fetches_source_status_idx",
+          "columns": [
+            {
+              "expression": "source_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ingestion_source_fetches_credential_created_idx": {
+          "name": "ingestion_source_fetches_credential_created_idx",
+          "columns": [
+            {
+              "expression": "credential_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ingestion_source_fetches_owner_uuid_users_uuid_fk": {
+          "name": "ingestion_source_fetches_owner_uuid_users_uuid_fk",
+          "tableFrom": "ingestion_source_fetches",
+          "tableTo": "users",
+          "columnsFrom": [
+            "owner_uuid"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ingestion_source_fetches_operation_uuid_operations_uuid_fk": {
+          "name": "ingestion_source_fetches_operation_uuid_operations_uuid_fk",
+          "tableFrom": "ingestion_source_fetches",
+          "tableTo": "operations",
+          "columnsFrom": [
+            "operation_uuid"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "ingestion_source_fetches_source_owner_fk": {
+          "name": "ingestion_source_fetches_source_owner_fk",
+          "tableFrom": "ingestion_source_fetches",
+          "tableTo": "ingestion_sources",
+          "columnsFrom": [
+            "source_uuid",
+            "owner_uuid"
+          ],
+          "columnsTo": [
+            "uuid",
+            "owner_uuid"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ingestion_source_fetches_origin_owner_fk": {
+          "name": "ingestion_source_fetches_origin_owner_fk",
+          "tableFrom": "ingestion_source_fetches",
+          "tableTo": "origins",
+          "columnsFrom": [
+            "origin_uuid",
+            "owner_uuid"
+          ],
+          "columnsTo": [
+            "uuid",
+            "owner_uuid"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "ingestion_source_fetches_credential_owner_fk": {
+          "name": "ingestion_source_fetches_credential_owner_fk",
+          "tableFrom": "ingestion_source_fetches",
+          "tableTo": "source_credentials",
+          "columnsFrom": [
+            "credential_uuid",
+            "owner_uuid"
+          ],
+          "columnsTo": [
+            "uuid",
+            "user_uuid"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ingestion_source_fetches_status_check": {
+          "name": "ingestion_source_fetches_status_check",
+          "value": "\"ingestion_source_fetches\".\"status\" IN ('fetching', 'fetched', 'verified', 'rejected', 'committed')"
         }
       },
       "isRLSEnabled": false
@@ -1318,6 +1612,312 @@
           ]
         }
       },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.source_credentials": {
+      "name": "source_credentials",
+      "schema": "",
+      "columns": {
+        "uuid": {
+          "name": "uuid",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_uuid": {
+          "name": "user_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "secret": {
+          "name": "secret",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "connected_at": {
+          "name": "connected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "source_credentials_user_uuid_users_uuid_fk": {
+          "name": "source_credentials_user_uuid_users_uuid_fk",
+          "tableFrom": "source_credentials",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_uuid"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "source_credentials_uuid_user_uuid_unique": {
+          "name": "source_credentials_uuid_user_uuid_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "uuid",
+            "user_uuid"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.source_credential_claim_attempts": {
+      "name": "source_credential_claim_attempts",
+      "schema": "",
+      "columns": {
+        "uuid": {
+          "name": "uuid",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_uuid": {
+          "name": "user_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_fingerprint": {
+          "name": "token_fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'claiming'"
+        },
+        "credential_uuid": {
+          "name": "credential_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "source_credential_claim_attempts_token_unique_idx": {
+          "name": "source_credential_claim_attempts_token_unique_idx",
+          "columns": [
+            {
+              "expression": "provider",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "token_fingerprint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "source_credential_claim_attempts_user_created_idx": {
+          "name": "source_credential_claim_attempts_user_created_idx",
+          "columns": [
+            {
+              "expression": "user_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "source_credential_claim_attempts_user_uuid_users_uuid_fk": {
+          "name": "source_credential_claim_attempts_user_uuid_users_uuid_fk",
+          "tableFrom": "source_credential_claim_attempts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_uuid"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "source_credential_claim_attempts_credential_owner_fk": {
+          "name": "source_credential_claim_attempts_credential_owner_fk",
+          "tableFrom": "source_credential_claim_attempts",
+          "tableTo": "source_credentials",
+          "columnsFrom": [
+            "credential_uuid",
+            "user_uuid"
+          ],
+          "columnsTo": [
+            "uuid",
+            "user_uuid"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "source_credential_claim_attempts_status_check": {
+          "name": "source_credential_claim_attempts_status_check",
+          "value": "\"source_credential_claim_attempts\".\"status\" IN ('claiming', 'succeeded', 'rejected', 'ambiguous')"
+        },
+        "source_credential_claim_attempts_result_check": {
+          "name": "source_credential_claim_attempts_result_check",
+          "value": "(\n        (\"source_credential_claim_attempts\".\"status\" = 'succeeded' AND \"source_credential_claim_attempts\".\"credential_uuid\" IS NOT NULL) OR\n        (\"source_credential_claim_attempts\".\"status\" <> 'succeeded' AND \"source_credential_claim_attempts\".\"credential_uuid\" IS NULL)\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.source_credential_claim_fingerprints": {
+      "name": "source_credential_claim_fingerprints",
+      "schema": "",
+      "columns": {
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempt_uuid": {
+          "name": "attempt_uuid",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "source_credential_claim_fingerprints_attempt_idx": {
+          "name": "source_credential_claim_fingerprints_attempt_idx",
+          "columns": [
+            {
+              "expression": "attempt_uuid",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "source_credential_claim_fingerprints_attempt_fk": {
+          "name": "source_credential_claim_fingerprints_attempt_fk",
+          "tableFrom": "source_credential_claim_fingerprints",
+          "tableTo": "source_credential_claim_attempts",
+          "columnsFrom": [
+            "attempt_uuid"
+          ],
+          "columnsTo": [
+            "uuid"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "source_credential_claim_fingerprints_pk": {
+          "name": "source_credential_claim_fingerprints_pk",
+          "columns": [
+            "provider",
+            "fingerprint"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
