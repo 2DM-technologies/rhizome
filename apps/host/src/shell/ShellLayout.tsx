@@ -61,9 +61,9 @@ function RunningSurfaceDockApp({ name, src, onOpen }: RunningSurfaceDockAppProps
 }
 
 /**
- * The persistent shell. Nothing here unmounts on navigation — that is the entire point. The
- * dock, the desktop, and the surface layer live above the router's control, and the URL only
- * decides which surface inside them is focused.
+ * The persistent shell. The dock and desktop live above the router's control, while the URL
+ * decides which surface is focused. Surface navigation replaces the window tree by default;
+ * callers can explicitly retain a background window when its local state must survive.
  */
 export function ShellLayout() {
   const { surface: focused, mode } = useFocusedSurface();

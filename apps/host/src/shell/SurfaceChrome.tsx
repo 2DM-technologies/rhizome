@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router";
 
-import { DmachineWindow, MaximizeIcon, RestoreIcon, cn } from "../ui/index.ts";
+import { BackIcon, DmachineWindow, MaximizeIcon, RestoreIcon, cn } from "../ui/index.ts";
 import { useSurfaceNavigation } from "./focus.ts";
 import { surfaceId, type Surface, type ViewMode } from "./surfaces.ts";
 import {
@@ -17,9 +18,9 @@ interface SurfaceChromeProps {
 }
 
 /**
- * Geometry for one surface, and nothing else. A backgrounded surface stays mounted — `hidden`
- * removes it from layout and `inert` from the tab order and the accessibility tree, but its
- * DOM, its scroll position, and (at M4) its iframe all survive.
+ * Geometry for one surface, and nothing else. Navigation replaces the current window by default.
+ * When a caller explicitly keeps one open in the background, `hidden` removes it from layout and
+ * `inert` from the tab order and accessibility tree while its DOM and scroll position survive.
  *
  * Maximized makes the surface itself full-bleed. Equal-and-opposite padding preserves the
  * standard window's content rectangle while the outer edges expand, so maximizing never moves
@@ -28,6 +29,13 @@ interface SurfaceChromeProps {
 export function SurfaceChrome({ surface, active, mode, children }: SurfaceChromeProps) {
   const id = surfaceId(surface);
   const maximized = active && mode === "maximized";
+  // Reading the location makes the browser-owned history index reactive on both PUSH and POP.
+  // React Router establishes index zero for the first in-app entry, so this never sends a
+  // freshly opened Rhizome tab back to an unrelated site.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const historyIndex = (window.history.state as { idx?: unknown } | null)?.idx;
+  const canGoBack = location.key !== "" && typeof historyIndex === "number" && historyIndex > 0;
   const elementRef = useRef<HTMLDivElement>(null);
   const transition = active ? dockOpenTransitionFor(surface) : null;
   const transitionRef = useRef<DockOpenTransition | null>(null);
@@ -121,24 +129,38 @@ export function SurfaceChrome({ surface, active, mode, children }: SurfaceChrome
   }, [active, id, maximized, transitionKey]);
 
   const { close, toggleMaximized } = useSurfaceNavigation();
-  const windowControls = (
-    <div data-window-controls className="absolute top-3 right-3 z-10 flex items-center gap-1">
+  const windowTopBar = (
+    <div
+      data-window-top-bar
+      className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-center justify-between"
+    >
       <button
         type="button"
-        aria-label={maximized ? "Restore window" : "Maximize window"}
-        onClick={toggleMaximized}
-        className="grid size-8 place-items-center rounded-pill bg-surface text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        aria-label="Back"
+        disabled={!canGoBack}
+        onClick={() => navigate(-1)}
+        className="pointer-events-auto grid size-8 place-items-center rounded-pill bg-surface text-secondary transition-[color,opacity] hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
       >
-        {maximized ? <RestoreIcon /> : <MaximizeIcon />}
+        <BackIcon />
       </button>
-      <button
-        type="button"
-        aria-label="Close surface"
-        onClick={() => close(id)}
-        className="grid size-8 place-items-center rounded-pill bg-surface text-xl leading-none text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-      >
-        <span aria-hidden>×</span>
-      </button>
+      <div data-window-controls className="pointer-events-auto flex items-center gap-1">
+        <button
+          type="button"
+          aria-label={maximized ? "Restore window" : "Maximize window"}
+          onClick={toggleMaximized}
+          className="grid size-8 place-items-center rounded-pill bg-surface text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          {maximized ? <RestoreIcon /> : <MaximizeIcon />}
+        </button>
+        <button
+          type="button"
+          aria-label="Close surface"
+          onClick={() => close(id)}
+          className="grid size-8 place-items-center rounded-pill bg-surface text-xl leading-none text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          <span aria-hidden>×</span>
+        </button>
+      </div>
     </div>
   );
   return (
@@ -156,7 +178,7 @@ export function SurfaceChrome({ surface, active, mode, children }: SurfaceChrome
     >
       {surface.kind === "dmachine" ? (
         <div data-surface-window data-surface-id={id} className="relative h-full min-h-0 w-full">
-          {windowControls}
+          {windowTopBar}
           {/* The cost tab is host-owned and unsuppressible; a guest surface always carries it. */}
           <DmachineWindow
             model="GPT-5.6 Sol"
@@ -180,7 +202,7 @@ export function SurfaceChrome({ surface, active, mode, children }: SurfaceChrome
             maximized ? "rounded-none" : "rounded-lg shadow-[0px_0px_8px_0px_rgba(184,68,254,0.1)]",
           )}
         >
-          {windowControls}
+          {windowTopBar}
           <div
             data-surface-scrollport
             className={cn(

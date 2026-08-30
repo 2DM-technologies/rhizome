@@ -10,10 +10,9 @@ import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 /**
  * Host-owned entry point for transaction files that do not start inside a Vibe.
  *
- * Target selection is local surface state on purpose. The `/imports` surface remains mounted
- * while another URL is focused, just like every other host surface, so a chosen target and a
- * staged ImportPanel review survive ordinary dock and history navigation without introducing a
- * second focus model outside the URL-driven shell.
+ * Target selection is local surface state on purpose. It survives for the lifetime of this
+ * window; a caller that needs to open another surface without losing a staged review can use the
+ * shell navigation's explicit keep-open option.
  */
 export function ImportSurface() {
   const session = useSession();

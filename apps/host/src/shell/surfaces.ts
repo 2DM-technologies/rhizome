@@ -2,8 +2,8 @@ import { matchPath } from "react-router";
 
 /**
  * A surface is anything the shell can focus and the dock can list. Host views and dMachines
- * are the same kind of thing here — both are windows that stay alive while backgrounded — so
- * they share one registry, one geometry, and one focus mechanism.
+ * share one registry, geometry, and focus mechanism. They stay alive while backgrounded only
+ * when navigation explicitly opts into retaining the current window.
  */
 export type Surface =
   | { readonly kind: "import" }

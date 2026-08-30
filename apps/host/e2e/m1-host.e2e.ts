@@ -8,6 +8,7 @@ import {
   NEW_VIBE_ID,
   OBJECT_ID,
   OBJECT_URI,
+  PAYLOAD_TEXT,
   VIBE_ID,
   type MockStore,
 } from "./support/mockStore.ts";
@@ -212,6 +213,97 @@ test("an object deep link resolves through the real shell and Store client", asy
   await expect(favicon).toHaveAttribute("href", /orb-home-48\.png$/);
 });
 
+test("the window back button only traverses prior in-app navigation", async ({ page }) => {
+  await page.goto(`/objects/${OBJECT_ID}`);
+
+  const back = page.getByRole("button", { name: "Back" });
+  await expect(back).toBeVisible();
+  await expect(back).toBeDisabled();
+  const backBox = await back.boundingBox();
+  const maximizeBox = await page.getByRole("button", { name: "Maximize window" }).boundingBox();
+  expect(backBox).toMatchObject({ width: 32, height: 32 });
+  expect(maximizeBox).not.toBeNull();
+  expect(backBox!.x).toBeLessThan(maximizeBox!.x);
+  expect(backBox!.y).toBe(maximizeBox!.y);
+
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(back).toBeEnabled();
+
+  const paintedSurfaceIds = await page.evaluate(async (objectId) => {
+    const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (candidate) => candidate.getAttribute("aria-label") === "Back",
+    );
+    if (!button) throw new Error("Missing window Back button");
+
+    const expectedPath = `/objects/${objectId}`;
+    const expectedSurfaceId = `object:${objectId}`;
+    const frames: Array<string | null> = [];
+    button.click();
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(
+        () => reject(new Error("Back navigation did not restore the object window")),
+        2_000,
+      );
+      function sample() {
+        const active = document.querySelector<HTMLElement>("[data-view-mode]:not([hidden])");
+        const activeId = active?.dataset.surfaceId ?? null;
+        frames.push(activeId);
+        if (location.pathname === expectedPath && activeId === expectedSurfaceId) {
+          window.clearTimeout(timeout);
+          resolve();
+          return;
+        }
+        requestAnimationFrame(sample);
+      }
+      requestAnimationFrame(sample);
+    });
+
+    return frames;
+  }, OBJECT_ID);
+
+  // A history POP names its destination before the window store catches up. Every paint must
+  // still contain a focused window; otherwise Back visibly flashes the bare desktop.
+  expect(paintedSurfaceIds).not.toContain(null);
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(back).toBeDisabled();
+});
+
+test("legacy saved sessions discard accumulated windows during hydration", async ({ page }) => {
+  await page.addInitScript((objectId) => {
+    sessionStorage.setItem(
+      "rhizome.shell",
+      JSON.stringify({
+        state: {
+          open: [{ kind: "object", uuid: objectId }, { kind: "vibes" }],
+          defaultViewMode: "standard",
+        },
+        version: 0,
+      }),
+    );
+  }, OBJECT_ID);
+
+  await page.goto(`/objects/${OBJECT_ID}`);
+
+  const windows = page.locator("[data-surface-window]");
+  await expect(windows).toHaveCount(1);
+  await expect(windows).toHaveAttribute("data-surface-id", `object:${OBJECT_ID}`);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const persisted = sessionStorage.getItem("rhizome.shell");
+        if (!persisted) return null;
+        const parsed = JSON.parse(persisted) as {
+          state?: { open?: unknown[] };
+          version?: number;
+        };
+        return { open: parsed.state?.open, version: parsed.version };
+      }),
+    )
+    .toEqual({ open: [{ kind: "object", uuid: OBJECT_ID }], version: 1 });
+});
+
 test("the dock stays dark while its search field stays light", async ({ page }) => {
   await page.goto("/");
 
@@ -352,35 +444,30 @@ test("window mode is inherited until a window is restored", async ({ page }) => 
   await page.getByRole("button", { name: "Maximize window" }).click();
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
-  await page.getByRole("button", { name: "Geometry", exact: true }).click();
-  await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
-  await page.waitForTimeout(250);
-
-  // Old standard history entries are normalized to the inherited mode without adding history.
-  await page.goBack();
-  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
-  await expect(activeSurface).toHaveAttribute("data-surface-id", "vibes");
-  await page.waitForTimeout(250);
+  // The previous window was closed, but returning to its history entry reopens it in the
+  // inherited mode without retaining the Vibes tree in the background.
   await page.goBack();
   await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
   await expect(activeSurface).toHaveAttribute("data-surface-id", "m:Geometry");
   await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
-  await page.getByRole("button", { name: "Vibes", exact: true }).click();
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+
+  await page.goForward();
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(activeSurface).toHaveAttribute("data-surface-id", "vibes");
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   // Closing and reloading the bare desktop do not implicitly reset the persisted mode.
   await activeSurface.getByRole("button", { name: "Close surface" }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.reload();
-  await page.getByRole("button", { name: "Geometry", exact: true }).click();
-  await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
 
   await activeSurface.getByRole("button", { name: "Restore window" }).click();
-  await expect(page).toHaveURL(/\/m\/Geometry$/);
-  await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/\/vibes$/);
   await expect(activeSurface).toHaveAttribute("data-view-mode", "standard");
 });
@@ -498,23 +585,25 @@ test("closing a surface animates its dock icon out", async ({ page }) => {
     .toEqual([]);
 });
 
-test("back and forward focus surfaces without remounting their local state", async ({ page }) => {
+test("opening and traversing to a new surface replaces the previous window", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
   await page.getByRole("button").filter({ hasText: OBJECT_URI }).click();
 
   const editor = page.getByLabel("User properties, as JSON");
   await expect(editor).toBeVisible();
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await editor.fill('{"reviewed":"draft"}');
 
   await page.goBack();
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
-  await expect(editor).toBeHidden();
-  await expect(editor).toHaveValue('{"reviewed":"draft"}');
+  await expect(editor).toHaveCount(0);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   await page.goForward();
   await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
   await expect(editor).toBeVisible();
-  await expect(editor).toHaveValue('{"reviewed":"draft"}');
+  await expect(editor).toHaveValue(JSON.stringify({ reviewed: false }, null, 2));
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 });
 
 test("Vibe CRUD and membership use the existing Store object", async ({ page }) => {
@@ -648,11 +737,47 @@ test("an existing element payload is fetched and presented", async ({ page }) =>
   await payloadResponse;
 
   const label = `Payload for ${ELEMENT_URI}`;
-  await expect(page.getByTitle(label)).toBeVisible();
+  const preview = page.getByTitle(label);
+  await expect(preview).toBeVisible();
+  await expect(preview.contentFrame().locator("body")).toContainText(PAYLOAD_TEXT.trim());
   const download = page.getByRole("link", { name: `Download payload ${ELEMENT_URI}` });
   await download.scrollIntoViewIfNeeded();
   await expect(download).toBeInViewport();
   await expect(download).toHaveAttribute("href", /^blob:/);
+});
+
+test("an image payload remains decodable when its previewing surface is replaced", async ({
+  page,
+}) => {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const element = mockStore.elements.get(ELEMENT_ID);
+  const object = mockStore.objects.get(OBJECT_ID);
+  if (!element) throw new Error("Missing seeded element");
+  if (!object) throw new Error("Missing seeded object");
+  element.kind = "image";
+  element.mime = "image/png";
+  element.byte_size = png.byteLength;
+  mockStore.elementPayloads.set(ELEMENT_ID, png);
+  object.type = "arena.block";
+
+  await page.goto(`/vibes/${VIBE_ID}`);
+  const preview = page.getByRole("img", { name: "Monthly plan" });
+  await expect
+    .poll(() => preview.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  const previewUrl = await preview.getAttribute("src");
+
+  await page.getByRole("button", { name: "Open Are.na block Monthly plan" }).click();
+
+  const image = page.getByRole("img", { name: `Payload for ${ELEMENT_URI}` });
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(image).not.toHaveAttribute("src", previewUrl ?? "");
 });
 
 test("home opens the Vibes surface from the bare desktop", async ({ page }) => {

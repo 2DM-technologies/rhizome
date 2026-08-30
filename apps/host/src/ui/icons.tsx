@@ -79,6 +79,20 @@ export function CheckIcon({ width = 11.8, height = 9.3, ...props }: IconProps) {
 }
 
 /** Window presentation controls. */
+export function BackIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M14.5 9H3.5M8 4.5L3.5 9L8 13.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function MaximizeIcon({ width = 18, height = 18, ...props }: IconProps) {
   return (
     <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>

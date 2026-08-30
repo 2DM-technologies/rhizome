@@ -5,12 +5,11 @@ import { useOpenSurfaces } from "./store.ts";
 import { surfaceId } from "./surfaces.ts";
 
 /**
- * Every open surface, mounted once.
+ * Every deliberately open surface, mounted once.
  *
- * This is the piece that makes the shell a shell. Surfaces are keyed by identity and rendered
- * for as long as they are open, so navigating between them changes which one is visible and
- * nothing else — no unmount, no refetch, no lost scroll position, and at M4 no iframe reload,
- * which would destroy a dMachine's entire state.
+ * Default navigation keeps this set to one window so inactive React trees cannot accumulate.
+ * An explicit keep-open navigation may retain additional keyed surfaces for workflows where
+ * preserving local state or a future dMachine iframe is worth the memory cost.
  */
 export function SurfaceLayer() {
   const open = useOpenSurfaces();
