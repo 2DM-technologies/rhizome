@@ -31,7 +31,7 @@ import { SurfaceLayer } from "./SurfaceLayer.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
 import { useOpenSurfaces, useShellStore } from "./store.ts";
-import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
 
 /**
  * There is no Figma spec for host surfaces in the dock — the mockups only show dMachine apps —
@@ -72,7 +72,7 @@ export function ShellLayout() {
   useEnsureSurfaceOpen(focused, mode);
 
   const open = useOpenSurfaces();
-  const recentVibeUuids = useShellStore((state) => state.recentVibeUuids);
+  const recentVibeSurfaces = useShellStore((state) => state.recentVibeSurfaces);
   const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const launcherOpen = useShellStore((state) => state.launcherOpen);
   const setLauncherOpen = useShellStore((state) => state.setLauncherOpen);
@@ -104,22 +104,20 @@ export function ShellLayout() {
   );
   const vibeCatalogLoaded = vibes.data !== undefined;
   const dockRailSurfaces = useMemo(() => {
-    const focusedVibeUuid = focused?.kind === "vibe" ? focused.uuid : null;
     // Preserve the persisted rail geometry with fallback labels during hydration. Once the
     // authoritative catalog arrives, missing or deleted Vibes disappear from the shortcuts.
-    const recentVibes: Surface[] = recentVibeUuids.flatMap((uuid) =>
-      uuid !== focusedVibeUuid && (!vibeCatalogLoaded || vibeTitles.has(uuid))
-        ? [{ kind: "vibe", uuid }]
-        : [],
+    const recentVibes = recentVibeSurfaces.filter(
+      (surface) =>
+        surfaceId(surface) !== focusedId &&
+        (surface.kind === "vibes" || !vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
     );
 
-    // A retained Vibe already appears in the recency list. Pin other explicitly retained
-    // windows before the shortcuts so the immediately previous Vibes index cannot be clipped
-    // behind an already-full MRU rail.
-    return [...background.filter((surface) => surface.kind !== "vibe"), ...recentVibes];
-  }, [background, focused, recentVibeUuids, vibeCatalogLoaded, vibeTitles]);
+    // Every Vibe route already appears in the shared recency list. Pin only other explicitly
+    // retained windows before those shortcuts so one route cannot appear twice in the rail.
+    return [...background.filter((surface) => !isVibeSurface(surface)), ...recentVibes];
+  }, [background, focusedId, recentVibeSurfaces, vibeCatalogLoaded, vibeTitles]);
   const retainedDockRailItems = dockRailSurfaces.filter(
-    (surface) => surface.kind !== "vibe",
+    (surface) => !isVibeSurface(surface),
   ).length;
   // Retained windows do not consume the three visible MRU Vibe slots. Additional Vibes remain
   // available through the scrollbar-free horizontal rail.

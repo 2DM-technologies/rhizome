@@ -295,20 +295,20 @@ test("legacy saved sessions discard accumulated windows during hydration", async
         const persisted = sessionStorage.getItem("rhizome.shell");
         if (!persisted) return null;
         const parsed = JSON.parse(persisted) as {
-          state?: { open?: unknown[]; recentVibeUuids?: unknown[] };
+          state?: { open?: unknown[]; recentVibeSurfaces?: unknown[] };
           version?: number;
         };
         return {
           open: parsed.state?.open,
-          recentVibeUuids: parsed.state?.recentVibeUuids,
+          recentVibeSurfaces: parsed.state?.recentVibeSurfaces,
           version: parsed.version,
         };
       }),
     )
     .toEqual({
       open: [{ kind: "object", uuid: OBJECT_ID }],
-      recentVibeUuids: [],
-      version: 2,
+      recentVibeSurfaces: [{ kind: "vibes" }],
+      version: 3,
     });
 });
 
@@ -627,7 +627,7 @@ test("a maximized host surface scrolls at the browser edge behind the dock", asy
   await expect(launcherDialog).toBeVisible();
 });
 
-test("closing a surface animates its dock icon out", async ({ page }) => {
+test("closing a Vibe moves it from the active slot into the recent rail", async ({ page }) => {
   await page.goto("/vibes");
 
   const slot = page.locator("[data-dock-app-slot]");
@@ -652,15 +652,15 @@ test("closing a surface animates its dock icon out", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/$/);
   expectMonotonicMotion(motion, "decreasing");
-  expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(-80, 0);
+  expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(-36, 0);
   await expect(slot).toHaveAttribute("data-present", "false");
   await expect(traySlot).toHaveAttribute("data-test-transition-property", "margin-left");
   await expect(content).toHaveCSS("opacity", "0");
   await expect(traySlot).toHaveCSS("margin-left", "0px");
   await expect.poll(() => slot.boundingBox()).toMatchObject({ width: 68, height: 68 });
-  await expect(runningApps).toHaveAttribute("data-count", "0");
-  await expect(runningApps).toHaveCSS("width", "0px");
-  await expect(page.getByRole("button", { name: "Vibes", exact: true })).toHaveCount(0);
+  await expect(runningApps).toHaveAttribute("data-count", "1");
+  await expect(runningApps).toHaveCSS("width", "44px");
+  await expect(page.getByRole("button", { name: "Vibes", exact: true })).toHaveCount(1);
   await expect(page.locator("[data-surface-window]")).toHaveCount(0);
   await expect
     .poll(() =>
@@ -710,7 +710,7 @@ test("Vibe CRUD and membership use the existing Store object", async ({ page }) 
   await newVibeTitle.fill("Trip planning");
   await createVibe.click();
   await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
-  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(
     page.locator("[data-dock-recent-vibes]").getByRole("button", { name: "Vibes", exact: true }),
   ).toBeVisible();
@@ -911,18 +911,18 @@ test("opening a Vibe keeps the Vibes index available as the previous dock window
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
 
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
-  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   const rail = page.locator("[data-dock-recent-vibes]");
   await expect(rail).toHaveAttribute("data-count", "1");
   await rail.getByRole("button", { name: "Vibes", exact: true }).click();
 
   await expect(page).toHaveURL(/\/vibes$/);
-  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(rail.getByRole("button", { name: "Spending", exact: true })).toBeVisible();
 });
 
-test("a retained Vibes index stays visible ahead of a full three-Vibe MRU rail", async ({
+test("the Vibes index participates in the same three-item MRU rail as individual Vibes", async ({
   page,
 }) => {
   const baseVibe = mockStore.vibes[0];
@@ -952,7 +952,7 @@ test("a retained Vibes index stays visible ahead of a full three-Vibe MRU rail",
   const rail = page.locator("[data-dock-recent-vibes]");
   const items = rail.getByRole("button");
   await expect(rail).toHaveAttribute("data-count", "4");
-  await expect(rail).toHaveCSS("width", "236px");
+  await expect(rail).toHaveCSS("width", "172px");
   expect(await items.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel))).toEqual([
     "Vibes",
     "Reading list",
@@ -965,7 +965,7 @@ test("a retained Vibes index stays visible ahead of a full three-Vibe MRU rail",
     const vibesButton = [...element.querySelectorAll("button")].find(
       (button) => button.ariaLabel === "Vibes",
     );
-    if (!vibesButton) throw new Error("Missing retained Vibes dock item");
+    if (!vibesButton) throw new Error("Missing recent Vibes dock item");
     const vibesBox = vibesButton.getBoundingClientRect();
     return {
       scrollLeft: element.scrollLeft,
@@ -1224,7 +1224,7 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
   await page.goto("/vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
-  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   for (const [uuid, title] of openedVibes.slice(1)) {
     const search = page.getByRole("searchbox", { name: /search everything/i });
@@ -1240,13 +1240,14 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
 
   const rail = page.locator("[data-dock-recent-vibes]");
   const items = rail.getByRole("button");
-  await expect(rail).toHaveAttribute("data-count", "4");
-  await expect(items).toHaveCount(4);
+  await expect(rail).toHaveAttribute("data-count", "5");
+  await expect(items).toHaveCount(5);
   expect(await items.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel))).toEqual([
     "Reading list",
     "Trip planning",
     "Library",
     "Spending",
+    "Vibes",
   ]);
   await expect(rail.getByRole("button", { name: "Recipes", exact: true })).toHaveCount(0);
   await expect(page.locator('[data-dock-app-slot] [aria-current="true"]')).toHaveAccessibleName(
@@ -1268,10 +1269,10 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
   });
   expect(geometry.clientWidth).toBe(172);
   expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
-  expect(geometry.itemBoxes.map(({ width }) => width)).toEqual([44, 44, 44, 44]);
+  expect(geometry.itemBoxes.map(({ width }) => width)).toEqual([44, 44, 44, 44, 44]);
   expect(
     geometry.itemBoxes.slice(1).map((box, index) => box.x - geometry.itemBoxes[index]!.x),
-  ).toEqual([64, 64, 64]);
+  ).toEqual([64, 64, 64, 64]);
   expect(geometry.scrollbarWidth).toBe("none");
   expect(geometry.webkitScrollbarDisplay).toBe("none");
 
@@ -1290,6 +1291,7 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
     "Reading list",
     "Trip planning",
     "Library",
+    "Vibes",
   ]);
 });
 

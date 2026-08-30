@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import {
   migrateShellPersistedState,
   nextOpenSurfaces,
-  nextRecentVibeUuids,
+  nextRecentVibeSurfaces,
   SHELL_STORE_VERSION,
 } from "../src/shell/store.ts";
 
@@ -24,18 +24,22 @@ test("navigation can explicitly keep the current window open", () => {
   expect(nextOpenSurfaces(open, VIBES)).toBe(open);
 });
 
-test("opening Vibes records an uncapped, deduplicated most-recently-opened list", () => {
-  const unchanged = [VIBE_B.uuid];
-  expect(nextRecentVibeUuids(unchanged, OBJECT)).toBe(unchanged);
+test("the Vibes index and individual Vibes share one deduplicated MRU list", () => {
+  const unchanged = [VIBE_B];
+  expect(nextRecentVibeSurfaces(unchanged, OBJECT)).toBe(unchanged);
 
-  const opened = nextRecentVibeUuids(unchanged, VIBE_A);
-  expect(opened).toEqual([VIBE_A.uuid, VIBE_B.uuid]);
-  expect(nextRecentVibeUuids(opened, VIBE_B)).toEqual([VIBE_B.uuid, VIBE_A.uuid]);
-  expect(nextRecentVibeUuids([VIBE_A.uuid, VIBE_B.uuid, VIBE_A.uuid], VIBE_A)).toEqual([
-    VIBE_A.uuid,
-    VIBE_B.uuid,
+  const openedIndex = nextRecentVibeSurfaces(unchanged, VIBES);
+  expect(openedIndex).toEqual([VIBES, VIBE_B]);
+
+  const openedVibe = nextRecentVibeSurfaces(openedIndex, VIBE_A);
+  expect(openedVibe).toEqual([VIBE_A, VIBES, VIBE_B]);
+  expect(nextRecentVibeSurfaces(openedVibe, VIBE_B)).toEqual([VIBE_B, VIBE_A, VIBES]);
+  expect(nextRecentVibeSurfaces([VIBE_A, VIBES, VIBE_B, VIBE_A], VIBE_A)).toEqual([
+    VIBE_A,
+    VIBES,
+    VIBE_B,
   ]);
-  expect(nextRecentVibeUuids(opened, VIBE_A)).toBe(opened);
+  expect(nextRecentVibeSurfaces(openedVibe, VIBE_A)).toBe(openedVibe);
 });
 
 test("version 0 windows seed Vibe recents before collapsing to the latest surface", () => {
@@ -49,7 +53,7 @@ test("version 0 windows seed Vibe recents before collapsing to the latest surfac
     ),
   ).toEqual({
     open: [OBJECT],
-    recentVibeUuids: [VIBE_B.uuid, VIBE_A.uuid],
+    recentVibeSurfaces: [VIBE_B, VIBES, VIBE_A],
     defaultViewMode: "maximized",
   });
 });
@@ -65,7 +69,24 @@ test("version 1 preserves explicitly retained windows and seeds Vibe recents", (
     ),
   ).toEqual({
     open: [VIBE_A, OBJECT, VIBE_B],
-    recentVibeUuids: [VIBE_B.uuid, VIBE_A.uuid],
+    recentVibeSurfaces: [VIBE_B, VIBE_A],
+    defaultViewMode: "standard",
+  });
+});
+
+test("version 2 migrates UUID recents and an open Vibes index into one MRU list", () => {
+  expect(
+    migrateShellPersistedState(
+      {
+        open: [VIBES, VIBE_B],
+        recentVibeUuids: [VIBE_A.uuid, VIBE_B.uuid, VIBE_A.uuid],
+        defaultViewMode: "standard",
+      },
+      2,
+    ),
+  ).toEqual({
+    open: [VIBES, VIBE_B],
+    recentVibeSurfaces: [VIBE_B, VIBES, VIBE_A],
     defaultViewMode: "standard",
   });
 });
@@ -73,7 +94,7 @@ test("version 1 preserves explicitly retained windows and seeds Vibe recents", (
 test("current persisted state preserves explicitly retained windows", () => {
   const persisted = {
     open: [VIBES, OBJECT],
-    recentVibeUuids: [VIBE_A.uuid],
+    recentVibeSurfaces: [VIBES, VIBE_A],
     defaultViewMode: "standard",
   };
 
@@ -83,7 +104,7 @@ test("current persisted state preserves explicitly retained windows", () => {
 test("malformed legacy state migrates to safe defaults", () => {
   expect(migrateShellPersistedState({ open: "many", defaultViewMode: "huge" }, 0)).toEqual({
     open: [],
-    recentVibeUuids: [],
+    recentVibeSurfaces: [],
     defaultViewMode: "standard",
   });
 });
