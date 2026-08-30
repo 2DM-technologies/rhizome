@@ -715,6 +715,129 @@ describe("rNet M1 store", () => {
     expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
   });
 
+  test("requires an explicit reviewed rebaseline when SimpleFIN history can no longer overlap", async () => {
+    const fixture = await createStoredSimpleFinCredential(1);
+    const source = fixture.sources[0]!;
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Reviewed SimpleFIN recovery" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+    const day = 24 * 60 * 60;
+    const nowEpoch = Math.floor(Date.now() / 1_000);
+    const previousBalanceAt = nowEpoch - 100 * day;
+    const previousBytes = simpleFinAccountSetBytes({
+      balance: "100.00",
+      balanceAtEpoch: previousBalanceAt,
+    });
+    simpleFinAccountResponses.push(previousBytes);
+
+    const baselineResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(baselineResponse.status).toBe(202);
+    const baseline = await waitForOperation(await baselineResponse.json(), owner);
+    expect(baseline.status).toBe("done");
+    expect(
+      (
+        await request(`/rnet/v0/vibes/${vibeUuid}/imports/${baseline.operation_id}/confirm`, {
+          method: "POST",
+          headers: owner,
+        })
+      ).status,
+    ).toBe(200);
+
+    const providerRequestsBeforeGap = simpleFinRequests.filter(
+      (providerRequest) => providerRequest.method === "GET",
+    ).length;
+    const gapResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(gapResponse.status).toBe(422);
+    expect(await gapResponse.json()).toMatchObject({
+      code: "simplefin_history_gap",
+      recovery: "reviewed_rebaseline",
+    });
+    expect(
+      simpleFinRequests.filter((providerRequest) => providerRequest.method === "GET"),
+    ).toHaveLength(providerRequestsBeforeGap);
+    expect(await connectedFetches(sourceUuid(source.source), "committed")).toHaveLength(1);
+
+    const currentBytes = simpleFinAccountSetBytes({
+      balance: "125.00",
+      balanceAtEpoch: nowEpoch,
+    });
+    simpleFinAccountResponses.push(currentBytes);
+    const recoveryResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source, rebaseline: true },
+    });
+    expect(recoveryResponse.status).toBe(202);
+    const recovery = await waitForOperation(await recoveryResponse.json(), owner);
+    expect(recovery.status).toBe("done");
+    expect(recovery.request).toMatchObject({ rebaseline: true });
+    const recoveryResult = recovery.result as {
+      staged_origin: string;
+      verify: {
+        ok: boolean;
+        history_recovery?: {
+          mode: string;
+          reason: string;
+          previous_balance_at: string;
+          history_resumes_at: string;
+        };
+        balance_delta_baselines: unknown[];
+        checks: Array<{ name: string; ok: boolean }>;
+      };
+    };
+    expect(recoveryResult.verify).toMatchObject({
+      ok: true,
+      history_recovery: {
+        mode: "rebaseline",
+        reason: "simplefin_history_gap",
+        previous_balance_at: new Date(previousBalanceAt * 1_000).toISOString(),
+      },
+      balance_delta_baselines: [{ account_index: 1 }],
+    });
+    expect(recoveryResult.verify.checks).toContainEqual(
+      expect.objectContaining({ name: "history_recovery", ok: true }),
+    );
+    const recoveryRequest = [...simpleFinRequests]
+      .reverse()
+      .find((providerRequest) => providerRequest.method === "GET");
+    expect(recoveryRequest).toBeDefined();
+    const recoveryUrl = new URL(recoveryRequest!.url);
+    expect(
+      Number(recoveryUrl.searchParams.get("end-date")) -
+        Number(recoveryUrl.searchParams.get("start-date")),
+    ).toBe(45 * day);
+    const stagedBytesResponse = await request(
+      `/rnet/v0/origins/${recoveryResult.staged_origin.split("/").at(-1)}/bytes`,
+      { headers: owner },
+    );
+    expect(stagedBytesResponse.status).toBe(200);
+    expect(Array.from(new Uint8Array(await stagedBytesResponse.arrayBuffer()))).toEqual(
+      Array.from(currentBytes),
+    );
+    expect(await connectedFetches(sourceUuid(source.source), "committed")).toHaveLength(1);
+    expect(await connectedFetches(sourceUuid(source.source), "verified")).toHaveLength(1);
+
+    const confirmRecovery = await request(
+      `/rnet/v0/vibes/${vibeUuid}/imports/${recovery.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirmRecovery.status).toBe(200);
+    expect(await connectedFetches(sourceUuid(source.source), "committed")).toHaveLength(2);
+    expect(await connectedFetches(sourceUuid(source.source), "verified")).toHaveLength(0);
+  });
+
   test("does not count credential decryption failures as SimpleFIN fetch attempts", async () => {
     const fixture = await createStoredSimpleFinCredential(1);
     const source = fixture.sources[0]!;
@@ -2352,4 +2475,40 @@ async function simpleFinFixtureWithoutTransactions(name: string): Promise<Uint8A
   };
   for (const account of document.accounts) account.transactions = [];
   return new TextEncoder().encode(JSON.stringify(document));
+}
+
+function simpleFinAccountSetBytes(input: {
+  balance: string;
+  balanceAtEpoch: number;
+  transactions?: Array<{
+    id: string;
+    posted: number;
+    amount: string;
+    description: string;
+  }>;
+}): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      errlist: [],
+      connections: [
+        {
+          conn_id: "conn-alpha",
+          name: "Synthetic Community Bank",
+          org_id: "org-alpha",
+          sfin_url: "https://synthetic-a.example.invalid/simplefin",
+        },
+      ],
+      accounts: [
+        {
+          id: "acct-shared",
+          name: "Synthetic Checking",
+          conn_id: "conn-alpha",
+          currency: "USD",
+          balance: input.balance,
+          "balance-date": input.balanceAtEpoch,
+          transactions: input.transactions ?? [],
+        },
+      ],
+    }),
+  );
 }

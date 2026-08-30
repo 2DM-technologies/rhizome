@@ -16,7 +16,8 @@ export interface VerifyCheck {
     | "balance_reconciliation"
     | "provider_errors"
     | "account_balances"
-    | "balance_delta";
+    | "balance_delta"
+    | "history_recovery";
   ok: boolean;
   detail: string;
 }
@@ -71,6 +72,14 @@ export interface ProviderErrorEvidence {
   scopes: Array<"general" | "connection" | "account" | "unknown">;
 }
 
+/** Owner-reviewed evidence that a connected source intentionally started a new balance baseline. */
+export interface HistoryRecoveryEvidence {
+  mode: "rebaseline";
+  reason: "simplefin_history_gap" | "unreconciled_backdated_activity";
+  previous_balance_at: string;
+  history_resumes_at: string;
+}
+
 export interface VerifyReport {
   ok: boolean;
   source_record_count: number;
@@ -81,11 +90,15 @@ export interface VerifyReport {
   balance_delta_reconciliations: BalanceDeltaReconciliation[];
   balance_delta_baselines: BalanceDeltaBaseline[];
   provider_error_evidence?: ProviderErrorEvidence;
+  history_recovery?: HistoryRecoveryEvidence;
   checks: VerifyCheck[];
 }
 
 export interface VerifyTransactionsOptions {
   previous?: ParsedTransactions;
+  historyRecovery?: HistoryRecoveryEvidence;
+  /** Inclusive start of the current connected response, used to detect removed overlap records. */
+  historyStartEpoch?: number;
 }
 
 interface ExactDecimal {
@@ -156,8 +169,13 @@ export function verifyTransactions(
     reconciliations: BalanceDeltaReconciliation[];
     baselines: BalanceDeltaBaseline[];
   } = options.previous
-    ? verifyBalanceDelta(parsed, options.previous)
-    : { reconciliations: [], baselines: [] };
+    ? verifyBalanceDelta(parsed, options.previous, options.historyStartEpoch)
+    : {
+        reconciliations: [],
+        baselines: options.historyRecovery
+          ? (parsed.accountBalances ?? []).map((_, index) => ({ account_index: index + 1 }))
+          : [],
+      };
   const provider = verifyProviderErrors(parsed.providerErrors);
   const checks: VerifyCheck[] = [
     {
@@ -203,6 +221,15 @@ export function verifyTransactions(
     ...(accounts.check ? [accounts.check] : []),
     ...(delta.check ? [delta.check] : []),
     ...(provider.check ? [provider.check] : []),
+    ...(options.historyRecovery
+      ? [
+          {
+            name: "history_recovery" as const,
+            ok: true,
+            detail: `Owner-reviewed rebaseline resumes connected history at ${options.historyRecovery.history_resumes_at} after the previous balance at ${options.historyRecovery.previous_balance_at}`,
+          },
+        ]
+      : []),
   ];
   return {
     ok: checks.every((check) => check.ok),
@@ -214,6 +241,7 @@ export function verifyTransactions(
     balance_delta_reconciliations: delta.reconciliations,
     balance_delta_baselines: delta.baselines,
     ...(provider.evidence ? { provider_error_evidence: provider.evidence } : {}),
+    ...(options.historyRecovery ? { history_recovery: options.historyRecovery } : {}),
     checks,
   };
 }
@@ -375,6 +403,7 @@ function verifyProviderErrors(errors: ParsedProviderErrors | undefined): {
 function verifyBalanceDelta(
   current: ParsedTransactions,
   previous: ParsedTransactions,
+  historyStartEpoch?: number,
 ): {
   check: VerifyCheck;
   reconciliations: BalanceDeltaReconciliation[];
@@ -400,7 +429,8 @@ function verifyBalanceDelta(
     providerErrorsAreEmpty(previous.providerErrors) &&
     currentKeys.size === currentBalances.length &&
     previousByAccount.size === previousBalances.length &&
-    missingPreviousCount === 0;
+    missingPreviousCount === 0 &&
+    (historyStartEpoch === undefined || isValidEpoch(historyStartEpoch, true));
   const reconciliations: BalanceDeltaReconciliation[] = [];
   const baselines: BalanceDeltaBaseline[] = [];
 
@@ -434,23 +464,32 @@ function verifyBalanceDelta(
       continue;
     }
 
+    const currentSettled = settledTransactionsForAccount(current.transactions, currentBalance);
+    const previousSettled = settledTransactionsForAccount(previous.transactions, previousBalance);
+    valid &&= currentSettled.valid && previousSettled.valid;
+
+    // Compare the value of every current record with the value already represented by the
+    // previous balance. This handles first-seen backdated records, amount corrections, pending →
+    // posted transitions, and removals/reversals. Prior records are treated as removed only when
+    // their posting date falls inside the current response's known overlap.
+    const identities = new Set(currentSettled.records.keys());
+    if (historyStartEpoch !== undefined) {
+      for (const [identity, transaction] of previousSettled.records) {
+        if (transaction.postedAtEpoch >= historyStartEpoch) identities.add(identity);
+      }
+    }
     let transactionTotal: ExactDecimal | undefined;
-    for (const transaction of current.transactions) {
+    for (const identity of identities) {
+      const currentTransaction = currentSettled.records.get(identity);
+      const previousTransaction = previousSettled.records.get(identity);
+      if (currentTransaction && currentTransaction.postedAtEpoch <= currentBalance.balanceAtEpoch) {
+        transactionTotal = add(transactionTotal, currentTransaction.amount);
+      }
       if (
-        transaction.accountIdentity !== currentBalance.accountIdentity ||
-        transaction.currency !== currentBalance.currency ||
-        transaction.pending === true
+        previousTransaction &&
+        previousTransaction.postedAtEpoch <= previousBalance.balanceAtEpoch
       ) {
-        continue;
-      }
-      const posted = transaction.postedAtEpoch;
-      const amount = exactDecimal(transaction.amount);
-      if (posted === undefined || !isValidEpoch(posted, false) || !amount) {
-        valid = false;
-        continue;
-      }
-      if (posted > previousBalance.balanceAtEpoch && posted <= currentBalance.balanceAtEpoch) {
-        transactionTotal = add(transactionTotal, amount);
+        transactionTotal = add(transactionTotal, negate(previousTransaction.amount));
       }
     }
     const balanceDelta = subtract(currentAmount, previousAmount);
@@ -492,6 +531,40 @@ function providerErrorsAreEmpty(errors: ParsedProviderErrors | undefined): boole
   return !errors || (errors.structured.length === 0 && errors.legacyCount === 0);
 }
 
+function settledTransactionsForAccount(
+  transactions: ParsedTransaction[],
+  balance: ParsedAccountBalance,
+): {
+  valid: boolean;
+  records: Map<string, { amount: ExactDecimal; postedAtEpoch: number }>;
+} {
+  let valid = true;
+  const records = new Map<string, { amount: ExactDecimal; postedAtEpoch: number }>();
+  for (const transaction of transactions) {
+    if (
+      transaction.accountIdentity !== balance.accountIdentity ||
+      transaction.currency !== balance.currency ||
+      transaction.pending === true
+    ) {
+      continue;
+    }
+    const amount = exactDecimal(transaction.amount);
+    const postedAtEpoch = transaction.postedAtEpoch;
+    if (
+      !transaction.fitid ||
+      !amount ||
+      postedAtEpoch === undefined ||
+      !isValidEpoch(postedAtEpoch, false) ||
+      records.has(transaction.fitid)
+    ) {
+      valid = false;
+      continue;
+    }
+    records.set(transaction.fitid, { amount, postedAtEpoch });
+  }
+  return { valid, records };
+}
+
 function identityKey(accountIdentity: string, fitid: string): string {
   return JSON.stringify([accountIdentity, fitid]);
 }
@@ -528,6 +601,10 @@ function subtract(left: ExactDecimal, right: ExactDecimal): ExactDecimal {
       right.coefficient * 10n ** BigInt(scale - right.scale),
     scale,
   };
+}
+
+function negate(value: ExactDecimal): ExactDecimal {
+  return { coefficient: -value.coefficient, scale: value.scale };
 }
 
 function decimalsEqual(left: ExactDecimal, right: ExactDecimal): boolean {

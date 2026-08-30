@@ -63,6 +63,10 @@ describe("shared store schemas", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
       createImportPreviewRequestSchema,
     );
+    expect(createImportPreviewRequestSchema.properties.rebaseline).toEqual({
+      type: "boolean",
+      default: false,
+    });
     expect(STORE_SCHEMA_COMPONENTS.ConnectSimpleFinRequest).toBe(connectSimpleFinRequestSchema);
     expect(STORE_SCHEMA_COMPONENTS.SourceCredential).toBe(sourceCredentialDocumentSchema);
     expect(Object.values(STORE_SCHEMA_COMPONENTS).every((schema) => !("$id" in schema))).toBe(true);

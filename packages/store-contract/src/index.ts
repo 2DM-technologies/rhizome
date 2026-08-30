@@ -27,6 +27,7 @@ export const PROBLEM_CODES = [
   "parser_unsupported",
   "rate_limited",
   "schema_violation",
+  "simplefin_history_gap",
   "source_connection_failed",
   "writer_namespace_mismatch",
 ] as const;
@@ -181,7 +182,15 @@ export const ingestionSourceDocumentSchema = {
 export const createImportPreviewRequestSchema = {
   type: "object",
   required: ["source"],
-  properties: { source: { type: "string", pattern: SOURCE_ID_PATTERN } },
+  properties: {
+    source: { type: "string", pattern: SOURCE_ID_PATTERN },
+    /**
+     * Owner-reviewed recovery for a SimpleFIN source whose last committed balance is older than
+     * the provider's retrievable history window. The resulting preview carries explicit recovery
+     * evidence and does not advance the baseline until that preview is confirmed.
+     */
+    rebaseline: { type: "boolean", default: false },
+  },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 

@@ -15,7 +15,11 @@ import type {
   ParsedAccountBalance,
   ParsedTransactions,
 } from "../../../ingest/transactions/types.ts";
-import { verifyTransactions, type VerifyReport } from "../../../ingest/transactions/verify.ts";
+import {
+  verifyTransactions,
+  type HistoryRecoveryEvidence,
+  type VerifyReport,
+} from "../../../ingest/transactions/verify.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
@@ -144,11 +148,20 @@ interface CredentialFetchReservation {
 
 const SIMPLEFIN_FETCH_LIMIT = 24;
 const SIMPLEFIN_FETCH_WINDOW_HOURS = 24;
-// Bridge emits a gen.api error for wider ranges, and connected VERIFY fails closed on every
-// provider errlist entry. A monthly pull still retains a 15-day overlap at this boundary.
+// Ordinary pulls retain a 15-day overlap at a monthly cadence. When a committed balance is older,
+// extend this one exact provider request just far enough to cover that balance and the same overlap,
+// bounded by SimpleFIN's documented 90-day maximum.
 const SIMPLEFIN_HISTORY_WINDOW_SECONDS = 45 * 24 * 60 * 60;
+const SIMPLEFIN_HISTORY_OVERLAP_SECONDS = 15 * 24 * 60 * 60;
+const SIMPLEFIN_MAX_HISTORY_WINDOW_SECONDS = 90 * 24 * 60 * 60;
 // A stable namespace for the PostgreSQL advisory lock used by SimpleFIN fetch leases.
 const SIMPLEFIN_FETCH_LOCK_SEED = 0x53464e;
+
+export interface SimpleFinHistoryPlan {
+  historyRecovery?: HistoryRecoveryEvidence;
+  previous?: ParsedTransactions;
+  startDateEpoch: number;
+}
 
 export interface SimpleFinAccountsFetcher {
   fetchAccounts(accessUrl: string, request?: SimpleFinAccountsRequest): Promise<Uint8Array>;
@@ -190,7 +203,18 @@ export class ImportService {
     if (!vibe) throw notFound("Vibe");
 
     const sourceUuid = sourceUuidOf(input.source);
-    await this.snapshotSource(sourceUuid, vibe.ownerUuid);
+    const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
+    if (input.rebaseline === true && source.kind !== "credential") {
+      throw new Problem(
+        422,
+        "schema_violation",
+        "Rebaseline is only available for connected sources",
+        "Remove rebaseline or select a SimpleFIN ingestion source",
+      );
+    }
+    if (source.kind === "credential") {
+      await this.historyPlanFor(source, input.rebaseline === true, undefined, true);
+    }
     const operationUuid = uuidv7();
     const [operation] = await this.db
       .insert(operations)
@@ -200,22 +224,28 @@ export class ImportService {
         status: "queued",
         invokedBy: this.actor.subject,
         vibeUuid,
-        request: { mode: "import_preview", source: input.source },
+        request: {
+          mode: "import_preview",
+          source: input.source,
+          rebaseline: input.rebaseline ?? false,
+        },
       })
       .returning();
     if (!operation) throw new Error("Import preview operation insert did not return a row");
 
     queueMicrotask(() => {
-      void this.runPreview(operationUuid, sourceUuid, vibe).catch(async (error: unknown) => {
-        await this.db
-          .update(operations)
-          .set({
-            status: "failed",
-            error: error instanceof Error ? error.message : "Import preview failed",
-            finishedAt: new Date(),
-          })
-          .where(eq(operations.uuid, operationUuid));
-      });
+      void this.runPreview(operationUuid, sourceUuid, vibe, input.rebaseline === true).catch(
+        async (error: unknown) => {
+          await this.db
+            .update(operations)
+            .set({
+              status: "failed",
+              error: error instanceof Error ? error.message : "Import preview failed",
+              finishedAt: new Date(),
+            })
+            .where(eq(operations.uuid, operationUuid));
+        },
+      );
     });
     return operation;
   }
@@ -239,7 +269,18 @@ export class ImportService {
       );
     }
     const sourceUuids = vibe.pullConfig.sources.map(sourceUuidOf);
-    for (const sourceUuid of sourceUuids) await this.snapshotSource(sourceUuid, vibe.ownerUuid);
+    for (const sourceUuid of sourceUuids) {
+      const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
+      if (source.kind === "credential") {
+        try {
+          await this.historyPlanFor(source, false);
+        } catch (error) {
+          // Pull may be invoked by a delegated dMachine. Keep private banking timestamps in the
+          // owner-only import-preview error while still returning a typed recovery signal here.
+          throw redactSimpleFinHistoryGapForPull(error);
+        }
+      }
+    }
 
     const operationUuid = uuidv7();
     const [operation] = await this.db
@@ -309,6 +350,10 @@ export class ImportService {
       if (!result.verify.ok || result.review_digest !== operation.reviewDigest) {
         throw invalidReview("The preview did not pass VERIFY or its digest does not match");
       }
+      const reviewedRebaseline = operation.request.rebaseline === true;
+      if (reviewedRebaseline !== Boolean(result.verify.history_recovery)) {
+        throw invalidReview("The preview history-recovery evidence does not match its request");
+      }
       const sourceReference = operation.request.source;
       if (typeof sourceReference !== "string") throw invalidReview("The preview has no source");
       const resolved = await this.resolveSource(
@@ -319,6 +364,9 @@ export class ImportService {
       );
       if (resolved.sourceStateDigest !== result.source_digest) {
         throw invalidReview("The source or pinned parser changed after review");
+      }
+      if (result.verify.history_recovery && resolved.kind !== "credential") {
+        throw invalidReview("History recovery is only valid for a connected source");
       }
       const stagedOrigin = await this.lockStagedOrigin(
         transaction,
@@ -478,13 +526,18 @@ export class ImportService {
     return { vibe, grants: activeGrants, mediaObjectUuids: memberships.map(({ uuid }) => uuid) };
   }
 
-  private async runPreview(operationUuid: string, sourceUuid: string, vibe: DbVibe): Promise<void> {
+  private async runPreview(
+    operationUuid: string,
+    sourceUuid: string,
+    vibe: DbVibe,
+    rebaseline: boolean,
+  ): Promise<void> {
     await this.db
       .update(operations)
       .set({ status: "running" })
       .where(and(eq(operations.uuid, operationUuid), eq(operations.status, "queued")));
     const resolved = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
-    const staged = await this.stageSource(resolved, vibe.ownerUuid, operationUuid);
+    const staged = await this.stageSource(resolved, vibe.ownerUuid, operationUuid, rebaseline);
     const candidates = staged.candidates.map(({ candidate }) => candidate);
     const elements = staged.candidates.flatMap(({ elements }) => elements);
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
@@ -530,7 +583,7 @@ export class ImportService {
         sourceUuidOf(sourceReference),
         initialVibe.ownerUuid,
       );
-      const parsed = await this.stageSource(resolved, initialVibe.ownerUuid, operationUuid);
+      const parsed = await this.stageSource(resolved, initialVibe.ownerUuid, operationUuid, false);
       staged.push(...parsed.candidates);
       captures.push(parsed);
       sourceResults.push({ source: sourceReference, verify: parsed.verify });
@@ -559,9 +612,10 @@ export class ImportService {
     resolved: ResolvedSource,
     ownerUuid: string,
     operationUuid: string,
+    rebaseline: boolean,
   ): Promise<StagedSourceCapture> {
     if (resolved.kind === "credential") {
-      return this.stageCredentialSource(resolved, ownerUuid, operationUuid);
+      return this.stageCredentialSource(resolved, ownerUuid, operationUuid, rebaseline);
     }
     return this.stageOriginSource(resolved, ownerUuid);
   }
@@ -601,6 +655,7 @@ export class ImportService {
     resolved: ResolvedCredentialSource,
     ownerUuid: string,
     operationUuid: string,
+    rebaseline: boolean,
   ): Promise<StagedSourceCapture> {
     const reservation = await this.reserveCredentialFetch(resolved, ownerUuid, operationUuid);
     const reservedSource = reservation.resolved;
@@ -610,6 +665,8 @@ export class ImportService {
     let providerRequestStarted = false;
     try {
       const config = simpleFinConfig(reservedSource.source.config);
+      const endDateEpoch = Math.floor(Date.now() / 1_000);
+      const historyPlan = await this.historyPlanFor(reservedSource, rebaseline, endDateEpoch);
       const accessUrl = await this.credentialCrypto.open(
         reservedSource.credential.secret,
         credentialAssociatedData(
@@ -618,19 +675,18 @@ export class ImportService {
           reservedSource.credential.provider,
         ),
       );
-      const endDateEpoch = Math.floor(Date.now() / 1_000);
       providerRequestStarted = true;
       const bytes = await this.simpleFin.fetchAccounts(accessUrl, {
         ...(config.accounts
           ? { accountIds: config.accounts.map(({ account_id }) => account_id) }
           : {}),
-        startDateEpoch: endDateEpoch - SIMPLEFIN_HISTORY_WINDOW_SECONDS,
+        startDateEpoch: historyPlan.startDateEpoch,
         endDateEpoch,
         includePending: config.include_pending === true,
       });
-      // Revocation may proceed once the outbound request is complete. Parsing and immutable
-      // capture storage do not use the credential and therefore do not need the lease.
-      await reservation.release();
+      // Persist the exact successful provider response before lease cleanup. If unlocking the
+      // dedicated connection fails, the rate-counted response remains retained as an immutable
+      // OriginArtifact instead of disappearing before the fetch ledger can record its failure.
       const origin = await storeOwnedOriginArtifact(
         { db: this.db, blobs: this.blobs },
         {
@@ -640,6 +696,9 @@ export class ImportService {
           label: `simplefin-${fetchUuid}.json`,
         },
       );
+      // Revocation may proceed once the exact response is durable. Parsing does not use the
+      // credential and therefore does not need the lease.
+      await reservation.release();
       const retrievedAt = new Date();
       const [fetched] = await this.db
         .update(ingestionSourceFetches)
@@ -659,18 +718,13 @@ export class ImportService {
         throw new Error("Pinned parser version is unavailable");
       }
       const current = filterSimpleFinTransactions(await parser.parse(bytes), config);
-      let previous: ParsedTransactions | undefined;
-      if (reservation.resolved.baseline) {
-        const previousBlob = await this.blobs.get(
-          "origins",
-          reservation.resolved.baseline.origin.contentHash,
-        );
-        if (!previousBlob) throw new Error("Previous connected capture is unavailable");
-        previous = filterSimpleFinTransactions(await parser.parse(previousBlob.bytes), config);
-      }
 
       phase = "verify";
-      const verify = verifyTransactions(current, previous ? { previous } : {});
+      const verify = verifyTransactions(current, {
+        ...(historyPlan.previous ? { previous: historyPlan.previous } : {}),
+        ...(historyPlan.previous ? { historyStartEpoch: historyPlan.startDateEpoch } : {}),
+        ...(historyPlan.historyRecovery ? { historyRecovery: historyPlan.historyRecovery } : {}),
+      });
       if (!verify.ok) {
         throw new Error(`VERIFY rejected the connected transaction set: ${failedChecks(verify)}`);
       }
@@ -736,6 +790,39 @@ export class ImportService {
       }
       throw error;
     }
+  }
+
+  /** Loads the exact committed capture and derives one provider-bounded history request. */
+  private async historyPlanFor(
+    resolved: ResolvedCredentialSource,
+    rebaseline: boolean,
+    endDateEpoch = Math.floor(Date.now() / 1_000),
+    exposeSource = false,
+  ): Promise<SimpleFinHistoryPlan> {
+    if (!resolved.baseline) {
+      return planSimpleFinHistory(
+        undefined,
+        endDateEpoch,
+        rebaseline,
+        exposeSource ? `source:${resolved.source.uuid}` : undefined,
+      );
+    }
+    const parser = transactionParserFor(resolved.source.parser);
+    if (!parser || parser.version !== resolved.source.parserVersion) {
+      throw new Error("Pinned parser version is unavailable");
+    }
+    const previousBlob = await this.blobs.get("origins", resolved.baseline.origin.contentHash);
+    if (!previousBlob) throw new Error("Previous connected capture is unavailable");
+    const previous = filterSimpleFinTransactions(
+      await parser.parse(previousBlob.bytes),
+      simpleFinConfig(resolved.source.config),
+    );
+    return planSimpleFinHistory(
+      previous,
+      endDateEpoch,
+      rebaseline,
+      exposeSource ? `source:${resolved.source.uuid}` : undefined,
+    );
   }
 
   /**
@@ -1550,6 +1637,93 @@ function simpleFinConfig(value: unknown): SimpleFinSourceConfig {
   };
 }
 
+/**
+ * Plans one exact SimpleFIN response. The ordinary 45-day range grows to include the oldest
+ * selected-account balance plus a 15-day overlap, but never exceeds the provider's documented
+ * 90-day limit. Crossing that boundary requires a separately reviewed rebaseline preview.
+ */
+export function planSimpleFinHistory(
+  previous: ParsedTransactions | undefined,
+  endDateEpoch: number,
+  rebaseline: boolean,
+  ownerSource?: string,
+): SimpleFinHistoryPlan {
+  if (!Number.isSafeInteger(endDateEpoch) || endDateEpoch <= 0) {
+    throw new Error("SimpleFIN history end date is invalid");
+  }
+  const rollingStart = Math.max(0, endDateEpoch - SIMPLEFIN_HISTORY_WINDOW_SECONDS);
+  if (!previous) {
+    if (rebaseline) {
+      throw new Problem(
+        422,
+        "schema_violation",
+        "SimpleFIN source has no baseline to replace",
+        "Start a normal import preview for this new connected source",
+      );
+    }
+    return { startDateEpoch: rollingStart };
+  }
+
+  const balances = previous.accountBalances ?? [];
+  if (!balances.length) throw new Error("Previous connected capture has no account balances");
+  const oldestBalanceAt = Math.min(...balances.map(({ balanceAtEpoch }) => balanceAtEpoch));
+  if (!Number.isSafeInteger(oldestBalanceAt) || oldestBalanceAt <= 0) {
+    throw new Error("Previous connected capture has an invalid balance date");
+  }
+  const preferredStart = Math.max(0, oldestBalanceAt - SIMPLEFIN_HISTORY_OVERLAP_SECONDS);
+  const earliestSupportedStart = Math.max(0, endDateEpoch - SIMPLEFIN_MAX_HISTORY_WINDOW_SECONDS);
+  const previousBalanceAt = new Date(oldestBalanceAt * 1_000).toISOString();
+
+  if (rebaseline) {
+    return {
+      startDateEpoch: rollingStart,
+      historyRecovery: {
+        mode: "rebaseline",
+        reason:
+          oldestBalanceAt < earliestSupportedStart
+            ? "simplefin_history_gap"
+            : "unreconciled_backdated_activity",
+        previous_balance_at: previousBalanceAt,
+        history_resumes_at: new Date(rollingStart * 1_000).toISOString(),
+      },
+    };
+  }
+
+  if (oldestBalanceAt < earliestSupportedStart) {
+    throw new Problem(
+      422,
+      "simplefin_history_gap",
+      "SimpleFIN history gap requires review",
+      `The previous connected balance at ${previousBalanceAt} cannot be reconciled inside SimpleFIN's 90-day retrieval limit. Start an import preview with rebaseline=true to review and acknowledge a new baseline; the omitted interval will not be imported automatically.`,
+      {
+        previous_balance_at: previousBalanceAt,
+        earliest_supported_start: new Date(earliestSupportedStart * 1_000).toISOString(),
+        recovery: "reviewed_rebaseline",
+        ...(ownerSource ? { source: ownerSource } : {}),
+      },
+    );
+  }
+
+  return {
+    previous,
+    // Preserve the preferred 15-day overlap when possible, then shrink only the overlap as the
+    // balance approaches the provider boundary. The balance interval itself is never omitted.
+    startDateEpoch: Math.max(earliestSupportedStart, Math.min(rollingStart, preferredStart)),
+  };
+}
+
+/** Removes owner-only banking timestamps/source references from pull errors visible to grantees. */
+export function redactSimpleFinHistoryGapForPull(error: unknown): unknown {
+  if (!(error instanceof Problem) || error.code !== "simplefin_history_gap") return error;
+  return new Problem(
+    422,
+    "simplefin_history_gap",
+    "SimpleFIN history gap requires owner review",
+    "The connected source cannot be reconciled inside the provider history window. Its owner must review a rebaseline import preview.",
+    { recovery: "owner_reviewed_rebaseline" },
+  );
+}
+
 export function assertSimpleFinFetchAllowance(recentAttemptCount: number): void {
   if (!Number.isSafeInteger(recentAttemptCount) || recentAttemptCount < 0) {
     throw new Error("SimpleFIN fetch attempt count is invalid");
@@ -1760,7 +1934,43 @@ function importPreviewResult(value: unknown): ImportPreviewResult {
   ) {
     throw invalidReview("The staged result is malformed");
   }
+  if (
+    result.verify.history_recovery !== undefined &&
+    !validHistoryRecoveryEvidence(result.verify.history_recovery)
+  ) {
+    throw invalidReview("The staged history-recovery evidence is malformed");
+  }
   return result as ImportPreviewResult;
+}
+
+function validHistoryRecoveryEvidence(value: unknown): value is HistoryRecoveryEvidence {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const evidence = value as Record<string, unknown>;
+  if (
+    Object.keys(evidence).some(
+      (key) =>
+        key !== "mode" &&
+        key !== "reason" &&
+        key !== "previous_balance_at" &&
+        key !== "history_resumes_at",
+    ) ||
+    evidence.mode !== "rebaseline" ||
+    (evidence.reason !== "simplefin_history_gap" &&
+      evidence.reason !== "unreconciled_backdated_activity") ||
+    typeof evidence.previous_balance_at !== "string" ||
+    typeof evidence.history_resumes_at !== "string"
+  ) {
+    return false;
+  }
+  return (
+    isCanonicalIsoTimestamp(evidence.previous_balance_at) &&
+    isCanonicalIsoTimestamp(evidence.history_resumes_at)
+  );
+}
+
+function isCanonicalIsoTimestamp(value: string): boolean {
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
 }
 
 function assertCandidate(

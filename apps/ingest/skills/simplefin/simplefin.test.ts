@@ -101,6 +101,139 @@ describe("M2 SimpleFIN v2 committed parser", () => {
     );
   });
 
+  test("counts newly appearing backdated activity and exposes reviewed recovery when it is omitted", async () => {
+    const previous = await parseFixture("accounts-previous-v2.json");
+    const current = await parseFixture("accounts-current-v2.json");
+    const first = current.transactions[0]!;
+    const backdatedEpoch = 1_785_456_000; // 2026-07-31, before the previous Aug 1 balance.
+    current.transactions[0] = {
+      ...first,
+      postedAt: "2026-07-31",
+      postedAtEpoch: backdatedEpoch,
+      sourceProperties: {
+        ...first.sourceProperties,
+        posted_at_epoch: backdatedEpoch,
+      },
+    };
+    const backdated = verifyTransactions(current, { previous });
+    expect(backdated.ok).toBe(true);
+    expect(backdated.balance_delta_reconciliations[0]?.transaction_total).toBe("125.50");
+
+    const omitted = {
+      ...current,
+      transactions: [],
+      sourceRecordCount: 0,
+      accountBalances: current.accountBalances?.map((balance) => ({
+        ...balance,
+        sourceRecordCount: 0,
+      })),
+    };
+    expect(verifyTransactions(omitted, { previous }).ok).toBe(false);
+
+    const historyRecovery = {
+      mode: "rebaseline" as const,
+      reason: "unreconciled_backdated_activity" as const,
+      previous_balance_at: "2026-08-01T00:00:00.000Z",
+      history_resumes_at: "2026-08-15T00:00:00.000Z",
+    };
+    const recovered = verifyTransactions(omitted, { historyRecovery });
+    expect(recovered).toMatchObject({
+      ok: true,
+      history_recovery: historyRecovery,
+      balance_delta_reconciliations: [],
+      balance_delta_baselines: [{ account_index: 1 }, { account_index: 2 }],
+    });
+    expect(recovered.checks).toContainEqual(
+      expect.objectContaining({ name: "history_recovery", ok: true }),
+    );
+  });
+
+  test("reconciles corrected and removed settled transactions inside the request overlap", () => {
+    const accountIdentity = '["conn-alpha","acct-shared"]';
+    const previousBalanceAtEpoch = 1_785_542_400; // 2026-08-01
+    const currentBalanceAtEpoch = 1_785_628_800; // 2026-08-02
+    const postedAtEpoch = 1_785_456_000; // 2026-07-31
+    const previous = {
+      transactions: [
+        {
+          amount: "10.00",
+          currency: "USD",
+          postedAt: "2026-07-31",
+          postedAtEpoch,
+          fitid: "corrected-backdate",
+          accountIdentity,
+        },
+      ],
+      sourceRecordCount: 1,
+      allowEmpty: true,
+      accountBalances: [
+        {
+          accountIdentity,
+          currency: "USD",
+          balance: "100.00",
+          balanceAt: "2026-08-01T00:00:00.000Z",
+          balanceAtEpoch: previousBalanceAtEpoch,
+          sourceRecordCount: 1,
+        },
+      ],
+    };
+    const corrected = {
+      transactions: [{ ...previous.transactions[0]!, amount: "15.00" }],
+      sourceRecordCount: 1,
+      allowEmpty: true,
+      accountBalances: [
+        {
+          ...previous.accountBalances[0]!,
+          balance: "105.00",
+          balanceAt: "2026-08-02T00:00:00.000Z",
+          balanceAtEpoch: currentBalanceAtEpoch,
+        },
+      ],
+    };
+    const correctedReport = verifyTransactions(corrected, {
+      previous,
+      historyStartEpoch: postedAtEpoch,
+    });
+    expect(correctedReport.ok).toBe(true);
+    expect(correctedReport.balance_delta_reconciliations[0]).toMatchObject({
+      balance_delta: "5.00",
+      transaction_total: "5.00",
+    });
+
+    const removed = {
+      ...corrected,
+      transactions: [],
+      sourceRecordCount: 0,
+      accountBalances: [
+        {
+          ...corrected.accountBalances[0]!,
+          balance: "90.00",
+          sourceRecordCount: 0,
+        },
+      ],
+    };
+    const removedReport = verifyTransactions(removed, {
+      previous,
+      historyStartEpoch: postedAtEpoch,
+    });
+    expect(removedReport.ok).toBe(true);
+    expect(removedReport.balance_delta_reconciliations[0]).toMatchObject({
+      balance_delta: "-10.00",
+      transaction_total: "-10.00",
+    });
+
+    const outsideOverlap = {
+      ...removed,
+      accountBalances: [{ ...removed.accountBalances[0]!, balance: "100.00" }],
+    };
+    const outsideOverlapReport = verifyTransactions(outsideOverlap, {
+      previous,
+      historyStartEpoch: postedAtEpoch + 1,
+    });
+    expect(outsideOverlapReport.ok).toBe(true);
+    expect(outsideOverlapReport.balance_delta_reconciliations[0]?.transaction_total).toBe("0.00");
+  });
+
   test("fails closed when a previously selected account disappears", async () => {
     const previous = await parseFixture("accounts-previous-v2.json");
     const current = await parseCurrent((capture) => {
