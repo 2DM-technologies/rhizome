@@ -658,8 +658,10 @@ describe("rNet M1 store", () => {
     expect(tombstonedConfirm.status).toBe(422);
     expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
 
-    const zeroCurrentBytes = await simpleFinFixtureWithoutTransactions("accounts-current-v2.json");
-    simpleFinAccountResponses.push(zeroCurrentBytes);
+    // Concurrent previews repeat the same provider snapshot. Removing transactions while leaving
+    // their balance effects intact is not a response a conforming provider can return and should
+    // (correctly) fail the stronger identity-union balance reconciliation.
+    simpleFinAccountResponses.push(currentBytes);
     const firstConcurrentResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
       method: "POST",
       headers: owner,
@@ -667,8 +669,8 @@ describe("rNet M1 store", () => {
     });
     const firstConcurrent = await waitForOperation(await firstConcurrentResponse.json(), owner);
     expect(firstConcurrent.status).toBe("done");
-    expect((firstConcurrent.result as { candidates: unknown[] }).candidates).toEqual([]);
-    simpleFinAccountResponses.push(zeroCurrentBytes);
+    expect((firstConcurrent.result as { candidates: unknown[] }).candidates).toHaveLength(4);
+    simpleFinAccountResponses.push(currentBytes);
     const secondConcurrentResponse = await request(`/rnet/v0/vibes/${connectedVibeId}/imports`, {
       method: "POST",
       headers: owner,
@@ -676,6 +678,7 @@ describe("rNet M1 store", () => {
     });
     const secondConcurrent = await waitForOperation(await secondConcurrentResponse.json(), owner);
     expect(secondConcurrent.status).toBe("done");
+    expect((secondConcurrent.result as { candidates: unknown[] }).candidates).toHaveLength(4);
     expect(
       (
         await request(
@@ -715,7 +718,7 @@ describe("rNet M1 store", () => {
     expect(await mediaObjectCount()).toBe(objectsBeforeProviderError);
   });
 
-  test("requires an explicit reviewed rebaseline when SimpleFIN history can no longer overlap", async () => {
+  test("requires reviewed rebaselines for SimpleFIN history gaps and unreconciled activity", async () => {
     const fixture = await createStoredSimpleFinCredential(1);
     const source = fixture.sources[0]!;
     const vibeResponse = await request("/rnet/v0/vibes", {
@@ -804,7 +807,7 @@ describe("rNet M1 store", () => {
 
     const currentBytes = simpleFinAccountSetBytes({
       balance: "125.00",
-      balanceAtEpoch: nowEpoch,
+      balanceAtEpoch: nowEpoch - 60,
     });
     simpleFinAccountResponses.push(currentBytes);
     const recoveryResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
@@ -869,6 +872,63 @@ describe("rNet M1 store", () => {
     expect(confirmRecovery.status).toBe(200);
     expect(await connectedFetches(sourceUuid(source.source), "committed")).toHaveLength(2);
     expect(await connectedFetches(sourceUuid(source.source), "verified")).toHaveLength(0);
+
+    const unreconciledBytes = simpleFinAccountSetBytes({
+      balance: "130.00",
+      balanceAtEpoch: nowEpoch,
+    });
+    simpleFinAccountResponses.push(unreconciledBytes);
+    const unreconciledResponse = await request(`/rnet/v0/vibes/${vibeUuid}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    expect(unreconciledResponse.status).toBe(202);
+    const unreconciled = await waitForOperation(await unreconciledResponse.json(), owner);
+    expect(unreconciled).toMatchObject({
+      status: "failed",
+      result: {
+        code: "simplefin_history_gap",
+        reason: "unreconciled_backdated_activity",
+        recovery: "reviewed_rebaseline",
+        source: source.source,
+      },
+    });
+    expect(unreconciled.error).toContain("cannot be reconciled");
+
+    const delegatedUnreconciledResponse = await request(
+      `/rnet/v0/operations/${unreconciled.operation_id}`,
+      { headers: dmachine },
+    );
+    expect(delegatedUnreconciledResponse.status).toBe(200);
+    const delegatedUnreconciled = await delegatedUnreconciledResponse.json();
+    expect(delegatedUnreconciled.result).toEqual({
+      code: "simplefin_history_gap",
+      recovery: "owner_reviewed_rebaseline",
+    });
+    expect(JSON.stringify(delegatedUnreconciled)).not.toContain(source.source);
+    expect(JSON.stringify(delegatedUnreconciled)).not.toContain("unreconciled_backdated_activity");
+
+    simpleFinAccountResponses.push(unreconciledBytes);
+    const activityRecoveryResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source, rebaseline: true },
+    });
+    expect(activityRecoveryResponse.status).toBe(202);
+    const activityRecovery = await waitForOperation(await activityRecoveryResponse.json(), owner);
+    expect(activityRecovery).toMatchObject({
+      status: "done",
+      result: {
+        verify: {
+          ok: true,
+          history_recovery: {
+            mode: "rebaseline",
+            reason: "unreconciled_backdated_activity",
+          },
+        },
+      },
+    });
   });
 
   test("does not count credential decryption failures as SimpleFIN fetch attempts", async () => {
@@ -2500,14 +2560,6 @@ async function simpleFinFixtureBytes(name: string): Promise<Uint8Array> {
       new URL(`../../ingest/skills/simplefin/fixtures/${name}`, import.meta.url),
     ).arrayBuffer(),
   );
-}
-
-async function simpleFinFixtureWithoutTransactions(name: string): Promise<Uint8Array> {
-  const document = JSON.parse(new TextDecoder().decode(await simpleFinFixtureBytes(name))) as {
-    accounts: Array<{ transactions?: unknown[] }>;
-  };
-  for (const account of document.accounts) account.transactions = [];
-  return new TextEncoder().encode(JSON.stringify(document));
 }
 
 function simpleFinAccountSetBytes(input: {

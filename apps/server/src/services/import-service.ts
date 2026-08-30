@@ -240,6 +240,7 @@ export class ImportService {
             .update(operations)
             .set({
               status: "failed",
+              result: simpleFinRecoveryResult(error),
               error: error instanceof Error ? error.message : "Import preview failed",
               finishedAt: new Date(),
             })
@@ -308,6 +309,7 @@ export class ImportService {
           .update(operations)
           .set({
             status: "failed",
+            result: simpleFinRecoveryResult(error),
             error: error instanceof Error ? error.message : "Pull failed",
             finishedAt: new Date(),
           })
@@ -728,6 +730,8 @@ export class ImportService {
         ...(historyPlan.historyRecovery ? { historyRecovery: historyPlan.historyRecovery } : {}),
       });
       if (!verify.ok) {
+        const recovery = unreconciledSimpleFinActivity(verify, reservedSource.source.uuid);
+        if (recovery) throw recovery;
         throw new Error(`VERIFY rejected the connected transaction set: ${failedChecks(verify)}`);
       }
 
@@ -1724,6 +1728,50 @@ export function redactSimpleFinHistoryGapForPull(error: unknown): unknown {
     "The connected source cannot be reconciled inside the provider history window. Its owner must review a rebaseline import preview.",
     { recovery: "owner_reviewed_rebaseline" },
   );
+}
+
+/**
+ * Turns the one VERIFY failure that owner review can resolve into the same typed recovery signal
+ * used by provider-window preflight failures. Other VERIFY failures remain ordinary rejections:
+ * rebaselining must never bypass malformed records, duplicate IDs, or provider errors.
+ */
+function unreconciledSimpleFinActivity(
+  report: VerifyReport,
+  sourceUuid: string,
+): Problem | undefined {
+  const failed = report.checks.filter(({ ok }) => !ok);
+  if (failed.length !== 1 || failed[0]?.name !== "balance_delta") return undefined;
+  return new Problem(
+    422,
+    "simplefin_history_gap",
+    "SimpleFIN history requires owner review",
+    "The connected account balances cannot be reconciled with the returned transaction history. Review and acknowledge a new baseline before pulling this source again.",
+    {
+      reason: "unreconciled_backdated_activity",
+      recovery: "reviewed_rebaseline",
+      source: `source:${sourceUuid}`,
+    },
+  );
+}
+
+/** Stores owner-only recovery metadata on an asynchronously failed operation. */
+function simpleFinRecoveryResult(error: unknown): Record<string, unknown> | null {
+  if (
+    !(error instanceof Problem) ||
+    error.code !== "simplefin_history_gap" ||
+    error.extensions.recovery !== "reviewed_rebaseline" ||
+    error.extensions.reason !== "unreconciled_backdated_activity" ||
+    typeof error.extensions.source !== "string" ||
+    !new RegExp(SOURCE_ID_PATTERN).test(error.extensions.source)
+  ) {
+    return null;
+  }
+  return {
+    code: error.code,
+    reason: error.extensions.reason,
+    recovery: error.extensions.recovery,
+    source: error.extensions.source,
+  };
 }
 
 export function assertSimpleFinFetchAllowance(recentAttemptCount: number): void {
