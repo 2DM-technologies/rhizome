@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,8 +39,9 @@ import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
  * same face across a session.
  */
 const STAND_IN_ORBS = [orb1, orb2, orb3, orb4];
-const RUNNING_APP_SIZE = 44;
-const RUNNING_APP_GAP = 20;
+const DOCK_RAIL_ITEM_SIZE = 44;
+const DOCK_RAIL_GAP = 20;
+const DOCK_RAIL_VISIBLE_ITEMS = 3;
 const HOME_SURFACE = { kind: "vibes" } satisfies Surface;
 
 function markFor(surface: Surface): string {
@@ -70,6 +72,7 @@ export function ShellLayout() {
   useEnsureSurfaceOpen(focused, mode);
 
   const open = useOpenSurfaces();
+  const recentVibeUuids = useShellStore((state) => state.recentVibeUuids);
   const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const launcherOpen = useShellStore((state) => state.launcherOpen);
   const setLauncherOpen = useShellStore((state) => state.setLauncherOpen);
@@ -80,15 +83,13 @@ export function ShellLayout() {
   const [launcherMotion, setLauncherMotion] = useState(true);
   const launcherInput = useRef<HTMLInputElement>(null);
   const launcherContainer = useRef<HTMLDivElement>(null);
+  const dockRail = useRef<HTMLDivElement>(null);
 
   const focusedId = focused ? surfaceId(focused) : null;
-  const background = open.filter((surface) => surfaceId(surface) !== focusedId);
-  // Match the tray's active-app transition: intrinsic flex reflow would move the launcher in
-  // the opposite direction for one frame before the tray's 80px reserve starts moving.
-  const runningAppsWidth =
-    background.length === 0
-      ? 0
-      : background.length * RUNNING_APP_SIZE + (background.length - 1) * RUNNING_APP_GAP;
+  const background = useMemo(
+    () => open.filter((surface) => surfaceId(surface) !== focusedId),
+    [focusedId, open],
+  );
   const loadedVibes = useMemo(
     () =>
       (vibes.data ?? []).map((vibe) => ({
@@ -101,7 +102,36 @@ export function ShellLayout() {
     () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.title])),
     [loadedVibes],
   );
+  const vibeCatalogLoaded = vibes.data !== undefined;
+  const dockRailSurfaces = useMemo(() => {
+    const focusedVibeUuid = focused?.kind === "vibe" ? focused.uuid : null;
+    // Preserve the persisted rail geometry with fallback labels during hydration. Once the
+    // authoritative catalog arrives, missing or deleted Vibes disappear from the shortcuts.
+    const recentVibes: Surface[] = recentVibeUuids.flatMap((uuid) =>
+      uuid !== focusedVibeUuid && (!vibeCatalogLoaded || vibeTitles.has(uuid))
+        ? [{ kind: "vibe", uuid }]
+        : [],
+    );
+
+    // A retained Vibe already appears in the recency list. Keep other explicitly retained
+    // surface kinds reachable after recents without letting mounted-window state dictate MRU.
+    return [...recentVibes, ...background.filter((surface) => surface.kind !== "vibe")];
+  }, [background, focused, recentVibeUuids, vibeCatalogLoaded, vibeTitles]);
+  const visibleDockRailItems = Math.min(dockRailSurfaces.length, DOCK_RAIL_VISIBLE_ITEMS);
+  // Match the tray's active-app transition: an explicit width avoids intrinsic flex reflow
+  // moving the launcher in the opposite direction while the active-app reserve animates.
+  const dockRailWidth =
+    visibleDockRailItems === 0
+      ? 0
+      : visibleDockRailItems * DOCK_RAIL_ITEM_SIZE + (visibleDockRailItems - 1) * DOCK_RAIL_GAP;
+  const dockRailOrder = dockRailSurfaces.map(surfaceId).join("\0");
   const results = useMemo(() => searchShell(query, loadedVibes), [loadedVibes, query]);
+
+  // The rail is an MRU view, so a newly opened Vibe should always restore its newest edge even
+  // if the user had scrolled back through older entries immediately beforehand.
+  useLayoutEffect(() => {
+    dockRail.current?.scrollTo({ left: 0 });
+  }, [dockRailOrder]);
 
   function dismissLauncher({ blurFocus = false, animate = true } = {}) {
     if (
@@ -200,24 +230,30 @@ export function ShellLayout() {
           tray={
             <DockTray>
               <div
+                ref={dockRail}
+                role="region"
+                aria-label="Recent Vibes and retained windows"
+                data-dock-recent-vibes
                 data-dock-running-apps
-                data-count={background.length}
-                style={{ width: runningAppsWidth }}
-                className="flex min-w-0 shrink items-center gap-5 overflow-hidden transition-[width] duration-100 ease-out"
+                data-count={dockRailSurfaces.length}
+                style={{ width: dockRailWidth }}
+                className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden transition-[width] duration-100 ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
-                {background.map((surface) => (
-                  <RunningSurfaceDockApp
-                    key={surfaceId(surface)}
-                    name={labelOf(surface, vibeTitles)}
-                    src={markFor(surface)}
-                    onOpen={(event) =>
-                      navigation.openFromDock(surface, {
-                        origin: event.currentTarget,
-                        source: "running",
-                      })
-                    }
-                  />
-                ))}
+                <div className="flex w-max items-center gap-5">
+                  {dockRailSurfaces.map((surface) => (
+                    <RunningSurfaceDockApp
+                      key={surfaceId(surface)}
+                      name={labelOf(surface, vibeTitles)}
+                      src={markFor(surface)}
+                      onOpen={(event) =>
+                        navigation.openFromDock(surface, {
+                          origin: event.currentTarget,
+                          source: "running",
+                        })
+                      }
+                    />
+                  ))}
+                </div>
               </div>
               <DockDivider />
               <div

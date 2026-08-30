@@ -295,13 +295,89 @@ test("legacy saved sessions discard accumulated windows during hydration", async
         const persisted = sessionStorage.getItem("rhizome.shell");
         if (!persisted) return null;
         const parsed = JSON.parse(persisted) as {
-          state?: { open?: unknown[] };
+          state?: { open?: unknown[]; recentVibeUuids?: unknown[] };
           version?: number;
         };
-        return { open: parsed.state?.open, version: parsed.version };
+        return {
+          open: parsed.state?.open,
+          recentVibeUuids: parsed.state?.recentVibeUuids,
+          version: parsed.version,
+        };
       }),
     )
-    .toEqual({ open: [{ kind: "object", uuid: OBJECT_ID }], version: 1 });
+    .toEqual({
+      open: [{ kind: "object", uuid: OBJECT_ID }],
+      recentVibeUuids: [],
+      version: 2,
+    });
+});
+
+test("persisted Vibe recents keep dock geometry stable while their titles hydrate", async ({
+  page,
+}) => {
+  const baseVibe = mockStore.vibes[0];
+  if (!baseVibe) throw new Error("Missing seeded Vibe");
+  const libraryUuid = "0198f2a1-a09b-76aa-95d8-fc5b55b41fd3";
+  mockStore.vibes.push({
+    ...structuredClone(baseVibe),
+    uri: `rnet://vibe/${libraryUuid}`,
+    title: "Library",
+  });
+
+  await page.addInitScript(
+    ({ recentVibeUuids }) => {
+      sessionStorage.setItem(
+        "rhizome.shell",
+        JSON.stringify({
+          state: {
+            open: [],
+            recentVibeUuids,
+            defaultViewMode: "standard",
+          },
+          version: 2,
+        }),
+      );
+    },
+    { recentVibeUuids: [VIBE_ID, libraryUuid] },
+  );
+
+  let releaseCatalog!: () => void;
+  let markCatalogPending!: () => void;
+  const catalogGate = new Promise<void>((resolve) => {
+    releaseCatalog = resolve;
+  });
+  const catalogPending = new Promise<void>((resolve) => {
+    markCatalogPending = resolve;
+  });
+  await page.route("**/rnet/v0/vibes", async (route) => {
+    if (route.request().method() === "GET") {
+      markCatalogPending();
+      await catalogGate;
+    }
+    await route.fallback();
+  });
+
+  await page.goto("/");
+  await catalogPending;
+
+  const rail = page.locator("[data-dock-recent-vibes]");
+  const items = rail.getByRole("button");
+  const launcher = page.locator("[data-launcher-slot]");
+  await expect(rail).toHaveAttribute("data-count", "2");
+  await expect(items).toHaveCount(2);
+  expect(await rail.evaluate((element) => element.clientWidth)).toBe(108);
+  expect(await items.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel))).toEqual([
+    `Vibe …${VIBE_ID.slice(-6)}`,
+    `Vibe …${libraryUuid.slice(-6)}`,
+  ]);
+  const launcherBeforeCatalog = await launcher.boundingBox();
+  expect(launcherBeforeCatalog).not.toBeNull();
+
+  releaseCatalog();
+  await expect(items.nth(0)).toHaveAccessibleName("Spending");
+  await expect(items.nth(1)).toHaveAccessibleName("Library");
+  await expect(rail).toHaveCSS("width", "108px");
+  await expect.poll(() => launcher.boundingBox()).toEqual(launcherBeforeCatalog);
 });
 
 test("the dock stays dark while its search field stays light", async ({ page }) => {
@@ -1048,6 +1124,98 @@ test("a running surface becomes active without reversing the dock motion", async
   const activeLabel = page.locator("[data-dock-app-slot] [data-dock-app-label]");
   await expect(activeLabel).toHaveText("Vibes");
   await expect(activeLabel).toHaveCSS("font-weight", "600");
+});
+
+test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", async ({
+  page,
+}) => {
+  const baseVibe = mockStore.vibes[0];
+  if (!baseVibe) throw new Error("Missing seeded Vibe");
+  const extraVibes = [
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd3", "Library"],
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd4", "Trip planning"],
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd5", "Reading list"],
+    ["0198f2a1-a09b-76aa-95d8-fc5b55b41fd6", "Recipes"],
+  ] as const;
+  mockStore.vibes.push(
+    ...extraVibes.map(([uuid, title]): Vibe => ({
+      ...structuredClone(baseVibe),
+      uri: `rnet://vibe/${uuid}`,
+      title,
+    })),
+  );
+
+  const openedVibes = [[VIBE_ID, "Spending"], ...extraVibes] as const;
+  await page.goto("/vibes");
+  await page.getByRole("button", { name: "Open Vibe Spending" }).click();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+
+  for (const [uuid, title] of openedVibes.slice(1)) {
+    const search = page.getByRole("searchbox", { name: /search everything/i });
+    await search.click();
+    await search.fill(title);
+    await page
+      .locator('[data-launcher-section="Vibes"]')
+      .getByRole("button", { name: title, exact: true })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/vibes/${uuid}$`));
+    await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+  }
+
+  const rail = page.locator("[data-dock-recent-vibes]");
+  const items = rail.getByRole("button");
+  await expect(rail).toHaveAttribute("data-count", "4");
+  await expect(items).toHaveCount(4);
+  expect(await items.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel))).toEqual([
+    "Reading list",
+    "Trip planning",
+    "Library",
+    "Spending",
+  ]);
+  await expect(rail.getByRole("button", { name: "Recipes", exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-dock-app-slot] [aria-current="true"]')).toHaveAccessibleName(
+    "Recipes",
+  );
+
+  const geometry = await rail.evaluate((element) => {
+    const itemBoxes = [...element.querySelectorAll("button")].map((button) => {
+      const box = button.getBoundingClientRect();
+      return { width: box.width, x: box.x };
+    });
+    return {
+      clientWidth: element.clientWidth,
+      itemBoxes,
+      scrollbarWidth: getComputedStyle(element).getPropertyValue("scrollbar-width"),
+      scrollWidth: element.scrollWidth,
+      webkitScrollbarDisplay: getComputedStyle(element, "::-webkit-scrollbar").display,
+    };
+  });
+  expect(geometry.clientWidth).toBe(172);
+  expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
+  expect(geometry.itemBoxes.map(({ width }) => width)).toEqual([44, 44, 44, 44]);
+  expect(
+    geometry.itemBoxes.slice(1).map((box, index) => box.x - geometry.itemBoxes[index]!.x),
+  ).toEqual([64, 64, 64]);
+  expect(geometry.scrollbarWidth).toBe("none");
+  expect(geometry.webkitScrollbarDisplay).toBe("none");
+
+  await rail.evaluate((element) => {
+    element.scrollTo({ left: element.scrollWidth });
+  });
+  await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+
+  await rail.getByRole("button", { name: "Spending", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+  await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBe(0);
+  await expect(items.first()).toHaveAccessibleName("Recipes");
+  expect(await items.evaluateAll((buttons) => buttons.map((button) => button.ariaLabel))).toEqual([
+    "Recipes",
+    "Reading list",
+    "Trip planning",
+    "Library",
+  ]);
 });
 
 test("launcher sections scroll horizontally beyond three items", async ({ page }) => {

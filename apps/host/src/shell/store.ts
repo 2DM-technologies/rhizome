@@ -14,6 +14,8 @@ import { surfaceId, type Surface, type SurfaceId, type ViewMode } from "./surfac
 interface ShellState {
   /** Open surfaces in dock order. Normally one surface; explicit navigation can preserve more. */
   open: Surface[];
+  /** Vibes opened in this browser session, most recently opened first. */
+  recentVibeUuids: string[];
   /** Presentation inherited by the next surface; focused presentation itself still lives in the URL. */
   defaultViewMode: ViewMode;
   agentOpen: boolean;
@@ -30,10 +32,11 @@ export interface OpenSurfaceOptions {
   keepCurrentOpen?: boolean;
 }
 
-export const SHELL_STORE_VERSION = 1;
+export const SHELL_STORE_VERSION = 2;
 
 interface PersistedShellState {
   open: Surface[];
+  recentVibeUuids: string[];
   defaultViewMode: ViewMode;
 }
 
@@ -57,7 +60,27 @@ function isSurface(value: unknown): value is Surface {
   }
 }
 
-/** Collapse pre-policy window accumulation while leaving versioned opt-in window sets intact. */
+function recentVibeUuidsFrom(surfaces: readonly Surface[]): string[] {
+  const recent: string[] = [];
+  for (let index = surfaces.length - 1; index >= 0; index -= 1) {
+    const surface = surfaces[index];
+    if (surface?.kind === "vibe" && !recent.includes(surface.uuid)) recent.push(surface.uuid);
+  }
+  return recent;
+}
+
+/** Add an opened Vibe to the front of the MRU list without retaining duplicate entries. */
+export function nextRecentVibeUuids(recentVibeUuids: string[], surface: Surface): string[] {
+  if (surface.kind !== "vibe") return recentVibeUuids;
+
+  const withoutSurface = recentVibeUuids.filter((uuid) => uuid !== surface.uuid);
+  if (recentVibeUuids[0] === surface.uuid && withoutSurface.length === recentVibeUuids.length - 1) {
+    return recentVibeUuids;
+  }
+  return [surface.uuid, ...withoutSurface];
+}
+
+/** Collapse pre-policy window accumulation while preserving versioned opt-in window sets. */
 export function migrateShellPersistedState(
   persistedState: unknown,
   persistedVersion: number,
@@ -68,8 +91,10 @@ export function migrateShellPersistedState(
   const validOpen = Array.isArray(record.open) ? record.open.filter(isSurface) : [];
   return {
     // The legacy store appended new windows, making the final valid entry the best available
-    // proxy for the window the user opened most recently.
-    open: validOpen.slice(-1),
+    // proxy for the window the user opened most recently. Version 1 already enforced the
+    // replacement policy, so its deliberately retained window set stays intact.
+    open: persistedVersion < 1 ? validOpen.slice(-1) : validOpen,
+    recentVibeUuids: recentVibeUuidsFrom(validOpen),
     defaultViewMode: record.defaultViewMode === "maximized" ? "maximized" : "standard",
   } satisfies PersistedShellState;
 }
@@ -87,6 +112,7 @@ export const useShellStore = create<ShellState>()(
   persist(
     (set) => ({
       open: [],
+      recentVibeUuids: [],
       defaultViewMode: "standard",
       agentOpen: false,
       launcherOpen: false,
@@ -97,7 +123,10 @@ export const useShellStore = create<ShellState>()(
       openSurface: (surface, { keepCurrentOpen = false } = {}) =>
         set((state) => {
           const open = nextOpenSurfaces(state.open, surface, { keepCurrentOpen });
-          return open === state.open ? state : { open };
+          const recentVibeUuids = nextRecentVibeUuids(state.recentVibeUuids, surface);
+          return open === state.open && recentVibeUuids === state.recentVibeUuids
+            ? state
+            : { open, recentVibeUuids };
         }),
 
       closeSurface: (id) =>
@@ -112,9 +141,13 @@ export const useShellStore = create<ShellState>()(
       storage: createJSONStorage(() => sessionStorage),
       version: SHELL_STORE_VERSION,
       migrate: migrateShellPersistedState,
-      // Open windows and their shared presentation default are restorable. Bridge status and
-      // panel state would be lies after a reload — nothing is connected and no panel is open.
-      partialize: (state) => ({ open: state.open, defaultViewMode: state.defaultViewMode }),
+      // Open windows, recent Vibes, and their shared presentation default are restorable. Bridge
+      // status and panel state would be lies after a reload — nothing is connected or open.
+      partialize: (state) => ({
+        open: state.open,
+        recentVibeUuids: state.recentVibeUuids,
+        defaultViewMode: state.defaultViewMode,
+      }),
     },
   ),
 );
