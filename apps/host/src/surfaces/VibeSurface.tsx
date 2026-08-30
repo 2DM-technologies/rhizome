@@ -120,6 +120,7 @@ function ArenaBlockPayload({
         src={payloadUrl}
         title={`Markdown content for ${title}`}
         sandbox=""
+        style={{ colorScheme: "light" }}
         className="size-full border-0 bg-white p-3"
       />
     );

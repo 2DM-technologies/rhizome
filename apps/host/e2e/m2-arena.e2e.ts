@@ -105,7 +105,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
     await expect(importedCards.nth(index)).toHaveAccessibleName(`Open Are.na block ${title}`);
   }
   await expect(page.getByText("5 blocks", { exact: true })).toBeVisible();
-  await expect(page.getByTitle("Markdown content for Manifesto")).toBeVisible();
+  const markdownPreview = page.getByTitle("Markdown content for Manifesto");
+  await expect(markdownPreview).toBeVisible();
+  await expect(markdownPreview).toHaveCSS("color-scheme", "light");
   await expect(page.getByRole("img", { name: "A still image" })).toBeVisible();
   await expect(page.getByRole("img", { name: "A saved link with a preview" })).toBeVisible();
   await expect(

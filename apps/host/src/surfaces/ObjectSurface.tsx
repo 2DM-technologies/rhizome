@@ -102,6 +102,16 @@ function RenderedPayload({ uri, uuid, mime }: { uri: string; uuid: string; mime:
       );
       break;
     case "text":
+      rendered = (
+        <iframe
+          src={payload.data}
+          title={label}
+          sandbox=""
+          style={{ colorScheme: "light" }}
+          className="h-72 w-full rounded-sm border border-hairline bg-white"
+        />
+      );
+      break;
     case "document":
       rendered = (
         <iframe

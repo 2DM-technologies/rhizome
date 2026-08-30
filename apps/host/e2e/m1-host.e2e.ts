@@ -834,6 +834,7 @@ test("an existing element payload is fetched and presented", async ({ page }) =>
   const label = `Payload for ${ELEMENT_URI}`;
   const preview = page.getByTitle(label);
   await expect(preview).toBeVisible();
+  await expect(preview).toHaveCSS("color-scheme", "light");
   await expect(preview.contentFrame().locator("body")).toContainText(PAYLOAD_TEXT.trim());
   const download = page.getByRole("link", { name: `Download payload ${ELEMENT_URI}` });
   await download.scrollIntoViewIfNeeded();
