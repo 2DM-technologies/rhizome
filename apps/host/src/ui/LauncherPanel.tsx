@@ -125,8 +125,7 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
             data-launcher-surface
             style={surfaceStyle}
             className={cn(
-              "launcher-surface-mask absolute inset-0 rounded-[24px] bg-[#fffffa]",
-              "opacity-[0.8]",
+              "launcher-surface-mask absolute inset-0 rounded-[24px] bg-dock-search",
               surfaceMotion,
             )}
           />

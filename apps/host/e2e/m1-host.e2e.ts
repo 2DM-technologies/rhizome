@@ -336,8 +336,8 @@ test("the dock stays dark while its search field stays light", async ({ page }) 
   const searchIcon = page.locator("[data-launcher-input-row] svg");
   const search = page.getByRole("searchbox", { name: "Search everything" });
   await expect(tray).toHaveCSS("background-color", "color(srgb 0.101961 0.101961 0.101961 / 0.8)");
-  await expect(searchSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
-  await expect(searchSurface).toHaveCSS("opacity", "0.8");
+  await expect(searchSurface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.8)");
+  await expect(searchSurface).toHaveCSS("opacity", "1");
   await expect(searchBlur).toHaveCSS("backdrop-filter", "blur(20px)");
   await expect(search).toHaveCSS("color", "rgb(20, 21, 26)");
   await expect(search).toHaveCSS("font-size", "14px");
@@ -346,10 +346,25 @@ test("the dock stays dark while its search field stays light", async ({ page }) 
 
   await search.click();
   await expect(page.getByRole("dialog", { name: "Start something new" })).toBeVisible();
-  await expect(searchSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
-  await expect(searchSurface).toHaveCSS("opacity", "0.8");
+  await expect(searchSurface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.8)");
+  await expect(searchSurface).toHaveCSS("opacity", "1");
   await expect(searchBlur).toHaveCSS("backdrop-filter", "blur(24px)");
   await expect(searchBlur).toHaveCSS("opacity", "1");
+});
+
+test("the collapsed and expanded search surfaces follow --rz-dock-search", async ({ page }) => {
+  await page.goto("/");
+
+  const search = page.getByRole("searchbox", { name: "Search everything" });
+  const searchSurface = page.locator("[data-launcher-surface]");
+  await expect(searchSurface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.8)");
+
+  await page.evaluate(() => document.documentElement.style.setProperty("--rz-dock-search", "red"));
+  await expect(searchSurface).toHaveCSS("background-color", "rgb(255, 0, 0)");
+
+  await search.click();
+  await expect(page.getByRole("dialog", { name: "Start something new" })).toBeVisible();
+  await expect(searchSurface).toHaveCSS("background-color", "rgb(255, 0, 0)");
 });
 
 test("standard and maximized windows preserve breathing room above the dock", async ({ page }) => {
@@ -407,7 +422,7 @@ test("standard and maximized windows preserve breathing room above the dock", as
 
   await expect(dock).toBeVisible();
   await expect(dock).toBeInViewport();
-  await expect(surface).toHaveCSS("background-color", "rgb(255, 255, 250)");
+  await expect(surface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.8)");
   const windowBox = await window.boundingBox();
   const dockBox = await dockTray.boundingBox();
   expect(windowBox).not.toBeNull();
@@ -1099,8 +1114,8 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
   await expect(itemRails.first()).toHaveCSS("overflow-x", "auto");
   await expect.poll(() => itemRails.first().boundingBox()).toMatchObject({ width: 260 });
   await expect(expandedContent).toHaveCSS("opacity", "0");
-  await expect(launcherSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
-  await expect(launcherSurface).toHaveCSS("opacity", "0.8");
+  await expect(launcherSurface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.8)");
+  await expect(launcherSurface).toHaveCSS("opacity", "1");
   await expect(launcherBlur).toHaveCSS("backdrop-filter", "blur(20px)");
   await expect(launcherBlur).toHaveCSS("opacity", "1");
   await expect(launcherSurface).toHaveCSS("clip-path", "none");
@@ -1168,8 +1183,8 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
     "transition-timing-function",
     "cubic-bezier(0, 0, 0.2, 1)",
   );
-  await expect(launcherSurface).toHaveCSS("background-color", "rgb(255, 255, 250)");
-  await expect(launcherSurface).toHaveCSS("opacity", "0.8");
+  await expect(launcherSurface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.8)");
+  await expect(launcherSurface).toHaveCSS("opacity", "1");
   await expect(launcherBlur).toHaveCSS("backdrop-filter", "blur(24px)");
   await expect(launcherBlur).toHaveCSS("opacity", "1");
   await expect(launcherSurface).toHaveCSS(
@@ -1208,7 +1223,7 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
     .toMatchObject({ x: inputBox!.x, y: inputBox!.y, height: inputBox!.height });
   await expect
     .poll(() => launcherSurface.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe("rgb(255, 255, 250)");
+    .toBe("rgba(255, 255, 250, 0.8)");
   await expect
     .poll(() => launcherSurface.evaluate((element) => getComputedStyle(element).borderRadius))
     .toBe(radius);
