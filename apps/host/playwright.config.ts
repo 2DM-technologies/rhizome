@@ -26,10 +26,13 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `bunx --bun vite --host ${host} --port ${port}`,
+    // Run the test server through Vite's Node entry point. Fresh Linux runners intermittently
+    // left the Bun-hosted process alive without accepting Playwright's readiness probe.
+    command: `node node_modules/vite/bin/vite.js --host ${host} --port ${port}`,
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    stdout: "pipe",
     // Keep Store requests on the page origin. The mocked lane intercepts them before Vite.
     env: { VITE_RHIZOME_API_URL: baseURL },
   },
