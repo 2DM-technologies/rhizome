@@ -721,7 +721,10 @@ describe("rNet M1 store", () => {
     const vibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
-      json: { title: "Reviewed SimpleFIN recovery" },
+      json: {
+        title: "Reviewed SimpleFIN recovery",
+        grants: [{ subject: "client:rbudget", scope: ["pull"] }],
+      },
     });
     expect(vibeResponse.status).toBe(201);
     const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
@@ -763,7 +766,37 @@ describe("rNet M1 store", () => {
     expect(await gapResponse.json()).toMatchObject({
       code: "simplefin_history_gap",
       recovery: "reviewed_rebaseline",
+      source: source.source,
     });
+    const ownerPullGapResponse = await request(`/rnet/v0/vibes/${vibeUuid}/pull`, {
+      method: "POST",
+      headers: owner,
+      json: {},
+    });
+    expect(ownerPullGapResponse.status).toBe(422);
+    const ownerPullGap = await ownerPullGapResponse.json();
+    expect(ownerPullGap).toMatchObject({
+      code: "simplefin_history_gap",
+      recovery: "reviewed_rebaseline",
+      source: source.source,
+      previous_balance_at: new Date(previousBalanceAt * 1_000).toISOString(),
+    });
+
+    const delegatedPullGapResponse = await request(`/rnet/v0/vibes/${vibeUuid}/pull`, {
+      method: "POST",
+      headers: dmachine,
+      json: {},
+    });
+    expect(delegatedPullGapResponse.status).toBe(422);
+    const delegatedPullGap = await delegatedPullGapResponse.json();
+    expect(delegatedPullGap).toMatchObject({
+      code: "simplefin_history_gap",
+      recovery: "owner_reviewed_rebaseline",
+    });
+    expect(JSON.stringify(delegatedPullGap)).not.toContain(source.source);
+    expect(JSON.stringify(delegatedPullGap)).not.toContain(
+      new Date(previousBalanceAt * 1_000).toISOString(),
+    );
     expect(
       simpleFinRequests.filter((providerRequest) => providerRequest.method === "GET"),
     ).toHaveLength(providerRequestsBeforeGap);

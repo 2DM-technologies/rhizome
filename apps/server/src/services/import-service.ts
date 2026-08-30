@@ -269,14 +269,16 @@ export class ImportService {
       );
     }
     const sourceUuids = vibe.pullConfig.sources.map(sourceUuidOf);
+    const exposeOwnerHistoryGap = this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid;
     for (const sourceUuid of sourceUuids) {
       const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
       if (source.kind === "credential") {
         try {
-          await this.historyPlanFor(source, false);
+          await this.historyPlanFor(source, false, undefined, exposeOwnerHistoryGap);
         } catch (error) {
-          // Pull may be invoked by a delegated dMachine. Keep private banking timestamps in the
-          // owner-only import-preview error while still returning a typed recovery signal here.
+          if (exposeOwnerHistoryGap) throw error;
+          // Pull may be invoked by a delegated dMachine. Keep private banking timestamps and the
+          // source identifier in the owner's response while retaining a typed recovery signal.
           throw redactSimpleFinHistoryGapForPull(error);
         }
       }
