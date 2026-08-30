@@ -1,5 +1,4 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
-import { SOURCE_ID_PATTERN } from "@rhizome/store-contract";
 
 import {
   useConnectSimpleFin,
@@ -11,14 +10,12 @@ import {
   useOperation,
   usePullVibe,
 } from "../queries/index.ts";
-import { isStoreError } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
 import { Button } from "../ui/index.ts";
 import { Failed } from "./provisional.tsx";
+import { simpleFinHistoryRecoverySource } from "./simpleFinHistoryRecovery.ts";
 
 type FileParser = "csv" | "ofx";
-
-const sourceIdPattern = new RegExp(SOURCE_ID_PATTERN);
 
 interface CandidateSummary {
   uri: string;
@@ -179,7 +176,15 @@ export function ImportPanel({
   const malformedPullResult =
     operationMode === "pull" && operation.data?.status === "done" && !pullSummary;
   const arenaReview = operationMode === "import" && importKind === "arena";
-  const historyRecoverySource = simpleFinHistoryRecoverySource(pull.error, configuredSources);
+  const failedPullResult =
+    operationMode === "pull" && operation.data?.status === "failed"
+      ? operation.data.result
+      : undefined;
+  const historyRecoverySource = simpleFinHistoryRecoverySource(
+    pull.error,
+    failedPullResult,
+    configuredSources,
+  );
   const hasHistoryRecoveryEvidence = Boolean(
     preview?.verify.checks.some((check) => check.name === "history_recovery" && check.ok),
   );
@@ -705,21 +710,6 @@ export function ImportPanel({
       {confirm.isError ? <Failed error={confirm.error} /> : null}
     </section>
   );
-}
-
-function simpleFinHistoryRecoverySource(
-  error: unknown,
-  configuredSources: readonly string[],
-): string | undefined {
-  if (!isStoreError(error) || error.code !== "simplefin_history_gap" || !("source" in error)) {
-    return undefined;
-  }
-  const source = error.source;
-  return typeof source === "string" &&
-    sourceIdPattern.test(source) &&
-    configuredSources.includes(source)
-    ? source
-    : undefined;
 }
 
 function pullResult(value: unknown):

@@ -427,6 +427,8 @@ export interface MockStore {
   holdNextUserWrite: () => () => void;
   /** Make exactly the next configured-source refresh return a SimpleFIN history-gap Problem. */
   failNextPullWithSimpleFinHistoryGap: (source: string | null) => void;
+  /** Make the next refresh fail asynchronously with owner or redacted recovery metadata. */
+  failNextPullWithUnreconciledSimpleFinActivity: (source: string | null) => void;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -484,6 +486,8 @@ export async function installMockStore(page: Page): Promise<MockStore> {
   let pendingUserWrite: Promise<void> | null = null;
   let pullOperation: Record<string, unknown> | undefined;
   let nextSimpleFinHistoryGapSource: string | null | undefined;
+  let nextUnreconciledSimpleFinSource: string | null | undefined;
+  let pendingPullFailureResult: Record<string, unknown> | undefined;
   let simpleFinOriginSequence = 0;
   const importOperations = new Map<string, MockImportOperation>();
   const sourceCredentialBindings = new Map<string, string>();
@@ -509,6 +513,9 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     },
     failNextPullWithSimpleFinHistoryGap: (source) => {
       nextSimpleFinHistoryGapSource = source;
+    },
+    failNextPullWithUnreconciledSimpleFinActivity: (source) => {
+      nextUnreconciledSimpleFinSource = source;
     },
   };
 
@@ -845,6 +852,31 @@ export async function installMockStore(page: Page): Promise<MockStore> {
           source ? { source, recovery: "reviewed_rebaseline" } : {},
         );
       }
+      if (nextUnreconciledSimpleFinSource !== undefined) {
+        const source = nextUnreconciledSimpleFinSource;
+        nextUnreconciledSimpleFinSource = undefined;
+        pendingPullFailureResult = source
+          ? {
+              code: "simplefin_history_gap",
+              reason: "unreconciled_backdated_activity",
+              recovery: "reviewed_rebaseline",
+              source,
+            }
+          : {
+              code: "simplefin_history_gap",
+              recovery: "owner_reviewed_rebaseline",
+            };
+        pullOperation = {
+          operation_id: PULL_OPERATION_ID,
+          kind: "pull",
+          status: "queued",
+          request: { mode: "pull", dry_run: false },
+          result: null,
+          error: null,
+          created_at: "2026-08-27T12:03:00.000Z",
+        };
+        return json(route, pullOperation, 202);
+      }
       for (const sourceId of vibe.pull?.sources ?? []) {
         const source = store.ingestionSources.get(sourceId);
         if (source?.kind === "credential") {
@@ -907,6 +939,14 @@ export async function installMockStore(page: Page): Promise<MockStore> {
           staged.document.finished_at = "2026-08-28T12:00:03.000Z";
         }
         return json(route, staged.document);
+      }
+      if (operationDocument[1] === PULL_OPERATION_ID && pullOperation && pendingPullFailureResult) {
+        pullOperation.status = "failed";
+        pullOperation.result = pendingPullFailureResult;
+        pullOperation.error =
+          "The connected account balances cannot be reconciled with the returned transaction history.";
+        pullOperation.finished_at = "2026-08-27T12:03:00.100Z";
+        pendingPullFailureResult = undefined;
       }
       return operationDocument[1] === PULL_OPERATION_ID && pullOperation
         ? json(route, pullOperation)

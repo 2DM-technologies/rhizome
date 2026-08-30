@@ -181,6 +181,28 @@ test("an owner can review and confirm a configured SimpleFIN history recovery", 
   );
 });
 
+test("an owner can review recovery discovered by a failed polled pull", async ({ page }) => {
+  const source = await configureSimpleFin(page);
+  mockStore.failNextPullWithUnreconciledSimpleFinActivity(source);
+
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+
+  await expect(
+    page.getByText(
+      "The connected account balances cannot be reconciled with the returned transaction history.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Review new baseline" }).click();
+
+  await expect(page.getByLabel("VERIFY reconciliation")).toBeVisible();
+  const previewRequests = mockStore.requests.filter(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/rnet/v0/vibes/${VIBE_ID}/imports`,
+  );
+  expect(previewRequests.at(-1)?.postDataJSON()).toEqual({ source, rebaseline: true });
+});
+
 test("history recovery stays hidden for redacted or unconfigured source metadata", async ({
   page,
 }) => {
@@ -200,6 +222,24 @@ test("history recovery stays hidden for redacted or unconfigured source metadata
   await expect(
     page.getByText(
       "The previous connected balance cannot be reconciled inside SimpleFIN's history window.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review new baseline" })).toHaveCount(0);
+
+  mockStore.failNextPullWithUnreconciledSimpleFinActivity(null);
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+  await expect(
+    page.getByText(
+      "The connected account balances cannot be reconciled with the returned transaction history.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review new baseline" })).toHaveCount(0);
+
+  mockStore.failNextPullWithUnreconciledSimpleFinActivity(`source:${VIBE_ID}`);
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+  await expect(
+    page.getByText(
+      "The connected account balances cannot be reconciled with the returned transaction history.",
     ),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Review new baseline" })).toHaveCount(0);
