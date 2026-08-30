@@ -271,36 +271,77 @@ export class ImportService {
         throw invalidReview("The staged candidate set changed after review");
       }
 
-      const [maxPosition] = await transaction
-        .select({ max: sql<number>`coalesce(max(${vibeMediaObjects.position}), -1)::int` })
-        .from(vibeMediaObjects)
-        .where(eq(vibeMediaObjects.vibeUuid, vibeUuid));
-      const firstPosition = (maxPosition?.max ?? -1) + 1;
-      for (const [index, candidate] of result.candidates.entries()) {
+      const stagedCandidates: StagedCandidate[] = [];
+      for (const candidate of result.candidates) {
         const candidateElements = result.elements.filter(
           ({ object_uri }) => object_uri === candidate.uri,
         );
         assertCandidate(candidate, lockedVibe.ownerUuid, stagedOrigin.uuid, candidateElements);
-        const entry: StagedCandidate = {
+        stagedCandidates.push({
           candidate,
           candidate_digest: await candidateSemanticDigest(candidate, candidateElements),
           elements: candidateElements,
           identity: await identityForCandidate(candidate),
           origin_uuid: stagedOrigin.uuid,
           source_uuid: resolved.source.uuid,
-        };
-        const mediaObjectUuid = await this.persistCandidate(transaction, operationUuid, entry);
-        await transaction.insert(ingestionSourceObjects).values({
-          sourceUuid: resolved.source.uuid,
-          identity: entry.identity,
-          mediaObjectUuid,
-          candidateDigest: entry.candidate_digest,
         });
-        await transaction.insert(vibeMediaObjects).values({
-          vibeUuid,
-          mediaObjectUuid,
-          position: firstPosition + index,
-        });
+      }
+      if (
+        new Set(stagedCandidates.map(({ identity }) => identity)).size !== stagedCandidates.length
+      ) {
+        throw invalidReview("The preview repeats a source identity");
+      }
+
+      const [existingBindings, memberships] = await Promise.all([
+        transaction
+          .select()
+          .from(ingestionSourceObjects)
+          .where(eq(ingestionSourceObjects.sourceUuid, resolved.source.uuid)),
+        transaction.select().from(vibeMediaObjects).where(eq(vibeMediaObjects.vibeUuid, vibeUuid)),
+      ]);
+      const bindingByIdentity = new Map(
+        existingBindings.map((binding) => [binding.identity, binding]),
+      );
+      const currentMembers = new Set(memberships.map(({ mediaObjectUuid }) => mediaObjectUuid));
+      let nextPosition =
+        memberships.reduce((maximum, membership) => Math.max(maximum, membership.position), -1) + 1;
+      const addedObjectUris: string[] = [];
+
+      for (const entry of stagedCandidates) {
+        const existing = bindingByIdentity.get(entry.identity);
+        let mediaObjectUuid = existing?.mediaObjectUuid;
+        if (existing) {
+          if (existing.candidateDigest !== entry.candidate_digest) {
+            throw invalidReview("A previously imported source identity changed unexpectedly");
+          }
+          await transaction
+            .update(ingestionSourceObjects)
+            .set({ lastSeenAt: new Date() })
+            .where(
+              and(
+                eq(ingestionSourceObjects.sourceUuid, resolved.source.uuid),
+                eq(ingestionSourceObjects.identity, entry.identity),
+              ),
+            );
+        } else {
+          mediaObjectUuid = await this.persistCandidate(transaction, operationUuid, entry);
+          await transaction.insert(ingestionSourceObjects).values({
+            sourceUuid: resolved.source.uuid,
+            identity: entry.identity,
+            mediaObjectUuid,
+            candidateDigest: entry.candidate_digest,
+          });
+        }
+        if (!mediaObjectUuid) throw new Error("Import candidate has no MediaObject identity");
+        if (!currentMembers.has(mediaObjectUuid)) {
+          await transaction.insert(vibeMediaObjects).values({
+            vibeUuid,
+            mediaObjectUuid,
+            position: nextPosition++,
+          });
+          currentMembers.add(mediaObjectUuid);
+          addedObjectUris.push("rnet://object/" + mediaObjectUuid);
+        }
       }
 
       const sourceId = "source:" + resolved.source.uuid;
@@ -332,7 +373,7 @@ export class ImportService {
           grants: activeGrants.map((grant) => ({ subject: grant.subject, scope: grant.scopes })),
         },
         membershipDelta: {
-          added: result.candidates.map((candidate) => candidate.uri),
+          added: addedObjectUris,
           removed: [],
         },
       });
@@ -499,7 +540,7 @@ export class ImportService {
       }
 
       for (const capture of [...captures].sort((left, right) =>
-        left.source.uuid.localeCompare(right.source.uuid),
+        compareCodeUnits(left.source.uuid, right.source.uuid),
       )) {
         const resolved = await this.resolveSource(
           capture.source.uuid,
@@ -958,7 +999,17 @@ export function candidateSemanticDigest(
   elements: readonly StagedElement[] = [],
 ): Promise<string> {
   const { uri: _uri, source, elements: _elementUris, ...content } = candidate;
-  const { origins: _origins, retrieved_at: _retrievedAt, ...semanticSource } = source;
+  const { origins: _origins, retrieved_at: _retrievedAt, properties, ...sourceIdentity } = source;
+  // Account-level snapshots can change while the transaction itself is unchanged. They remain
+  // on the persisted source provenance; only this semantic comparison projection omits them.
+  const {
+    account_balance: _accountBalance,
+    account_balance_date: _accountBalanceDate,
+    account_balance_date_epoch: _accountBalanceDateEpoch,
+    simplefin_account_extra: _simpleFinAccountExtra,
+    ...semanticProperties
+  } = properties;
+  const semanticSource = { ...sourceIdentity, properties: semanticProperties };
   const semanticElements = elements.map(({ role, kind, mime, byte_size, content_hash }) => ({
     role,
     kind,
@@ -969,17 +1020,21 @@ export function candidateSemanticDigest(
   return digest({ ...content, elements: semanticElements, source: semanticSource });
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
   return (
     "{" +
     Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCodeUnits(left, right))
       .map(([key, entry]) => JSON.stringify(key) + ":" + canonicalJson(entry))
       .join(",") +
     "}"
   );
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function importPreviewResult(value: unknown): ImportPreviewResult {

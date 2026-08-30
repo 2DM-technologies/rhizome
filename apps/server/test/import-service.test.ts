@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MediaObject } from "@rnet/types";
 
-import { candidateSemanticDigest } from "../src/services/import-service.ts";
+import { candidateSemanticDigest, canonicalJson } from "../src/services/import-service.ts";
 
 const firstCandidate: MediaObject = {
   rnet_schema: "0.1",
@@ -41,6 +41,69 @@ describe("pull candidate identity", () => {
     expect(await candidateSemanticDigest(changed)).not.toBe(
       await candidateSemanticDigest(firstCandidate),
     );
+  });
+
+  test("semantic digests ignore SimpleFIN account snapshots but retain transaction changes", async () => {
+    const firstSnapshot: MediaObject = {
+      ...firstCandidate,
+      source: {
+        ...firstCandidate.source,
+        properties: {
+          ...firstCandidate.source.properties,
+          account_balance: "100.00",
+          account_balance_date: "2026-08-29T12:00:00.000Z",
+          account_balance_date_epoch: 1_777_461_600,
+          simplefin_account_extra: { available_balance: "90.00", status: "open" },
+          simplefin_transaction_extra: { category: "food" },
+        },
+      },
+    };
+    const laterSnapshot: MediaObject = {
+      ...firstSnapshot,
+      source: {
+        ...firstSnapshot.source,
+        properties: {
+          ...firstSnapshot.source.properties,
+          account_balance: "75.00",
+          account_balance_date: "2026-08-30T12:00:00.000Z",
+          account_balance_date_epoch: 1_777_548_000,
+          simplefin_account_extra: { available_balance: "65.00", status: "restricted" },
+        },
+      },
+    };
+    const changedAmount: MediaObject = {
+      ...laterSnapshot,
+      source: {
+        ...laterSnapshot.source,
+        properties: { ...laterSnapshot.source.properties, amount: "-12.35" },
+      },
+    };
+    const changedTransactionExtra: MediaObject = {
+      ...laterSnapshot,
+      source: {
+        ...laterSnapshot.source,
+        properties: {
+          ...laterSnapshot.source.properties,
+          simplefin_transaction_extra: { category: "travel" },
+        },
+      },
+    };
+
+    expect(await candidateSemanticDigest(laterSnapshot)).toBe(
+      await candidateSemanticDigest(firstSnapshot),
+    );
+    expect(await candidateSemanticDigest(changedAmount)).not.toBe(
+      await candidateSemanticDigest(firstSnapshot),
+    );
+    expect(await candidateSemanticDigest(changedTransactionExtra)).not.toBe(
+      await candidateSemanticDigest(firstSnapshot),
+    );
+    expect(laterSnapshot.source.properties).toMatchObject({
+      account_balance: "75.00",
+      account_balance_date: "2026-08-30T12:00:00.000Z",
+      account_balance_date_epoch: 1_777_548_000,
+      simplefin_account_extra: { available_balance: "65.00", status: "restricted" },
+    });
   });
 
   test("semantic digests bind staged element bytes without binding allocated UUIDs", async () => {
@@ -94,5 +157,13 @@ describe("pull candidate identity", () => {
         { ...recapturedManifest, role: "preview" as const },
       ]),
     ).not.toBe(await candidateSemanticDigest(first, [manifest]));
+  });
+});
+
+describe("canonical JSON", () => {
+  test("orders mixed keys by UTF-16 code units without locale collation", () => {
+    const mixed = { "😀": 7, ä: 6, z: 5, a: 4, A: 3, "2": 2, "10": 1 };
+
+    expect(canonicalJson(mixed)).toBe('{"10":1,"2":2,"A":3,"a":4,"z":5,"ä":6,"😀":7}');
   });
 });

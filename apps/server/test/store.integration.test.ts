@@ -507,6 +507,63 @@ describe("rNet M1 store", () => {
     });
   });
 
+  test("reuses a confirmed source within and across Vibes without partial derived state", async () => {
+    const fixture = await createCsvSourceFixture("repeat-review.csv");
+    const firstVibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "First source target" },
+    });
+    const secondVibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Second source target" },
+    });
+    expect(firstVibeResponse.status).toBe(201);
+    expect(secondVibeResponse.status).toBe(201);
+    const firstVibeId = ((await firstVibeResponse.json()) as { uri: string }).uri
+      .split("/")
+      .at(-1)!;
+    const secondVibeId = ((await secondVibeResponse.json()) as { uri: string }).uri
+      .split("/")
+      .at(-1)!;
+
+    const confirmPreview = async (targetVibeId: string) => {
+      const previewResponse = await request(`/rnet/v0/vibes/${targetVibeId}/imports`, {
+        method: "POST",
+        headers: owner,
+        json: { source: fixture.source.source },
+      });
+      expect(previewResponse.status).toBe(202);
+      const preview = await waitForOperation(await previewResponse.json(), owner);
+      expect(preview.status).toBe("done");
+      const confirmResponse = await request(
+        `/rnet/v0/vibes/${targetVibeId}/imports/${preview.operation_id}/confirm`,
+        { method: "POST", headers: owner },
+      );
+      expect(confirmResponse.status).toBe(200);
+      return (await confirmResponse.json()) as { objects: string[]; pull: { sources: string[] } };
+    };
+
+    const firstConfirmation = await confirmPreview(firstVibeId);
+    expect(firstConfirmation.objects).toHaveLength(3);
+    const persistedObjectUris = firstConfirmation.objects;
+    const objectCount = await mediaObjectCount();
+    expect(await sourceBindingCount(fixture.source.source)).toBe(3);
+
+    const repeatedConfirmation = await confirmPreview(firstVibeId);
+    expect(repeatedConfirmation.objects).toEqual(persistedObjectUris);
+    expect(repeatedConfirmation.pull.sources).toContain(fixture.source.source);
+    expect(await mediaObjectCount()).toBe(objectCount);
+    expect(await sourceBindingCount(fixture.source.source)).toBe(3);
+
+    const crossVibeConfirmation = await confirmPreview(secondVibeId);
+    expect(crossVibeConfirmation.objects).toEqual(persistedObjectUris);
+    expect(crossVibeConfirmation.pull.sources).toContain(fixture.source.source);
+    expect(await mediaObjectCount()).toBe(objectCount);
+    expect(await sourceBindingCount(fixture.source.source)).toBe(3);
+  });
+
   test("only reviewed confirmation can introduce a source and cancellation leaves no derived state", async () => {
     const fixture = await createCsvSourceFixture("cancel-review.csv");
     const [beforeObjects] = await client.unsafe("select count(*)::int as count from media_objects");
