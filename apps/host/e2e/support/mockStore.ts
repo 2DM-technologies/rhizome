@@ -1,6 +1,7 @@
 import type { Page, Request, Route } from "@playwright/test";
 import type { MediaElement, MediaObject, OriginArtifact, Vibe } from "@rnet/types";
 import type {
+  CreateImportPreviewRequest,
   IngestionSourceDocument,
   OperationDocument,
   SourceCredentialDocument,
@@ -224,7 +225,7 @@ function importCandidates(parser: MockParser, origin: string): MediaObject[] {
   }));
 }
 
-function verifyFor(parser: MockParser) {
+function verifyFor(parser: MockParser, historyRecovery = false) {
   const candidateCount = parser === "arena" ? ARENA_BLOCKS.length : parser === "csv" ? 3 : 2;
   if (parser === "arena") {
     const elementBlocks = ARENA_BLOCKS.filter(hasArenaElement);
@@ -310,6 +311,14 @@ function verifyFor(parser: MockParser) {
       ok: true,
       detail: "SimpleFIN returned no connection or account errors",
     });
+    if (historyRecovery) {
+      checks.push({
+        name: "history_recovery",
+        ok: true,
+        detail:
+          "Owner-reviewed rebaseline resumes connected history at 2026-08-01T00:00:00.000Z after the previous balance at 2026-04-01T00:00:00.000Z",
+      });
+    }
   }
   return {
     ok: true,
@@ -317,6 +326,16 @@ function verifyFor(parser: MockParser) {
     candidate_count: candidateCount,
     totals_by_currency: { USD: total },
     checks,
+    ...(historyRecovery
+      ? {
+          history_recovery: {
+            mode: "rebaseline" as const,
+            reason: "simplefin_history_gap" as const,
+            previous_balance_at: "2026-04-01T00:00:00.000Z",
+            history_resumes_at: "2026-08-01T00:00:00.000Z",
+          },
+        }
+      : {}),
   };
 }
 
@@ -406,6 +425,8 @@ export interface MockStore {
   readonly sourceCredentials: Map<string, SourceCredentialDocument>;
   /** Hold exactly the next user-property write until the returned release function is called. */
   holdNextUserWrite: () => () => void;
+  /** Make exactly the next configured-source refresh return a SimpleFIN history-gap Problem. */
+  failNextPullWithSimpleFinHistoryGap: (source: string | null) => void;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -416,7 +437,13 @@ function json(route: Route, body: unknown, status = 200) {
   });
 }
 
-function problem(route: Route, status: number, code: string, detail: string) {
+function problem(
+  route: Route,
+  status: number,
+  code: string,
+  detail: string,
+  extensions: Record<string, unknown> = {},
+) {
   return route.fulfill({
     status,
     contentType: "application/problem+json",
@@ -426,6 +453,7 @@ function problem(route: Route, status: number, code: string, detail: string) {
       status,
       detail,
       code,
+      ...extensions,
     }),
   });
 }
@@ -455,6 +483,7 @@ function arenaChannelSlug(value: string): string | undefined {
 export async function installMockStore(page: Page): Promise<MockStore> {
   let pendingUserWrite: Promise<void> | null = null;
   let pullOperation: Record<string, unknown> | undefined;
+  let nextSimpleFinHistoryGapSource: string | null | undefined;
   let simpleFinOriginSequence = 0;
   const importOperations = new Map<string, MockImportOperation>();
   const sourceCredentialBindings = new Map<string, string>();
@@ -477,6 +506,9 @@ export async function installMockStore(page: Page): Promise<MockStore> {
         release = resolve;
       });
       return release;
+    },
+    failNextPullWithSimpleFinHistoryGap: (source) => {
+      nextSimpleFinHistoryGapSource = source;
     },
   };
 
@@ -746,7 +778,7 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     if (method === "POST" && vibeImports) {
       const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${vibeImports[1]}`));
       if (!vibe) return problem(route, 404, "not_found", "The Vibe does not exist");
-      const input = request.postDataJSON() as { source: string };
+      const input: CreateImportPreviewRequest = request.postDataJSON();
       const source = store.ingestionSources.get(input.source);
       if (!source) return problem(route, 404, "not_found", "The ingestion source does not exist");
       let origin: string;
@@ -772,13 +804,17 @@ export async function installMockStore(page: Page): Promise<MockStore> {
               ? ARENA_IMPORT_OPERATION_ID
               : SIMPLEFIN_IMPORT_OPERATION_ID;
       const candidates = importCandidates(parser, origin);
-      const verify = verifyFor(parser);
+      const verify = verifyFor(parser, parser === "simplefin" && input.rebaseline === true);
       const elements = parser === "arena" ? arenaStagedElements() : [];
       const document = {
         operation_id: operationId,
         kind: "pull",
         status: "queued",
-        request: { mode: "import_preview", source: source.source },
+        request: {
+          mode: "import_preview",
+          source: source.source,
+          rebaseline: input.rebaseline ?? false,
+        },
         result: null,
         error: null,
         created_at: "2026-08-28T12:00:02.000Z",
@@ -798,6 +834,17 @@ export async function installMockStore(page: Page): Promise<MockStore> {
     if (method === "POST" && vibePull) {
       const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${vibePull[1]}`));
       if (!vibe) return problem(route, 404, "not_found", "The Vibe does not exist");
+      if (nextSimpleFinHistoryGapSource !== undefined) {
+        const source = nextSimpleFinHistoryGapSource;
+        nextSimpleFinHistoryGapSource = undefined;
+        return problem(
+          route,
+          422,
+          "simplefin_history_gap",
+          "The previous connected balance cannot be reconciled inside SimpleFIN's history window.",
+          source ? { source, recovery: "reviewed_rebaseline" } : {},
+        );
+      }
       for (const sourceId of vibe.pull?.sources ?? []) {
         const source = store.ingestionSources.get(sourceId);
         if (source?.kind === "credential") {

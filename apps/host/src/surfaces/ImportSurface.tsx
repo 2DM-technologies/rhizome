@@ -77,9 +77,7 @@ export function ImportSurface() {
           {target.data && targetIsOwned ? (
             <ImportPanel
               vibeUuid={targetUuid}
-              hasConfiguredSources={Boolean(
-                target.data.pull?.enabled && target.data.pull.sources?.length,
-              )}
+              configuredSources={target.data.pull?.enabled ? (target.data.pull.sources ?? []) : []}
             />
           ) : null}
         </div>

@@ -1,4 +1,5 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { SOURCE_ID_PATTERN } from "@rhizome/store-contract";
 
 import {
   useConnectSimpleFin,
@@ -10,11 +11,14 @@ import {
   useOperation,
   usePullVibe,
 } from "../queries/index.ts";
+import { isStoreError } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
 import { Button } from "../ui/index.ts";
 import { Failed } from "./provisional.tsx";
 
 type FileParser = "csv" | "ofx";
+
+const sourceIdPattern = new RegExp(SOURCE_ID_PATTERN);
 
 interface CandidateSummary {
   uri: string;
@@ -135,10 +139,10 @@ function ImportPreviewImage({
 
 export function ImportPanel({
   vibeUuid,
-  hasConfiguredSources,
+  configuredSources,
 }: {
   vibeUuid: string;
-  hasConfiguredSources: boolean;
+  configuredSources: readonly string[];
 }) {
   const input = useRef<HTMLInputElement>(null);
   const simpleFinToken = useRef<HTMLInputElement>(null);
@@ -153,6 +157,7 @@ export function ImportPanel({
   const [importKind, setImportKind] = useState<"arena" | "file" | "simplefin">("file");
   const [sourceLabel, setSourceLabel] = useState<string>();
   const [arenaChannelUrl, setArenaChannelUrl] = useState("");
+  const [reviewRequiresHistoryRecovery, setReviewRequiresHistoryRecovery] = useState(false);
   const [localError, setLocalError] = useState<string>();
   const [outcome, setOutcome] = useState<string>();
   const operation = useOperation(operationId, vibeUuid);
@@ -174,6 +179,10 @@ export function ImportPanel({
   const malformedPullResult =
     operationMode === "pull" && operation.data?.status === "done" && !pullSummary;
   const arenaReview = operationMode === "import" && importKind === "arena";
+  const historyRecoverySource = simpleFinHistoryRecoverySource(pull.error, configuredSources);
+  const hasHistoryRecoveryEvidence = Boolean(
+    preview?.verify.checks.some((check) => check.name === "history_recovery" && check.ok),
+  );
 
   function resetMutationErrors() {
     createOrigin.reset();
@@ -187,6 +196,7 @@ export function ImportPanel({
   function clearReview() {
     setOperationId(undefined);
     setSourceLabel(undefined);
+    setReviewRequiresHistoryRecovery(false);
     setLocalError(undefined);
   }
 
@@ -205,6 +215,7 @@ export function ImportPanel({
     }
     setLocalError(undefined);
     setSourceLabel(file.name);
+    setReviewRequiresHistoryRecovery(false);
     setOperationMode("import");
     setImportKind("file");
     setOperationId(undefined);
@@ -253,6 +264,7 @@ export function ImportPanel({
     setLocalError(undefined);
     setOperationMode("import");
     setImportKind("simplefin");
+    setReviewRequiresHistoryRecovery(false);
     try {
       const credential = await exchangeSimpleFinToken();
       if (!credential) return;
@@ -279,6 +291,7 @@ export function ImportPanel({
     setLocalError(undefined);
     setOperationMode("import");
     setImportKind("arena");
+    setReviewRequiresHistoryRecovery(false);
     const channelUrl = arenaChannelUrl.trim();
     const channelSlug = arenaChannelSlug(channelUrl);
     if (!channelSlug) {
@@ -307,12 +320,34 @@ export function ImportPanel({
     setSourceLabel(undefined);
     setOperationId(undefined);
     setOperationMode("pull");
+    setReviewRequiresHistoryRecovery(false);
     try {
       const operation = await pull.mutateAsync({
         params: { path: { id: vibeUuid } },
         body: {},
       });
       setOperationId(operation.operation_id);
+    } catch {
+      // The mutation's typed store error is rendered below.
+    }
+  }
+
+  async function reviewSimpleFinHistoryRecovery() {
+    if (!historyRecoverySource) return;
+    resetMutationErrors();
+    setOutcome(undefined);
+    setLocalError(undefined);
+    setOperationId(undefined);
+    setOperationMode("import");
+    setImportKind("simplefin");
+    setReviewRequiresHistoryRecovery(true);
+    setSourceLabel("SimpleFIN history recovery");
+    try {
+      const staged = await createPreview.mutateAsync({
+        params: { path: { id: vibeUuid } },
+        body: { source: historyRecoverySource, rebaseline: true },
+      });
+      setOperationId(staged.operation_id);
     } catch {
       // The mutation's typed store error is rendered below.
     }
@@ -329,7 +364,14 @@ export function ImportPanel({
   }
 
   function confirmReview() {
-    if (!operationId || !preview?.verify.ok || operation.data?.status !== "done") return;
+    if (
+      !operationId ||
+      !preview?.verify.ok ||
+      operation.data?.status !== "done" ||
+      (reviewRequiresHistoryRecovery && !hasHistoryRecoveryEvidence)
+    ) {
+      return;
+    }
     const importedCount = preview.verify.candidateCount;
     const importedSource = sourceLabel;
     const importedArenaBlocks = arenaReview;
@@ -363,7 +405,7 @@ export function ImportPanel({
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
-          {hasConfiguredSources ? (
+          {configuredSources.length > 0 ? (
             <Button variant="secondary" disabled={busy} onClick={() => void refreshSources()}>
               {operationMode === "pull" && busy ? "Refreshing…" : "Refresh sources"}
             </Button>
@@ -514,6 +556,20 @@ export function ImportPanel({
           {operationMode === "pull" ? "The source refresh was aborted." : "The import was aborted."}
         </span>
       ) : null}
+      {historyRecoverySource ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-hairline bg-canvas p-4">
+          <div className="min-w-0 flex-1">
+            <span className="text-label text-primary">SimpleFIN history needs a new baseline</span>
+            <span className="mt-1 block text-caption text-secondary">
+              Review the currently available account history and explicitly acknowledge the omitted
+              interval before refreshing this source again.
+            </span>
+          </div>
+          <Button disabled={busy} onClick={() => void reviewSimpleFinHistoryRecovery()}>
+            Review new baseline
+          </Button>
+        </div>
+      ) : null}
       {malformedImportResult ? (
         <span role="alert" className="text-body text-error">
           The completed import did not contain a valid review. Start the import again to retry.
@@ -605,12 +661,23 @@ export function ImportPanel({
               Cancel
             </Button>
             <Button
-              disabled={confirm.isPending || !operationId || !preview.verify.ok}
+              disabled={
+                confirm.isPending ||
+                !operationId ||
+                !preview.verify.ok ||
+                (reviewRequiresHistoryRecovery && !hasHistoryRecoveryEvidence)
+              }
               onClick={confirmReview}
             >
               {confirm.isPending ? "Importing…" : "Confirm import"}
             </Button>
           </div>
+          {reviewRequiresHistoryRecovery && !hasHistoryRecoveryEvidence ? (
+            <span role="alert" className="text-caption text-error">
+              This preview is missing the required history recovery evidence and cannot be
+              confirmed.
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -638,6 +705,21 @@ export function ImportPanel({
       {confirm.isError ? <Failed error={confirm.error} /> : null}
     </section>
   );
+}
+
+function simpleFinHistoryRecoverySource(
+  error: unknown,
+  configuredSources: readonly string[],
+): string | undefined {
+  if (!isStoreError(error) || error.code !== "simplefin_history_gap" || !("source" in error)) {
+    return undefined;
+  }
+  const source = error.source;
+  return typeof source === "string" &&
+    sourceIdPattern.test(source) &&
+    configuredSources.includes(source)
+    ? source
+    : undefined;
 }
 
 function pullResult(value: unknown):

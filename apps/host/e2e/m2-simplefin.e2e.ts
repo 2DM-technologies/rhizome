@@ -37,6 +37,17 @@ async function stageSimpleFin(page: Page): Promise<void> {
   await expect(page.locator("[data-import-candidate]")).toHaveCount(2);
 }
 
+async function configureSimpleFin(page: Page): Promise<string> {
+  await stageSimpleFin(page);
+  const source = [...mockStore.ingestionSources.values()].find(
+    (candidate) => candidate.kind === "credential",
+  );
+  if (!source) throw new Error("Missing mocked SimpleFIN source");
+  await page.getByRole("button", { name: "Confirm import" }).click();
+  await expect(page.getByRole("status")).toContainText("Imported 2 transactions from SimpleFIN.");
+  return source.source;
+}
+
 test("SimpleFIN stages a secret-free reviewed import and commits only after confirm", async ({
   page,
 }) => {
@@ -134,4 +145,62 @@ test("a rejected compromised token is cleared and its disable warning stops the 
       .filter((request) => request.method() === "POST")
       .map((request) => new URL(request.url()).pathname),
   ).toEqual(["/rnet/v0/source-credentials/simplefin"]);
+});
+
+test("an owner can review and confirm a configured SimpleFIN history recovery", async ({
+  page,
+}) => {
+  const source = await configureSimpleFin(page);
+  mockStore.failNextPullWithSimpleFinHistoryGap(source);
+
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+
+  await expect(
+    page.getByText(
+      "The previous connected balance cannot be reconciled inside SimpleFIN's history window.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Review new baseline" }).click();
+
+  const reconciliation = page.getByLabel("VERIFY reconciliation");
+  await expect(reconciliation).toBeVisible();
+  const recoveryCheck = reconciliation.locator('[data-verify-check="history_recovery"]');
+  await expect(recoveryCheck).toContainText("Owner-reviewed rebaseline resumes connected history");
+  await expect(page.getByRole("button", { name: "Confirm import" })).toBeEnabled();
+
+  const previewRequests = mockStore.requests.filter(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/rnet/v0/vibes/${VIBE_ID}/imports`,
+  );
+  expect(previewRequests.at(-1)?.postDataJSON()).toEqual({ source, rebaseline: true });
+
+  await page.getByRole("button", { name: "Confirm import" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Imported 2 transactions from SimpleFIN history recovery.",
+  );
+});
+
+test("history recovery stays hidden for redacted or unconfigured source metadata", async ({
+  page,
+}) => {
+  await configureSimpleFin(page);
+
+  mockStore.failNextPullWithSimpleFinHistoryGap(null);
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+  await expect(
+    page.getByText(
+      "The previous connected balance cannot be reconciled inside SimpleFIN's history window.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review new baseline" })).toHaveCount(0);
+
+  mockStore.failNextPullWithSimpleFinHistoryGap(`source:${VIBE_ID}`);
+  await page.getByRole("button", { name: "Refresh sources" }).click();
+  await expect(
+    page.getByText(
+      "The previous connected balance cannot be reconciled inside SimpleFIN's history window.",
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review new baseline" })).toHaveCount(0);
 });

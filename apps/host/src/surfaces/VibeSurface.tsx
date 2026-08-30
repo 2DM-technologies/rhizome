@@ -381,9 +381,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           {remove.isError ? <Failed error={remove.error} /> : null}
           <ImportPanel
             vibeUuid={uuid}
-            hasConfiguredSources={Boolean(
-              vibe.data.pull?.enabled && vibe.data.pull.sources?.length,
-            )}
+            configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
           />
         </div>
       ) : null}
