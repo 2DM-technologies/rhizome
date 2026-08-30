@@ -9,6 +9,8 @@ import {
 import { TASK_PATTERN, UUIDV7_PATTERN } from "@rnet/types/patterns";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
+import { FILE_PARSERS } from "./ingestion.ts";
+
 export { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
 
 /** Protocol-visible problem codes emitted by the Rhizome HTTP API. */
@@ -67,7 +69,6 @@ export const operationDocumentSchema = {
 
 export type OperationDocument = FromSchema<typeof operationDocumentSchema>;
 
-export const FILE_PARSERS = ["csv", "ofx"] as const;
 export const SOURCE_ID_PATTERN = `^source:${UUIDV7_PATTERN.slice(1, -1)}$`;
 
 export const createFileIngestionSourceRequestSchema = {

@@ -7,8 +7,8 @@ import {
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
-import { parserFor } from "../../../ingest/src/registry.ts";
-import type { ParsedTransactions } from "../../../ingest/src/types.ts";
+import { transactionParserFor } from "../../../ingest/src/parser-catalog.ts";
+import type { ParsedTransactions } from "../../../ingest/transactions/types.ts";
 import { verifyTransactions, type VerifyReport } from "../../../ingest/verify/transactions.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
@@ -487,7 +487,7 @@ export class ImportService {
     resolved: ResolvedOriginSource,
     ownerUuid: string,
   ): Promise<StagedSourceCapture> {
-    const parser = parserFor(resolved.source.parser);
+    const parser = transactionParserFor(resolved.source.parser);
     if (!parser || parser.version !== resolved.source.parserVersion) {
       throw new Error("Pinned parser version is unavailable");
     }
@@ -888,7 +888,7 @@ function originUuidOf(origin: string): string {
 }
 
 function assertPinnedParser(source: DbIngestionSource): void {
-  const parser = parserFor(source.parser);
+  const parser = transactionParserFor(source.parser);
   if (!parser) {
     throw new Problem(422, "parser_unsupported", "Parser unsupported", source.parser);
   }
