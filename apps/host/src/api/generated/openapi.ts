@@ -1089,6 +1089,15 @@ export interface operations {
         };
       };
       /** @description Problem response */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
       500: {
         headers: {
           [name: string]: unknown;
@@ -1332,6 +1341,15 @@ export interface operations {
       };
       /** @description Problem response */
       422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      429: {
         headers: {
           [name: string]: unknown;
         };

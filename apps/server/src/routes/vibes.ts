@@ -206,6 +206,7 @@ export function createVibeRoutes(
         403: ProblemSchema,
         404: ProblemSchema,
         422: ProblemSchema,
+        429: ProblemSchema,
       },
     },
     async (context) => {
@@ -284,6 +285,7 @@ export function createVibeRoutes(
         403: ProblemSchema,
         404: ProblemSchema,
         422: ProblemSchema,
+        429: ProblemSchema,
       },
     },
     async (context) => {
