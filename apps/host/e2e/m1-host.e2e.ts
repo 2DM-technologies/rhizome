@@ -710,6 +710,10 @@ test("Vibe CRUD and membership use the existing Store object", async ({ page }) 
   await newVibeTitle.fill("Trip planning");
   await createVibe.click();
   await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+  await expect(
+    page.locator("[data-dock-recent-vibes]").getByRole("button", { name: "Vibes", exact: true }),
+  ).toBeVisible();
 
   const title = page.getByLabel("Vibe title", { exact: true });
   await expect(title).toHaveValue("Trip planning");
@@ -898,6 +902,24 @@ test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
   await expect(activeAppSurface).toHaveCSS("background-color", "color(srgb 0 0 0 / 0.8)");
   await expect(activeAppSurface).toHaveCSS("backdrop-filter", "blur(10px)");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
+});
+
+test("opening a Vibe keeps the Vibes index available as the previous dock window", async ({
+  page,
+}) => {
+  await page.goto("/vibes");
+  await page.getByRole("button", { name: "Open Vibe Spending" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+
+  const rail = page.locator("[data-dock-recent-vibes]");
+  await expect(rail).toHaveAttribute("data-count", "1");
+  await rail.getByRole("button", { name: "Vibes", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
+  await expect(rail.getByRole("button", { name: "Spending", exact: true })).toBeVisible();
 });
 
 test("opening a surface grows its dock icon into the window", async ({ page }) => {
@@ -1144,7 +1166,7 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
   await page.goto("/vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
-  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+  await expect(page.locator("[data-surface-window]")).toHaveCount(2);
 
   for (const [uuid, title] of openedVibes.slice(1)) {
     const search = page.getByRole("searchbox", { name: /search everything/i });

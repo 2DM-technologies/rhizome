@@ -21,7 +21,7 @@ export function VibesSurface() {
       {
         onSuccess: (vibe) => {
           setTitle("");
-          open({ kind: "vibe", uuid: uuidOf(vibe.uri) });
+          open({ kind: "vibe", uuid: uuidOf(vibe.uri) }, { keepCurrentOpen: true });
         },
       },
     );
@@ -61,7 +61,9 @@ export function VibesSurface() {
           <li key={vibe.uri}>
             <button
               type="button"
-              onClick={() => open({ kind: "vibe", uuid: uuidOf(vibe.uri) })}
+              onClick={() =>
+                open({ kind: "vibe", uuid: uuidOf(vibe.uri) }, { keepCurrentOpen: true })
+              }
               aria-label={`Open Vibe ${vibe.title}`}
               className="flex w-full items-baseline gap-3 border-b border-[rgba(20,20,26,0.06)] py-3 text-left"
             >
