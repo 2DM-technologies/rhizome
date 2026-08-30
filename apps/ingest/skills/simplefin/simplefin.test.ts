@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { simpleFinParser } from "../skills/simplefin/scripts/parse-simplefin.ts";
-import { transactionParserFor } from "../src/parser-catalog.ts";
-import { verifyTransactions } from "../verify/transactions.ts";
+import { transactionParserFor } from "../../src/parser-catalog.ts";
+import { verifyTransactions } from "../../transactions/verify.ts";
+import { simpleFinParser } from "./scripts/parse-simplefin.ts";
 
 describe("M2 SimpleFIN v2 committed parser", () => {
   test("parses the synthetic Account Set deterministically with stable keys and source facts", async () => {
@@ -103,7 +103,9 @@ describe("M2 SimpleFIN v2 committed parser", () => {
 
   test("fails closed when a previously selected account disappears", async () => {
     const previous = await parseFixture("accounts-previous-v2.json");
-    const current = await parseFixture("missing-previous-account-v2.json");
+    const current = await parseCurrent((capture) => {
+      capture.accounts.pop();
+    });
     const report = verifyTransactions(current, { previous });
 
     expect(report.ok).toBe(false);
@@ -120,8 +122,8 @@ describe("M2 SimpleFIN v2 committed parser", () => {
 
   test("records newly discovered accounts as deterministic index-only baseline evidence", async () => {
     const previous = await parseFixture("accounts-previous-v2.json");
-    const first = await parseFixture("new-account-v2.json");
-    const second = await parseFixture("new-account-v2.json");
+    const first = await parseCurrent(addNewAccount);
+    const second = await parseCurrent(addNewAccount);
     const firstReport = verifyTransactions(first, { previous });
     const secondReport = verifyTransactions(second, { previous });
 
@@ -153,7 +155,10 @@ describe("M2 SimpleFIN v2 committed parser", () => {
       current.transactions[3]?.accountIdentity,
     );
 
-    const duplicate = await parseFixture("duplicate-transaction-v2.json");
+    const duplicate = await parseCurrent((capture) => {
+      const transactions = capture.accounts[0]!.transactions;
+      transactions[1]!.id = transactions[0]!.id;
+    });
     const duplicateReport = verifyTransactions(duplicate);
     expect(duplicateReport.ok).toBe(false);
     expect(duplicateReport.checks).toContainEqual(
@@ -184,16 +189,26 @@ describe("M2 SimpleFIN v2 committed parser", () => {
   });
 
   test("fails closed on orphan accounts, malformed values, and custom currencies", async () => {
-    await expect(parseFixture("orphan-account-v2.json")).rejects.toThrow("unknown connection");
-    await expect(parseFixture("malformed-decimal-v2.json")).rejects.toThrow(
-      "invalid amount decimal",
-    );
-    await expect(parseFixture("malformed-timestamp-v2.json")).rejects.toThrow(
-      "invalid posted timestamp",
-    );
-    await expect(parseFixture("custom-currency-v2.json")).rejects.toThrow(
-      "unsupported custom currency URL",
-    );
+    await expect(
+      parseCurrent((capture) => {
+        capture.accounts[0]!.conn_id = "conn-missing";
+      }),
+    ).rejects.toThrow("unknown connection");
+    await expect(
+      parseCurrent((capture) => {
+        capture.accounts[0]!.transactions[0]!.amount = "1,00";
+      }),
+    ).rejects.toThrow("invalid amount decimal");
+    await expect(
+      parseCurrent((capture) => {
+        capture.accounts[0]!.transactions[0]!.posted = 1_785_931_200.5;
+      }),
+    ).rejects.toThrow("invalid posted timestamp");
+    await expect(
+      parseCurrent((capture) => {
+        capture.accounts[0]!.currency = "https://rewards.example.invalid/currency";
+      }),
+    ).rejects.toThrow("unsupported custom currency URL");
   });
 
   test("requires the v2 Account Set arrays and required transaction fields", async () => {
@@ -201,28 +216,62 @@ describe("M2 SimpleFIN v2 committed parser", () => {
       "required errlist array",
     );
 
-    const current = JSON.parse(await fixtureText("accounts-current-v2.json")) as {
-      accounts: Array<{ transactions: Array<Record<string, unknown>> }>;
-    };
+    const current = await fixtureCapture("accounts-current-v2.json");
     delete current.accounts[0]!.transactions[0]!.description;
-    await expect(
-      simpleFinParser.parse(new TextEncoder().encode(JSON.stringify(current))),
-    ).rejects.toThrow("required description");
+    await expect(simpleFinParser.parse(captureBytes(current))).rejects.toThrow(
+      "required description",
+    );
   });
 });
 
-function fixture(name: string): URL {
-  return new URL(`../skills/simplefin/fixtures/${name}`, import.meta.url);
+interface SimpleFinFixture {
+  errlist: unknown[];
+  errors?: unknown[];
+  connections: Array<Record<string, unknown>>;
+  accounts: Array<
+    Record<string, unknown> & {
+      id: string;
+      name: string;
+      conn_id: string;
+      currency: string;
+      balance: string;
+      transactions: Array<Record<string, unknown>>;
+    }
+  >;
 }
 
-async function fixtureText(name: string): Promise<string> {
-  return Bun.file(fixture(name)).text();
+function fixture(name: string): URL {
+  return new URL(`./fixtures/${name}`, import.meta.url);
 }
 
 async function fixtureBytes(name: string): Promise<Uint8Array> {
   return new Uint8Array(await Bun.file(fixture(name)).arrayBuffer());
 }
 
+async function fixtureCapture(name: string): Promise<SimpleFinFixture> {
+  return JSON.parse(await Bun.file(fixture(name)).text()) as SimpleFinFixture;
+}
+
+function captureBytes(capture: SimpleFinFixture): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(capture));
+}
+
 async function parseFixture(name: string) {
   return simpleFinParser.parse(await fixtureBytes(name));
+}
+
+async function parseCurrent(mutate: (capture: SimpleFinFixture) => void) {
+  const capture = await fixtureCapture("accounts-current-v2.json");
+  mutate(capture);
+  return simpleFinParser.parse(captureBytes(capture));
+}
+
+function addNewAccount(capture: SimpleFinFixture): void {
+  const account = structuredClone(capture.accounts[0]!);
+  account.id = "acct-new";
+  account.name = "Synthetic Savings";
+  account.balance = "50.00";
+  account["available-balance"] = "50.00";
+  account.transactions = [];
+  capture.accounts.splice(1, 0, account);
 }
