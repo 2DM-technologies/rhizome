@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { operations, type DbOperation } from "../db/models/operation.ts";
-import { notFound } from "../errors.ts";
+import { grantMissing, notFound } from "../errors.ts";
 import { AccessService } from "./access-service.ts";
 import type { ServiceContext } from "./types.ts";
 
@@ -38,7 +38,15 @@ export class OperationsService {
         const vibe = await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.READ);
         exposeOwnerOnlyResult = this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid;
       }
-    } else await this.access.assertAuthenticated();
+    } else {
+      await this.access.assertAuthenticated();
+      if (this.actor.subject !== operation.invokedBy) throw grantMissing("operation");
+      // Import previews can only be created by the Vibe owner, so the original invoker
+      // remains entitled to its review payload after the Vibe has been deleted. A pull
+      // can also be invoked through a delegated grant, so keep its owner-only fields
+      // redacted once the Vibe is no longer available to prove ownership.
+      exposeOwnerOnlyResult = operation.request.mode === "import_preview";
+    }
     return { exposeOwnerOnlyResult, operation };
   }
 }

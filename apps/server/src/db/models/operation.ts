@@ -17,7 +17,7 @@ export const operations = pgTable(
     kind: text("kind", { enum: OperationKindEnum }).notNull(),
     status: text("status", { enum: OperationStatusEnum }).notNull(),
     invokedBy: text("invoked_by").notNull(),
-    vibeUuid: uuid("vibe_uuid").references(() => vibes.uuid),
+    vibeUuid: uuid("vibe_uuid").references(() => vibes.uuid, { onDelete: "set null" }),
     request: jsonb("request").$type<JsonObject>().notNull(),
     result: jsonb("result").$type<JsonObject>(),
     reviewDigest: text("review_digest"),
@@ -31,6 +31,7 @@ export const operations = pgTable(
     check("operations_status_check", textEnumCheck(operation.status, OperationStatusEnum)),
     index("operations_status_idx").on(operation.status),
     index("operations_invoked_by_idx").on(operation.invokedBy),
+    index("operations_vibe_uuid_idx").on(operation.vibeUuid),
   ],
 );
 

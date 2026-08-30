@@ -2325,6 +2325,95 @@ describe("rNet M1 store", () => {
     expect(retained[0]?.object_exists).toBe(true);
   });
 
+  test("deletes an imported Vibe while retaining its operation only for the invoker", async () => {
+    const fixture = await createCsvSourceFixture("deleted-vibe-operation.csv");
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Imported then deleted" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibe = await vibeResponse.json();
+    const importedVibeId = vibe.uri.split("/").at(-1);
+
+    const previewResponse = await request(`/rnet/v0/vibes/${importedVibeId}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const preview = await waitForOperation(await previewResponse.json(), owner);
+    expect(preview.status).toBe("done");
+    expect((preview.result as { candidates: unknown[] }).candidates.length).toBeGreaterThan(0);
+
+    const delegatedOperationUuid = uuidv7();
+    await db.insert(operations).values({
+      uuid: delegatedOperationUuid,
+      kind: "pull",
+      status: "done",
+      invokedBy: "client:rbudget",
+      vibeUuid: importedVibeId,
+      request: { mode: "pull" },
+      result: {
+        candidate_count: 1,
+        candidates: [{ private_origin: "rnet://origin/private" }],
+        elements: [{ private_payload: "preview" }],
+        source_results: [{ private_reconciliation: "owner-only" }],
+        staged_origin: "rnet://origin/private",
+      },
+      finishedAt: new Date(),
+    });
+
+    const confirmResponse = await request(
+      `/rnet/v0/vibes/${importedVibeId}/imports/${preview.operation_id}/confirm`,
+      { method: "POST", headers: owner },
+    );
+    expect(confirmResponse.status).toBe(200);
+    expect(
+      (await request(`/rnet/v0/vibes/${importedVibeId}`, { method: "DELETE", headers: owner }))
+        .status,
+    ).toBe(204);
+
+    const [retainedOperation] = await db
+      .select()
+      .from(operations)
+      .where(eq(operations.uuid, preview.operation_id));
+    expect(retainedOperation).toMatchObject({
+      invokedBy: `id:rnet://id/${DEV_USER_UUID}`,
+      vibeUuid: null,
+    });
+
+    const invokerResponse = await request(`/rnet/v0/operations/${preview.operation_id}`, {
+      headers: owner,
+    });
+    expect(invokerResponse.status).toBe(200);
+    const invokerOperation = (await invokerResponse.json()) as OperationDocument;
+    expect(invokerOperation.result).toEqual(preview.result);
+
+    const delegatedResponse = await request(`/rnet/v0/operations/${delegatedOperationUuid}`, {
+      headers: dmachine,
+    });
+    expect(delegatedResponse.status).toBe(200);
+    const delegatedOperation = (await delegatedResponse.json()) as OperationDocument;
+    expect(delegatedOperation.result).toMatchObject({
+      candidate_count: 1,
+      candidates: [],
+      elements: [],
+      source_results: [],
+    });
+    expect(JSON.stringify(delegatedOperation)).not.toContain("private");
+
+    expect(
+      (await request(`/rnet/v0/operations/${preview.operation_id}`, { headers: otherOwner }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(`/rnet/v0/operations/${delegatedOperationUuid}`, { headers: otherOwner }))
+        .status,
+    ).toBe(403);
+    expect((await request(`/rnet/v0/operations/${delegatedOperationUuid}`)).status).toBe(401);
+  });
+
   test("revocation fails closed on the next request", async () => {
     const patched = await request(`/rnet/v0/vibes/${vibeId}`, {
       method: "PATCH",

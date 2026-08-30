@@ -654,6 +654,10 @@ test("Vibe CRUD and membership use the existing Store object", async ({ page }) 
   await page.getByRole("button", { name: "Confirm delete Vibe" }).click();
   await expect(page).toHaveURL(/\/$/);
 
+  await page.getByRole("searchbox", { name: "Search everything" }).click();
+  await expect(page.getByRole("button", { name: "Summer trip", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Spending", exact: true })).toBeVisible();
+
   await page.goto("/vibes");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Vibe Summer trip" })).toHaveCount(0);

@@ -1,0 +1,1 @@
+CREATE INDEX "operations_vibe_uuid_idx" ON "operations" USING btree ("vibe_uuid");
