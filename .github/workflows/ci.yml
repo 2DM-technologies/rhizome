@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  check:
+    name: Deterministic repository check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: rhizome
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: rhizome_m1_test
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rhizome_m1_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/rhizome_m1_test
+      RHIZOME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/rhizome_m1_test
+
+    steps:
+      - name: Check out Rhizome
+        uses: actions/checkout@v6
+        with:
+          path: rhizome
+          persist-credentials: false
+
+      - name: Check out the pinned rNet types dependency
+        uses: actions/checkout@v6
+        with:
+          repository: 2DM-technologies/rnet
+          ref: 403a70c2a628a7f492ee9de1af01fc218fcfd8f1
+          path: rnet
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Cache Bun package downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-bun-1.3.10-${{ hashFiles('rhizome/bun.lock') }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Apply test database migrations
+        run: bun run db:migrate
+
+      - name: Run deterministic repository checks
+        run: bun run check
+
+  browser:
+    name: Host Playwright suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: rhizome
+
+    steps:
+      - name: Check out Rhizome
+        uses: actions/checkout@v6
+        with:
+          path: rhizome
+          persist-credentials: false
+
+      - name: Check out the pinned rNet types dependency
+        uses: actions/checkout@v6
+        with:
+          repository: 2DM-technologies/rnet
+          ref: 403a70c2a628a7f492ee9de1af01fc218fcfd8f1
+          path: rnet
+          persist-credentials: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Cache Bun package downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-bun-1.3.10-${{ hashFiles('rhizome/bun.lock') }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium and its runtime dependencies
+        run: bunx --no-install playwright install --with-deps chromium
+        working-directory: rhizome/apps/host
+
+      - name: Run host browser tests
+        run: bun run test:e2e
+
+      - name: Upload browser diagnostics
+        if: ${{ !cancelled() && failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-diagnostics
+          path: rhizome/.rhizome/playwright
+          if-no-files-found: ignore
+          retention-days: 7
