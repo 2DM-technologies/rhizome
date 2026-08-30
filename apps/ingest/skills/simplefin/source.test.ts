@@ -33,6 +33,21 @@ describe("SimpleFIN connected-source skill", () => {
       capture: { mime: "application/json" },
     });
     expect(skill.capture.label("fetch-1")).toBe("simplefin-fetch-1.json");
+
+    const claimUrl = `https://${allowedHost}/simplefin/claim/once`;
+    const prepared = skill.connection.prepare({
+      setup_token: Buffer.from(claimUrl).toString("base64"),
+    });
+    expect(prepared).toMatchObject({
+      replayKey: claimUrl,
+      fingerprintCompatibility: [
+        {
+          claim: claimUrl,
+          localHkdfInfo: "rhizome:simplefin-setup-token-fingerprint:v1",
+          kmsDigestDomain: "rhizome:simplefin-setup-token-fingerprint:kms-v1",
+        },
+      ],
+    });
   });
 
   test("normalizes stored config and prepares an exact account request", async () => {

@@ -1,11 +1,14 @@
+import type { CredentialClaimFingerprintCompatibility } from "../../../ingest/connected-sources/types.ts";
+
 const AES_KEY_BYTES = 32;
 const GCM_IV_BYTES = 12;
 const LEGACY_SEALED_SECRET_VERSION = 1;
 const SEALED_SECRET_VERSION = 2;
 const MAX_KEY_ID_BYTES = 64;
+const MAX_FINGERPRINT_COMPATIBILITY_PROFILES = 8;
+const MAX_FINGERPRINT_DOMAIN_BYTES = 256;
+const MAX_FINGERPRINT_CLAIM_BYTES = 16 * 1_024;
 const CLAIM_FINGERPRINT_HKDF_INFO = "rhizome:source-credential-claim-fingerprint:v1";
-const LEGACY_SIMPLEFIN_FINGERPRINT_HKDF_INFO = "rhizome:simplefin-setup-token-fingerprint:v1";
-const LEGACY_SIMPLEFIN_SKILL_ID = "simplefin";
 
 export interface CredentialKeyring {
   activeKeyId: string;
@@ -32,6 +35,7 @@ export interface SourceCredentialCrypto {
   fingerprintConnectionClaim(
     skillId: string,
     replayKey: string,
+    compatibility?: readonly CredentialClaimFingerprintCompatibility[],
   ): Promise<CredentialClaimFingerprints>;
   open(sealed: Uint8Array, associatedData: string): Promise<string>;
   prepareSeal(associatedData: string): Promise<PreparedCredentialSecretSeal>;
@@ -42,8 +46,8 @@ export function createLocalSourceCredentialCrypto(
 ): SourceCredentialCrypto {
   const keyring = normalizeKeyring(encryptionKeys);
   return {
-    fingerprintConnectionClaim: (skillId, replayKey) =>
-      fingerprintCredentialConnectionClaim(skillId, replayKey, keyring),
+    fingerprintConnectionClaim: (skillId, replayKey, compatibility) =>
+      fingerprintCredentialConnectionClaim(skillId, replayKey, keyring, compatibility),
     open: (sealed, associatedData) => openCredentialSecret(sealed, keyring, associatedData),
     async prepareSeal(associatedData) {
       let available = true;
@@ -173,10 +177,10 @@ export async function fingerprintCredentialConnectionClaim(
   skillId: string,
   replayKey: string,
   encryptionKeys: CredentialEncryptionKeys,
+  compatibility: readonly CredentialClaimFingerprintCompatibility[] = [],
 ): Promise<CredentialClaimFingerprints> {
   const message = credentialClaimFingerprintMessage(skillId, replayKey);
-  const legacySimpleFinMessage =
-    skillId === LEGACY_SIMPLEFIN_SKILL_ID ? new TextEncoder().encode(replayKey.trim()) : undefined;
+  const compatibilityProfiles = validateFingerprintCompatibility(compatibility);
   const keyring = normalizeKeyring(encryptionKeys);
   const keyIds = [
     keyring.activeKeyId,
@@ -194,15 +198,13 @@ export async function fingerprintCredentialConnectionClaim(
     // retained key during rotation must not make the same one-time token claimable again.
     fingerprints.push(`hmac-sha256-hkdf-v1:${Buffer.from(signature).toString("hex")}`);
   }
-  if (legacySimpleFinMessage) {
-    // Claims made before credential skills were generalized used a SimpleFIN-specific HKDF
-    // domain and signed the canonical token without a skill-id prefix. Retain those exact
-    // aliases so an already-consumed one-time token still resolves to its existing ledger row.
+  for (const profile of compatibilityProfiles) {
+    const compatibilityMessage = new TextEncoder().encode(profile.claim);
     for (const keyId of keyIds) {
       const keyBytes = keyring.keys.get(keyId);
       if (!keyBytes) continue;
-      const hmacKey = await deriveFingerprintKey(keyBytes, LEGACY_SIMPLEFIN_FINGERPRINT_HKDF_INFO);
-      const signature = await crypto.subtle.sign("HMAC", hmacKey, legacySimpleFinMessage);
+      const hmacKey = await deriveFingerprintKey(keyBytes, profile.localHkdfInfo);
+      const signature = await crypto.subtle.sign("HMAC", hmacKey, compatibilityMessage);
       fingerprints.push(`hmac-sha256-hkdf-v1:${Buffer.from(signature).toString("hex")}`);
     }
   }
@@ -256,6 +258,43 @@ function credentialClaimFingerprintMessage(skillId: string, replayKey: string): 
     throw new Error("Credential claim replay key must be non-empty");
   }
   return new TextEncoder().encode(`${skillId}\0${replayKey}`).buffer;
+}
+
+export function validateFingerprintCompatibility(
+  profiles: readonly CredentialClaimFingerprintCompatibility[],
+): readonly CredentialClaimFingerprintCompatibility[] {
+  if (profiles.length > MAX_FINGERPRINT_COMPATIBILITY_PROFILES) {
+    throw new Error("Credential claim has too many fingerprint compatibility profiles");
+  }
+  const encoder = new TextEncoder();
+  return profiles.map((profile) => {
+    if (
+      !profile ||
+      typeof profile.claim !== "string" ||
+      !profile.claim ||
+      profile.claim.includes("\0") ||
+      encoder.encode(profile.claim).byteLength > MAX_FINGERPRINT_CLAIM_BYTES ||
+      !validFingerprintDomain(profile.localHkdfInfo, encoder) ||
+      !validFingerprintDomain(profile.kmsDigestDomain, encoder)
+    ) {
+      throw new Error("Credential claim fingerprint compatibility profile is invalid");
+    }
+    return {
+      claim: profile.claim,
+      localHkdfInfo: profile.localHkdfInfo,
+      kmsDigestDomain: profile.kmsDigestDomain,
+    };
+  });
+}
+
+function validFingerprintDomain(value: unknown, encoder: TextEncoder): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value === value.trim() &&
+    !value.includes("\0") &&
+    encoder.encode(value).byteLength <= MAX_FINGERPRINT_DOMAIN_BYTES
+  );
 }
 
 function normalizeKeyring(encryptionKeys: CredentialEncryptionKeys): CredentialKeyring {

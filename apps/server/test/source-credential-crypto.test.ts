@@ -85,22 +85,46 @@ describe("source credential encryption", () => {
     expect(JSON.stringify(fingerprints)).not.toContain("canonical-claim");
   });
 
-  test("retains exact pre-generalization SimpleFIN aliases for every local key", async () => {
+  test("adds skill-owned compatibility aliases for every local key", async () => {
     const keyring = createCredentialKeyring("current", { current: otherKey, previous: key });
-    const fingerprints = await fingerprintCredentialConnectionClaim(
-      "simplefin",
+    const current = await fingerprintCredentialConnectionClaim(
+      "test-provider",
       "canonical-one-time-claim",
       keyring,
     );
-    const legacyCurrent =
-      "hmac-sha256-hkdf-v1:4ece111cf55e09b97c9caaa710d1e4f8e747dd32ada6fca1ee01c77169f70fdf";
-    const legacyPrevious =
-      "hmac-sha256-hkdf-v1:12202b093bf56008dfc7437b51579322e67751e82839ecad3d506d3423cac192";
+    const fingerprints = await fingerprintCredentialConnectionClaim(
+      "test-provider",
+      "canonical-one-time-claim",
+      keyring,
+      [
+        {
+          claim: "legacy-canonical-claim",
+          localHkdfInfo: "rhizome:test-provider-claim-fingerprint:v0",
+          kmsDigestDomain: "rhizome:test-provider-claim-fingerprint:kms-v0",
+        },
+      ],
+    );
 
     expect(fingerprints.all[0]).toBe(fingerprints.active);
-    expect(fingerprints.active).not.toBe(legacyCurrent);
+    expect(fingerprints.all.slice(0, current.all.length)).toEqual([...current.all]);
     expect(fingerprints.all).toHaveLength(4);
-    expect(fingerprints.all).toEqual(expect.arrayContaining([legacyCurrent, legacyPrevious]));
+    expect(fingerprints.all.slice(current.all.length)).toEqual([
+      "hmac-sha256-hkdf-v1:0e7cee77989137acc0e2e0bb42f5002d03a7ee4ca4d2e215cb3e7696eb1ce36c",
+      "hmac-sha256-hkdf-v1:385a3c9c61a60bd520a862c1e66c9de5ac57ca3b45b5cd662d41810790269271",
+    ]);
+    expect(JSON.stringify(fingerprints)).not.toContain("legacy-canonical-claim");
+  });
+
+  test("rejects invalid skill-owned fingerprint compatibility profiles", async () => {
+    await expect(
+      fingerprintCredentialConnectionClaim("test-provider", "claim", key, [
+        {
+          claim: "legacy-claim",
+          localHkdfInfo: " invalid-domain",
+          kmsDigestDomain: "rhizome:test-provider:kms-v0",
+        },
+      ]),
+    ).rejects.toThrow("compatibility profile is invalid");
   });
 });
 

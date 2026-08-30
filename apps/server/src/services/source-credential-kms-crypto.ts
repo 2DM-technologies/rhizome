@@ -17,7 +17,9 @@ import {
   type CredentialClaimFingerprints,
   type PreparedCredentialSecretSeal,
   type SourceCredentialCrypto,
+  validateFingerprintCompatibility,
 } from "./source-credential-crypto.ts";
+import type { CredentialClaimFingerprintCompatibility } from "../../../ingest/connected-sources/types.ts";
 
 const AES_KEY_BYTES = 32;
 const GCM_IV_BYTES = 12;
@@ -28,8 +30,6 @@ const MAX_KMS_KEY_ID_BYTES = 2_048;
 const MAX_KMS_CIPHERTEXT_BLOB_BYTES = 6_144;
 const MAX_LOCAL_CIPHERTEXT_BYTES = 64 * 1_024;
 const FINGERPRINT_DOMAIN = "rhizome:source-credential-claim-fingerprint:kms-v1";
-const LEGACY_SIMPLEFIN_FINGERPRINT_DOMAIN = "rhizome:simplefin-setup-token-fingerprint:kms-v1";
-const LEGACY_SIMPLEFIN_SKILL_ID = "simplefin";
 
 export interface CredentialKms {
   decrypt(input: DecryptCommandInput): Promise<DecryptCommandOutput>;
@@ -157,20 +157,25 @@ export class AwsKmsSourceCredentialCrypto implements SourceCredentialCrypto {
   async fingerprintConnectionClaim(
     skillId: string,
     replayKey: string,
+    compatibility: readonly CredentialClaimFingerprintCompatibility[] = [],
   ): Promise<CredentialClaimFingerprints> {
     const message = await fingerprintMessage(skillId, replayKey);
+    const compatibilityProfiles = validateFingerprintCompatibility(compatibility);
     const kmsFingerprints = await this.#fingerprintsForMessage(message);
-    const legacySimpleFinFingerprints =
-      skillId === LEGACY_SIMPLEFIN_SKILL_ID
-        ? await this.#fingerprintsForMessage(await legacySimpleFinFingerprintMessage(replayKey))
-        : [];
+    const compatibilityFingerprints = (
+      await Promise.all(
+        compatibilityProfiles.map(async (profile) =>
+          this.#fingerprintsForMessage(await compatibilityFingerprintMessage(profile)),
+        ),
+      )
+    ).flat();
     const legacyFingerprints = this.#legacy
-      ? await this.#legacy.fingerprintConnectionClaim(skillId, replayKey)
+      ? await this.#legacy.fingerprintConnectionClaim(skillId, replayKey, compatibilityProfiles)
       : undefined;
     const all = [
       ...new Set([
         ...kmsFingerprints,
-        ...legacySimpleFinFingerprints,
+        ...compatibilityFingerprints,
         ...(legacyFingerprints?.all ?? []),
       ]),
     ];
@@ -370,11 +375,10 @@ async function fingerprintMessage(skillId: string, replayKey: string): Promise<U
   return new Uint8Array(await crypto.subtle.digest("SHA-256", material));
 }
 
-async function legacySimpleFinFingerprintMessage(replayKey: string): Promise<Uint8Array> {
-  // Exact pre-generalization KMS input: SHA-256(domain NUL canonical-setup-token).
-  const material = new TextEncoder().encode(
-    `${LEGACY_SIMPLEFIN_FINGERPRINT_DOMAIN}\0${replayKey.trim()}`,
-  );
+async function compatibilityFingerprintMessage(
+  profile: CredentialClaimFingerprintCompatibility,
+): Promise<Uint8Array> {
+  const material = new TextEncoder().encode(`${profile.kmsDigestDomain}\0${profile.claim}`);
   return new Uint8Array(await crypto.subtle.digest("SHA-256", material));
 }
 

@@ -88,9 +88,21 @@ export class ConnectedSourceError extends Error {
   }
 }
 
+/** Skill-owned recipe for recognizing claims fingerprinted before the current generic scheme. */
+export interface CredentialClaimFingerprintCompatibility {
+  /** Canonical claim material used by the historical fingerprint scheme. */
+  readonly claim: string;
+  /** Historical HKDF info used by the local-keyring adapter. */
+  readonly localHkdfInfo: string;
+  /** Historical pre-HMAC digest domain used by the KMS adapter. */
+  readonly kmsDigestDomain: string;
+}
+
 export interface PreparedCredentialConnection {
   /** Canonical sensitive material. The server fingerprints it immediately and never stores it. */
   readonly replayKey: string;
+  /** Optional skill-owned aliases that preserve replay protection across scheme migrations. */
+  readonly fingerprintCompatibility?: readonly CredentialClaimFingerprintCompatibility[];
   /** The first operation allowed to contact or consume the provider credential. */
   acquire(): Promise<{ secret: string; publicMetadata?: SourceJsonObject }>;
 }

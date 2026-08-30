@@ -88,28 +88,43 @@ describe("AWS KMS source credential crypto", () => {
     }
   });
 
-  test("retains exact pre-generalization SimpleFIN aliases for every KMS key", async () => {
+  test("adds skill-owned compatibility aliases for every KMS key", async () => {
     const kms = new FakeCredentialKms();
     const credentialCrypto = createKmsCrypto(kms);
-    const fingerprints = await credentialCrypto.fingerprintConnectionClaim(
-      "simplefin",
+    const current = await credentialCrypto.fingerprintConnectionClaim(
+      "test-provider",
       "canonical-one-time-claim",
     );
-    const legacyActive =
-      "hmac-sha256-kms-v1:561a574a33374fe9ab4e9e3ef80feac290b02b78b1b9ffcb6fdcebc21a44f748";
-    const legacyPrevious =
-      "hmac-sha256-kms-v1:1d736ba469cf728bbf1b76221a31898eaa01facbec25762dcab7640a20ed3e5d";
+    kms.generateMacInputs.length = 0;
+    const fingerprints = await credentialCrypto.fingerprintConnectionClaim(
+      "test-provider",
+      "canonical-one-time-claim",
+      [
+        {
+          claim: "legacy-canonical-claim",
+          localHkdfInfo: "rhizome:test-provider-claim-fingerprint:v0",
+          kmsDigestDomain: "rhizome:test-provider-claim-fingerprint:kms-v0",
+        },
+      ],
+    );
 
     expect(fingerprints.all[0]).toBe(fingerprints.active);
-    expect(fingerprints.active).not.toBe(legacyActive);
+    expect(fingerprints.all.slice(0, current.all.length)).toEqual([...current.all]);
     expect(fingerprints.all).toHaveLength(4);
-    expect(fingerprints.all).toEqual(expect.arrayContaining([legacyActive, legacyPrevious]));
+    expect(fingerprints.all.slice(current.all.length)).toEqual([
+      "hmac-sha256-kms-v1:836cbee6435102a4f435ed1c6354f22643f3ad303f3e04cdf484d3f87110ec88",
+      "hmac-sha256-kms-v1:490e0823f8e9da2f1c0c092d7250d7bf9198f36fd11a4ff2b9b9908e5fc8faaf",
+    ]);
     expect(kms.generateMacInputs.map(({ KeyId }) => KeyId)).toEqual([
       activeFingerprintKey,
       previousFingerprintKey,
       activeFingerprintKey,
       previousFingerprintKey,
     ]);
+    for (const input of kms.generateMacInputs) {
+      expect(input.Message).toHaveLength(32);
+      expect(new TextDecoder().decode(input.Message)).not.toContain("legacy-canonical-claim");
+    }
   });
 
   test("reads v1/v2 local envelopes during migration while every new write is v3", async () => {

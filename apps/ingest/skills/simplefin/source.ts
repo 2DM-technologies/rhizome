@@ -22,6 +22,8 @@ const FETCH_WINDOW_HOURS = 24;
 const HISTORY_WINDOW_SECONDS = 45 * 24 * 60 * 60;
 const HISTORY_OVERLAP_SECONDS = 15 * 24 * 60 * 60;
 const MAX_HISTORY_WINDOW_SECONDS = 90 * 24 * 60 * 60;
+const LEGACY_LOCAL_FINGERPRINT_HKDF_INFO = "rhizome:simplefin-setup-token-fingerprint:v1";
+const LEGACY_KMS_FINGERPRINT_DIGEST_DOMAIN = "rhizome:simplefin-setup-token-fingerprint:kms-v1";
 
 export interface SimpleFinHistoryPlan {
   historyRecovery?: HistoryRecoveryEvidence;
@@ -75,6 +77,13 @@ export function createSimpleFinSkill(options: SimpleFinClientOptions): Credentia
         }
         return {
           replayKey,
+          fingerprintCompatibility: [
+            {
+              claim: replayKey.trim(),
+              localHkdfInfo: LEGACY_LOCAL_FINGERPRINT_HKDF_INFO,
+              kmsDigestDomain: LEGACY_KMS_FINGERPRINT_DIGEST_DOMAIN,
+            },
+          ],
           async acquire() {
             try {
               return { secret: await client.claimSetupToken(input.setup_token) };

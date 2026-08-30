@@ -119,6 +119,7 @@ export class SourceCredentialsService {
     const fingerprints = await this.credentialCrypto.fingerprintConnectionClaim(
       skillId,
       preparedConnection.replayKey,
+      preparedConnection.fingerprintCompatibility,
     );
     const reservation = await this.claimStore.reserve({
       attemptLimit: claimPolicy.attempts,

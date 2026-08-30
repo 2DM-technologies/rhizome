@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   CredentialConnectionError,
+  type CredentialClaimFingerprintCompatibility,
   type CredentialClaimPolicy,
   type CredentialSourceConnector,
   type SourceJsonObject,
@@ -77,6 +78,38 @@ describe("source credential service", () => {
       status: "active",
     });
     expect(JSON.stringify(document)).not.toContain(providerSecret);
+  });
+
+  test("passes skill-owned fingerprint compatibility profiles to generic credential crypto", async () => {
+    const compatibility: CredentialClaimFingerprintCompatibility[] = [
+      {
+        claim: "legacy-canonical-claim",
+        localHkdfInfo: "rhizome:test-provider-claim-fingerprint:v0",
+        kmsDigestDomain: "rhizome:test-provider-claim-fingerprint:kms-v0",
+      },
+    ];
+    const localCrypto = createLocalSourceCredentialCrypto(key);
+    let observed: readonly CredentialClaimFingerprintCompatibility[] | undefined;
+    const credentialCrypto: SourceCredentialCrypto = {
+      async fingerprintConnectionClaim(claimSkillId, claim, profiles) {
+        observed = profiles;
+        return localCrypto.fingerprintConnectionClaim(claimSkillId, claim, profiles);
+      },
+      open: (sealed, associatedData) => localCrypto.open(sealed, associatedData),
+      prepareSeal: (associatedData) => localCrypto.prepareSeal(associatedData),
+    };
+    const service = new SourceCredentialsService({
+      db: emptyDatabase(),
+      actor: ownerActor(),
+      claimStore: memoryClaimStore([]),
+      credentialCrypto,
+    });
+
+    await service.connect(fakeCredentialedSkill({ fingerprintCompatibility: compatibility }), {
+      claim: replayKey,
+    });
+
+    expect(observed).toEqual(compatibility);
   });
 
   test("rejects clients before skill preparation and preserves only provider-safe failures", async () => {
@@ -432,6 +465,7 @@ describe("source credential service", () => {
 interface FakeSkillOptions {
   acquire?: () => Promise<{ secret: string; publicMetadata?: SourceJsonObject }>;
   claimPolicy?: CredentialClaimPolicy;
+  fingerprintCompatibility?: readonly CredentialClaimFingerprintCompatibility[];
   onPrepare?: () => void;
 }
 
@@ -495,6 +529,9 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
         }
         return {
           replayKey: input.claim.trim(),
+          ...(options.fingerprintCompatibility
+            ? { fingerprintCompatibility: options.fingerprintCompatibility }
+            : {}),
           acquire: options.acquire ?? (async () => ({ secret: providerSecret })),
         };
       },
