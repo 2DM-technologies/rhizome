@@ -5,9 +5,11 @@ import {
   STORE_SCHEMA_COMPONENTS,
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
+  connectSimpleFinRequestSchema,
   createFileIngestionSourceRequestSchema,
   createImportPreviewRequestSchema,
   createIngestionSourceRequestSchema,
+  createSimpleFinIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
   createVibeRequestSchema,
   fileIngestionSourceDocumentSchema,
@@ -16,6 +18,9 @@ import {
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
   setMediaObjectUserRequestSchema,
+  simpleFinIngestionSourceDocumentSchema,
+  simpleFinSourceConfigSchema,
+  sourceCredentialDocumentSchema,
   type OwnerCreateMediaObjectsRequest,
   vibesResponseSchema,
 } from "../src/index.ts";
@@ -58,12 +63,16 @@ describe("shared store schemas", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
       createImportPreviewRequestSchema,
     );
+    expect(STORE_SCHEMA_COMPONENTS.ConnectSimpleFinRequest).toBe(connectSimpleFinRequestSchema);
+    expect(STORE_SCHEMA_COMPONENTS.SourceCredential).toBe(sourceCredentialDocumentSchema);
     expect(Object.values(STORE_SCHEMA_COMPONENTS).every((schema) => !("$id" in schema))).toBe(true);
   });
 
   test("keeps file ingestion sources pinned to an owned origin and parser version", () => {
-    expect(createIngestionSourceRequestSchema).toBe(createFileIngestionSourceRequestSchema);
-    expect(ingestionSourceDocumentSchema).toBe(fileIngestionSourceDocumentSchema);
+    expect(createIngestionSourceRequestSchema.oneOf).toContain(
+      createFileIngestionSourceRequestSchema,
+    );
+    expect(ingestionSourceDocumentSchema.oneOf).toContain(fileIngestionSourceDocumentSchema);
     expect(fileIngestionSourceDocumentSchema.properties).toMatchObject({
       kind: { const: "origin" },
       parser: { enum: ["csv", "ofx"] },
@@ -71,6 +80,23 @@ describe("shared store schemas", () => {
     });
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("provider");
+  });
+
+  test("keeps SimpleFIN secrets out of credential and source documents", () => {
+    expect(createIngestionSourceRequestSchema.oneOf).toContain(
+      createSimpleFinIngestionSourceRequestSchema,
+    );
+    expect(ingestionSourceDocumentSchema.oneOf).toContain(simpleFinIngestionSourceDocumentSchema);
+    expect(connectSimpleFinRequestSchema.properties).toHaveProperty("setup_token");
+    expect(createSimpleFinIngestionSourceRequestSchema.properties).toHaveProperty("credential");
+    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("secret");
+    expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("access_url");
+    expect(simpleFinIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
+    expect(simpleFinIngestionSourceDocumentSchema.properties.parser_version).toEqual({
+      type: "string",
+      minLength: 1,
+    });
+    expect(simpleFinSourceConfigSchema.properties.accounts.minItems).toBe(1);
   });
 });
 

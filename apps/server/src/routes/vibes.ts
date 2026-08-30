@@ -16,7 +16,8 @@ import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
 import { VibesService } from "../services/vibe-service.ts";
-import { ImportService } from "../services/import-service.ts";
+import { ImportService, type SimpleFinAccountsFetcher } from "../services/import-service.ts";
+import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
 import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
 import { serializeVibe } from "../serializers/vibe-serializer.ts";
@@ -52,7 +53,15 @@ const MediaObjectCollectionSchema = collectionOf(
   "mediaObjects",
   mediaObjectsResponseSchema,
 );
-export function createVibeRoutes(db: Database, blobs: BlobStore) {
+export function createVibeRoutes(
+  db: Database,
+  blobs: BlobStore,
+  connectedSources: {
+    baseUrl: string;
+    credentialCrypto: SourceCredentialCrypto;
+    simpleFin: SimpleFinAccountsFetcher;
+  },
+) {
   const router = createRhizomeRouter();
 
   router.get(
@@ -201,6 +210,7 @@ export function createVibeRoutes(db: Database, blobs: BlobStore) {
         db,
         blobs,
         actor: context.get("actor"),
+        ...connectedSources,
       });
       const operation = await service.startPreview(
         context.req.valid("param").id,
@@ -229,6 +239,7 @@ export function createVibeRoutes(db: Database, blobs: BlobStore) {
         db,
         blobs,
         actor: context.get("actor"),
+        ...connectedSources,
       });
       const vibe = await service.confirm(parameters.id, parameters.operation_id);
       return context.json(serializeVibe(vibe));
@@ -277,6 +288,7 @@ export function createVibeRoutes(db: Database, blobs: BlobStore) {
         db,
         blobs,
         actor: context.get("actor"),
+        ...connectedSources,
       });
       const operation = await service.startPull(
         context.req.valid("param").id,

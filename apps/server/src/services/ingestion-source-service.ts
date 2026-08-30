@@ -1,7 +1,10 @@
 import {
   FILE_PARSERS,
+  SIMPLEFIN_PARSER_NAME,
+  SIMPLEFIN_PROVIDER,
   type CreateIngestionSourceRequest,
   type IngestionSourceDocument,
+  type SimpleFinSourceConfig,
 } from "@rhizome/store-contract";
 import { and, eq, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
@@ -14,6 +17,7 @@ import {
   type NewDbIngestionSource,
 } from "../db/models/ingestion-source.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
+import { sourceCredentials } from "../db/models/source-credential.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
@@ -35,6 +39,7 @@ export class IngestionSourcesService {
 
   async create(input: CreateIngestionSourceRequest): Promise<DbIngestionSource> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
+    if ("credential" in input) return this.createSimpleFin(input);
     if (!("origin" in input)) {
       throw new Problem(
         422,
@@ -74,6 +79,54 @@ export class IngestionSourcesService {
     return source;
   }
 
+  private async createSimpleFin(
+    input: Extract<CreateIngestionSourceRequest, { credential: string }>,
+  ): Promise<DbIngestionSource> {
+    if (this.actor.kind !== "user") throw grantMissing("owner");
+    const parser = transactionParserFor(SIMPLEFIN_PARSER_NAME);
+    if (!parser) {
+      throw new Problem(422, "parser_unsupported", "Parser unsupported", SIMPLEFIN_PARSER_NAME);
+    }
+
+    const ownerUuid = this.actor.uuid;
+    const credentialUuid = input.credential.slice("credential:".length);
+    return this.db.transaction(async (transaction) => {
+      const [credential] = await transaction
+        .select()
+        .from(sourceCredentials)
+        .where(
+          and(
+            eq(sourceCredentials.uuid, credentialUuid),
+            eq(sourceCredentials.userUuid, ownerUuid),
+            isNull(sourceCredentials.revokedAt),
+          ),
+        )
+        .for("update");
+      if (!credential) throw notFound("Source credential");
+      if (credential.provider !== SIMPLEFIN_PROVIDER) {
+        throw new Problem(
+          422,
+          "parser_unsupported",
+          "Source provider unsupported",
+          credential.provider,
+        );
+      }
+
+      const candidate: NewDbIngestionSource = {
+        uuid: uuidv7(),
+        ownerUuid,
+        kind: "credential",
+        parser: parser.name,
+        parserVersion: parser.version,
+        credentialUuid,
+        config: input.config ?? {},
+      };
+      const [source] = await transaction.insert(ingestionSources).values(candidate).returning();
+      if (!source) throw new Error("Ingestion source insert did not return a row");
+      return source;
+    });
+  }
+
   async getActiveOwned(sourceUuid: string): Promise<DbIngestionSource> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const source = await this.db.query.ingestionSources.findFirst({
@@ -89,6 +142,24 @@ export class IngestionSourcesService {
 }
 
 export function serializeIngestionSource(source: DbIngestionSource): IngestionSourceDocument {
+  if (source.kind === "credential") {
+    if (
+      !source.credentialUuid ||
+      source.originUuid ||
+      source.provider ||
+      source.parser !== SIMPLEFIN_PARSER_NAME
+    ) {
+      throw new Error("Credential ingestion source is internally inconsistent");
+    }
+    return {
+      source: `source:${source.uuid}`,
+      kind: "credential",
+      parser: SIMPLEFIN_PARSER_NAME,
+      parser_version: source.parserVersion,
+      config: (source.config ?? {}) as SimpleFinSourceConfig,
+      created_at: source.createdAt.toISOString(),
+    };
+  }
   if (source.kind !== "origin" || !source.originUuid || !isFileParserName(source.parser)) {
     throw new Error("Origin ingestion source is internally inconsistent");
   }

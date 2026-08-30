@@ -19,6 +19,8 @@ const RNET_COMPONENT_TYPES = {
 const STORE_COMPONENT_TYPES = {
   Problem: "StoreProblemDocument",
   Operation: "StoreOperationDocument",
+  SourceCredential: "StoreSourceCredentialDocument",
+  ConnectSimpleFinRequest: "StoreConnectSimpleFinRequest",
   IngestionSource: "StoreIngestionSourceDocument",
   CreateIngestionSourceRequest: "StoreCreateIngestionSourceRequest",
   CreateImportPreviewRequest: "StoreCreateImportPreviewRequest",
@@ -52,6 +54,8 @@ import type {
 import type {
   ProblemDocument as StoreProblemDocument,
   OperationDocument as StoreOperationDocument,
+  SourceCredentialDocument as StoreSourceCredentialDocument,
+  ConnectSimpleFinRequest as StoreConnectSimpleFinRequest,
   IngestionSourceDocument as StoreIngestionSourceDocument,
   CreateIngestionSourceRequest as StoreCreateIngestionSourceRequest,
   CreateImportPreviewRequest as StoreCreateImportPreviewRequest,
@@ -74,6 +78,16 @@ const config: AppDependencies["config"] = {
   baseUrl: "http://localhost:3000",
   allowedOrigins: [],
   maxRequestBodySize: 52_428_800,
+  sourceCredentials: {
+    keyProvider: {
+      driver: "local",
+      keyring: {
+        activeKeyId: "openapi",
+        keys: new Map([["openapi", new Uint8Array(32)]]),
+      },
+    },
+    simpleFinAllowedHosts: ["bridge.simplefin.test"],
+  },
   blob: {
     driver: "r2",
     endpoint: "https://openapi.invalid",

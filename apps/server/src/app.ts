@@ -14,18 +14,37 @@ import { createIngestionSourceRoutes } from "./routes/ingestion-sources.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
+import { createSourceCredentialRoutes } from "./routes/source-credentials.ts";
 import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
+import { SimpleFinClient } from "./services/simplefin-client.ts";
+import type { SimpleFinAccountsFetcher } from "./services/import-service.ts";
+import type { SourceCredentialCrypto } from "./services/source-credential-crypto.ts";
+import { createSourceCredentialCrypto } from "./services/source-credential-crypto-factory.ts";
+import type { SimpleFinTokenExchange } from "./services/source-credential-service.ts";
 
 export interface AppDependencies {
   config: ServerConfig;
   db: Database;
   blobs: BlobStore;
+  simpleFinClient?: SimpleFinTokenExchange & SimpleFinAccountsFetcher;
+  sourceCredentialCrypto?: SourceCredentialCrypto;
 }
 
-export function createApp({ config, db, blobs }: AppDependencies) {
+export function createApp({
+  config,
+  db,
+  blobs,
+  simpleFinClient,
+  sourceCredentialCrypto,
+}: AppDependencies) {
   const app = new Hono<AppEnvironment>();
+  const resolvedSimpleFinClient =
+    simpleFinClient ??
+    new SimpleFinClient({ allowedHosts: config.sourceCredentials.simpleFinAllowedHosts });
+  const credentialCrypto =
+    sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
 
   app.use(logger());
   app.use(
@@ -82,11 +101,19 @@ export function createApp({ config, db, blobs }: AppDependencies) {
   const routeGroups = [
     {
       basePath: "/rnet/v0/vibes",
-      router: createVibeRoutes(db, blobs),
+      router: createVibeRoutes(db, blobs, {
+        baseUrl: config.baseUrl,
+        credentialCrypto,
+        simpleFin: resolvedSimpleFinClient,
+      }),
     },
     {
       basePath: "/rnet/v0/ingestion-sources",
       router: createIngestionSourceRoutes(db),
+    },
+    {
+      basePath: "/rnet/v0/source-credentials",
+      router: createSourceCredentialRoutes(db, resolvedSimpleFinClient, credentialCrypto),
     },
     { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
     {

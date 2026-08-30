@@ -1,19 +1,29 @@
 import { rnetUriPattern, validateMediaObject, type MediaObject, type Vibe } from "@rnet/types";
 import {
+  SIMPLEFIN_PARSER_NAME,
+  SIMPLEFIN_PROVIDER,
   SOURCE_ID_PATTERN,
   type CreateImportPreviewRequest,
   type PullVibeRequest,
+  type SimpleFinSourceConfig,
 } from "@rhizome/store-contract";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import { transactionParserFor } from "../../../ingest/src/parser-catalog.ts";
-import type { ParsedTransactions } from "../../../ingest/transactions/types.ts";
+import type {
+  ParsedAccountBalance,
+  ParsedTransactions,
+} from "../../../ingest/transactions/types.ts";
 import { verifyTransactions, type VerifyReport } from "../../../ingest/transactions/verify.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
 import { grants } from "../db/models/grant.ts";
+import {
+  ingestionSourceFetches,
+  type DbIngestionSourceFetch,
+} from "../db/models/ingestion-source-fetch.ts";
 import { ingestionSources, type DbIngestionSource } from "../db/models/ingestion-source.ts";
 import { ingestionSourceObjects } from "../db/models/ingestion-source-object.ts";
 import { mediaElements, type MediaElementKind } from "../db/models/media-element.ts";
@@ -23,6 +33,7 @@ import { mediaObjectRevisions } from "../db/models/media-object-revision.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
 import { operations, type DbOperation } from "../db/models/operation.ts";
 import { originArtifacts, type DbOriginArtifact } from "../db/models/origin-artifact.ts";
+import { sourceCredentials, type DbSourceCredential } from "../db/models/source-credential.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes, type DbVibe } from "../db/models/vibe.ts";
@@ -30,6 +41,14 @@ import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { VibeAggregate } from "../serializers/vibe-serializer.ts";
 import { AccessService } from "./access-service.ts";
+import { storeOwnedOriginArtifact } from "./origin-artifact-service.ts";
+import {
+  createLocalSourceCredentialCrypto,
+  credentialAssociatedData,
+  type CredentialEncryptionKeys,
+  type SourceCredentialCrypto,
+} from "./source-credential-crypto.ts";
+import type { SimpleFinAccountsRequest } from "./simplefin-client.ts";
 import type { ServiceContext } from "./types.ts";
 
 interface ImportPreviewResult {
@@ -68,12 +87,26 @@ interface PullOperationResult {
   source_results: PullSourceResult[];
 }
 
-interface ResolvedOriginSource {
-  kind: "origin";
-  origin: DbOriginArtifact;
+interface ResolvedSourceBase {
   source: DbIngestionSource;
   sourceStateDigest: string;
 }
+
+interface ResolvedOriginSource extends ResolvedSourceBase {
+  kind: "origin";
+  origin: DbOriginArtifact;
+}
+
+interface ResolvedCredentialSource extends ResolvedSourceBase {
+  kind: "credential";
+  credential: DbSourceCredential;
+  baseline?: {
+    fetch: DbIngestionSourceFetch;
+    origin: DbOriginArtifact;
+  };
+}
+
+type ResolvedSource = ResolvedOriginSource | ResolvedCredentialSource;
 
 type StagedElementRole = "title" | "content" | "preview";
 
@@ -95,11 +128,30 @@ export interface StagedElement {
 
 interface StagedSourceCapture {
   candidates: StagedCandidate[];
-  kind: "origin";
+  fetchUuid?: string;
+  kind: "origin" | "credential";
   origin: DbOriginArtifact;
   source: DbIngestionSource;
   sourceStateDigest: string;
   verify: VerifyReport;
+}
+
+interface CredentialFetchReservation {
+  fetchUuid: string;
+  release: () => Promise<void>;
+  resolved: ResolvedCredentialSource;
+}
+
+const SIMPLEFIN_FETCH_LIMIT = 24;
+const SIMPLEFIN_FETCH_WINDOW_HOURS = 24;
+// Bridge emits a gen.api error for wider ranges, and connected VERIFY fails closed on every
+// provider errlist entry. A monthly pull still retains a 15-day overlap at this boundary.
+const SIMPLEFIN_HISTORY_WINDOW_SECONDS = 45 * 24 * 60 * 60;
+// A stable namespace for the PostgreSQL advisory lock used by SimpleFIN fetch leases.
+const SIMPLEFIN_FETCH_LOCK_SEED = 0x53464e;
+
+export interface SimpleFinAccountsFetcher {
+  fetchAccounts(accessUrl: string, request?: SimpleFinAccountsRequest): Promise<Uint8Array>;
 }
 
 export class ImportService {
@@ -107,12 +159,28 @@ export class ImportService {
   private readonly actor: ServiceContext["actor"];
   private readonly access: AccessService;
   private readonly blobs: BlobStore;
+  private readonly credentialCrypto: SourceCredentialCrypto;
+  private readonly simpleFin: SimpleFinAccountsFetcher;
 
-  constructor(context: ServiceContext & { blobs: BlobStore }) {
+  constructor(
+    context: ServiceContext & {
+      blobs: BlobStore;
+      credentialCrypto?: SourceCredentialCrypto;
+      credentialEncryptionKey?: CredentialEncryptionKeys;
+      simpleFin: SimpleFinAccountsFetcher;
+    },
+  ) {
     this.db = context.db;
     this.actor = context.actor;
     this.access = new AccessService(context);
     this.blobs = context.blobs;
+    if (!context.credentialCrypto && !context.credentialEncryptionKey) {
+      throw new Error("Credential crypto is required");
+    }
+    this.credentialCrypto =
+      context.credentialCrypto ??
+      createLocalSourceCredentialCrypto(context.credentialEncryptionKey!);
+    this.simpleFin = context.simpleFin;
   }
 
   async startPreview(vibeUuid: string, input: CreateImportPreviewRequest): Promise<DbOperation> {
@@ -257,7 +325,17 @@ export class ImportService {
         originUuidOf(result.staged_origin),
         lockedVibe.ownerUuid,
       );
-      if (resolved.origin.uuid !== stagedOrigin.uuid) {
+      const stagedFetch =
+        resolved.kind === "credential"
+          ? await this.lockVerifiedFetch(
+              transaction,
+              operationUuid,
+              resolved,
+              stagedOrigin.uuid,
+              result.source_digest,
+            )
+          : undefined;
+      if (resolved.kind === "origin" && resolved.origin.uuid !== stagedOrigin.uuid) {
         throw invalidReview("The staged origin does not match the file source");
       }
       const expectedReviewDigest = await digest({
@@ -381,6 +459,7 @@ export class ImportService {
         .update(operations)
         .set({ committedAt: new Date() })
         .where(eq(operations.uuid, operationUuid));
+      if (stagedFetch) await this.commitFetch(transaction, stagedFetch.uuid);
     });
 
     const [vibe] = await this.db.select().from(vibes).where(eq(vibes.uuid, vibeUuid));
@@ -405,7 +484,7 @@ export class ImportService {
       .set({ status: "running" })
       .where(and(eq(operations.uuid, operationUuid), eq(operations.status, "queued")));
     const resolved = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
-    const staged = await this.stageSource(resolved, vibe.ownerUuid);
+    const staged = await this.stageSource(resolved, vibe.ownerUuid, operationUuid);
     const candidates = staged.candidates.map(({ candidate }) => candidate);
     const elements = staged.candidates.flatMap(({ elements }) => elements);
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
@@ -451,7 +530,7 @@ export class ImportService {
         sourceUuidOf(sourceReference),
         initialVibe.ownerUuid,
       );
-      const parsed = await this.stageSource(resolved, initialVibe.ownerUuid);
+      const parsed = await this.stageSource(resolved, initialVibe.ownerUuid, operationUuid);
       staged.push(...parsed.candidates);
       captures.push(parsed);
       sourceResults.push({ source: sourceReference, verify: parsed.verify });
@@ -476,10 +555,14 @@ export class ImportService {
     );
   }
 
-  private stageSource(
-    resolved: ResolvedOriginSource,
+  private async stageSource(
+    resolved: ResolvedSource,
     ownerUuid: string,
+    operationUuid: string,
   ): Promise<StagedSourceCapture> {
+    if (resolved.kind === "credential") {
+      return this.stageCredentialSource(resolved, ownerUuid, operationUuid);
+    }
     return this.stageOriginSource(resolved, ownerUuid);
   }
 
@@ -514,6 +597,325 @@ export class ImportService {
     };
   }
 
+  private async stageCredentialSource(
+    resolved: ResolvedCredentialSource,
+    ownerUuid: string,
+    operationUuid: string,
+  ): Promise<StagedSourceCapture> {
+    const reservation = await this.reserveCredentialFetch(resolved, ownerUuid, operationUuid);
+    const reservedSource = reservation.resolved;
+    const fetchUuid = reservation.fetchUuid;
+
+    let phase: "fetch" | "parse" | "verify" | "candidate" = "fetch";
+    let providerRequestStarted = false;
+    try {
+      const config = simpleFinConfig(reservedSource.source.config);
+      const accessUrl = await this.credentialCrypto.open(
+        reservedSource.credential.secret,
+        credentialAssociatedData(
+          reservedSource.credential.uuid,
+          ownerUuid,
+          reservedSource.credential.provider,
+        ),
+      );
+      const endDateEpoch = Math.floor(Date.now() / 1_000);
+      providerRequestStarted = true;
+      const bytes = await this.simpleFin.fetchAccounts(accessUrl, {
+        ...(config.accounts
+          ? { accountIds: config.accounts.map(({ account_id }) => account_id) }
+          : {}),
+        startDateEpoch: endDateEpoch - SIMPLEFIN_HISTORY_WINDOW_SECONDS,
+        endDateEpoch,
+        includePending: config.include_pending === true,
+      });
+      // Revocation may proceed once the outbound request is complete. Parsing and immutable
+      // capture storage do not use the credential and therefore do not need the lease.
+      await reservation.release();
+      const origin = await storeOwnedOriginArtifact(
+        { db: this.db, blobs: this.blobs },
+        {
+          ownerUuid,
+          bytes,
+          mime: "application/json",
+          label: `simplefin-${fetchUuid}.json`,
+        },
+      );
+      const retrievedAt = new Date();
+      const [fetched] = await this.db
+        .update(ingestionSourceFetches)
+        .set({ originUuid: origin.uuid, status: "fetched", retrievedAt })
+        .where(
+          and(
+            eq(ingestionSourceFetches.uuid, fetchUuid),
+            eq(ingestionSourceFetches.status, "fetching"),
+          ),
+        )
+        .returning({ uuid: ingestionSourceFetches.uuid });
+      if (!fetched) throw new Error("Connected fetch state changed unexpectedly");
+
+      phase = "parse";
+      const parser = transactionParserFor(reservedSource.source.parser);
+      if (!parser || parser.version !== reservedSource.source.parserVersion) {
+        throw new Error("Pinned parser version is unavailable");
+      }
+      const current = filterSimpleFinTransactions(await parser.parse(bytes), config);
+      let previous: ParsedTransactions | undefined;
+      if (reservation.resolved.baseline) {
+        const previousBlob = await this.blobs.get(
+          "origins",
+          reservation.resolved.baseline.origin.contentHash,
+        );
+        if (!previousBlob) throw new Error("Previous connected capture is unavailable");
+        previous = filterSimpleFinTransactions(await parser.parse(previousBlob.bytes), config);
+      }
+
+      phase = "verify";
+      const verify = verifyTransactions(current, previous ? { previous } : {});
+      if (!verify.ok) {
+        throw new Error(`VERIFY rejected the connected transaction set: ${failedChecks(verify)}`);
+      }
+
+      phase = "candidate";
+      const candidates = await candidatesFromParsed(
+        current,
+        reservation.resolved.source,
+        origin,
+        ownerUuid,
+        parser.version,
+      );
+      const verifiedAt = new Date();
+      const [verified] = await this.db
+        .update(ingestionSourceFetches)
+        .set({ status: "verified", verifiedAt, errorCode: null })
+        .where(
+          and(
+            eq(ingestionSourceFetches.uuid, fetchUuid),
+            eq(ingestionSourceFetches.status, "fetched"),
+          ),
+        )
+        .returning({ uuid: ingestionSourceFetches.uuid });
+      if (!verified) throw new Error("Connected fetch state changed unexpectedly");
+      return {
+        candidates,
+        fetchUuid,
+        kind: "credential",
+        origin,
+        source: reservation.resolved.source,
+        sourceStateDigest: reservation.resolved.sourceStateDigest,
+        verify,
+      };
+    } catch (error) {
+      // Preserve the provider/parser failure and ledger transition even if lease cleanup sees a
+      // broken connection. A broken PostgreSQL session releases its advisory locks server-side.
+      try {
+        await reservation.release();
+      } catch {
+        // The original failure is more actionable and must not be masked by cleanup.
+      }
+      if (providerRequestStarted) {
+        await this.db
+          .update(ingestionSourceFetches)
+          .set({ status: "rejected", errorCode: `${phase}_failed` })
+          .where(
+            and(
+              eq(ingestionSourceFetches.uuid, fetchUuid),
+              inArray(ingestionSourceFetches.status, ["fetching", "fetched", "verified"]),
+            ),
+          );
+      } else {
+        // Local/KMS credential failures happen before any provider traffic. Removing the
+        // untouched reservation keeps the rolling limit tied to actual SimpleFIN attempts.
+        await this.db
+          .delete(ingestionSourceFetches)
+          .where(
+            and(
+              eq(ingestionSourceFetches.uuid, fetchUuid),
+              eq(ingestionSourceFetches.status, "fetching"),
+            ),
+          );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Linearizes a provider fetch with credential revocation without holding a database
+   * transaction open across the network. The short transaction locks and revalidates the
+   * credential/source, takes a session advisory lease, checks the credential-wide rolling
+   * quota, and durably records the attempt. A database trigger takes the matching transaction
+   * advisory lock before revocation, so either revocation wins before reservation or waits for
+   * the outbound request to finish. The reserved connection makes the lease crash-safe: its
+   * session lock is released automatically if the process/connection dies.
+   */
+  private async reserveCredentialFetch(
+    expected: ResolvedCredentialSource,
+    ownerUuid: string,
+    operationUuid: string,
+  ): Promise<CredentialFetchReservation> {
+    const connection = await this.db.$client.reserve();
+    const fetchUuid = uuidv7();
+    let leaseHeld = false;
+    let connectionReleased = false;
+
+    const release = async (): Promise<void> => {
+      if (connectionReleased) return;
+      try {
+        if (leaseHeld) {
+          // This connection is dedicated to one fetch lease. Unlocking every session lock is
+          // safer than returning a connection with an uncertain lock state after an error.
+          await connection`select pg_advisory_unlock_all()`;
+          leaseHeld = false;
+        }
+      } finally {
+        connection.release();
+        connectionReleased = true;
+      }
+    };
+
+    try {
+      await connection`begin`;
+      let reserved: ResolvedCredentialSource;
+      try {
+        const [locked] = await connection<
+          Array<{
+            credential_uuid: string;
+            owner_uuid: string;
+            provider: string;
+            source_config: unknown;
+            source_kind: string;
+            source_parser: string;
+            source_parser_version: string;
+            source_uuid: string;
+          }>
+        >`
+          select
+            credential.uuid as credential_uuid,
+            credential.user_uuid as owner_uuid,
+            credential.provider,
+            source.uuid as source_uuid,
+            source.kind as source_kind,
+            source.parser as source_parser,
+            source.parser_version as source_parser_version,
+            source.config as source_config
+          from source_credentials as credential
+          join ingestion_sources as source
+            on source.credential_uuid = credential.uuid
+            and source.owner_uuid = credential.user_uuid
+          where credential.uuid = ${expected.credential.uuid}
+            and credential.user_uuid = ${ownerUuid}
+            and credential.revoked_at is null
+            and source.uuid = ${expected.source.uuid}
+            and source.kind = 'credential'
+            and source.revoked_at is null
+          for update of credential, source
+        `;
+        if (!locked) throw notFound("Ingestion source");
+
+        const [baseline] = await connection<
+          Array<{
+            fetch_uuid: string;
+            origin_content_hash: string;
+            origin_uuid: string;
+            parser_version: string;
+          }>
+        >`
+          select
+            source_fetch.uuid as fetch_uuid,
+            source_fetch.parser_version,
+            origin.uuid as origin_uuid,
+            origin.content_hash as origin_content_hash
+          from ingestion_source_fetches as source_fetch
+          join origins as origin
+            on origin.uuid = source_fetch.origin_uuid
+            and origin.owner_uuid = source_fetch.owner_uuid
+            and origin.tombstoned_at is null
+          where source_fetch.source_uuid = ${expected.source.uuid}
+            and source_fetch.status = 'committed'
+            and source_fetch.origin_uuid is not null
+            and source_fetch.committed_at is not null
+          order by source_fetch.committed_at desc, source_fetch.created_at desc
+          limit 1
+          for update of source_fetch, origin
+        `;
+        const expectedBaseline = expected.baseline;
+        if (
+          locked.credential_uuid !== expected.credential.uuid ||
+          locked.owner_uuid !== ownerUuid ||
+          locked.provider !== expected.credential.provider ||
+          locked.source_uuid !== expected.source.uuid ||
+          locked.source_kind !== expected.source.kind ||
+          locked.source_parser !== expected.source.parser ||
+          locked.source_parser_version !== expected.source.parserVersion ||
+          canonicalJson(locked.source_config ?? {}) !==
+            canonicalJson(expected.source.config ?? {}) ||
+          Boolean(baseline) !== Boolean(expectedBaseline) ||
+          (baseline !== undefined &&
+            (baseline.fetch_uuid !== expectedBaseline?.fetch.uuid ||
+              baseline.parser_version !== expectedBaseline.fetch.parserVersion ||
+              baseline.origin_uuid !== expectedBaseline.origin.uuid ||
+              baseline.origin_content_hash !== expectedBaseline.origin.contentHash))
+        ) {
+          throw new Error("The connected source changed before its fetch could start");
+        }
+        const candidate = expected;
+
+        // Credential/source row locks are acquired before this session lock, matching the
+        // revocation transaction's row-lock-then-advisory-lock order and avoiding deadlocks.
+        const [lock] = await connection<[{ acquired: boolean }]>`
+          select pg_try_advisory_lock(
+            hashtextextended(${candidate.credential.uuid}::text, ${SIMPLEFIN_FETCH_LOCK_SEED}::bigint)
+          ) as acquired
+        `;
+        if (!lock?.acquired) {
+          throw new Problem(
+            429,
+            "rate_limited",
+            "SimpleFIN fetch already in progress",
+            "Wait for the active credential fetch to finish before trying again",
+          );
+        }
+        leaseHeld = true;
+
+        const [recent] = await connection<Array<{ count: number }>>`
+          select count(*)::int as count
+          from ingestion_source_fetches
+          where credential_uuid = ${candidate.credential.uuid}
+            and created_at >= now() - make_interval(hours => ${SIMPLEFIN_FETCH_WINDOW_HOURS})
+        `;
+        assertSimpleFinFetchAllowance(recent?.count ?? 0);
+
+        await connection`
+          insert into ingestion_source_fetches (
+            uuid,
+            source_uuid,
+            owner_uuid,
+            credential_uuid,
+            operation_uuid,
+            parser_version,
+            source_state_digest
+          ) values (
+            ${fetchUuid},
+            ${candidate.source.uuid},
+            ${ownerUuid},
+            ${candidate.credential.uuid},
+            ${operationUuid},
+            ${candidate.source.parserVersion},
+            ${candidate.sourceStateDigest}
+          )
+        `;
+        reserved = candidate;
+        await connection`commit`;
+      } catch (error) {
+        await connection`rollback`;
+        throw error;
+      }
+      return { fetchUuid, release, resolved: reserved };
+    } catch (error) {
+      await release();
+      throw error;
+    }
+  }
+
   private async applyPull(
     operationUuid: string,
     initialVibe: DbVibe,
@@ -539,6 +941,7 @@ export class ImportService {
         throw new Error("The Vibe pull configuration changed while the pull was running");
       }
 
+      const connectedFetches: DbIngestionSourceFetch[] = [];
       for (const capture of [...captures].sort((left, right) =>
         compareCodeUnits(left.source.uuid, right.source.uuid),
       )) {
@@ -560,8 +963,24 @@ export class ImportService {
           capture.origin.uuid,
           vibe.ownerUuid,
         );
-        if (resolved.origin.uuid !== stagedOrigin.uuid) {
-          throw new Error("The file source origin changed while the pull was running");
+        if (resolved.kind === "origin") {
+          if (capture.kind !== "origin" || resolved.origin.uuid !== stagedOrigin.uuid) {
+            throw new Error("The file source origin changed while the pull was running");
+          }
+        } else {
+          if (capture.kind !== "credential" || !capture.fetchUuid) {
+            throw new Error("The connected source capture is malformed");
+          }
+          connectedFetches.push(
+            await this.lockVerifiedFetch(
+              transaction,
+              operationUuid,
+              resolved,
+              stagedOrigin.uuid,
+              capture.sourceStateDigest,
+              capture.fetchUuid,
+            ),
+          );
         }
       }
 
@@ -696,6 +1115,9 @@ export class ImportService {
       }
 
       const now = new Date();
+      for (const fetch of connectedFetches) {
+        await this.commitFetch(transaction, fetch.uuid, now);
+      }
       const pullConfig: NonNullable<Vibe["pull"]> = {
         ...vibe.pullConfig,
         last_pulled_at: now.toISOString(),
@@ -800,7 +1222,7 @@ export class ImportService {
     return mediaObjectUuid;
   }
 
-  private snapshotSource(sourceUuid: string, ownerUuid: string): Promise<ResolvedOriginSource> {
+  private snapshotSource(sourceUuid: string, ownerUuid: string): Promise<ResolvedSource> {
     return this.db.transaction((transaction) =>
       this.resolveSource(sourceUuid, ownerUuid, transaction, "share"),
     );
@@ -811,7 +1233,98 @@ export class ImportService {
     ownerUuid: string,
     database: DatabaseTransaction,
     lock: "share" | "update",
-  ): Promise<ResolvedOriginSource> {
+  ): Promise<ResolvedSource> {
+    const [observedSource] = await database
+      .select()
+      .from(ingestionSources)
+      .where(
+        and(
+          eq(ingestionSources.uuid, sourceUuid),
+          eq(ingestionSources.ownerUuid, ownerUuid),
+          isNull(ingestionSources.revokedAt),
+        ),
+      );
+    if (!observedSource) throw notFound("Ingestion source");
+
+    if (observedSource.kind === "credential") {
+      if (!observedSource.credentialUuid || observedSource.originUuid) {
+        throw new Error("Credential ingestion source is internally inconsistent");
+      }
+      // Credential first matches revocation's lock order. The source is locked second and
+      // rechecked against the initially observed credential, closing the discovery race.
+      const [credential] = await database
+        .select()
+        .from(sourceCredentials)
+        .where(
+          and(
+            eq(sourceCredentials.uuid, observedSource.credentialUuid),
+            eq(sourceCredentials.userUuid, ownerUuid),
+            isNull(sourceCredentials.revokedAt),
+          ),
+        )
+        .for(lock);
+      if (!credential) throw notFound("Ingestion source");
+      const [source] = await database
+        .select()
+        .from(ingestionSources)
+        .where(
+          and(
+            eq(ingestionSources.uuid, sourceUuid),
+            eq(ingestionSources.ownerUuid, ownerUuid),
+            eq(ingestionSources.kind, "credential"),
+            eq(ingestionSources.credentialUuid, credential.uuid),
+            isNull(ingestionSources.revokedAt),
+          ),
+        )
+        .for(lock);
+      if (!source) throw notFound("Ingestion source");
+      if (credential.provider !== SIMPLEFIN_PROVIDER || source.parser !== SIMPLEFIN_PARSER_NAME) {
+        throw new Problem(
+          422,
+          "parser_unsupported",
+          "Source provider unsupported",
+          credential.provider,
+        );
+      }
+      assertPinnedParser(source);
+
+      const [baselineFetch] = await database
+        .select()
+        .from(ingestionSourceFetches)
+        .where(
+          and(
+            eq(ingestionSourceFetches.sourceUuid, source.uuid),
+            eq(ingestionSourceFetches.status, "committed"),
+            isNotNull(ingestionSourceFetches.originUuid),
+            isNotNull(ingestionSourceFetches.committedAt),
+          ),
+        )
+        .orderBy(desc(ingestionSourceFetches.committedAt), desc(ingestionSourceFetches.createdAt))
+        .limit(1)
+        .for(lock);
+      let baseline: ResolvedCredentialSource["baseline"];
+      if (baselineFetch) {
+        if (!baselineFetch.originUuid) {
+          throw new Error("Committed connected fetch has no OriginArtifact");
+        }
+        const [origin] = await database
+          .select()
+          .from(originArtifacts)
+          .where(
+            and(
+              eq(originArtifacts.uuid, baselineFetch.originUuid),
+              eq(originArtifacts.ownerUuid, ownerUuid),
+              isNull(originArtifacts.tombstonedAt),
+            ),
+          )
+          .for(lock);
+        if (!origin) throw notFound("Ingestion source");
+        baseline = { fetch: baselineFetch, origin };
+      }
+      const sourceStateDigest = await credentialSourceStateDigest(source, credential, baseline);
+      return { kind: "credential", source, credential, baseline, sourceStateDigest };
+    }
+
     const [source] = await database
       .select()
       .from(ingestionSources)
@@ -824,7 +1337,9 @@ export class ImportService {
         ),
       )
       .for(lock);
-    if (!source || !source.originUuid) throw notFound("Ingestion source");
+    if (!source || !source.originUuid || source.credentialUuid) {
+      throw notFound("Ingestion source");
+    }
 
     const [origin] = await database
       .select()
@@ -866,6 +1381,50 @@ export class ImportService {
     if (!origin) throw invalidReview("The staged OriginArtifact is unavailable");
     return origin;
   }
+
+  private async lockVerifiedFetch(
+    transaction: DatabaseTransaction,
+    operationUuid: string,
+    resolved: ResolvedCredentialSource,
+    originUuid: string,
+    sourceStateDigest: string,
+    fetchUuid?: string,
+  ): Promise<DbIngestionSourceFetch> {
+    const conditions = [
+      eq(ingestionSourceFetches.operationUuid, operationUuid),
+      eq(ingestionSourceFetches.sourceUuid, resolved.source.uuid),
+      eq(ingestionSourceFetches.originUuid, originUuid),
+      eq(ingestionSourceFetches.parserVersion, resolved.source.parserVersion),
+      eq(ingestionSourceFetches.sourceStateDigest, sourceStateDigest),
+      eq(ingestionSourceFetches.status, "verified"),
+    ];
+    if (fetchUuid) conditions.push(eq(ingestionSourceFetches.uuid, fetchUuid));
+    const [fetch] = await transaction
+      .select()
+      .from(ingestionSourceFetches)
+      .where(and(...conditions))
+      .for("update");
+    if (!fetch) throw invalidReview("The connected capture is stale or unavailable");
+    return fetch;
+  }
+
+  private async commitFetch(
+    transaction: DatabaseTransaction,
+    fetchUuid: string,
+    committedAt = new Date(),
+  ): Promise<void> {
+    const [committed] = await transaction
+      .update(ingestionSourceFetches)
+      .set({ status: "committed", committedAt })
+      .where(
+        and(
+          eq(ingestionSourceFetches.uuid, fetchUuid),
+          eq(ingestionSourceFetches.status, "verified"),
+        ),
+      )
+      .returning({ uuid: ingestionSourceFetches.uuid });
+    if (!committed) throw invalidReview("The connected capture was already consumed");
+  }
 }
 
 function sourceUuidOf(source: string): string {
@@ -906,9 +1465,160 @@ async function originSourceStateDigest(
     kind: source.kind,
     parser: source.parser,
     parser_version: source.parserVersion,
+    config: source.config ?? {},
     origin: origin.uuid,
     content_hash: origin.contentHash,
   });
+}
+
+async function credentialSourceStateDigest(
+  source: DbIngestionSource,
+  credential: DbSourceCredential,
+  baseline: ResolvedCredentialSource["baseline"],
+): Promise<string> {
+  return digest({
+    source: source.uuid,
+    kind: source.kind,
+    parser: source.parser,
+    parser_version: source.parserVersion,
+    config: source.config ?? {},
+    credential: credential.uuid,
+    provider: credential.provider,
+    baseline: baseline
+      ? {
+          fetch: baseline.fetch.uuid,
+          parser_version: baseline.fetch.parserVersion,
+          origin: baseline.origin.uuid,
+          content_hash: baseline.origin.contentHash,
+        }
+      : null,
+  });
+}
+
+function simpleFinConfig(value: unknown): SimpleFinSourceConfig {
+  if (value === null || value === undefined) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Stored SimpleFIN source configuration is invalid");
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "accounts" && key !== "include_pending")) {
+    throw new Error("Stored SimpleFIN source configuration is invalid");
+  }
+  if (record.include_pending !== undefined && typeof record.include_pending !== "boolean") {
+    throw new Error("Stored SimpleFIN source configuration is invalid");
+  }
+  let accounts: SimpleFinSourceConfig["accounts"];
+  if (record.accounts !== undefined) {
+    if (
+      !Array.isArray(record.accounts) ||
+      record.accounts.length === 0 ||
+      record.accounts.length > 100
+    ) {
+      throw new Error("Stored SimpleFIN source configuration is invalid");
+    }
+    const seen = new Set<string>();
+    accounts = record.accounts.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Stored SimpleFIN source configuration is invalid");
+      }
+      const selector = value as Record<string, unknown>;
+      if (
+        Object.keys(selector).some((key) => key !== "connection_id" && key !== "account_id") ||
+        typeof selector.connection_id !== "string" ||
+        selector.connection_id.length === 0 ||
+        selector.connection_id.length > 512 ||
+        typeof selector.account_id !== "string" ||
+        selector.account_id.length === 0 ||
+        selector.account_id.length > 512
+      ) {
+        throw new Error("Stored SimpleFIN source configuration is invalid");
+      }
+      const composite = JSON.stringify([selector.connection_id, selector.account_id]);
+      if (seen.has(composite)) {
+        throw new Error("Stored SimpleFIN source configuration is invalid");
+      }
+      seen.add(composite);
+      return {
+        connection_id: selector.connection_id,
+        account_id: selector.account_id,
+      };
+    });
+  }
+  return {
+    ...(accounts ? { accounts } : {}),
+    ...(record.include_pending === undefined ? {} : { include_pending: record.include_pending }),
+  };
+}
+
+export function assertSimpleFinFetchAllowance(recentAttemptCount: number): void {
+  if (!Number.isSafeInteger(recentAttemptCount) || recentAttemptCount < 0) {
+    throw new Error("SimpleFIN fetch attempt count is invalid");
+  }
+  if (recentAttemptCount >= SIMPLEFIN_FETCH_LIMIT) {
+    throw new Problem(
+      429,
+      "rate_limited",
+      "SimpleFIN fetch limit reached",
+      `This credential has already attempted ${SIMPLEFIN_FETCH_LIMIT} account fetches in the last ${SIMPLEFIN_FETCH_WINDOW_HOURS} hours`,
+    );
+  }
+}
+
+/** Applies the owner-selected composite account and pending policy deterministically. */
+export function filterSimpleFinTransactions(
+  parsed: ParsedTransactions,
+  config: SimpleFinSourceConfig,
+): ParsedTransactions {
+  const selectedAccounts = config.accounts
+    ? new Set(
+        config.accounts.map(({ connection_id, account_id }) =>
+          JSON.stringify([connection_id, account_id]),
+        ),
+      )
+    : undefined;
+  const hasProviderErrors =
+    (parsed.providerErrors?.structured.length ?? 0) > 0 ||
+    (parsed.providerErrors?.legacyCount ?? 0) > 0;
+  if (selectedAccounts && !hasProviderErrors) {
+    const returnedAccounts = new Set(
+      (parsed.accountBalances ?? [])
+        .map(({ accountIdentity }) => accountIdentity)
+        .filter((identity): identity is string => Boolean(identity)),
+    );
+    const missingAccountCount = [...selectedAccounts].filter(
+      (identity) => !returnedAccounts.has(identity),
+    ).length;
+    if (missingAccountCount > 0) {
+      throw new Error(
+        `SimpleFIN response omitted ${missingAccountCount} selected account${missingAccountCount === 1 ? "" : "s"}`,
+      );
+    }
+  }
+  const includesAccount = (accountIdentity: string | undefined): boolean =>
+    Boolean(accountIdentity) &&
+    (!selectedAccounts || selectedAccounts.has(accountIdentity as string));
+  const transactions = parsed.transactions.filter(
+    (transaction) =>
+      includesAccount(transaction.accountIdentity) &&
+      (config.include_pending === true || transaction.pending !== true),
+  );
+  const countByAccount = new Map<string, number>();
+  for (const transaction of transactions) {
+    const identity = transaction.accountIdentity!;
+    countByAccount.set(identity, (countByAccount.get(identity) ?? 0) + 1);
+  }
+  const accountBalances: ParsedAccountBalance[] | undefined = parsed.accountBalances
+    ?.filter((balance) => includesAccount(balance.accountIdentity))
+    .map((balance) => ({
+      ...balance,
+      sourceRecordCount: countByAccount.get(balance.accountIdentity) ?? 0,
+    }));
+  return {
+    ...parsed,
+    transactions,
+    sourceRecordCount: transactions.length,
+    ...(accountBalances ? { accountBalances } : {}),
+  };
 }
 
 function failedChecks(report: VerifyReport): string {

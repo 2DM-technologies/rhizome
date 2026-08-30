@@ -28,6 +28,7 @@ import { createBlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
 import { createDatabase } from "../src/db/index.ts";
 import { seedDb } from "../src/db/seedDb.ts";
+import { createCredentialKeyring } from "../src/services/source-credential-crypto.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 1 });
@@ -63,7 +64,9 @@ beforeAll(async () => {
   await client.unsafe(`
     TRUNCATE TABLE
       meter_entry, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
-      vibe_media_objects, grants, operations, media_objects, media_elements, origins, vibes, dmachines, users
+      vibe_media_objects, grants, operations, ingestion_source_objects, ingestion_sources,
+      source_credentials, media_objects,
+      media_elements, origins, vibes, dmachines, users
     CASCADE
   `);
   scratch = await mkdtemp(join(tmpdir(), "rhizome-semantics-"));
@@ -82,6 +85,13 @@ beforeAll(async () => {
     baseUrl: "http://rhizome.test",
     allowedOrigins: ["http://rhizome.test"],
     maxRequestBodySize: 52_428_800,
+    sourceCredentials: {
+      keyProvider: {
+        driver: "local",
+        keyring: createCredentialKeyring("test", { test: new Uint8Array(32) }),
+      },
+      simpleFinAllowedHosts: ["bridge.simplefin.test"],
+    },
     blob: {
       driver: "r2",
       endpoint: `http://${address.address}:${address.port}`,

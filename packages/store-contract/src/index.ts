@@ -25,7 +25,9 @@ export const PROBLEM_CODES = [
   "not_implemented",
   "payload_too_large",
   "parser_unsupported",
+  "rate_limited",
   "schema_violation",
+  "source_connection_failed",
   "writer_namespace_mismatch",
 ] as const;
 
@@ -69,7 +71,54 @@ export const operationDocumentSchema = {
 
 export type OperationDocument = FromSchema<typeof operationDocumentSchema>;
 
+export const SIMPLEFIN_PROVIDER = "simplefin" as const;
 export const SOURCE_ID_PATTERN = `^source:${UUIDV7_PATTERN.slice(1, -1)}$`;
+export const SOURCE_CREDENTIAL_ID_PATTERN = `^credential:${UUIDV7_PATTERN.slice(1, -1)}$`;
+
+export const connectSimpleFinRequestSchema = {
+  type: "object",
+  required: ["setup_token"],
+  properties: {
+    setup_token: { type: "string", minLength: 1, maxLength: 8_192 },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const sourceCredentialDocumentSchema = {
+  type: "object",
+  required: ["credential", "provider", "status", "connected_at"],
+  properties: {
+    credential: { type: "string", pattern: SOURCE_CREDENTIAL_ID_PATTERN },
+    provider: { const: SIMPLEFIN_PROVIDER },
+    status: { enum: ["active", "revoked"] },
+    connected_at: { type: "string", format: "date-time" },
+    revoked_at: { type: "string", format: "date-time" },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const simpleFinSourceConfigSchema = {
+  type: "object",
+  properties: {
+    accounts: {
+      type: "array",
+      minItems: 1,
+      maxItems: 100,
+      uniqueItems: true,
+      items: {
+        type: "object",
+        required: ["connection_id", "account_id"],
+        properties: {
+          connection_id: { type: "string", minLength: 1, maxLength: 512 },
+          account_id: { type: "string", minLength: 1, maxLength: 512 },
+        },
+        additionalProperties: false,
+      },
+    },
+    include_pending: { type: "boolean" },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
 
 export const createFileIngestionSourceRequestSchema = {
   type: "object",
@@ -81,7 +130,19 @@ export const createFileIngestionSourceRequestSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
-export const createIngestionSourceRequestSchema = createFileIngestionSourceRequestSchema;
+export const createSimpleFinIngestionSourceRequestSchema = {
+  type: "object",
+  required: ["credential"],
+  properties: {
+    credential: { type: "string", pattern: SOURCE_CREDENTIAL_ID_PATTERN },
+    config: simpleFinSourceConfigSchema,
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const createIngestionSourceRequestSchema = {
+  oneOf: [createFileIngestionSourceRequestSchema, createSimpleFinIngestionSourceRequestSchema],
+} as const satisfies JSONSchema;
 
 export const fileIngestionSourceDocumentSchema = {
   type: "object",
@@ -97,7 +158,25 @@ export const fileIngestionSourceDocumentSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
-export const ingestionSourceDocumentSchema = fileIngestionSourceDocumentSchema;
+export const simpleFinIngestionSourceDocumentSchema = {
+  type: "object",
+  required: ["source", "kind", "parser", "parser_version", "config", "created_at"],
+  properties: {
+    source: { type: "string", pattern: SOURCE_ID_PATTERN },
+    kind: { const: "credential" },
+    parser: { const: SIMPLEFIN_PARSER_NAME },
+    // A source stays pinned to the parser version used when it was created. Do not
+    // make the response schema reject older pins after the current parser advances.
+    parser_version: { type: "string", minLength: 1 },
+    config: simpleFinSourceConfigSchema,
+    created_at: { type: "string", format: "date-time" },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const ingestionSourceDocumentSchema = {
+  oneOf: [fileIngestionSourceDocumentSchema, simpleFinIngestionSourceDocumentSchema],
+} as const satisfies JSONSchema;
 
 export const createImportPreviewRequestSchema = {
   type: "object",
@@ -114,6 +193,9 @@ export const pullVibeRequestSchema = {
 
 export type CreateIngestionSourceRequest = ContractValue<typeof createIngestionSourceRequestSchema>;
 export type IngestionSourceDocument = ContractValue<typeof ingestionSourceDocumentSchema>;
+export type ConnectSimpleFinRequest = ContractValue<typeof connectSimpleFinRequestSchema>;
+export type SourceCredentialDocument = ContractValue<typeof sourceCredentialDocumentSchema>;
+export type SimpleFinSourceConfig = ContractValue<typeof simpleFinSourceConfigSchema>;
 export type CreateImportPreviewRequest = ContractValue<typeof createImportPreviewRequestSchema>;
 export type PullVibeRequest = ContractValue<typeof pullVibeRequestSchema>;
 
@@ -365,6 +447,8 @@ export type MediaObjectsResponse = ContractValue<typeof mediaObjectsResponseSche
 export const STORE_SCHEMA_COMPONENTS = {
   Problem: problemDocumentSchema,
   Operation: operationDocumentSchema,
+  SourceCredential: sourceCredentialDocumentSchema,
+  ConnectSimpleFinRequest: connectSimpleFinRequestSchema,
   IngestionSource: ingestionSourceDocumentSchema,
   CreateIngestionSourceRequest: createIngestionSourceRequestSchema,
   CreateImportPreviewRequest: createImportPreviewRequestSchema,

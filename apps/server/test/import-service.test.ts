@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { MediaObject } from "@rnet/types";
 
-import { candidateSemanticDigest, canonicalJson } from "../src/services/import-service.ts";
+import { simpleFinParser } from "../../ingest/skills/simplefin/scripts/parse-simplefin.ts";
+import {
+  assertSimpleFinFetchAllowance,
+  candidateSemanticDigest,
+  canonicalJson,
+  filterSimpleFinTransactions,
+} from "../src/services/import-service.ts";
 
 const firstCandidate: MediaObject = {
   rnet_schema: "0.1",
@@ -18,6 +24,12 @@ const firstCandidate: MediaObject = {
 };
 
 describe("pull candidate identity", () => {
+  test("enforces the credential-wide SimpleFIN rolling attempt boundary", () => {
+    expect(() => assertSimpleFinFetchAllowance(23)).not.toThrow();
+    expect(() => assertSimpleFinFetchAllowance(24)).toThrow("24 account fetches");
+    expect(() => assertSimpleFinFetchAllowance(-1)).toThrow("attempt count is invalid");
+  });
+
   test("semantic digests ignore record and capture identities but retain source values", async () => {
     const recaptured: MediaObject = {
       ...firstCandidate,
@@ -157,6 +169,58 @@ describe("pull candidate identity", () => {
         { ...recapturedManifest, role: "preview" as const },
       ]),
     ).not.toBe(await candidateSemanticDigest(first, [manifest]));
+  });
+
+  test("SimpleFIN filtering uses composite accounts and applies pending policy deterministically", async () => {
+    const bytes = new Uint8Array(
+      await Bun.file(
+        new URL("../../ingest/skills/simplefin/fixtures/accounts-current-v2.json", import.meta.url),
+      ).arrayBuffer(),
+    );
+    const parsed = await simpleFinParser.parse(bytes);
+    const alpha = filterSimpleFinTransactions(parsed, {
+      accounts: [{ connection_id: "conn-alpha", account_id: "acct-shared" }],
+    });
+    expect(alpha.transactions.map(({ fitid }) => fitid)).toEqual([
+      "shared-transaction",
+      "alpha-debit",
+    ]);
+    expect(alpha.sourceRecordCount).toBe(2);
+    expect(alpha.accountBalances).toHaveLength(1);
+    expect(alpha.accountBalances?.[0]?.sourceRecordCount).toBe(2);
+
+    const withPending = filterSimpleFinTransactions(parsed, {
+      accounts: [{ connection_id: "conn-alpha", account_id: "acct-shared" }],
+      include_pending: true,
+    });
+    expect(withPending.transactions.map(({ fitid }) => fitid)).toEqual([
+      "shared-transaction",
+      "alpha-debit",
+      "alpha-pending",
+    ]);
+
+    const bothConnections = filterSimpleFinTransactions(parsed, {
+      accounts: [
+        { connection_id: "conn-beta", account_id: "acct-shared" },
+        { connection_id: "conn-alpha", account_id: "acct-shared" },
+      ],
+    });
+    expect(
+      bothConnections.transactions.map(({ accountIdentity, fitid }) => [accountIdentity, fitid]),
+    ).toEqual([
+      ['["conn-alpha","acct-shared"]', "shared-transaction"],
+      ['["conn-alpha","acct-shared"]', "alpha-debit"],
+      ['["conn-beta","acct-shared"]', "shared-transaction"],
+    ]);
+
+    expect(() =>
+      filterSimpleFinTransactions(parsed, {
+        accounts: [
+          { connection_id: "conn-alpha", account_id: "acct-shared" },
+          { connection_id: "conn-missing", account_id: "acct-shared" },
+        ],
+      }),
+    ).toThrow("SimpleFIN response omitted 1 selected account");
   });
 });
 
