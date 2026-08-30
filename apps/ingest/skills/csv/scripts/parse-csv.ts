@@ -156,11 +156,13 @@ function parseCsv(input: string): string[][] {
 }
 
 function decimal(raw: string, row: number): string {
-  const normalized = raw.replaceAll(",", "");
-  if (!/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(normalized)) {
+  const valid = /^-?(?:(?:0|[1-9][0-9]*)|(?:[1-9][0-9]{0,2}(?:,[0-9]{3})+))(?:\.[0-9]+)?$/.test(
+    raw,
+  );
+  if (!valid) {
     throw new Error(`CSV row ${row} has invalid Amount`);
   }
-  return normalized;
+  return raw.replaceAll(",", "");
 }
 
 function canonicalDecimal(value: string): string {

@@ -52,10 +52,11 @@ describe("M2 committed transaction parsers", () => {
       new TextEncoder().encode(
         [
           "Status,Date,Description,Debit Category,Debit,Credit Category,Credit,Note",
-          ",12/02/2026,SYNTHETIC MONTHLY RENT,Updated category,1200.00,,,Updated note",
+          ',12/02/2026,SYNTHETIC MONTHLY RENT,Updated category,"1,200.00",,,Updated note',
         ].join("\n"),
       ),
     );
+    expect(recategorized.transactions[0]?.amount).toBe("-1200.00");
     expect(recategorized.transactions[0]?.fitid).toBe(first.transactions[0]?.fitid);
     expect(verifyTransactions(first)).toMatchObject({
       ok: true,
@@ -63,6 +64,37 @@ describe("M2 committed transaction parsers", () => {
       candidate_count: 3,
       totals_by_currency: { USD: "1216.75" },
     });
+  });
+
+  test("CSV amounts accept US thousands grouping and reject ambiguous comma formats", async () => {
+    const grouped = await csvParser.parse(
+      new TextEncoder().encode(
+        [
+          "Date,Description,Amount,Currency,Transaction ID,Account ID",
+          '2026-01-01,GROUPED,"1,234.56",USD,grouped,checking',
+        ].join("\n"),
+      ),
+    );
+    expect(grouped.transactions[0]?.amount).toBe("1234.56");
+    expect(verifyTransactions(grouped)).toMatchObject({
+      ok: true,
+      source_record_count: 1,
+      candidate_count: 1,
+      totals_by_currency: { USD: "1234.56" },
+    });
+
+    for (const amount of ["1.234,56", "12,34.56"]) {
+      await expect(
+        csvParser.parse(
+          new TextEncoder().encode(
+            [
+              "Date,Description,Amount,Currency,Transaction ID,Account ID",
+              `2026-01-01,INVALID,"${amount}",USD,invalid,checking`,
+            ].join("\n"),
+          ),
+        ),
+      ).rejects.toThrow("CSV row 2 has invalid Amount");
+    }
   });
 
   test("QFX/OFX SGML parses transactions and account-scoped identifiers", async () => {
