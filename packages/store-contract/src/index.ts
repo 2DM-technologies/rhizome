@@ -8,6 +8,8 @@ import {
 import { TASK_PATTERN } from "@rnet/types/patterns";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
+export { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
+
 /** Protocol-visible problem codes emitted by the Rhizome HTTP API. */
 export const PROBLEM_CODES = [
   "authentication_required",
