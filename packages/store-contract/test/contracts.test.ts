@@ -15,6 +15,7 @@ import {
   fileIngestionSourceDocumentSchema,
   credentialIngestionSourceDocumentSchema,
   ingestionSourceDocumentSchema,
+  mediaElementReferenceInputSchema,
   mediaObjectsResponseSchema,
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
@@ -49,6 +50,24 @@ describe("shared store schemas", () => {
       ownerCreateMediaObjectsRequestSchema,
       clientCreateMediaObjectsRequestSchema,
     ]);
+  });
+
+  test("accepts only object-shaped element references with optional association context", () => {
+    expect(mediaElementReferenceInputSchema.anyOf[0]).toBe(
+      mediaObjectSchema.properties.elements.items,
+    );
+    expect(mediaObjectSchema.properties.elements.items).toMatchObject({
+      type: "object",
+      required: ["uri"],
+      properties: {
+        role: { enum: ["title", "content", "preview"] },
+        alt: { type: "string" },
+      },
+      additionalProperties: false,
+    });
+    expect(mediaElementReferenceInputSchema.anyOf).not.toContainEqual(
+      expect.objectContaining({ type: "string" }),
+    );
   });
 
   test("uses canonical rNet document references in response envelopes", () => {
@@ -175,7 +194,15 @@ describe("multipart creation request", () => {
             origins: ["rnet://client/0198eaf0-4cb3-7000-8000-000000000001"],
             properties: {},
           },
-          elements: [{ upload: "scan", kind: "document" as const, mime: "image/png" }],
+          elements: [
+            {
+              upload: "scan",
+              kind: "document" as const,
+              mime: "image/png",
+              role: "content",
+              alt: "Scanned receipt",
+            },
+          ],
         },
       ],
     };

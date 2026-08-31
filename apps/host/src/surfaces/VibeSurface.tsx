@@ -36,6 +36,8 @@ const MEDIA_ELEMENT_PATH = "/rnet/v0/elements/{id}";
 interface ResolvedObjectElement {
   element: MediaElement;
   index: number;
+  reference: MediaObject["elements"][number];
+  role?: MediaObject["elements"][number]["role"];
   uuid: string;
 }
 
@@ -216,7 +218,7 @@ function MediaObjectEntry({
   const canRemoveFromCard = isOwner && object.source.ingest.method === "authored";
   const viewport = useNearViewport();
   const elementQueries = useQueries({
-    queries: object.elements.map((uri) => ({
+    queries: object.elements.map(({ uri }) => ({
       ...api.queryOptions("get", MEDIA_ELEMENT_PATH, {
         params: { path: { id: uuidOf(uri) } },
       }),
@@ -225,13 +227,15 @@ function MediaObjectEntry({
   });
   const elements = elementQueries.flatMap((query, index): ResolvedObjectElement[] => {
     const element = query.data;
-    const uri = object.elements[index];
-    if (!element || !uri) return [];
+    const reference = object.elements[index];
+    if (!element || !reference) return [];
     return [
       {
         element,
         index,
-        uuid: uuidOf(uri),
+        reference,
+        ...(reference.role ? { role: reference.role } : {}),
+        uuid: uuidOf(reference.uri),
       },
     ];
   });
@@ -288,7 +292,7 @@ function MediaObjectEntry({
             isPending={elementPending}
             kindLabel={kindLabel}
             payloadUrl={payload.data}
-            title={title}
+            title={primaryElement?.reference.alt ?? title}
           />
         </span>
         <span className="flex min-h-20 flex-col gap-1 px-4 py-3">

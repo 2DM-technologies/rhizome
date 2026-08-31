@@ -1,3 +1,4 @@
+import type { MediaObjectElementRef } from "@rnet/types";
 import { useState } from "react";
 
 import { uuidOf } from "../api/uris.ts";
@@ -59,11 +60,13 @@ function RenderedPayload({
   uuid,
   kind,
   mime,
+  alt,
 }: {
   uri: string;
   uuid: string;
   kind: string;
   mime: string;
+  alt?: string;
 }) {
   const payload = usePayloadUrl("elements", uuid);
 
@@ -75,7 +78,7 @@ function RenderedPayload({
   return (
     <div className="flex flex-col items-start gap-3">
       <ElementPreview
-        title={label}
+        title={alt ?? label}
         kind={kind}
         mime={mime}
         src={payload.data}
@@ -94,7 +97,14 @@ function RenderedPayload({
   );
 }
 
-function MediaElementReference({ uri, position }: { uri: string; position: number }) {
+function MediaElementReference({
+  reference,
+  position,
+}: {
+  reference: MediaObjectElementRef;
+  position: number;
+}) {
+  const { uri } = reference;
   const uuid = uuidOf(uri);
   const element = useMediaElement(uuid);
 
@@ -106,6 +116,8 @@ function MediaElementReference({ uri, position }: { uri: string; position: numbe
         <>
           <MetadataList
             items={[
+              { term: "Role", value: reference.role ?? "—" },
+              { term: "Alt", value: reference.alt ?? "—" },
               { term: "Kind", value: element.data.kind },
               { term: "MIME", value: element.data.mime },
               { term: "Bytes", value: element.data.byte_size ?? "—" },
@@ -117,6 +129,7 @@ function MediaElementReference({ uri, position }: { uri: string; position: numbe
             uuid={uuid}
             kind={element.data.kind}
             mime={element.data.mime}
+            {...(reference.alt !== undefined ? { alt: reference.alt } : {})}
           />
         </>
       ) : null}
@@ -236,10 +249,10 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
             <SectionCard title={`Elements (${object.data.elements.length})`}>
               {object.data.elements.length ? (
                 <ol className="flex flex-col gap-3">
-                  {object.data.elements.map((uri, position) => (
+                  {object.data.elements.map((reference, position) => (
                     <MediaElementReference
-                      key={`${uri}:${position}`}
-                      uri={uri}
+                      key={`${reference.uri}:${position}`}
+                      reference={reference}
                       position={position}
                     />
                   ))}

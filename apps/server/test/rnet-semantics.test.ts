@@ -247,7 +247,15 @@ describe("rNet semantics", () => {
         objects: [
           {
             type: "note",
-            elements: [{ upload: "body", kind: "text", mime: "text/plain" }],
+            elements: [
+              {
+                upload: "body",
+                kind: "text",
+                mime: "text/plain",
+                role: "content",
+                alt: "Atomic note body",
+              },
+            ],
             properties: { title: "Atomic note" },
           },
         ],
@@ -258,8 +266,15 @@ describe("rNet semantics", () => {
     const authored = ((await response.json()) as { mediaObjects: MediaObject[] }).mediaObjects[0]!;
     const validation = validateMediaObject(authored);
     if (!validation.ok) expect(validation.issues).toEqual([]);
+    expect(authored.elements).toEqual([
+      {
+        uri: expect.stringMatching(/^rnet:\/\/element\/[0-9a-f-]{36}$/),
+        role: "content",
+        alt: "Atomic note body",
+      },
+    ]);
 
-    const elementId = authored.elements[0]?.split("/").at(-1);
+    const elementId = authored.elements[0]?.uri.split("/").at(-1);
     expect(elementId).toBeDefined();
     const elementResponse = await request(`/rnet/v0/elements/${elementId}`, { headers: dmachine });
     expect(elementResponse.status).toBe(200);
@@ -399,7 +414,7 @@ describe("rNet semantics", () => {
       objects: [
         {
           type: "note",
-          elements: [otherElement.uri],
+          elements: [{ uri: otherElement.uri }],
           source: {
             ingest: { method: "parser", reproducible: true },
             origins: [origin.uri],

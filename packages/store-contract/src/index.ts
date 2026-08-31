@@ -379,6 +379,8 @@ export const mediaElementUploadReferenceSchema = {
     upload: { type: "string", minLength: 1 },
     kind: mediaElementSchema.properties.kind,
     mime: mediaElementSchema.properties.mime,
+    role: mediaObjectSchema.properties.elements.items.properties.role,
+    alt: mediaObjectSchema.properties.elements.items.properties.alt,
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;

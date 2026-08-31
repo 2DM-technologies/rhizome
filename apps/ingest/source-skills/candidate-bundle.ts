@@ -10,6 +10,8 @@ export type SourceElementRole = "title" | "content" | "preview";
 
 export interface SourceElementDraft {
   readonly role: SourceElementRole;
+  /** Association-specific alternative text; omitted when the source does not provide it. */
+  readonly alt?: string;
   readonly kind: SourceElementKind;
   readonly mime: string;
   readonly bytes: Uint8Array;

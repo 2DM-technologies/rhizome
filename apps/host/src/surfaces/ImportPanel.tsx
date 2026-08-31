@@ -49,6 +49,7 @@ interface PreviewElementSummary {
   uri: string;
   objectUri: string;
   role?: "title" | "content" | "preview";
+  alt?: string;
   kind: string;
   mime: string;
   byteSize: number;
@@ -705,7 +706,7 @@ function ImportPreviewImage({
   );
   return (
     <ElementPreview
-      title={`${title} preview`}
+      title={element.alt ?? `${title} preview`}
       kind={element.kind}
       mime={element.mime}
       src={payload.data}
@@ -960,7 +961,13 @@ function previewResult(value: unknown): ImportPreview | undefined {
     const properties = source?.properties as Record<string, unknown> | undefined;
     if (typeof document.uri !== "string" || !properties) return undefined;
     const elementUris = Array.isArray(document.elements)
-      ? document.elements.filter((element): element is string => typeof element === "string")
+      ? document.elements.flatMap((element) =>
+          element &&
+          typeof element === "object" &&
+          typeof (element as Record<string, unknown>).uri === "string"
+            ? [(element as { uri: string }).uri]
+            : [],
+        )
       : [];
     const inlineElements = Array.isArray(document.elements)
       ? document.elements.flatMap(parsePreviewElement)
@@ -1026,6 +1033,7 @@ function parsePreviewElement(value: unknown): PreviewElementSummary[] {
       ...(element.role === "title" || element.role === "content" || element.role === "preview"
         ? { role: element.role }
         : {}),
+      ...(typeof element.alt === "string" ? { alt: element.alt } : {}),
       ...(typeof element.preview_url === "string" ? { previewUrl: element.preview_url } : {}),
     },
   ];

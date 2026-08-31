@@ -1653,7 +1653,7 @@ describe("rNet M1 store", () => {
       { role: "title", kind: "text", mime: "text/plain" },
       { role: "title", kind: "text", mime: "text/plain" },
     ]);
-    expect(result.candidates.map(({ elements }) => elements[0])).toEqual(
+    expect(result.candidates.map(({ elements }) => elements[0]?.uri)).toEqual(
       result.elements.map(({ uri }) => uri),
     );
     expect(await mediaObjectCount()).toBe(objectsBeforePreview);
@@ -1690,7 +1690,7 @@ describe("rNet M1 store", () => {
       const committed = (await objectResponse.json()) as MediaObject;
       expect(committed.keys?.synthetic_item_id).toBe(index === 0 ? "item-z" : "item-a");
       const elementResponse = await request(
-        `/rnet/v0/elements/${committed.elements[0]!.split("/").at(-1)}/bytes`,
+        `/rnet/v0/elements/${committed.elements[0]!.uri.split("/").at(-1)}/bytes`,
         { headers: owner },
       );
       expect(await elementResponse.text()).toBe(
@@ -2312,7 +2312,15 @@ describe("rNet M1 store", () => {
         objects: [
           {
             type: "note",
-            elements: [{ upload: "note", kind: "text", mime: "text/plain" }],
+            elements: [
+              {
+                upload: "note",
+                kind: "text",
+                mime: "text/plain",
+                role: "content",
+                alt: "Authored note body",
+              },
+            ],
             properties: { title: "dMachine-authored" },
           },
         ],
@@ -2326,10 +2334,14 @@ describe("rNet M1 store", () => {
     expect(document.owner).toBe("rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47");
     expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
     expect(document.source.origins).toEqual(["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"]);
-    const mediaElementUri = document.elements[0];
-    expect(mediaElementUri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
+    const mediaElementReference = document.elements[0];
+    expect(mediaElementReference).toMatchObject({
+      uri: expect.stringMatching(/^rnet:\/\/element\/[0-9a-f-]{36}$/),
+      role: "content",
+      alt: "Authored note body",
+    });
     const mediaElementRead = await request(
-      `/rnet/v0/elements/${mediaElementUri.split("/").at(-1)}`,
+      `/rnet/v0/elements/${mediaElementReference.uri.split("/").at(-1)}`,
       { headers: dmachine },
     );
     expect(mediaElementRead.status).toBe(200);
@@ -2402,8 +2414,8 @@ describe("rNet M1 store", () => {
     expect(response.status).toBe(201);
     const mediaObjects = (await response.json()).mediaObjects;
     expect(mediaObjects).toHaveLength(2);
-    expect(mediaObjects[0].elements[0]).toBe(mediaObjects[1].elements[0]);
-    const mediaElementUuid = mediaObjects[0].elements[0].split("/").at(-1);
+    expect(mediaObjects[0].elements[0].uri).toBe(mediaObjects[1].elements[0].uri);
+    const mediaElementUuid = mediaObjects[0].elements[0].uri.split("/").at(-1);
     const [stored] = await client.unsafe(
       "select count(*)::int as elements from media_elements where uuid = $1",
       [mediaElementUuid],
@@ -2455,7 +2467,7 @@ describe("rNet M1 store", () => {
       headers: dmachine,
       json: {
         vibe: `rnet://vibe/${vibeId}`,
-        objects: [{ type: "note", elements: [privateElement.uri], properties: {} }],
+        objects: [{ type: "note", elements: [{ uri: privateElement.uri }], properties: {} }],
       },
     });
     expect(attachKnownElement.status).toBe(403);
@@ -2498,7 +2510,13 @@ describe("rNet M1 store", () => {
         objects: [
           {
             type: "note",
-            elements: [disposableElement.uri],
+            elements: [
+              {
+                uri: disposableElement.uri,
+                role: "preview",
+                alt: "Disposable element",
+              },
+            ],
             source: {
               ingest: { method: "parser", reproducible: true },
               origins: [disposableOrigin.uri],
@@ -2543,7 +2561,13 @@ describe("rNet M1 store", () => {
     });
     expect(preservedObject.status).toBe(200);
     const preservedDocument = await preservedObject.json();
-    expect(preservedDocument.elements).toEqual([disposableElement.uri]);
+    expect(preservedDocument.elements).toEqual([
+      {
+        uri: disposableElement.uri,
+        role: "preview",
+        alt: "Disposable element",
+      },
+    ]);
     expect(preservedDocument.source.origins).toEqual([disposableOrigin.uri]);
   });
 
@@ -2578,7 +2602,7 @@ describe("rNet M1 store", () => {
     });
     expect(mediaObjectResponse.status).toBe(201);
     const mediaObject = (await mediaObjectResponse.json()).mediaObjects[0];
-    const retainedMediaElementUuid = mediaObject.elements[0].split("/").at(-1);
+    const retainedMediaElementUuid = mediaObject.elements[0].uri.split("/").at(-1);
     const retainedMediaObjectUuid = mediaObject.uri.split("/").at(-1);
 
     expect(

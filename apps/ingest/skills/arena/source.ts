@@ -61,6 +61,7 @@ export function createArenaSourceSkill(
           retrievedAt: channel.retrievedAt,
           elements: block.elements.map((element) => ({
             role: element.role,
+            ...(element.alt ? { alt: element.alt } : {}),
             kind: element.kind,
             mime: element.mime,
             bytes: element.bytes,

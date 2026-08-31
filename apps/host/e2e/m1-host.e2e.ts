@@ -841,8 +841,7 @@ test("an existing element payload is fetched and presented", async ({ page }) =>
   await page.goto(`/objects/${OBJECT_ID}`);
   await payloadResponse;
 
-  const label = `Payload for ${ELEMENT_URI}`;
-  const preview = page.getByTitle(label);
+  const preview = page.getByTitle("Monthly plan");
   await expect(preview).toBeVisible();
   await expect(preview).toHaveCSS("color-scheme", "light");
   await expect(preview.contentFrame().locator("body")).toContainText(PAYLOAD_TEXT.trim());
@@ -875,7 +874,7 @@ test("an image payload remains decodable when its previewing surface is replaced
 
   await page.getByRole("button", { name: `Open object ${OBJECT_URI}` }).click();
 
-  const image = page.getByRole("img", { name: `Payload for ${ELEMENT_URI}` });
+  const image = page.getByRole("img", { name: "Monthly plan" });
   await expect(image).toBeVisible();
   await expect(image).toHaveCSS("border-top-width", "1px");
   await expect(image).toHaveCSS("border-top-color", "rgb(184, 68, 254)");

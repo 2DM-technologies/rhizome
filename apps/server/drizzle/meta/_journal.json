@@ -15,6 +15,13 @@
       "when": 1788059862844,
       "tag": "0001_m2_ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788151270003,
+      "tag": "0002_white_moira_mactaggert",
+      "breakpoints": true
     }
   ]
 }

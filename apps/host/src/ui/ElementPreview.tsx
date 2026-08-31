@@ -11,6 +11,7 @@ export interface PayloadCandidate {
     mime: string;
   };
   index: number;
+  role?: "title" | "content" | "preview";
 }
 
 /** Choose a browser-native payload renderer from the stored media type. */
@@ -39,14 +40,16 @@ function isNativePresentation(candidate: PayloadCandidate): boolean {
 function presentationPriority(candidate: PayloadCandidate): number {
   const presentation = payloadPresentation(candidate.element.mime);
   const mediaType = candidate.element.mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (!isNativePresentation(candidate)) return 4;
-  return presentation === "image" || presentation === "audio" || presentation === "video"
-    ? 0
-    : presentation === "document"
-      ? 1
-      : presentation === "text" && mediaType !== "text/plain"
-        ? 2
-        : 3;
+  const nativePriority = !isNativePresentation(candidate)
+    ? 4
+    : presentation === "image" || presentation === "audio" || presentation === "video"
+      ? 0
+      : presentation === "document"
+        ? 1
+        : presentation === "text" && mediaType !== "text/plain"
+          ? 2
+          : 3;
+  return nativePriority + (candidate.role === "title" ? 10 : 0);
 }
 
 /** Select one card preview without assigning provider-specific meaning to element positions. */

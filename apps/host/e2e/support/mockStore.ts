@@ -43,7 +43,7 @@ const fixtureObject = {
   uri: OBJECT_URI,
   owner: `rnet://id/${OWNER_ID}`,
   type: "note",
-  elements: [ELEMENT_URI],
+  elements: [{ uri: ELEMENT_URI, role: "content", alt: "Monthly plan" }],
   source: {
     ingest: { method: "authored", reproducible: false },
     origins: ["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"],
@@ -93,6 +93,7 @@ export interface MockStagedElement {
   object_uri: string;
   preview_url: string;
   role: "title" | "content" | "preview";
+  alt?: string;
   payload: Buffer;
 }
 
@@ -778,6 +779,7 @@ export async function installMockStore(
               preview_url: element.preview_url,
               object_uri: element.object_uri,
               role: element.role,
+              ...(element.alt !== undefined ? { alt: element.alt } : {}),
             })),
             verify: staged.verify,
             source_digest: `sha256:${"d".repeat(64)}`,

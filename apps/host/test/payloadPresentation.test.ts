@@ -33,3 +33,18 @@ test("prefers a natively renderable payload over inconsistent metadata", () => {
   expect(primaryPayloadCandidate([genericDownload, mismatchedImage])).toBe(mismatchedImage);
   expect(primaryPayloadCandidate([])).toBeUndefined();
 });
+
+test("uses association roles to keep title elements out of the primary payload slot", () => {
+  const titleImage = {
+    element: { kind: "image", mime: "image/png" },
+    index: 0,
+    role: "title" as const,
+  };
+  const contentText = {
+    element: { kind: "text", mime: "text/plain" },
+    index: 1,
+    role: "content" as const,
+  };
+
+  expect(primaryPayloadCandidate([titleImage, contentText])).toBe(contentText);
+});

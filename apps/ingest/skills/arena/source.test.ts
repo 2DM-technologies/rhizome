@@ -103,6 +103,10 @@ describe("Are.na public-remote source skill", () => {
     expect(bundle.candidates[1]?.elements[1]?.bytes).toEqual(
       parseArenaCapture(fixtureBytes).blocks[1]?.elements[1]?.bytes,
     );
+    expect(bundle.candidates[1]?.elements[1]).toMatchObject({
+      role: "content",
+      alt: "Synthetic primary",
+    });
     expect(skill.stateDigest(config)).toEqual({
       version: "arena-source-state@1",
       url: fixture.channel_url,

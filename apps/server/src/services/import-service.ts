@@ -153,6 +153,7 @@ export interface StagedElement {
   uri: string;
   object_uri: string;
   role: StagedElementRole;
+  alt?: string;
   kind: MediaElementKind;
   mime: string;
   byte_size: number;
@@ -1695,6 +1696,8 @@ export class ImportService {
         mediaObjectUuid,
         mediaElementUuid,
         position,
+        role: element.role,
+        ...(element.alt !== undefined ? { alt: element.alt } : {}),
       });
     }
     await transaction.insert(mediaObjectRevisions).values({
@@ -2225,6 +2228,7 @@ async function candidatesFromBundle(
         uri: `rnet://element/${elementUuid}`,
         object_uri: objectUri,
         role: element.role,
+        ...(element.alt !== undefined ? { alt: element.alt } : {}),
         kind: element.kind,
         mime: element.mime,
         byte_size: element.byteSize,
@@ -2237,7 +2241,11 @@ async function candidatesFromBundle(
       uri: objectUri,
       owner: `rnet://id/${ownerUuid}`,
       type: draft.type,
-      elements: elements.map(({ uri }) => uri),
+      elements: elements.map(({ uri, role, alt }) => ({
+        uri,
+        role,
+        ...(alt !== undefined ? { alt } : {}),
+      })),
       keys: { ...draft.keys },
       source: {
         ingest: {
@@ -2357,8 +2365,9 @@ export function candidateSemanticDigest(
   const { origins: _origins, retrieved_at: _retrievedAt, properties, ...sourceIdentity } = source;
   const semanticProperties = identitySourceProperties(properties);
   const semanticSource = { ...sourceIdentity, properties: semanticProperties };
-  const semanticElements = elements.map(({ role, kind, mime, byte_size, content_hash }) => ({
+  const semanticElements = elements.map(({ role, alt, kind, mime, byte_size, content_hash }) => ({
     role,
+    ...(alt !== undefined ? { alt } : {}),
     kind,
     mime,
     byte_size,
@@ -2471,8 +2480,16 @@ function assertCandidate(
   }
   if (
     candidate.elements.length !== elements.length ||
-    candidate.elements.some((uri, index) => elements[index]?.uri !== uri) ||
-    new Set(candidate.elements).size !== candidate.elements.length
+    candidate.elements.some((reference, index) => {
+      const element = elements[index];
+      return (
+        !element ||
+        reference.uri !== element.uri ||
+        reference.role !== element.role ||
+        reference.alt !== element.alt
+      );
+    }) ||
+    new Set(candidate.elements.map(({ uri }) => uri)).size !== candidate.elements.length
   ) {
     throw invalidReview("Candidate element order mismatch");
   }
@@ -2480,6 +2497,7 @@ function assertCandidate(
     if (
       element.object_uri !== candidate.uri ||
       !["title", "content", "preview"].includes(element.role) ||
+      (element.alt !== undefined && typeof element.alt !== "string") ||
       !ELEMENT_URI_PATTERN.test(element.uri) ||
       !/^sha256:[a-f0-9]{64}$/.test(element.content_hash) ||
       !Number.isSafeInteger(element.byte_size) ||

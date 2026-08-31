@@ -200,6 +200,8 @@ CREATE TABLE media_object_elements (    -- ordered element refs
   media_object_uuid  UUID NOT NULL REFERENCES media_objects(uuid) ON DELETE CASCADE,
   media_element_uuid UUID NOT NULL REFERENCES media_elements(uuid),
   position      INTEGER NOT NULL,
+  role          TEXT CHECK (role IN ('title', 'content', 'preview')),
+  alt           TEXT,
   PRIMARY KEY (media_object_uuid, position)
 );
 

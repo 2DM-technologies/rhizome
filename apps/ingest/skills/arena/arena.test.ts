@@ -69,6 +69,7 @@ describe("M2 committed Are.na v3 parser", () => {
     });
     expect(image?.elements[1]).toMatchObject({
       role: "content",
+      alt: "Synthetic primary",
       kind: "image",
       mime: "image/png",
       byteSize: 68,
@@ -85,7 +86,11 @@ describe("M2 committed Are.na v3 parser", () => {
       original_asset_url: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
       imported_asset_url: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
     });
-    expect(link?.elements[1]).toMatchObject({ role: "preview", kind: "image" });
+    expect(link?.elements[1]).toMatchObject({
+      role: "preview",
+      alt: "Synthetic link-preview",
+      kind: "image",
+    });
     expect(link?.sourceProperties).toMatchObject({
       source_url: "https://example.test/article",
       connection_position: 3,
