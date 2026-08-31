@@ -1,4 +1,0 @@
-Date,Description,Amount,Currency,Transaction ID,Account ID
-2026-08-01,ACME PAYROLL,2500.00,USD,csv-001,checking-001
-2026-08-02,COFFEE SHOP,-6.50,USD,csv-002,checking-001
-2026-08-03,"GROCERY, MARKET",-83.25,USD,csv-003,checking-001
