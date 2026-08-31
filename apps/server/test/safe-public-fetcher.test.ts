@@ -9,6 +9,7 @@ import {
   type SafePublicDnsResolver,
   type SafePublicTransport,
 } from "../src/public-fetch/index.ts";
+import { createPinnedAddressLookup } from "../src/public-fetch/safe-public-fetcher.ts";
 
 interface StubReply {
   body?: readonly (string | Uint8Array)[];
@@ -76,6 +77,29 @@ function fixedResolver(
 function publicV4(address = "93.184.216.34"): ResolvedPublicAddress {
   return { address, family: 4 };
 }
+
+describe("pinned HTTPS transport lookup", () => {
+  test("returns the selected address in both single-address and all-address forms", () => {
+    const address = publicV4("8.8.4.4");
+    const lookup = createPinnedAddressLookup(address);
+    let singleResult: unknown;
+    let allResult: unknown;
+
+    lookup("assets.example", { all: false }, (error, result, family) => {
+      singleResult = { error, result, family };
+    });
+    lookup("assets.example", { all: true }, (error, result, family) => {
+      allResult = { error, result, family };
+    });
+
+    expect(singleResult).toEqual({ error: null, result: "8.8.4.4", family: 4 });
+    expect(allResult).toEqual({
+      error: null,
+      result: [{ address: "8.8.4.4", family: 4 }],
+      family: undefined,
+    });
+  });
+});
 
 describe("SafePublicFetcher IP policy", () => {
   test("allows ordinary public unicast addresses", () => {
