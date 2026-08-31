@@ -24,7 +24,6 @@ import {
   EntityRow,
   InlineError,
   TextInput,
-  TextLink,
   primaryPayloadCandidate,
 } from "../ui/index.ts";
 import { surfaceId } from "../shell/surfaces.ts";
@@ -214,6 +213,7 @@ function MediaObjectEntry({
   const title = sourceTitle(object);
   const kindLabel = objectKindLabel(object);
   const destination = sourceDestination(object);
+  const canRemoveFromCard = isOwner && object.source.ingest.method === "authored";
   const viewport = useNearViewport();
   const elementQueries = useQueries({
     queries: object.elements.map((uri) => ({
@@ -257,7 +257,7 @@ function MediaObjectEntry({
           onSelect={openObject}
           selectLabel={`Open object ${object.uri}`}
           trailing={
-            isOwner ? (
+            canRemoveFromCard ? (
               <Button
                 variant="ghost"
                 aria-label={`Remove ${object.uri} from Vibe`}
@@ -307,32 +307,17 @@ function MediaObjectEntry({
           >
             {title}
           </button>
-          {destination || isOwner ? (
-            <span className="mt-auto flex items-center justify-between gap-2 pt-2">
-              {destination ? (
-                <TextLink
-                  href={destination}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`Open source for ${title}`}
-                  tone="secondary"
-                >
-                  {destinationHost(destination)} ↗
-                </TextLink>
-              ) : (
-                <span />
-              )}
-              {isOwner ? (
-                <Button
-                  variant="ghost"
-                  className="-mr-3 px-3 py-2"
-                  aria-label={`Remove ${object.uri} from Vibe`}
-                  disabled={removePending}
-                  onClick={removeObject}
-                >
-                  Remove
-                </Button>
-              ) : null}
+          {canRemoveFromCard ? (
+            <span className="mt-auto flex justify-end pt-2">
+              <Button
+                variant="ghost"
+                className="-mr-3 px-3 py-2"
+                aria-label={`Remove ${object.uri} from Vibe`}
+                disabled={removePending}
+                onClick={removeObject}
+              >
+                Remove
+              </Button>
             </span>
           ) : null}
         </span>
