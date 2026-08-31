@@ -124,7 +124,7 @@ type ArenaConnectionOrder = "asc" | "desc";
 const BLOCK_TYPES = new Set<ArenaBlockType>(["Text", "Image", "Attachment", "Link", "Embed"]);
 const JSON_MIME = "application/json";
 const MIME = /^[a-z]+\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
-const SLUG = new RegExp(`^[a-z0-9][a-z0-9-]{0,${ARENA_CHANNEL_SLUG_MAX_LENGTH - 1}}$`);
+const SLUG = new RegExp(`^[a-z0-9][a-z0-9_-]{0,${ARENA_CHANNEL_SLUG_MAX_LENGTH - 1}}$`);
 const DOCUMENT_MIMES = new Set([
   "application/epub+zip",
   "application/msword",

@@ -157,6 +157,21 @@ describe("M2 committed Are.na v3 parser", () => {
     expect(verifyArena(parsed)).toMatchObject({ ok: true });
   });
 
+  test("accepts underscores in provider-issued channel slugs", async () => {
+    const capture = await fixtureCapture();
+    const slug = "synthetic-media_study";
+    capture.channel_url = capture.channel_url.replace("synthetic-media-study", slug);
+    capture.channel.url = capture.channel.url.replace("synthetic-media-study", slug);
+    for (const page of capture.contents_pages) {
+      page.url = page.url.replace("synthetic-media-study", slug);
+    }
+    const channelEnvelope = decodedBody(capture.channel);
+    record(channelEnvelope.data ?? channelEnvelope, "channel").slug = slug;
+    encodeBody(capture.channel, channelEnvelope);
+
+    expect(parseArenaCapture(captureBytes(capture))).toMatchObject({ channelSlug: slug });
+  });
+
   test("counts nested channels without traversing or emitting them", async () => {
     const capture = await fixtureCapture();
     const channel = decodedBody(capture.channel);

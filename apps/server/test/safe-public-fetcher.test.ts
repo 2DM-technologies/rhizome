@@ -401,6 +401,25 @@ describe("SafePublicFetcher request boundary", () => {
 });
 
 describe("SafePublicFetcher resource limits", () => {
+  test("allows callers to tighten the 16 MiB server default but not widen it", async () => {
+    let transportCalls = 0;
+    const fetcher = new SafePublicFetcher({
+      resolver: fixedResolver({ "assets.example": [publicV4()] }),
+      transport: async () => {
+        transportCalls += 1;
+        return { body: chunks(["ok"]), headers: new Headers(), status: 200 };
+      },
+    });
+
+    await expect(
+      fetcher.fetch("https://assets.example/file", { maxBytes: 16 * 1024 * 1024 }),
+    ).resolves.toMatchObject({ status: 200 });
+    await expect(
+      fetcher.fetch("https://assets.example/file", { maxBytes: 16 * 1024 * 1024 + 1 }),
+    ).rejects.toBeInstanceOf(RangeError);
+    expect(transportCalls).toBe(1);
+  });
+
   test("accepts only an absent, empty, or single identity Content-Encoding", async () => {
     let bodiesRead = 0;
     let rejectedResponsesClosed = 0;

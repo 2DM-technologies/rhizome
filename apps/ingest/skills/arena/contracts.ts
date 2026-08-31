@@ -27,7 +27,7 @@ export interface ArenaChannelLocator {
   readonly channelSlug: string;
 }
 
-const CHANNEL_SLUG = new RegExp(`^[a-z0-9][a-z0-9-]{0,${ARENA_CHANNEL_SLUG_MAX_LENGTH - 1}}$`);
+const CHANNEL_SLUG = new RegExp(`^[a-z0-9][a-z0-9_-]{0,${ARENA_CHANNEL_SLUG_MAX_LENGTH - 1}}$`);
 
 /**
  * Treats an Are.na page URL as a semantic locator, not as a page to scrape. The connector uses

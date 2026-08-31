@@ -4,7 +4,7 @@ import { isIP, type LookupFunction } from "node:net";
 
 import { isSafePublicIpAddress } from "./ip-address.ts";
 
-const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 const DEFAULT_MAX_REDIRECTS = 5;
 const DEFAULT_TIMEOUT_MS = 30_000;
