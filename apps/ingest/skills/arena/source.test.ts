@@ -33,6 +33,13 @@ describe("Are.na public-remote source skill", () => {
       ownerSlug: "noah-putnam",
       channelSlug: "love-always-wins",
     });
+    expect(
+      normalizeArenaChannelLocator("https://www.are.na/noah-putnam/closer-skimdvjv7_k"),
+    ).toEqual({
+      canonicalUrl: "https://www.are.na/noah-putnam/closer-skimdvjv7_k",
+      ownerSlug: "noah-putnam",
+      channelSlug: "closer-skimdvjv7_k",
+    });
     for (const value of [
       "https://example.test/noah-putnam/love-always-wins",
       "http://www.are.na/noah-putnam/love-always-wins",
@@ -66,7 +73,7 @@ describe("Are.na public-remote source skill", () => {
     const assetFetch: PublicAssetFetcher = async (request) => {
       assetUrls.push(request.url);
       expect(request.accept).toBe("*/*");
-      expect(request.maxBytes).toBeGreaterThan(0);
+      expect(request.maxBytes).toBe(16 * 1024 * 1024);
       const asset = fixture.assets.find((entry) => entry.requested_url === request.url);
       if (!asset) throw new Error(`Unexpected asset request: ${request.url}`);
       return {
