@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
 import { uuidOf } from "../api/uris.ts";
 import {
@@ -9,137 +9,80 @@ import {
   useSetMediaObjectUser,
 } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
-import { Button, StatusChip } from "../ui/index.ts";
-import { payloadPresentation } from "./payloadPresentation.ts";
+import {
+  Button,
+  CodeBlock,
+  ElementPreview,
+  InlineError,
+  MetadataList,
+  ReferenceCard,
+  SectionCard,
+  StatusChip,
+  TextArea,
+  TextLink,
+} from "../ui/index.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 
-function GraphSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section aria-label={title} className="flex flex-col gap-3 rounded-md bg-surface p-5">
-      <h2 className="text-label text-primary">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
 function JsonBlock({ value }: { value: unknown }) {
-  return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-canvas p-3 font-mono text-caption text-secondary">
-      {JSON.stringify(value, null, 2)}
-    </pre>
-  );
+  return <CodeBlock className="max-h-72">{JSON.stringify(value, null, 2)}</CodeBlock>;
 }
 
 function OriginArtifactReference({ uri }: { uri: string }) {
   const origin = useOriginArtifact(uuidOf(uri));
 
   return (
-    <li className="flex flex-col gap-2 rounded-sm border border-hairline p-3">
-      <div className="flex min-w-0 items-center gap-2">
-        <StatusChip status="neutral">origin artifact</StatusChip>
-        <code className="min-w-0 flex-1 truncate text-caption text-secondary">{uri}</code>
-      </div>
+    <ReferenceCard label="origin artifact" reference={uri}>
       {origin.isPending ? <Pending label="origin" /> : null}
       {origin.isError ? <Failed error={origin.error} /> : null}
       {origin.data ? (
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-caption">
-          <dt className="text-tertiary">Label</dt>
-          <dd className="text-secondary">{origin.data.label ?? "—"}</dd>
-          <dt className="text-tertiary">MIME</dt>
-          <dd className="text-secondary">{origin.data.mime}</dd>
-          <dt className="text-tertiary">Bytes</dt>
-          <dd className="text-secondary">{origin.data.byte_size ?? "—"}</dd>
-          <dt className="text-tertiary">Hash</dt>
-          <dd className="break-all font-mono text-secondary">{origin.data.content_hash}</dd>
-        </dl>
+        <MetadataList
+          items={[
+            { term: "Label", value: origin.data.label ?? "—" },
+            { term: "MIME", value: origin.data.mime },
+            { term: "Bytes", value: origin.data.byte_size ?? "—" },
+            { term: "Hash", value: origin.data.content_hash, mono: true },
+          ]}
+        />
       ) : null}
-    </li>
+    </ReferenceCard>
   );
 }
 
 function OriginReference({ uri, inspectArtifact }: { uri: string; inspectArtifact: boolean }) {
   const artifact = uri.startsWith("rnet://origin/");
   if (artifact && inspectArtifact) return <OriginArtifactReference uri={uri} />;
-  return (
-    <li className="flex min-w-0 items-center gap-2 rounded-sm border border-hairline p-3">
-      <StatusChip status="neutral">{artifact ? "origin artifact" : "client"}</StatusChip>
-      <code className="min-w-0 flex-1 truncate text-caption text-secondary">{uri}</code>
-    </li>
-  );
+  return <ReferenceCard label={artifact ? "origin artifact" : "client"} reference={uri} compact />;
 }
 
-function RenderedPayload({ uri, uuid, mime }: { uri: string; uuid: string; mime: string }) {
+function RenderedPayload({
+  uri,
+  uuid,
+  kind,
+  mime,
+}: {
+  uri: string;
+  uuid: string;
+  kind: string;
+  mime: string;
+}) {
   const payload = usePayloadUrl("elements", uuid);
-  const presentation = payloadPresentation(mime);
 
   if (payload.isPending) return <Pending label="payload" />;
   if (payload.isError) return <Failed error={payload.error} />;
   if (!payload.data) return null;
 
   const label = `Payload for ${uri}`;
-  let rendered: ReactNode = null;
-  switch (presentation) {
-    case "image":
-      rendered = (
-        <img
-          src={payload.data}
-          alt={label}
-          className="max-h-96 max-w-full rounded-sm object-contain"
-        />
-      );
-      break;
-    case "audio":
-      rendered = <audio src={payload.data} controls aria-label={label} className="w-full" />;
-      break;
-    case "video":
-      rendered = (
-        <video
-          src={payload.data}
-          controls
-          aria-label={label}
-          className="max-h-96 w-full rounded-sm bg-black"
-        />
-      );
-      break;
-    case "text":
-      rendered = (
-        <iframe
-          src={payload.data}
-          title={label}
-          sandbox=""
-          style={{ colorScheme: "light" }}
-          className="h-72 w-full rounded-sm border border-hairline bg-white"
-        />
-      );
-      break;
-    case "document":
-      rendered = (
-        <iframe
-          src={payload.data}
-          title={label}
-          sandbox=""
-          className="h-72 w-full rounded-sm border border-hairline bg-white"
-        />
-      );
-      break;
-    case "download":
-      rendered = (
-        <span className="text-body text-tertiary">This payload has no browser-native preview.</span>
-      );
-      break;
-  }
-
   return (
     <div className="flex flex-col items-start gap-3">
-      {rendered}
-      <a
+      <ElementPreview title={label} kind={kind} mime={mime} src={payload.data} variant="detail" />
+      <TextLink
         href={payload.data}
         download={`element-${uuid}`}
         aria-label={`Download payload ${uri}`}
-        className="text-label text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+        size="label"
       >
         Download payload
-      </a>
+      </TextLink>
     </div>
   );
 }
@@ -149,29 +92,28 @@ function MediaElementReference({ uri, position }: { uri: string; position: numbe
   const element = useMediaElement(uuid);
 
   return (
-    <li className="flex flex-col gap-3 rounded-sm border border-hairline p-4">
-      <div className="flex min-w-0 items-center gap-2">
-        <StatusChip status="neutral">{`element ${position + 1}`}</StatusChip>
-        <code className="min-w-0 flex-1 truncate text-caption text-secondary">{uri}</code>
-      </div>
+    <ReferenceCard label={`element ${position + 1}`} reference={uri}>
       {element.isPending ? <Pending label="element" /> : null}
       {element.isError ? <Failed error={element.error} /> : null}
       {element.data ? (
         <>
-          <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-caption">
-            <dt className="text-tertiary">Kind</dt>
-            <dd className="text-secondary">{element.data.kind}</dd>
-            <dt className="text-tertiary">MIME</dt>
-            <dd className="text-secondary">{element.data.mime}</dd>
-            <dt className="text-tertiary">Bytes</dt>
-            <dd className="text-secondary">{element.data.byte_size ?? "—"}</dd>
-            <dt className="text-tertiary">Hash</dt>
-            <dd className="break-all font-mono text-secondary">{element.data.content_hash}</dd>
-          </dl>
-          <RenderedPayload uri={uri} uuid={uuid} mime={element.data.mime} />
+          <MetadataList
+            items={[
+              { term: "Kind", value: element.data.kind },
+              { term: "MIME", value: element.data.mime },
+              { term: "Bytes", value: element.data.byte_size ?? "—" },
+              { term: "Hash", value: element.data.content_hash, mono: true },
+            ]}
+          />
+          <RenderedPayload
+            uri={uri}
+            uuid={uuid}
+            kind={element.data.kind}
+            mime={element.data.mime}
+          />
         </>
       ) : null}
-    </li>
+    </ReferenceCard>
   );
 }
 
@@ -225,11 +167,11 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
       {object.data ? (
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-5">
-            <GraphSection title="Source">
+            <SectionCard title="Source">
               <JsonBlock value={object.data.source} />
-            </GraphSection>
+            </SectionCard>
 
-            <GraphSection title="User">
+            <SectionCard title="User">
               {isOwner ? (
                 <>
                   <div className="flex items-center gap-3">
@@ -238,7 +180,7 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                     ) : null}
                   </div>
 
-                  <textarea
+                  <TextArea
                     value={text}
                     onChange={(event) => {
                       setDraft(event.target.value);
@@ -247,7 +189,8 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                     spellCheck={false}
                     rows={14}
                     aria-label="User properties, as JSON"
-                    className="w-full rounded-sm border border-hairline bg-canvas p-3 font-mono text-caption text-primary outline-none focus-visible:outline-2 focus-visible:outline-accent"
+                    tone="canvas"
+                    typography="mono"
                   />
 
                   <div className="flex flex-wrap items-center gap-3">
@@ -265,7 +208,7 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                         Discard
                       </Button>
                     ) : null}
-                    {parseError ? <span className="text-body text-error">{parseError}</span> : null}
+                    {parseError ? <InlineError>{parseError}</InlineError> : null}
                     {save.isError && draft === submittedDraft ? (
                       <Failed error={save.error} />
                     ) : null}
@@ -274,15 +217,15 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
               ) : (
                 <JsonBlock value={stored} />
               )}
-            </GraphSection>
+            </SectionCard>
 
-            <GraphSection title="Inferred">
+            <SectionCard title="Inferred">
               <JsonBlock value={object.data.inferred ?? {}} />
-            </GraphSection>
+            </SectionCard>
           </div>
 
           <div className="flex min-w-0 flex-col gap-5">
-            <GraphSection title={`Elements (${object.data.elements.length})`}>
+            <SectionCard title={`Elements (${object.data.elements.length})`}>
               {object.data.elements.length ? (
                 <ol className="flex flex-col gap-3">
                   {object.data.elements.map((uri, position) => (
@@ -296,17 +239,17 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
               ) : (
                 <span className="text-body text-tertiary">This object has no media elements.</span>
               )}
-            </GraphSection>
-            <GraphSection title="Keys">
+            </SectionCard>
+            <SectionCard title="Keys">
               <JsonBlock value={object.data.keys ?? {}} />
-            </GraphSection>
-            <GraphSection title="Origins">
+            </SectionCard>
+            <SectionCard title="Origins">
               <ul className="flex flex-col gap-3">
                 {object.data.source.origins.map((uri, position) => (
                   <OriginReference key={`${uri}:${position}`} uri={uri} inspectArtifact={isOwner} />
                 ))}
               </ul>
-            </GraphSection>
+            </SectionCard>
           </div>
         </div>
       ) : null}

@@ -1,4 +1,5 @@
 import { cn } from "./cn.ts";
+import { CodeBlock } from "./CodeBlock.tsx";
 
 export type DiffKind = "add" | "remove" | "context";
 
@@ -25,10 +26,11 @@ const TONES: Record<DiffKind, string> = {
  */
 export function CodeSnippet({ lines, className }: CodeSnippetProps) {
   return (
-    <pre
+    <CodeBlock
+      tone="pill"
+      typography="sans"
       className={cn(
-        "flex w-full flex-col gap-[3px] overflow-x-auto rounded-[10px] bg-pill px-3.5 py-3",
-        "font-sans text-caption",
+        "flex w-full flex-col gap-[3px] overflow-x-auto rounded-[10px] px-3.5 py-3",
         className,
       )}
     >
@@ -41,6 +43,6 @@ export function CodeSnippet({ lines, className }: CodeSnippetProps) {
           <span className="min-w-0 flex-1 whitespace-pre-wrap">{line.text}</span>
         </code>
       ))}
-    </pre>
+    </CodeBlock>
   );
 }

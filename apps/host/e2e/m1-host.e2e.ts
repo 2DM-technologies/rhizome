@@ -403,7 +403,7 @@ test("the dock stays dark while its search field stays light", async ({ page }) 
     600: "#525252",
     700: "#3f3f3f",
     800: "#252525",
-    900: "#000000",
+    900: "#111111",
   });
 
   const tray = page.locator("[data-dock-tray-backdrop]");
@@ -411,7 +411,10 @@ test("the dock stays dark while its search field stays light", async ({ page }) 
   const searchSurface = page.locator("[data-launcher-surface]");
   const searchIcon = page.locator("[data-launcher-input-row] svg");
   const search = page.getByRole("searchbox", { name: "Search everything" });
-  await expect(tray).toHaveCSS("background-color", "color(srgb 0 0 0 / 0.8)");
+  await expect(tray).toHaveCSS(
+    "background-color",
+    "color(srgb 0.0666667 0.0666667 0.0666667 / 0.9)",
+  );
   await expect(searchSurface).toHaveCSS("background-color", "rgba(255, 255, 250, 0.9)");
   await expect(searchSurface).toHaveCSS("opacity", "1");
   await expect(searchBlur).toHaveCSS("backdrop-filter", "blur(20px)");
@@ -507,7 +510,10 @@ test("standard and maximized windows preserve breathing room above the dock", as
   expect(dockBox!.y + dockBox!.height).toBe(976);
   expect(dockBox!.y).toBeLessThan(windowBox!.y + windowBox!.height);
   await expect(dockTray).toHaveCSS("border-radius", "12px");
-  await expect(dockTrayBackdrop).toHaveCSS("background-color", "color(srgb 0 0 0 / 0.8)");
+  await expect(dockTrayBackdrop).toHaveCSS(
+    "background-color",
+    "color(srgb 0.0666667 0.0666667 0.0666667 / 0.9)",
+  );
   await expect(dockTrayBackdrop).toHaveCSS("backdrop-filter", "blur(10px)");
   expect(await contentTitle.boundingBox()).toEqual(contentBox);
 
@@ -899,7 +905,10 @@ test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
   const activeAppSurface = page
     .getByRole("button", { name: "Vibes", exact: true })
     .locator("[data-dock-app-surface]");
-  await expect(activeAppSurface).toHaveCSS("background-color", "color(srgb 0 0 0 / 0.8)");
+  await expect(activeAppSurface).toHaveCSS(
+    "background-color",
+    "color(srgb 0.0666667 0.0666667 0.0666667 / 0.9)",
+  );
   await expect(activeAppSurface).toHaveCSS("backdrop-filter", "blur(10px)");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
 });

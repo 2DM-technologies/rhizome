@@ -16,11 +16,20 @@ import { api } from "../api/client.ts";
 import { useSession } from "../session/session.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
 import { uuidOf } from "../api/uris.ts";
-import { Button } from "../ui/index.ts";
+import {
+  Badge,
+  Button,
+  Card,
+  ElementPreview,
+  EntityRow,
+  InlineError,
+  TextInput,
+  TextLink,
+  primaryPayloadCandidate,
+} from "../ui/index.ts";
 import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
-import { payloadPresentation, primaryPayloadCandidate } from "./payloadPresentation.ts";
 
 const OBJECT_URI = new RegExp(rnetUriPattern("object"));
 const MEDIA_ELEMENT_PATH = "/rnet/v0/elements/{id}";
@@ -168,103 +177,24 @@ function MediaObjectPayload({
   payloadUrl: string | undefined;
   title: string;
 }) {
-  if (!element) {
-    if (isPending) {
-      return <span className="text-caption text-tertiary">Loading content…</span>;
-    }
-    if (isError) {
-      return <span className="text-caption text-tertiary">Content unavailable</span>;
-    }
-    return (
-      <span
-        data-media-object-presentation="link"
-        className="flex max-w-[80%] flex-col items-center gap-2 text-center"
-      >
-        <span className="rounded-pill border border-hairline px-3 py-1 text-mono-label text-secondary">
-          {kindLabel}
-        </span>
-        <span className="line-clamp-2 text-body text-primary">
-          {destination ? destinationHost(destination) : "No stored payload"}
-        </span>
-      </span>
-    );
-  }
-
-  const presentation = payloadPresentation(element.mime);
-  if (!payloadUrl) {
-    const label =
-      presentation === "document" ? "document" : presentation === "text" ? "markdown" : "media";
-    return (
-      <span className="text-caption text-tertiary">
-        {isError ? `${label[0]?.toUpperCase()}${label.slice(1)} unavailable` : `Loading ${label}…`}
-      </span>
-    );
-  }
-
-  if (presentation === "image" && element.kind === "image") {
-    return (
-      <img
-        data-media-object-presentation="image"
-        src={payloadUrl}
-        alt={title}
-        className="size-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-      />
-    );
-  }
-  if (presentation === "text" && element.kind === "text") {
-    return (
-      <iframe
-        data-media-object-presentation="text"
-        src={payloadUrl}
-        title={`${element.mime === "text/markdown" ? "Markdown" : "Text"} content for ${title}`}
-        sandbox=""
-        style={{ colorScheme: "light" }}
-        className="size-full border-0 bg-white p-3"
-      />
-    );
-  }
-  if (presentation === "document" && element.kind === "document") {
-    return (
-      <iframe
-        data-media-object-presentation="document"
-        src={payloadUrl}
-        title={`${element.mime === "application/pdf" ? "PDF" : "Document"} preview for ${title}`}
-        className="size-full border-0 bg-white"
-      />
-    );
-  }
-  if (presentation === "audio" && element.kind === "audio") {
-    return (
-      <audio
-        data-media-object-presentation="audio"
-        src={payloadUrl}
-        controls
-        aria-label={`Audio for ${title}`}
-        className="w-[80%]"
-      />
-    );
-  }
-  if (presentation === "video" && element.kind === "video") {
-    return (
-      <video
-        data-media-object-presentation="video"
-        src={payloadUrl}
-        controls
-        aria-label={`Video for ${title}`}
-        className="size-full object-contain"
-      />
-    );
-  }
   return (
-    <span
-      data-media-object-presentation="download"
-      className="flex max-w-[80%] flex-col items-center gap-2 text-center"
-    >
-      <span className="rounded-pill border border-hairline px-3 py-1 text-mono-label text-secondary">
-        {kindLabel}
-      </span>
-      <span className="text-body text-primary">{element.mime}</span>
-    </span>
+    <ElementPreview
+      title={title}
+      kind={element?.kind}
+      mime={element?.mime}
+      src={payloadUrl}
+      isPending={isPending}
+      isError={isError}
+      fallbackLabel={kindLabel}
+      fallbackDetail={destination ? destinationHost(destination) : "No stored payload"}
+      frameTitle={
+        element?.kind === "text"
+          ? `${element.mime === "text/markdown" ? "Markdown" : "Text"} content for ${title}`
+          : element?.kind === "document"
+            ? `${element.mime === "application/pdf" ? "PDF" : "Document"} preview for ${title}`
+            : undefined
+      }
+    />
   );
 }
 
@@ -318,37 +248,38 @@ function MediaObjectEntry({
 
   if (!hasRichPresentation) {
     return (
-      <li
-        ref={viewport.ref}
-        className="col-span-full flex items-center gap-3 border-b border-[rgba(20,20,26,0.06)]"
-      >
-        <button
-          type="button"
-          onClick={openObject}
-          aria-label={`Open object ${object.uri}`}
-          className="flex min-w-0 flex-1 items-baseline gap-3 py-3 text-left"
-        >
-          <span className="text-mono-label text-tertiary">{object.type}</span>
-          <span className="min-w-0 flex-1 truncate text-label text-primary">{title}</span>
-          <span className="text-caption text-tertiary">0 elements</span>
-        </button>
-        {isOwner ? (
-          <Button
-            variant="ghost"
-            aria-label={`Remove ${object.uri} from Vibe`}
-            disabled={removePending}
-            onClick={removeObject}
-          >
-            Remove
-          </Button>
-        ) : null}
+      <li ref={viewport.ref} className="col-span-full">
+        <EntityRow
+          align="baseline"
+          leading={<Badge>{object.type}</Badge>}
+          title={title}
+          meta="0 elements"
+          onSelect={openObject}
+          selectLabel={`Open object ${object.uri}`}
+          trailing={
+            isOwner ? (
+              <Button
+                variant="ghost"
+                aria-label={`Remove ${object.uri} from Vibe`}
+                disabled={removePending}
+                onClick={removeObject}
+              >
+                Remove
+              </Button>
+            ) : null
+          }
+        />
       </li>
     );
   }
 
   return (
     <li ref={viewport.ref} className="min-w-0" data-media-object-card>
-      <article className="group flex h-full w-full flex-col overflow-hidden rounded-card border border-hairline bg-surface text-left transition-transform hover:-translate-y-0.5">
+      <Card
+        as="article"
+        padding="none"
+        className="group flex h-full w-full flex-col overflow-hidden text-left transition-transform hover:-translate-y-0.5"
+      >
         <span className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-canvas">
           <MediaObjectPayload
             destination={destination}
@@ -379,15 +310,15 @@ function MediaObjectEntry({
           {destination || isOwner ? (
             <span className="mt-auto flex items-center justify-between gap-2 pt-2">
               {destination ? (
-                <a
+                <TextLink
                   href={destination}
                   target="_blank"
                   rel="noreferrer"
                   aria-label={`Open source for ${title}`}
-                  className="w-fit text-caption text-secondary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+                  tone="secondary"
                 >
                   {destinationHost(destination)} ↗
-                </a>
+                </TextLink>
               ) : (
                 <span />
               )}
@@ -405,7 +336,7 @@ function MediaObjectEntry({
             </span>
           ) : null}
         </span>
-      </article>
+      </Card>
     </li>
   );
 }
@@ -473,6 +404,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                   Cancel
                 </Button>
                 <Button
+                  variant="danger"
                   aria-label="Confirm delete Vibe"
                   onClick={confirmVibeDeletion}
                   disabled={deleteVibe.isPending}
@@ -498,12 +430,11 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           <form onSubmit={rename} className="flex max-w-[42rem] items-center gap-3">
             <label className="min-w-0 flex-1">
               <span className="sr-only">Vibe title</span>
-              <input
+              <TextInput
                 aria-label="Vibe title"
                 value={title}
                 onChange={(event) => setTitleDraft(event.target.value)}
                 maxLength={256}
-                className="w-full rounded-pill border border-hairline bg-surface px-5 py-3 text-body text-primary outline-none focus-visible:outline-2 focus-visible:outline-accent"
               />
             </label>
             <Button
@@ -519,7 +450,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           <form onSubmit={addObject} className="flex max-w-[42rem] items-center gap-3">
             <label className="min-w-0 flex-1">
               <span className="sr-only">Object URI</span>
-              <input
+              <TextInput
                 aria-label="Object URI"
                 aria-invalid={objectUriError ? true : undefined}
                 aria-describedby={objectUriError ? objectUriErrorId : undefined}
@@ -529,7 +460,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                   setObjectUriError(null);
                 }}
                 placeholder="rnet://object/…"
-                className="w-full rounded-pill border border-hairline bg-surface px-5 py-3 font-mono text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent"
+                typography="mono"
               />
             </label>
             <Button type="submit" variant="secondary" disabled={!objectUri.trim() || add.isPending}>
@@ -537,9 +468,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
             </Button>
           </form>
           {objectUriError ? (
-            <span id={objectUriErrorId} role="alert" className="text-body text-error">
-              {objectUriError}
-            </span>
+            <InlineError id={objectUriErrorId}>{objectUriError}</InlineError>
           ) : null}
           {add.isError ? <Failed error={add.error} /> : null}
           {remove.isError ? <Failed error={remove.error} /> : null}

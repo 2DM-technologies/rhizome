@@ -1,12 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type MouseEventHandler,
-} from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import appMark from "../assets/brand/app-mark.png";
 import orb1 from "../assets/orbs/orb-1-44.png";
@@ -16,7 +8,6 @@ import orb4 from "../assets/orbs/orb-4-44.png";
 import orbHome from "../assets/orbs/orb-home-48.png";
 import { uuidOf } from "../api/uris.ts";
 import { useVibes } from "../queries/index.ts";
-import { useSession } from "../session/session.ts";
 import {
   Desktop,
   Dock,
@@ -25,7 +16,7 @@ import {
   DockTray,
   LauncherItem,
   LauncherPanel,
-  VibeOrb,
+  OrbButton,
 } from "../ui/index.ts";
 import { SurfaceLayer } from "./SurfaceLayer.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
@@ -52,16 +43,6 @@ function markFor(surface: Surface): string {
   return STAND_IN_ORBS[hash % STAND_IN_ORBS.length] as string;
 }
 
-interface RunningSurfaceDockAppProps {
-  name: string;
-  src: string;
-  onOpen: MouseEventHandler<HTMLButtonElement>;
-}
-
-function RunningSurfaceDockApp({ name, src, onOpen }: RunningSurfaceDockAppProps) {
-  return <DockApp name={name} src={src} onOpen={onOpen} />;
-}
-
 /**
  * The persistent shell. The dock and desktop live above the router's control, while the URL
  * decides which surface is focused. Surface navigation replaces the window tree by default;
@@ -77,7 +58,6 @@ export function ShellLayout() {
   const launcherOpen = useShellStore((state) => state.launcherOpen);
   const setLauncherOpen = useShellStore((state) => state.setLauncherOpen);
   const navigation = useSurfaceNavigation();
-  const session = useSession();
   const vibes = useVibes();
   const [query, setQuery] = useState("");
   const [launcherMotion, setLauncherMotion] = useState(true);
@@ -214,9 +194,9 @@ export function ShellLayout() {
       dock={
         <Dock
           leading={
-            <button
-              type="button"
-              aria-label="Home"
+            <OrbButton
+              label="Home"
+              src={orbHome}
               onClick={(event) =>
                 navigation.openFromDock(HOME_SURFACE, {
                   origin: event.currentTarget,
@@ -225,11 +205,7 @@ export function ShellLayout() {
                   keepCurrentOpen: focused?.kind === "import",
                 })
               }
-              className="rounded-full transition-transform hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            >
-              <VibeOrb src={orbHome} size="lg" alt="" />
-              <span className="sr-only">{session.data?.user.handle ?? "Home"}</span>
-            </button>
+            />
           }
           apps={
             focused ? (
@@ -250,7 +226,7 @@ export function ShellLayout() {
               >
                 <div className="flex w-max items-center gap-5">
                   {dockRailSurfaces.map((surface) => (
-                    <RunningSurfaceDockApp
+                    <DockApp
                       key={surfaceId(surface)}
                       name={labelOf(surface, vibeTitles)}
                       src={markFor(surface)}

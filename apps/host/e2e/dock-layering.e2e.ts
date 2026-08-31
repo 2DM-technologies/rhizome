@@ -35,7 +35,10 @@ test("a maximized window expands underneath the dock", async ({ page }) => {
   const trayBackdrop = page.locator("[data-dock-tray-backdrop]");
   await expect(dock).toHaveCSS("view-transition-name", "none");
   await expect(dock).toHaveCSS("z-index", "20");
-  await expect(trayBackdrop).toHaveCSS("background-color", "color(srgb 0 0 0 / 0.8)");
+  await expect(trayBackdrop).toHaveCSS(
+    "background-color",
+    "color(srgb 0.0666667 0.0666667 0.0666667 / 0.9)",
+  );
   await expect(trayBackdrop).toHaveCSS("backdrop-filter", "blur(10px)");
 
   await page.getByRole("button", { name: "Maximize window" }).click();
@@ -47,7 +50,10 @@ test("a maximized window expands underneath the dock", async ({ page }) => {
   await expect(openingSurface).toHaveAttribute("data-surface-opening-source", "home");
   await expect(openingSurface).toHaveCSS("z-index", "auto");
   await expect(dock).toHaveCSS("view-transition-name", "none");
-  await expect(trayBackdrop).toHaveCSS("background-color", "color(srgb 0 0 0 / 0.8)");
+  await expect(trayBackdrop).toHaveCSS(
+    "background-color",
+    "color(srgb 0.0666667 0.0666667 0.0666667 / 0.9)",
+  );
   await expect(trayBackdrop).toHaveCSS("backdrop-filter", "blur(10px)");
 
   expect(

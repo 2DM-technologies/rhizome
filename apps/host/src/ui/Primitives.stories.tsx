@@ -1,13 +1,22 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 
+import { Badge } from "./Badge.tsx";
 import { Button } from "./Button.tsx";
+import { Callout } from "./Callout.tsx";
+import { Card } from "./Card.tsx";
+import { FilePicker } from "./FilePicker.tsx";
+import { IconButton } from "./IconButton.tsx";
+import { CloseIcon } from "./icons.tsx";
 import { MenuItem } from "./MenuItem.tsx";
 import { ProgressBar } from "./ProgressBar.tsx";
 import { SearchField } from "./SearchField.tsx";
 import { Select } from "./Select.tsx";
 import { StatusChip } from "./StatusChip.tsx";
 import { Tabs } from "./Tabs.tsx";
+import { TextArea } from "./TextArea.tsx";
+import { TextInput } from "./TextInput.tsx";
+import { TextLink } from "./TextLink.tsx";
 import { VibeOrb } from "./VibeOrb.tsx";
 import { orbs } from "./fixtures.ts";
 
@@ -22,9 +31,48 @@ export const Buttons: Story = {
       <Button variant="primary">Save to Library</Button>
       <Button variant="secondary">Save to Library</Button>
       <Button variant="ghost">Save to Library</Button>
+      <Button variant="danger">Delete</Button>
       <Button variant="primary" disabled>
         Disabled
       </Button>
+    </div>
+  ),
+};
+
+export const Fields: Story = {
+  render: () => (
+    <div className="flex w-100 flex-col gap-4">
+      <TextInput aria-label="Vibe title" placeholder="Name a new Vibe" />
+      <TextInput aria-label="Object URI" placeholder="rnet://object/…" typography="mono" />
+      <TextArea
+        aria-label="Properties"
+        defaultValue={'{\n  "favorite": true\n}'}
+        typography="mono"
+      />
+      <FilePicker aria-label="Transaction export" accept=".csv,.qfx" />
+    </div>
+  ),
+};
+
+export const LabelsAndActions: Story = {
+  render: () => (
+    <div className="flex items-center gap-4">
+      <Badge>media object</Badge>
+      <Badge tone="accent">new</Badge>
+      <IconButton aria-label="Close">
+        <CloseIcon />
+      </IconButton>
+      <TextLink href="#text-link">Learn more ↗</TextLink>
+    </div>
+  ),
+};
+
+export const Surfaces: Story = {
+  render: () => (
+    <div className="grid w-140 gap-4">
+      <Card>Reusable surface card</Card>
+      <Callout tone="success">VERIFY passed.</Callout>
+      <Callout tone="error">VERIFY did not pass.</Callout>
     </div>
   ),
 };

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import { cn } from "./cn.ts";
+import { IconButton } from "./IconButton.tsx";
 import { SendArrowIcon } from "./icons.tsx";
 
 export interface ChatInputProps {
@@ -48,17 +49,15 @@ export function ChatInput({
         aria-label="Message the agent"
         className="min-w-0 flex-1 bg-transparent text-label font-sans text-primary outline-none placeholder:text-tertiary"
       />
-      <button
+      <IconButton
         type="submit"
         disabled={disabled || prompt.trim() === ""}
         aria-label="Send"
-        className={cn(
-          "grid size-7 shrink-0 place-items-center rounded-full bg-accent text-on-accent",
-          "transition-opacity hover:opacity-85 disabled:opacity-40",
-        )}
+        tone="accent"
+        size="sm"
       >
         <SendArrowIcon width={28} height={28} />
-      </button>
+      </IconButton>
     </form>
   );
 }

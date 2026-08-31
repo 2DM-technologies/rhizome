@@ -1,7 +1,15 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 
-import { BackIcon, DmachineWindow, MaximizeIcon, RestoreIcon, cn } from "../ui/index.ts";
+import {
+  BackIcon,
+  CloseIcon,
+  DmachineWindow,
+  IconButton,
+  MaximizeIcon,
+  RestoreIcon,
+  cn,
+} from "../ui/index.ts";
 import { useSurfaceNavigation } from "./focus.ts";
 import { surfaceId, type Surface, type ViewMode } from "./surfaces.ts";
 import {
@@ -134,32 +142,24 @@ export function SurfaceChrome({ surface, active, mode, children }: SurfaceChrome
       data-window-top-bar
       className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-center justify-between"
     >
-      <button
-        type="button"
+      <IconButton
         aria-label="Back"
         disabled={!canGoBack}
         onClick={() => navigate(-1)}
-        className="pointer-events-auto grid size-8 place-items-center rounded-pill bg-surface text-secondary transition-[color,opacity] hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+        className="pointer-events-auto"
       >
         <BackIcon />
-      </button>
+      </IconButton>
       <div data-window-controls className="pointer-events-auto flex items-center gap-1">
-        <button
-          type="button"
+        <IconButton
           aria-label={maximized ? "Restore window" : "Maximize window"}
           onClick={toggleMaximized}
-          className="grid size-8 place-items-center rounded-pill bg-surface text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           {maximized ? <RestoreIcon /> : <MaximizeIcon />}
-        </button>
-        <button
-          type="button"
-          aria-label="Close surface"
-          onClick={() => close(id)}
-          className="grid size-8 place-items-center rounded-pill bg-surface text-xl leading-none text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          <span aria-hidden>×</span>
-        </button>
+        </IconButton>
+        <IconButton aria-label="Close surface" onClick={() => close(id)}>
+          <CloseIcon />
+        </IconButton>
       </div>
     </div>
   );

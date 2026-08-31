@@ -1,9 +1,6 @@
 import { expect, test } from "bun:test";
 
-import {
-  payloadPresentation,
-  primaryPayloadCandidate,
-} from "../src/surfaces/payloadPresentation.ts";
+import { payloadPresentation, primaryPayloadCandidate } from "../src/ui/ElementPreview.tsx";
 
 test("selects browser-native payload renderers from MIME types", () => {
   expect(payloadPresentation("image/png")).toBe("image");

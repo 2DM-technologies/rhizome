@@ -9,7 +9,7 @@ import {
 } from "react";
 
 import { cn } from "./cn.ts";
-import { SearchIcon } from "./icons.tsx";
+import { SearchField } from "./SearchField.tsx";
 
 export interface LauncherSection {
   title: string;
@@ -166,27 +166,21 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
             ))}
           </div>
         </div>
-        <div
-          data-launcher-input-row
-          className="pointer-events-auto relative z-10 flex h-12 w-60 shrink-0 items-center gap-2.5 px-[22px] pr-5"
-        >
-          <SearchIcon width={16} height={16} className="shrink-0 text-dock-search-placeholder" />
-          <input
-            ref={ref}
-            type="search"
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            onFocus={onOpen}
-            onClick={onOpen}
-            onKeyDown={onInputKeyDown}
-            aria-label="Search everything"
-            aria-expanded={open}
-            aria-haspopup="dialog"
-            aria-controls={resultsId}
-            placeholder="Search"
-            className="min-w-0 flex-1 bg-transparent text-body text-dock-search-text outline-none placeholder:text-dock-search-placeholder [&::-webkit-search-cancel-button]:appearance-none"
-          />
-        </div>
+        <SearchField
+          ref={ref}
+          surface="embedded"
+          containerClassName="pointer-events-auto relative z-10 shrink-0"
+          containerProps={{ "data-launcher-input-row": true }}
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onFocus={onOpen}
+          onClick={onOpen}
+          onKeyDown={onInputKeyDown}
+          aria-label="Search everything"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-controls={resultsId}
+        />
       </div>
     );
   },

@@ -120,3 +120,16 @@ export function RestoreIcon({ width = 18, height = 18, ...props }: IconProps) {
     </svg>
   );
 }
+
+export function CloseIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M4.5 4.5L13.5 13.5M13.5 4.5L4.5 13.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

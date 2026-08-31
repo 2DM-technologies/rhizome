@@ -3,7 +3,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { uuidOf } from "../api/uris.ts";
 import { useCreateVibe, useVibe, useVibes } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
-import { Button } from "../ui/index.ts";
+import { Button, EntityRow, TextInput } from "../ui/index.ts";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 
@@ -99,19 +99,13 @@ export function ImportSurface() {
             <ul aria-label="Owned Vibes" className="flex flex-col">
               {ownedVibes.map((vibe) => (
                 <li key={vibe.uri}>
-                  <button
-                    type="button"
-                    aria-label={`Import into ${vibe.title}`}
-                    onClick={() => setTargetUuid(uuidOf(vibe.uri))}
-                    className="flex w-full items-baseline gap-3 border-b border-[rgba(20,20,26,0.06)] py-3 text-left"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-label text-primary">
-                      {vibe.title}
-                    </span>
-                    <span className="text-caption text-tertiary">
-                      {vibe.objects.length} objects
-                    </span>
-                  </button>
+                  <EntityRow
+                    align="baseline"
+                    title={vibe.title}
+                    meta={`${vibe.objects.length} objects`}
+                    selectLabel={`Import into ${vibe.title}`}
+                    onSelect={() => setTargetUuid(uuidOf(vibe.uri))}
+                  />
                 </li>
               ))}
             </ul>
@@ -133,7 +127,7 @@ export function ImportSurface() {
             <div className="flex items-center gap-3">
               <label className="min-w-0 flex-1">
                 <span className="sr-only">New import Vibe title</span>
-                <input
+                <TextInput
                   aria-label="New import Vibe title"
                   value={title}
                   onChange={(event) => {
@@ -142,7 +136,6 @@ export function ImportSurface() {
                   }}
                   placeholder="Name a new Vibe"
                   maxLength={256}
-                  className="w-full rounded-pill border border-hairline bg-surface px-5 py-3 text-body text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent"
                 />
               </label>
               <Button type="submit" disabled={!title.trim() || create.isPending}>

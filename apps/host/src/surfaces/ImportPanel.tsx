@@ -15,7 +15,18 @@ import {
   usePullVibe,
   useSourceSkills,
 } from "../queries/index.ts";
-import { Button } from "../ui/index.ts";
+import {
+  Button,
+  Callout,
+  Card,
+  ElementPreview,
+  EntityRow,
+  FilePicker,
+  InlineError,
+  StatusChip,
+  TextInput,
+  TextLink,
+} from "../ui/index.ts";
 import { Failed } from "./provisional.tsx";
 import { sourceActionRequired } from "./sourceActionRequired.ts";
 
@@ -286,7 +297,7 @@ export function ImportPanel({
   }
 
   return (
-    <section className="flex max-w-[52rem] flex-col gap-4 rounded-card border border-hairline bg-surface p-5">
+    <Card as="section" className="flex max-w-[52rem] flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <h2 className="text-label text-primary">Import into this Vibe</h2>
@@ -321,13 +332,14 @@ export function ImportPanel({
             <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
               <label>
                 <span className="sr-only">Search import sources</span>
-                <input
+                <TextInput
                   type="search"
                   aria-label="Search import sources"
                   value={skillSearch}
                   onChange={(event) => setSkillSearch(event.target.value)}
                   placeholder="Search installed sources"
-                  className="w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent"
+                  tone="canvas"
+                  typography="caption"
                 />
               </label>
               <label>
@@ -366,7 +378,9 @@ export function ImportPanel({
         )}
       </section>
 
-      {sourceLabel ? <span className="text-caption text-tertiary">{sourceLabel}</span> : null}
+      {sourceLabel && selectedSkill?.source_kind !== "file" ? (
+        <span className="text-caption text-tertiary">{sourceLabel}</span>
+      ) : null}
       {outcome ? (
         <span role="status" className="text-body text-secondary">
           {outcome}
@@ -380,20 +394,20 @@ export function ImportPanel({
         </span>
       ) : null}
       {operation.data?.status === "failed" ? (
-        <span role="alert" className="text-body text-error">
+        <InlineError>
           {operation.data.error ??
             (operationMode === "pull"
               ? "The source refresh failed."
               : "The import preview failed.")}
-        </span>
+        </InlineError>
       ) : null}
       {operation.data?.status === "aborted" ? (
-        <span role="alert" className="text-body text-error">
+        <InlineError>
           {operationMode === "pull" ? "The source refresh was aborted." : "The import was aborted."}
-        </span>
+        </InlineError>
       ) : null}
       {requiredAction ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-hairline bg-canvas p-4">
+        <Callout className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             <span className="text-label text-primary">{requiredAction.title}</span>
             <span className="mt-1 block text-caption text-secondary">{requiredAction.detail}</span>
@@ -401,17 +415,15 @@ export function ImportPanel({
           <Button disabled={busy} onClick={() => void reviewRequiredAction(requiredAction)}>
             Review import
           </Button>
-        </div>
+        </Callout>
       ) : null}
       {malformedImportResult ? (
-        <span role="alert" className="text-body text-error">
+        <InlineError>
           The completed import did not contain a valid review. Start the import again to retry.
-        </span>
+        </InlineError>
       ) : null}
       {malformedPullResult ? (
-        <span role="alert" className="text-body text-error">
-          The completed source refresh did not contain a valid summary.
-        </span>
+        <InlineError>The completed source refresh did not contain a valid summary.</InlineError>
       ) : null}
 
       {preview ? (
@@ -425,28 +437,24 @@ export function ImportPanel({
       ) : null}
 
       {operationMode === "pull" && pullSummary && operation.data?.status === "done" ? (
-        <div className="rounded-card bg-canvas p-4" role="status">
+        <Callout role="status" tone="success">
           <span className="text-label text-primary">
             Checked {pullSummary.candidate_count} candidates · added {pullSummary.added_count}
           </span>
           <span className="mt-1 block text-caption text-secondary">
             {pullSummary.duplicate_count} already known · {pullSummary.created_count} new objects
           </span>
-        </div>
+        </Callout>
       ) : null}
 
-      {localError ? (
-        <span role="alert" className="text-body text-error">
-          {localError}
-        </span>
-      ) : null}
+      {localError ? <InlineError>{localError}</InlineError> : null}
       {createOrigin.isError ? <Failed error={createOrigin.error} /> : null}
       {createSource.isError ? <Failed error={createSource.error} /> : null}
       {createPreview.isError ? <Failed error={createPreview.error} /> : null}
       {pull.isError && !requiredAction ? <Failed error={pull.error} /> : null}
       {operation.isError ? <Failed error={operation.error} /> : null}
       {confirm.isError ? <Failed error={confirm.error} /> : null}
-    </section>
+    </Card>
   );
 }
 
@@ -509,8 +517,10 @@ function ManifestField({
     "aria-describedby": helpId,
   };
   return (
-    <label htmlFor={id} className="block">
-      <span className="text-caption text-primary">{field.label}</span>
+    <div className="block">
+      <label htmlFor={id} className="text-caption text-primary">
+        {field.label}
+      </label>
       {field.control === "checkbox" ? (
         <input {...shared} type="checkbox" className="ml-3 align-middle accent-accent" />
       ) : field.control === "select" ? (
@@ -529,23 +539,23 @@ function ManifestField({
           ))}
         </select>
       ) : field.control === "file" ? (
-        <input
+        <FilePicker
           {...shared}
-          type="file"
           accept={field.accept?.join(",")}
-          className="mt-1 block w-full rounded-card border border-hairline bg-canvas px-4 py-3 text-caption text-secondary file:mr-3 file:rounded-pill file:border-0 file:bg-accent file:px-4 file:py-2 file:text-caption file:text-white"
+          buttonLabel={`Choose ${field.label.toLocaleLowerCase()}`}
+          className="mt-1"
         />
       ) : (
-        <input
+        <TextInput
           {...shared}
           type={field.secret ? "password" : field.control === "url" ? "url" : "text"}
           placeholder={field.placeholder}
           autoComplete={field.secret ? "off" : field.control === "url" ? "url" : "off"}
           autoCapitalize="none"
           spellCheck={false}
-          className={`mt-1 w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent${
-            field.secret ? " font-mono" : ""
-          }`}
+          tone="canvas"
+          typography={field.secret ? "mono" : "caption"}
+          className="mt-1"
         />
       )}
       {field.help_text ? (
@@ -554,16 +564,16 @@ function ManifestField({
         </span>
       ) : null}
       {field.help_url ? (
-        <a
+        <TextLink
           href={field.help_url}
           target="_blank"
           rel="noreferrer"
-          className="mt-1 inline-block text-caption text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+          className="mt-1 inline-block"
         >
           Learn more ↗
-        </a>
+        </TextLink>
       ) : null}
-    </label>
+    </div>
   );
 }
 
@@ -587,7 +597,10 @@ function ImportReview({
   const totals = Object.entries(preview.verify.totalsByCurrency);
   return (
     <div className="flex flex-col gap-4">
-      <div aria-label="VERIFY reconciliation" className="rounded-card bg-canvas p-4">
+      <Callout aria-label="VERIFY reconciliation" tone={preview.verify.ok ? "success" : "error"}>
+        <StatusChip status={preview.verify.ok ? "success" : "error"}>
+          {preview.verify.ok ? "passed" : "failed"}
+        </StatusChip>
         <span className="text-label text-primary">
           {preview.verify.ok
             ? `${preview.verify.candidateCount} ${candidateCountLabel(
@@ -621,7 +634,7 @@ function ImportReview({
             </li>
           ))}
         </ul>
-      </div>
+      </Callout>
       <ul
         aria-label="Candidate media objects"
         className="max-h-72 overflow-auto border-y border-hairline"
@@ -651,57 +664,61 @@ function CandidateReview({
 }) {
   if (candidate.type === "transaction") {
     return (
-      <li
+      <EntityRow
+        as="li"
         data-import-candidate
-        className="flex items-baseline gap-3 border-b border-hairline py-3 last:border-b-0"
-      >
-        <span className="min-w-24 font-mono text-caption text-primary">
-          {String(candidate.amount ?? "")}
-        </span>
-        <span className="text-caption text-tertiary">{String(candidate.currency ?? "")}</span>
-        <span className="min-w-0 flex-1 truncate text-body text-secondary">
-          {String(candidate.description ?? candidate.title)}
-        </span>
-        {candidate.postedAt ? (
-          <span className="shrink-0 text-caption text-tertiary">{String(candidate.postedAt)}</span>
-        ) : null}
-      </li>
+        align="baseline"
+        className="last:border-b-0"
+        leading={
+          <span className="flex min-w-32 items-baseline gap-3">
+            <span className="min-w-24 font-mono text-caption text-primary">
+              {String(candidate.amount ?? "")}
+            </span>
+            <span className="text-caption text-tertiary">{String(candidate.currency ?? "")}</span>
+          </span>
+        }
+        title={String(candidate.description ?? candidate.title)}
+        titleClassName="text-body text-secondary"
+        meta={candidate.postedAt ? String(candidate.postedAt) : undefined}
+      />
     );
   }
 
   const primaryElement = primaryPreviewElement(candidate.elements);
   const metadataElement = primaryElement ?? candidate.elements[0];
   return (
-    <li
+    <EntityRow
+      as="li"
       data-import-candidate
-      className="flex items-center gap-4 border-b border-hairline py-3 last:border-b-0"
-    >
-      <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-card bg-surface">
-        {primaryElement?.previewUrl && primaryElement.kind === "image" ? (
-          <ImportPreviewImage
-            element={primaryElement}
-            operationId={operationId}
-            title={candidate.title}
-          />
-        ) : (
-          <span aria-hidden className="text-mono-label text-tertiary">
-            {primaryElement?.kind ?? "object"}
-          </span>
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-body text-primary">{candidate.title}</span>
-        <span className="mt-1 block text-caption text-tertiary">
-          {candidate.type} · {candidate.elementCount}{" "}
-          {candidate.elementCount === 1 ? "element" : "elements"}
-          {metadataElement
-            ? ` · ${metadataElement.mime} · ${formatByteSize(
-                candidate.elements.reduce((total, element) => total + element.byteSize, 0),
-              )}`
-            : ""}
+      className="last:border-b-0"
+      leading={
+        <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-card bg-surface">
+          {primaryElement?.previewUrl && primaryElement.kind === "image" ? (
+            <ImportPreviewImage
+              element={primaryElement}
+              operationId={operationId}
+              title={candidate.title}
+            />
+          ) : (
+            <span aria-hidden className="text-mono-label text-tertiary">
+              {primaryElement?.kind ?? "object"}
+            </span>
+          )}
         </span>
-      </span>
-    </li>
+      }
+      title={candidate.title}
+      titleClassName="text-body text-primary"
+      subtitle={`${candidate.type} · ${candidate.elementCount} ${
+        candidate.elementCount === 1 ? "element" : "elements"
+      }${
+        metadataElement
+          ? ` · ${metadataElement.mime} · ${formatByteSize(
+              candidate.elements.reduce((total, element) => total + element.byteSize, 0),
+            )}`
+          : ""
+      }`}
+      subtitleClassName="text-caption text-tertiary"
+    />
   );
 }
 
@@ -718,12 +735,18 @@ function ImportPreviewImage({
     element.previewUrl ? operationId : undefined,
     element.previewUrl ? uuidOf(element.uri) : undefined,
   );
-  return payload.data ? (
-    <img src={payload.data} alt={`${title} preview`} className="size-full object-cover" />
-  ) : (
-    <span aria-hidden className="text-mono-label text-tertiary">
-      {payload.isError ? "unavailable" : element.kind}
-    </span>
+  return (
+    <ElementPreview
+      title={`${title} preview`}
+      kind={element.kind}
+      mime={element.mime}
+      src={payload.data}
+      variant="thumbnail"
+      isPending={payload.isPending}
+      isError={payload.isError}
+      loadingLabel={element.kind}
+      errorLabel="unavailable"
+    />
   );
 }
 
