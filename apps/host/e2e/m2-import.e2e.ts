@@ -30,6 +30,29 @@ test.beforeEach(async ({ page }) => {
   delete target.pull;
 });
 
+test("the shared file picker accepts a dropped file", async ({ page }) => {
+  await page.goto(`/vibes/${VIBE_ID}`);
+  await page
+    .getByLabel("Import source", { exact: true })
+    .selectOption({ label: SYNTHETIC_FILE_SKILL_LABEL });
+
+  const fileInput = page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL);
+  await fileInput.evaluate((input, filename) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["dropped source"], filename, { type: "application/json" }));
+    input.dispatchEvent(
+      new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }),
+    );
+  }, "dropped-source.json");
+
+  await expect(page.getByText("dropped-source.json", { exact: true })).toBeVisible();
+  expect(
+    await fileInput.evaluate((input: HTMLInputElement) =>
+      Array.from(input.files ?? [], ({ name }) => name),
+    ),
+  ).toEqual(["dropped-source.json"]);
+});
+
 async function stageFile(page: Page, fixture: (typeof cases)[number]): Promise<void> {
   await page.goto(`/vibes/${VIBE_ID}`);
   await page

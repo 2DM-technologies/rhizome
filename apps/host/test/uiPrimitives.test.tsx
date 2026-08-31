@@ -25,7 +25,9 @@ test("renders shared text and file inputs with native form controls", () => {
   expect(text).toContain('name="token"');
   expect(file).toContain('type="file"');
   expect(file).toContain('name="export"');
-  expect(file).toContain("Choose file");
+  expect(file).toContain("data-file-picker-dropzone");
+  expect(file).toContain("Drop a file here");
+  expect(file).toContain("Choose a file");
 });
 
 test("renders selectable entity rows with an accessible native button", () => {

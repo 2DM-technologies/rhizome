@@ -518,7 +518,10 @@ function ManifestField({
   };
   return (
     <div className="block">
-      <label htmlFor={id} className="text-caption text-primary">
+      <label
+        htmlFor={id}
+        className={field.control === "file" ? "sr-only" : "text-caption text-primary"}
+      >
         {field.label}
       </label>
       {field.control === "checkbox" ? (
@@ -539,12 +542,7 @@ function ManifestField({
           ))}
         </select>
       ) : field.control === "file" ? (
-        <FilePicker
-          {...shared}
-          accept={field.accept?.join(",")}
-          buttonLabel={`Choose ${field.label.toLocaleLowerCase()}`}
-          className="mt-1"
-        />
+        <FilePicker {...shared} accept={field.accept?.join(",")} className="mt-1" />
       ) : (
         <TextInput
           {...shared}

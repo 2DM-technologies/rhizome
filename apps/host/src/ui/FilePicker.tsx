@@ -4,20 +4,20 @@ import {
   useRef,
   useState,
   type ChangeEventHandler,
+  type DragEventHandler,
   type InputHTMLAttributes,
   type Ref,
 } from "react";
 
-import { Button } from "./Button.tsx";
 import { cn } from "./cn.ts";
 
 export interface FilePickerProps extends Omit<
   InputHTMLAttributes<HTMLInputElement>,
   "children" | "className" | "type"
 > {
-  buttonLabel?: string;
+  actionLabel?: string;
   className?: string;
-  emptyLabel?: string;
+  dropLabel?: string;
 }
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
@@ -25,15 +25,20 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   else if (ref) ref.current = value;
 }
 
-/** Styled file chooser that keeps the native input in the form and accessibility tree. */
+/** Dropzone file chooser that keeps the native input in the form and accessibility tree. */
 export const FilePicker = forwardRef<HTMLInputElement, FilePickerProps>(function FilePicker(
   {
-    buttonLabel = "Choose file",
+    actionLabel = "Choose a file",
     className,
     disabled,
-    emptyLabel = "No file chosen",
+    dropLabel = "Drop a file here",
     id: providedId,
+    multiple,
     onChange,
+    onDragEnter,
+    onDragLeave,
+    onDragOver,
+    onDrop,
     ...props
   },
   forwardedRef,
@@ -41,39 +46,89 @@ export const FilePicker = forwardRef<HTMLInputElement, FilePickerProps>(function
   const generatedId = useId();
   const id = providedId ?? generatedId;
   const input = useRef<HTMLInputElement>(null);
-  const [selection, setSelection] = useState(emptyLabel);
+  const dragDepth = useRef(0);
+  const [dragActive, setDragActive] = useState(false);
+  const [selection, setSelection] = useState<string>();
 
   const handleChange: ChangeEventHandler<HTMLInputElement> = (event) => {
     const names = Array.from(event.currentTarget.files ?? [], ({ name }) => name);
-    setSelection(names.length > 0 ? names.join(", ") : emptyLabel);
+    setSelection(names.length > 0 ? names.join(", ") : undefined);
     onChange?.(event);
   };
 
+  const handleDragEnter: DragEventHandler<HTMLInputElement> = (event) => {
+    event.preventDefault();
+    onDragEnter?.(event);
+    if (disabled) return;
+    dragDepth.current += 1;
+    setDragActive(true);
+  };
+
+  const handleDragOver: DragEventHandler<HTMLInputElement> = (event) => {
+    event.preventDefault();
+    onDragOver?.(event);
+    if (disabled) return;
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragLeave: DragEventHandler<HTMLInputElement> = (event) => {
+    event.preventDefault();
+    onDragLeave?.(event);
+    if (disabled) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragActive(false);
+  };
+
+  const handleDrop: DragEventHandler<HTMLInputElement> = (event) => {
+    event.preventDefault();
+    onDrop?.(event);
+    dragDepth.current = 0;
+    setDragActive(false);
+    if (disabled || !input.current || event.dataTransfer.files.length === 0) return;
+
+    const transfer = new DataTransfer();
+    const files = Array.from(event.dataTransfer.files);
+    for (const file of multiple ? files : files.slice(0, 1)) transfer.items.add(file);
+    input.current.files = transfer.files;
+    input.current.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
   return (
-    <div className={cn("flex min-w-0 items-center gap-3", className)}>
-      <input
-        ref={(node) => {
-          input.current = node;
-          assignRef(forwardedRef, node);
-        }}
-        id={id}
-        type="file"
-        disabled={disabled}
-        className="sr-only"
-        onChange={handleChange}
-        {...props}
-      />
-      <Button
-        type="button"
-        variant="secondary"
-        disabled={disabled}
-        onClick={() => input.current?.click()}
+    <div className={cn("min-w-0", className)}>
+      <div
+        data-file-picker-dropzone
+        data-drag-active={dragActive || undefined}
+        className={cn(
+          "relative flex min-h-36 w-full flex-col items-center justify-center gap-2 rounded-sm border border-dashed border-hairline bg-canvas px-6 py-8 text-center outline-none transition-colors",
+          "hover:bg-surface focus-within:outline-2 focus-within:outline-accent",
+          dragActive && "border-accent bg-surface",
+          disabled && "cursor-not-allowed opacity-50",
+        )}
       >
-        {buttonLabel}
-      </Button>
-      <span aria-live="polite" className="min-w-0 truncate text-caption text-secondary">
-        {selection}
-      </span>
+        <input
+          ref={(node) => {
+            input.current = node;
+            assignRef(forwardedRef, node);
+          }}
+          id={id}
+          type="file"
+          disabled={disabled}
+          multiple={multiple}
+          className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+          onChange={handleChange}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          {...props}
+        />
+        <span aria-live="polite" className="max-w-full truncate text-body text-primary">
+          {dragActive ? "Drop to select this file" : (selection ?? dropLabel)}
+        </span>
+        <span aria-hidden className="text-caption text-secondary">
+          {actionLabel}
+        </span>
+      </div>
     </div>
   );
 });

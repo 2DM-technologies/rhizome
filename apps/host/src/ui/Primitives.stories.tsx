@@ -41,7 +41,7 @@ export const Buttons: Story = {
 
 export const Fields: Story = {
   render: () => (
-    <div className="flex w-100 flex-col gap-4">
+    <div className="flex w-120 flex-col gap-4">
       <TextInput aria-label="Vibe title" placeholder="Name a new Vibe" />
       <TextInput aria-label="Object URI" placeholder="rnet://object/…" typography="mono" />
       <TextArea
