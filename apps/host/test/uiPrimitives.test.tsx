@@ -54,3 +54,25 @@ test("renders browser-native element previews through the shared media component
   expect(markup).toContain('src="/preview.png"');
   expect(markup).toContain('alt="Preview"');
 });
+
+test("frames every detailed native element preview with the shared hairline", () => {
+  for (const [kind, mime] of [
+    ["image", "image/png"],
+    ["audio", "audio/mpeg"],
+    ["video", "video/mp4"],
+    ["text", "text/plain"],
+    ["document", "application/pdf"],
+  ] as const) {
+    const markup = renderToStaticMarkup(
+      <ElementPreview
+        title={`${kind} preview`}
+        kind={kind}
+        mime={mime}
+        src={`/preview.${kind}`}
+        variant="detail"
+      />,
+    );
+
+    expect(markup).toContain("border-hairline");
+  }
+});

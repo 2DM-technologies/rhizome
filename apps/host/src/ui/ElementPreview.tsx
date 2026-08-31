@@ -154,7 +154,7 @@ export function ElementPreview({
             ? "size-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
             : variant === "thumbnail"
               ? "size-full object-cover"
-              : "max-h-96 max-w-full rounded-sm object-contain",
+              : "max-h-96 max-w-full rounded-sm border border-hairline object-contain",
           className,
         )}
       />
@@ -168,7 +168,10 @@ export function ElementPreview({
         src={src}
         controls
         aria-label={`Audio for ${title}`}
-        className={cn(variant === "card" ? "w-[80%]" : "w-full", className)}
+        className={cn(
+          variant === "card" ? "w-[80%]" : "w-full rounded-sm border border-hairline",
+          className,
+        )}
       />
     );
   }
@@ -181,7 +184,9 @@ export function ElementPreview({
         controls
         aria-label={`Video for ${title}`}
         className={cn(
-          variant === "card" ? "size-full object-contain" : "max-h-96 w-full rounded-sm bg-black",
+          variant === "card"
+            ? "size-full object-contain"
+            : "max-h-96 w-full rounded-sm border border-hairline bg-black",
           className,
         )}
       />
