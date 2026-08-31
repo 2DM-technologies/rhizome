@@ -74,14 +74,7 @@ function RenderedPayload({
   const label = `Payload for ${uri}`;
   return (
     <div className="flex flex-col items-start gap-3">
-      <ElementPreview
-        title={label}
-        kind={kind}
-        mime={mime}
-        src={payload.data}
-        variant="detail"
-        borderTone="accent-secondary"
-      />
+      <ElementPreview title={label} kind={kind} mime={mime} src={payload.data} variant="detail" />
       <TextLink
         href={payload.data}
         download={`element-${uuid}`}
@@ -99,7 +92,7 @@ function MediaElementReference({ uri, position }: { uri: string; position: numbe
   const element = useMediaElement(uuid);
 
   return (
-    <ReferenceCard label={`element ${position + 1}`} reference={uri} borderTone="accent-secondary">
+    <ReferenceCard label={`element ${position + 1}`} reference={uri}>
       {element.isPending ? <Pending label="element" /> : null}
       {element.isError ? <Failed error={element.error} /> : null}
       {element.data ? (
