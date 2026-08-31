@@ -17,6 +17,7 @@ import { X_OAUTH_CAPTURE_MIME } from "../parser.ts";
 
 let mockStore: MockStore;
 let provider: MockXProvider;
+const X_DISPLAY_NAMES = ["@example_user - Aug 21, 2026", "@example_user - Aug 20, 2026"] as const;
 
 test.beforeEach(async ({ page }) => {
   const mock = createMockXOAuthSkill();
@@ -42,9 +43,12 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await expect(reconciliation).toContainText("4 source records → 2 candidates");
   await expect(reconciliation).toContainText("4 elements staged");
   await expect(page.getByLabel("New Vibe title")).toHaveValue("@example_user Tweets");
-  await expect(
-    page.getByRole("list", { name: "Candidate media objects" }).locator("[data-import-candidate]"),
-  ).toHaveCount(2);
+  const candidateList = page.getByRole("list", { name: "Candidate media objects" });
+  await expect(candidateList.locator("[data-import-candidate]")).toHaveCount(2);
+  for (const displayName of X_DISPLAY_NAMES) {
+    await expect(candidateList.getByText(displayName, { exact: true })).toBeVisible();
+  }
+  await expect(candidateList.getByText("Untitled tweet", { exact: true })).toHaveCount(0);
   await expect(
     page
       .getByRole("list", { name: "Candidate media objects" })
@@ -95,7 +99,13 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   expect(tweets[0]?.elements[1]?.alt).toBe("A mocked horizon");
   expect(tweets[0]?.source.properties).not.toHaveProperty("text");
 
-  await page.getByRole("button", { name: "Choose another Vibe" }).click();
+  await page.goto(`/vibes/${NEW_VIBE_ID}`);
+  await expect(page.locator("[data-media-object-card]")).toHaveCount(2);
+  for (const displayName of X_DISPLAY_NAMES) {
+    await expect(page.getByText(displayName, { exact: true })).toBeVisible();
+  }
+
+  await page.goto("/imports");
   await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await expect(page.getByRole("button", { name: "Sign in with X", exact: true })).toBeVisible();
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
