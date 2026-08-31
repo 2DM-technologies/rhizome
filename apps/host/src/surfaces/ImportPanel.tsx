@@ -23,6 +23,7 @@ import {
   EntityRow,
   FilePicker,
   InlineError,
+  SelectInput,
   StatusChip,
   TextInput,
   TextLink,
@@ -88,7 +89,6 @@ export function ImportPanel({
   const confirm = useConfirmImportPreview();
   const pull = usePullVibe();
   const forgetOperation = useForgetOperation();
-  const [skillSearch, setSkillSearch] = useState("");
   const [selectedSkillId, setSelectedSkillId] = useState<string>();
   const [operationId, setOperationId] = useState<string>();
   const [operationMode, setOperationMode] = useState<"import" | "pull">("import");
@@ -104,17 +104,6 @@ export function ImportPanel({
   );
   const selectedSkill =
     importSkills.find((skill) => skill.skill_id === selectedSkillId) ?? importSkills[0];
-  const skillChoices = useMemo(() => {
-    const query = skillSearch.trim().toLocaleLowerCase();
-    if (!query) return importSkills;
-    const matches = importSkills.filter((skill) =>
-      `${skill.label} ${skill.description} ${skill.skill_id}`.toLocaleLowerCase().includes(query),
-    );
-    return selectedSkill && !matches.some((skill) => skill.skill_id === selectedSkill.skill_id)
-      ? [selectedSkill, ...matches]
-      : matches;
-  }, [importSkills, selectedSkill, skillSearch]);
-
   const operation = useOperation(operationId, vibeUuid);
   const preview = previewResult(operation.data?.result);
   const pullSummary = pullResult(operation.data?.result);
@@ -329,35 +318,20 @@ export function ImportPanel({
           </span>
         ) : (
           <>
-            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-              <label>
-                <span className="sr-only">Search import sources</span>
-                <TextInput
-                  type="search"
-                  aria-label="Search import sources"
-                  value={skillSearch}
-                  onChange={(event) => setSkillSearch(event.target.value)}
-                  placeholder="Search installed sources"
-                  tone="canvas"
-                  typography="caption"
-                />
-              </label>
-              <label>
-                <span className="sr-only">Import source</span>
-                <select
-                  aria-label="Import source"
-                  value={selectedSkill?.skill_id ?? ""}
-                  onChange={(event) => selectSkill(event.target.value)}
-                  className="w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none focus-visible:outline-2 focus-visible:outline-accent"
-                >
-                  {skillChoices.map((skill) => (
-                    <option key={skill.skill_id} value={skill.skill_id}>
-                      {skill.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            <label className="mt-3 block">
+              <span className="sr-only">Import source</span>
+              <SelectInput
+                aria-label="Import source"
+                value={selectedSkill?.skill_id ?? ""}
+                onChange={(event) => selectSkill(event.target.value)}
+              >
+                {importSkills.map((skill) => (
+                  <option key={skill.skill_id} value={skill.skill_id}>
+                    {skill.label}
+                  </option>
+                ))}
+              </SelectInput>
+            </label>
             {selectedSkill ? (
               <SourceSkillForm
                 key={selectedSkill.skill_id}
@@ -527,11 +501,7 @@ function ManifestField({
       {field.control === "checkbox" ? (
         <input {...shared} type="checkbox" className="ml-3 align-middle accent-accent" />
       ) : field.control === "select" ? (
-        <select
-          {...shared}
-          defaultValue=""
-          className="mt-1 w-full rounded-pill border border-hairline bg-canvas px-5 py-3 text-caption text-primary outline-none focus-visible:outline-2 focus-visible:outline-accent"
-        >
+        <SelectInput {...shared} defaultValue="" containerClassName="mt-1">
           <option value="" disabled={field.required}>
             {field.placeholder ?? `Choose ${field.label.toLocaleLowerCase()}`}
           </option>
@@ -540,7 +510,7 @@ function ManifestField({
               {option.label}
             </option>
           ))}
-        </select>
+        </SelectInput>
       ) : field.control === "file" ? (
         <FilePicker {...shared} accept={field.accept?.join(",")} className="mt-1" />
       ) : (

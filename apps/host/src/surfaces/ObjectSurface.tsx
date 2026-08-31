@@ -74,7 +74,14 @@ function RenderedPayload({
   const label = `Payload for ${uri}`;
   return (
     <div className="flex flex-col items-start gap-3">
-      <ElementPreview title={label} kind={kind} mime={mime} src={payload.data} variant="detail" />
+      <ElementPreview
+        title={label}
+        kind={kind}
+        mime={mime}
+        src={payload.data}
+        variant="detail"
+        borderTone="accent-secondary"
+      />
       <TextLink
         href={payload.data}
         download={`element-${uuid}`}
@@ -92,7 +99,7 @@ function MediaElementReference({ uri, position }: { uri: string; position: numbe
   const element = useMediaElement(uuid);
 
   return (
-    <ReferenceCard label={`element ${position + 1}`} reference={uri}>
+    <ReferenceCard label={`element ${position + 1}`} reference={uri} borderTone="accent-secondary">
       {element.isPending ? <Pending label="element" /> : null}
       {element.isError ? <Failed error={element.error} /> : null}
       {element.data ? (
@@ -189,6 +196,7 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                     spellCheck={false}
                     rows={14}
                     aria-label="User properties, as JSON"
+                    bordered={false}
                     tone="canvas"
                     typography="mono"
                   />

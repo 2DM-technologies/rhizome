@@ -70,6 +70,7 @@ export function primaryPayloadCandidate<T extends PayloadCandidate>(
 }
 
 export interface ElementPreviewProps {
+  borderTone?: "hairline" | "accent-secondary";
   title: string;
   kind?: string;
   mime?: string;
@@ -105,6 +106,7 @@ function fallback(
 
 /** Shared browser-native renderer for stored and staged media elements. */
 export function ElementPreview({
+  borderTone = "hairline",
   className,
   errorLabel = "Content unavailable",
   fallbackDetail,
@@ -119,6 +121,9 @@ export function ElementPreview({
   title,
   variant = "card",
 }: ElementPreviewProps) {
+  const frameBorder =
+    borderTone === "accent-secondary" ? "border-accent-secondary" : "border-hairline";
+
   if (!kind || !mime) {
     if (isPending) return <span className="text-caption text-tertiary">{loadingLabel}</span>;
     if (isError) return <span className="text-caption text-tertiary">{errorLabel}</span>;
@@ -154,7 +159,8 @@ export function ElementPreview({
             ? "size-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
             : variant === "thumbnail"
               ? "size-full object-cover"
-              : "max-h-96 max-w-full rounded-sm border border-hairline object-contain",
+              : "max-h-96 max-w-full rounded-sm border object-contain",
+          variant === "detail" && frameBorder,
           className,
         )}
       />
@@ -169,7 +175,8 @@ export function ElementPreview({
         controls
         aria-label={`Audio for ${title}`}
         className={cn(
-          variant === "card" ? "w-[80%]" : "w-full rounded-sm border border-hairline",
+          variant === "card" ? "w-[80%]" : "w-full rounded-sm border",
+          variant !== "card" && frameBorder,
           className,
         )}
       />
@@ -186,7 +193,8 @@ export function ElementPreview({
         className={cn(
           variant === "card"
             ? "size-full object-contain"
-            : "max-h-96 w-full rounded-sm border border-hairline bg-black",
+            : "max-h-96 w-full rounded-sm border bg-black",
+          variant !== "card" && frameBorder,
           className,
         )}
       />
@@ -205,7 +213,8 @@ export function ElementPreview({
       className={cn(
         variant === "card"
           ? "size-full border-0 bg-white"
-          : "h-72 w-full rounded-sm border border-hairline bg-white",
+          : "h-72 w-full rounded-sm border bg-white",
+        variant !== "card" && frameBorder,
         text && variant === "card" && "p-3",
         className,
       )}
