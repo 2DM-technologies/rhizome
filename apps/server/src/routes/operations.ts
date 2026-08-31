@@ -1,7 +1,6 @@
 import { operationDocumentSchema } from "@rhizome/store-contract";
 
 import type { Database } from "../db/index.ts";
-import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { OperationsService } from "../services/operation-service.ts";
 import { ProblemSchema, RecordIdParamsSchema, jsonSchema } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
@@ -16,22 +15,22 @@ export function createOperationRoutes(db: Database) {
     {
       operationId: "getOperation",
       request: { param: RecordIdParamsSchema },
-      responses: {
-        200: OperationDocumentSchema,
-        401: ProblemSchema,
-        403: ProblemSchema,
-        404: ProblemSchema,
-        422: ProblemSchema,
-      },
+      responses: { 200: OperationDocumentSchema, 422: ProblemSchema },
     },
     async (context) => {
       const operationsService = new OperationsService({ db, actor: context.get("actor") });
-      const authorized = await operationsService.getOperation(context.req.valid("param").id);
-      return context.json(
-        serializeOperation(authorized.operation, {
-          exposeOwnerOnlyResult: authorized.exposeOwnerOnlyResult,
-        }),
-      );
+      const operation = await operationsService.getOperation(context.req.valid("param").id);
+      const document = {
+        operation_id: operation.uuid,
+        kind: operation.kind,
+        status: operation.status,
+        request: operation.request,
+        result: operation.result,
+        error: operation.error,
+        created_at: operation.createdAt.toISOString(),
+        ...(operation.finishedAt ? { finished_at: operation.finishedAt.toISOString() } : {}),
+      };
+      return context.json(document);
     },
   );
 

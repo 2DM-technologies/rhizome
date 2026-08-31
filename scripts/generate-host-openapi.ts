@@ -19,10 +19,6 @@ const RNET_COMPONENT_TYPES = {
 const STORE_COMPONENT_TYPES = {
   Problem: "StoreProblemDocument",
   Operation: "StoreOperationDocument",
-  IngestionSource: "StoreIngestionSourceDocument",
-  CreateIngestionSourceRequest: "StoreCreateIngestionSourceRequest",
-  CreateImportPreviewRequest: "StoreCreateImportPreviewRequest",
-  PullVibeRequest: "StorePullVibeRequest",
   CreateVibeRequest: "StoreCreateVibeRequest",
   UpdateVibeRequest: "StoreUpdateVibeRequest",
   MediaObjectRefsRequest: "StoreMediaObjectRefsRequest",
@@ -52,10 +48,6 @@ import type {
 import type {
   ProblemDocument as StoreProblemDocument,
   OperationDocument as StoreOperationDocument,
-  IngestionSourceDocument as StoreIngestionSourceDocument,
-  CreateIngestionSourceRequest as StoreCreateIngestionSourceRequest,
-  CreateImportPreviewRequest as StoreCreateImportPreviewRequest,
-  PullVibeRequest as StorePullVibeRequest,
   CreateVibeRequest as StoreCreateVibeRequest,
   UpdateVibeRequest as StoreUpdateVibeRequest,
   MediaObjectRefsRequest as StoreMediaObjectRefsRequest,

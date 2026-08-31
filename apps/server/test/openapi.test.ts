@@ -39,9 +39,6 @@ describe("OpenAPI", () => {
   test("discovers each route contract without external schema references", () => {
     const serialized = JSON.stringify(openApiDocument);
     expect(serialized).toContain('"operationId":"createMediaObjects"');
-    expect(serialized).toContain('"operationId":"createIngestionSource"');
-    expect(serialized).toContain('"operationId":"createImportPreview"');
-    expect(serialized).toContain('"operationId":"confirmImportPreview"');
     expect(serialized).toContain('"/rnet/v0/elements/{id}/bytes"');
     expect(serialized).toContain('"BearerAuth":{"type":"http","scheme":"bearer"}');
     expect(serialized).toContain('"name":"x-rnet-kind","in":"header","required":true');
@@ -58,12 +55,6 @@ describe("OpenAPI", () => {
     const getVibe = openApiDocument.paths["/rnet/v0/vibes/{id}"]?.get as
       { security?: unknown } | undefined;
     expect(getVibe?.security).toBeUndefined();
-
-    const getOperation = openApiDocument.paths["/rnet/v0/operations/{id}"]?.get as
-      { responses?: Record<string, unknown> } | undefined;
-    expect(Object.keys(getOperation?.responses ?? {})).toEqual(
-      expect.arrayContaining(["401", "403", "404"]),
-    );
   });
 
   test("documents arbitrary named multipart parts as binary files", () => {

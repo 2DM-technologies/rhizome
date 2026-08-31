@@ -8,13 +8,6 @@
       "when": 1787615919185,
       "tag": "0000_colossal_sentinel",
       "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1788059862844,
-      "tag": "0001_m2_ingestion",
-      "breakpoints": true
     }
   ]
 }

@@ -92,7 +92,6 @@ export class VibesService {
   async createVibe(input: CreateVibeRequest): Promise<VibeAggregate> {
     await this.access.assertAuthenticated();
     if (this.actor.kind !== "user") throw grantMissing("owner");
-    assertNoIntroducedPullSources(input.pull?.sources, []);
     const vibeUuid = uuidv7();
     const candidateGrants = input.grants ?? [];
     await this.assertGrantSubjects(candidateGrants);
@@ -144,9 +143,6 @@ export class VibesService {
       patch.grants ??
       currentVibe.grants.map((grant) => ({ subject: grant.subject, scope: grant.scopes }));
     await this.assertGrantSubjects(candidateGrants);
-    if (patch.pull !== undefined) {
-      assertNoIntroducedPullSources(patch.pull.sources, currentVibe.vibe.pullConfig?.sources ?? []);
-    }
 
     const vibeRecord = await this.db.transaction(async (transaction: DatabaseTransaction) => {
       const [vibeRecord] = await transaction
@@ -361,30 +357,4 @@ function snapshotVibe(vibeRecord: DbVibe, activeGrants: Grant[]): Record<string,
     pull_config: vibeRecord.pullConfig,
     grants: activeGrants,
   };
-}
-
-function assertNoIntroducedPullSources(
-  candidateSources: readonly string[] | undefined,
-  existingSources: readonly string[],
-): void {
-  const candidates = candidateSources ?? [];
-  if (new Set(candidates).size !== candidates.length) {
-    throw new Problem(
-      422,
-      "schema_violation",
-      "Pull configuration is invalid",
-      "Configured source identifiers must be unique",
-    );
-  }
-
-  const existing = new Set(existingSources);
-  const introduced = candidates.filter((source) => !existing.has(source));
-  if (introduced.length > 0) {
-    throw new Problem(
-      422,
-      "import_review_invalid",
-      "Import review required",
-      "New ingestion sources can only be added by confirming a completed import preview",
-    );
-  }
 }
