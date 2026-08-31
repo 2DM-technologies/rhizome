@@ -163,7 +163,6 @@ describe("X shared post candidates", () => {
       x_tweet_id: "101",
       x_author_id: "42",
     });
-    expect(quote?.semanticSourceProperties).toBe(quote?.sourceProperties);
     expect(bundle.verify).toMatchObject({
       source_record_count: 7,
       replies_excluded: 1,

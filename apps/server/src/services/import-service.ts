@@ -51,7 +51,11 @@ import {
 import { ingestionSources, type DbIngestionSource } from "../db/models/ingestion-source.ts";
 import { ingestionSourceObjects } from "../db/models/ingestion-source-object.ts";
 import { mediaElements, type MediaElementKind } from "../db/models/media-element.ts";
-import { mediaObjectElements } from "../db/models/media-object-element.ts";
+import {
+  MediaObjectElementRoleEnum,
+  mediaObjectElements,
+  type MediaObjectElementRole,
+} from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
 import { mediaObjectRevisions } from "../db/models/media-object-revision.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
@@ -158,8 +162,6 @@ interface ResolvedRemoteSource extends ResolvedSourceBase {
 
 type ResolvedSource = ResolvedOriginSource | ResolvedCredentialSource | ResolvedRemoteSource;
 
-type StagedElementRole = "title" | "content" | "preview";
-
 /**
  * A provider-neutral manifest for a payload captured during preview. Sources can emit zero or
  * more elements through this same reviewed and atomically committed path.
@@ -167,7 +169,7 @@ type StagedElementRole = "title" | "content" | "preview";
 export interface StagedElement {
   uri: string;
   object_uri: string;
-  role: StagedElementRole;
+  role: MediaObjectElementRole;
   alt?: string;
   kind: MediaElementKind;
   mime: string;
@@ -255,62 +257,14 @@ export class ImportService {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const [vibe] = await this.db.select().from(vibes).where(eq(vibes.uuid, vibeUuid));
     if (!vibe) throw notFound("Vibe");
-
-    const sourceUuid = sourceUuidOf(input.source);
-    const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
-    const continuation = input.continuation_token
-      ? await this.openSourceContinuation(
-          input.continuation_token,
-          vibe.uuid,
-          vibe.ownerUuid,
-          source,
-        )
-      : undefined;
-    if (source.kind === "credential") {
-      try {
-        await this.prepareConnectedFetch(source, continuation?.resume);
-      } catch (error) {
-        if (!(error instanceof ConnectedSourceActionRequired)) throw error;
-        if (continuation) throw invalidContinuation();
-        throw await this.sourceActionError(error, source, vibe);
-      }
-    } else if (continuation) {
-      throw invalidContinuation();
-    }
-    const operationUuid = uuidv7();
-    const [operation] = await this.db
-      .insert(operations)
-      .values({
-        uuid: operationUuid,
-        kind: "pull",
-        status: "queued",
-        invokedBy: this.actor.subject,
-        vibeUuid,
-        request: {
-          mode: "import_preview",
-          source: input.source,
-          ...(continuation ? { continuation_action: continuation.kind } : {}),
-        },
-      })
-      .returning();
-    if (!operation) throw new Error("Import preview operation insert did not return a row");
-
-    queueMicrotask(() => {
-      void this.runPreview(operationUuid, sourceUuid, vibe, continuation).catch(
-        async (error: unknown) => {
-          await this.db
-            .update(operations)
-            .set({
-              status: "failed",
-              result: connectedSourceOperationResult(error),
-              error: error instanceof Error ? error.message : "Import preview failed",
-              finishedAt: new Date(),
-            })
-            .where(eq(operations.uuid, operationUuid));
-        },
-      );
+    return this.startPreviewForVibe({
+      vibe,
+      operationVibeUuid: vibe.uuid,
+      invokedBy: this.actor.subject,
+      sourceReference: input.source,
+      continuationToken: input.continuation_token,
+      pendingDestination: false,
     });
-    return operation;
   }
 
   async startPendingVibePreview(input: CreatePendingVibeImportRequest): Promise<DbOperation> {
@@ -318,16 +272,6 @@ export class ImportService {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const actor = this.actor;
     const pendingVibeUuid = input.destination?.id ?? uuidv7();
-    const sourceUuid = sourceUuidOf(input.source);
-    const source = await this.snapshotSource(sourceUuid, actor.uuid);
-    const continuation = input.continuation_token
-      ? await this.openSourceContinuation(
-          input.continuation_token,
-          pendingVibeUuid,
-          actor.uuid,
-          source,
-        )
-      : undefined;
     const pendingVibe: DbVibe = {
       uuid: pendingVibeUuid,
       title: "Pending import",
@@ -339,13 +283,41 @@ export class ImportService {
       createdAt: new Date(),
       rev: 0,
     };
+    return this.startPreviewForVibe({
+      vibe: pendingVibe,
+      operationVibeUuid: null,
+      invokedBy: actor.subject,
+      sourceReference: input.source,
+      continuationToken: input.continuation_token,
+      pendingDestination: true,
+    });
+  }
+
+  private async startPreviewForVibe(input: {
+    continuationToken: string | undefined;
+    invokedBy: string;
+    operationVibeUuid: string | null;
+    pendingDestination: boolean;
+    sourceReference: string;
+    vibe: DbVibe;
+  }): Promise<DbOperation> {
+    const sourceUuid = sourceUuidOf(input.sourceReference);
+    const source = await this.snapshotSource(sourceUuid, input.vibe.ownerUuid);
+    const continuation = input.continuationToken
+      ? await this.openSourceContinuation(
+          input.continuationToken,
+          input.vibe.uuid,
+          input.vibe.ownerUuid,
+          source,
+        )
+      : undefined;
     if (source.kind === "credential") {
       try {
         await this.prepareConnectedFetch(source, continuation?.resume);
       } catch (error) {
         if (!(error instanceof ConnectedSourceActionRequired)) throw error;
         if (continuation) throw invalidContinuation();
-        throw await this.sourceActionError(error, source, pendingVibe, true);
+        throw await this.sourceActionError(error, source, input.vibe, input.pendingDestination);
       }
     } else if (continuation) {
       throw invalidContinuation();
@@ -357,20 +329,22 @@ export class ImportService {
         uuid: operationUuid,
         kind: "pull",
         status: "queued",
-        invokedBy: actor.subject,
-        vibeUuid: null,
+        invokedBy: input.invokedBy,
+        vibeUuid: input.operationVibeUuid,
         request: {
           mode: "import_preview",
-          source: input.source,
-          pending_destination: { vibe_uuid: pendingVibeUuid },
+          source: input.sourceReference,
+          ...(input.pendingDestination
+            ? { pending_destination: { vibe_uuid: input.vibe.uuid } }
+            : {}),
           ...(continuation ? { continuation_action: continuation.kind } : {}),
         },
       })
       .returning();
-    if (!operation) throw new Error("Pending-Vibe import operation insert did not return a row");
+    if (!operation) throw new Error("Import preview operation insert did not return a row");
 
     queueMicrotask(() => {
-      void this.runPreview(operationUuid, sourceUuid, pendingVibe, continuation).catch(
+      void this.runPreview(operationUuid, sourceUuid, input.vibe, continuation).catch(
         async (error: unknown) => {
           await this.db
             .update(operations)
@@ -2811,7 +2785,7 @@ function assertCandidate(
   for (const element of elements) {
     if (
       element.object_uri !== candidate.uri ||
-      !["title", "content", "preview"].includes(element.role) ||
+      !MediaObjectElementRoleEnum.includes(element.role) ||
       (element.alt !== undefined && typeof element.alt !== "string") ||
       !ELEMENT_URI_PATTERN.test(element.uri) ||
       !/^sha256:[a-f0-9]{64}$/.test(element.content_hash) ||

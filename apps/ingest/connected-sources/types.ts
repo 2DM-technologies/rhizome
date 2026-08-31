@@ -326,10 +326,6 @@ function assertConnectionManifestCoverage(skill: CredentialedSourceSkill): void 
   });
 }
 
-function boundedInteger(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
 export function delegatedConnectedSourceError(error: unknown): unknown {
   if (!(error instanceof ConnectedSourceError) || !error.delegated) return error;
   return new ConnectedSourceError(error.skillId, error.delegated);

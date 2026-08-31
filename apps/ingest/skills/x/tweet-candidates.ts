@@ -2,6 +2,7 @@ import type { SourceExecutionLimits } from "../../../../packages/store-contract/
 
 import {
   candidateBundle,
+  sourceJsonObject,
   type CandidateBundle,
   type SourceCandidateDraft,
   type SourceElementDraft,
@@ -17,7 +18,7 @@ import type {
   XPostExclusionReason,
   XVerifyReport,
 } from "./contracts.ts";
-import { sha256, sourceJsonObject } from "./contracts.ts";
+import { sha256 } from "./contracts.ts";
 import { normalizeXEntities } from "./entities.ts";
 import { verifyXPostCandidates } from "./verify.ts";
 
@@ -38,7 +39,7 @@ export function classifyXPost(post: NormalizedXPost, ownerId: string): XPostDisp
   if (post.references.some(({ kind }) => kind === "replied_to")) {
     return { eligible: false, reason: "reply" };
   }
-  if (post.references.some(({ kind }) => kind === "reposted")) {
+  if (post.isRepost || post.references.some(({ kind }) => kind === "reposted")) {
     return { eligible: false, reason: "repost" };
   }
   const quote = post.references.find(({ kind }) => kind === "quoted");
@@ -215,9 +216,6 @@ export async function compileXPostCandidates(
       ...(selection.retrievedAt ? { retrievedAt: selection.retrievedAt } : {}),
       elements,
       semanticIdentity: { type: "tweet", x_tweet_id: post.id, x_author_id: post.authorId },
-      // Adapters never admit volatile engagement metrics, so every normalized source fact is
-      // intentionally semantic, including declared media omissions.
-      semanticSourceProperties: sourceProperties,
     });
   }
 
@@ -235,30 +233,35 @@ function postSourceProperties(
   postKind: XEligiblePostKind,
   omissions: readonly XMediaOmission[],
 ): SourceJsonObject {
-  return sourceJsonObject({
-    published_at: post.publishedAt,
-    ...(post.authorHandle ? { author_handle: post.authorHandle } : {}),
-    ...(post.authorName ? { author_name: post.authorName } : {}),
-    post_kind: postKind,
-    ...(post.conversationId ? { conversation_id: post.conversationId } : {}),
-    referenced_post_ids: post.references.map(({ postId }) => postId),
-    ...(post.language ? { language: post.language } : {}),
-    ...(post.possiblySensitive !== undefined ? { possibly_sensitive: post.possiblySensitive } : {}),
-    ...(post.editHistoryIds ? { edit_history_ids: post.editHistoryIds } : {}),
-    ...(post.entities ? { entities: canonicalEntityFacts(post.entities) } : {}),
-    ...(omissions.length
-      ? {
-          media_omissions: omissions.map((omission) => ({
-            attachment_index: omission.attachmentIndex,
-            source_ref: omission.sourceRef,
-            reason: omission.reason,
-            ...(omission.kind ? { kind: omission.kind } : {}),
-            ...(omission.mime ? { mime: omission.mime } : {}),
-            ...(omission.byteSize !== undefined ? { byte_size: omission.byteSize } : {}),
-          })),
-        }
-      : {}),
-  });
+  return sourceJsonObject(
+    {
+      published_at: post.publishedAt,
+      ...(post.authorHandle ? { author_handle: post.authorHandle } : {}),
+      ...(post.authorName ? { author_name: post.authorName } : {}),
+      post_kind: postKind,
+      ...(post.conversationId ? { conversation_id: post.conversationId } : {}),
+      referenced_post_ids: post.references.map(({ postId }) => postId),
+      ...(post.language ? { language: post.language } : {}),
+      ...(post.possiblySensitive !== undefined
+        ? { possibly_sensitive: post.possiblySensitive }
+        : {}),
+      ...(post.editHistoryIds ? { edit_history_ids: post.editHistoryIds } : {}),
+      ...(post.entities ? { entities: canonicalEntityFacts(post.entities) } : {}),
+      ...(omissions.length
+        ? {
+            media_omissions: omissions.map((omission) => ({
+              attachment_index: omission.attachmentIndex,
+              source_ref: omission.sourceRef,
+              reason: omission.reason,
+              ...(omission.kind ? { kind: omission.kind } : {}),
+              ...(omission.mime ? { mime: omission.mime } : {}),
+              ...(omission.byteSize !== undefined ? { byte_size: omission.byteSize } : {}),
+            })),
+          }
+        : {}),
+    },
+    "X source properties",
+  );
 }
 
 function mediaOmission(

@@ -537,6 +537,7 @@ function credential(overrides: Partial<DbSourceCredential> = {}): DbSourceCreden
     metadata: null,
     connectedAt: new Date("2026-08-29T11:00:00.000Z"),
     revokedAt: null,
+    providerRevokedAt: null,
     ...overrides,
   };
 }

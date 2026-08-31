@@ -9,7 +9,6 @@ import {
   X_OAUTH_ACCESS_TOKEN,
   X_OAUTH_AUTHORIZATION_CODE,
   X_OAUTH_AUTHORIZATION_ENDPOINT,
-  X_OAUTH_PKCE_VERIFIER,
   createMockXOAuthSkill,
   type MockXProvider,
 } from "./support/mockXOAuthSkill.ts";
@@ -179,7 +178,6 @@ function expectExactlyOnceConnectionAndPreview(): void {
   expect(authorization.searchParams.get("redirect_uri")).toMatch(
     /\/rnet\/v0\/source-connections\/oauth\/callback$/,
   );
-  expect(authorization.href).not.toContain(X_OAUTH_PKCE_VERIFIER);
   expect(authorization.href).not.toContain(X_OAUTH_ACCESS_TOKEN);
   expect(
     requestsTo("/rnet/v0/source-connections/oauth/callback", "GET")[0]?.headers()["cookie"],
@@ -204,7 +202,7 @@ async function expectCleanBrowserBoundary(page: Page): Promise<void> {
   const persisted = await page.context().storageState();
   const browserText = JSON.stringify({ storage, persisted });
   const requestBodies = mockStore.requests.map((request) => request.postData() ?? "").join("\n");
-  for (const secret of [X_OAUTH_AUTHORIZATION_CODE, X_OAUTH_PKCE_VERIFIER, X_OAUTH_ACCESS_TOKEN]) {
+  for (const secret of [X_OAUTH_AUTHORIZATION_CODE, X_OAUTH_ACCESS_TOKEN]) {
     expect(browserText).not.toContain(secret);
     expect(requestBodies).not.toContain(secret);
     expect(page.url()).not.toContain(secret);

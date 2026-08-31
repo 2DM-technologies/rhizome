@@ -6,6 +6,8 @@ import { compileTransactionCandidates } from "../skills/transactions/transaction
 import {
   CANDIDATE_BUNDLE_CAPABILITY,
   candidateBundle,
+  sourceJsonObject,
+  sourceJsonValue,
   type SourceCandidateDraft,
 } from "./candidate-bundle.ts";
 
@@ -31,6 +33,23 @@ describe("candidate_bundle@1 compiled-source contract", () => {
 
     expect(bundle.kind).toBe(CANDIDATE_BUNDLE_CAPABILITY);
     expect(bundle.candidates).toEqual(candidates);
+  });
+
+  test("centralizes defensive JSON-safe copies for source-owned facts", () => {
+    const input = { nested: { count: 2 }, values: [true, null, "stable"] };
+    const copied = sourceJsonObject(input, "Synthetic facts");
+    expect(copied).toEqual(input);
+    expect(copied).not.toBe(input);
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => sourceJsonValue(cyclic, "Synthetic facts")).toThrow("contains a cycle");
+    expect(() => sourceJsonObject({ missing: undefined }, "Synthetic facts")).toThrow(
+      "Synthetic facts.missing is undefined",
+    );
+    expect(() => sourceJsonValue(Number.POSITIVE_INFINITY, "Synthetic facts")).toThrow(
+      "not JSON-safe",
+    );
   });
 
   test("compiles canonical transaction IR without provider or server behavior", async () => {

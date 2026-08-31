@@ -1412,6 +1412,7 @@ describe("rNet M1 store", () => {
       .from(ingestionSources)
       .where(eq(ingestionSources.uuid, sourceUuid(source.source)));
     expect(revokedCredential?.revokedAt).toBeInstanceOf(Date);
+    expect(revokedCredential?.providerRevokedAt).toBeInstanceOf(Date);
     expect(revokedSource?.revokedAt).toBeInstanceOf(Date);
   });
 
@@ -1473,10 +1474,21 @@ describe("rNet M1 store", () => {
     expect(completed.map(({ status }) => status)).toEqual(["done", "done", "done", "done"]);
   });
 
-  test("fails OAuth provider revocation closed without leaving local access active", async () => {
+  test("disables local OAuth access immediately and retries provider revocation", async () => {
     resetSyntheticOAuthRuntime();
     const fixture = await createStoredSyntheticOAuthCredential();
+    let localAccessWasDisabledBeforeProviderRequest = false;
     syntheticOAuthRevoke = async () => {
+      const [credential] = await db
+        .select()
+        .from(sourceCredentials)
+        .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+      const [source] = await db
+        .select()
+        .from(ingestionSources)
+        .where(eq(ingestionSources.uuid, sourceUuid(fixture.source.source)));
+      localAccessWasDisabledBeforeProviderRequest =
+        credential?.revokedAt instanceof Date && source?.revokedAt instanceof Date;
       throw new CredentialConnectionError(
         "provider_revoke_failed",
         "ambiguous",
@@ -1493,6 +1505,7 @@ describe("rNet M1 store", () => {
     expect(problem.detail).toBe("The provider could not confirm revocation");
     expect(JSON.stringify(problem)).not.toContain("oauth-token-0");
     expect(syntheticOAuthRevokeSecrets).toEqual(["oauth-token-0"]);
+    expect(localAccessWasDisabledBeforeProviderRequest).toBe(true);
 
     const [credential] = await db
       .select()
@@ -1503,7 +1516,53 @@ describe("rNet M1 store", () => {
       .from(ingestionSources)
       .where(eq(ingestionSources.uuid, sourceUuid(fixture.source.source)));
     expect(credential?.revokedAt).toBeInstanceOf(Date);
+    expect(credential?.providerRevokedAt).toBeNull();
     expect(source?.revokedAt).toBeInstanceOf(Date);
+
+    syntheticOAuthRevoke = async () => {
+      throw undefined;
+    };
+    const retry = await request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(retry.status).toBe(422);
+    expect(syntheticOAuthRevokeSecrets).toEqual(["oauth-token-0", "oauth-token-0"]);
+
+    const [stillPendingProvider] = await db
+      .select()
+      .from(sourceCredentials)
+      .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+    expect(stillPendingProvider?.providerRevokedAt).toBeNull();
+
+    syntheticOAuthRevoke = async () => undefined;
+    const successfulRetry = await request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(successfulRetry.status).toBe(204);
+    expect(syntheticOAuthRevokeSecrets).toEqual([
+      "oauth-token-0",
+      "oauth-token-0",
+      "oauth-token-0",
+    ]);
+
+    const [providerRevoked] = await db
+      .select()
+      .from(sourceCredentials)
+      .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+    expect(providerRevoked?.providerRevokedAt).toBeInstanceOf(Date);
+
+    const idempotent = await request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(idempotent.status).toBe(204);
+    expect(syntheticOAuthRevokeSecrets).toEqual([
+      "oauth-token-0",
+      "oauth-token-0",
+      "oauth-token-0",
+    ]);
   });
 
   test("never persists an unknown provider error that contains the credential secret", async () => {

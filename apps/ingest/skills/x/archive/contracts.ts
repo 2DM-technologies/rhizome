@@ -9,13 +9,13 @@ import type {
   XMediaOmissionReason,
   XSelectionCounts,
 } from "../contracts.ts";
-import { isXStatusUrl, normalizeXEntities } from "../entities.ts";
+import { isXStatusUrl, normalizeXEntities, type XEntitiesInput } from "../entities.ts";
 
 export const X_ARCHIVE_CAPTURE_FORMAT = "rhizome.x-archive-selection@1" as const;
 export const X_ARCHIVE_CAPTURE_MIME = "application/vnd.rhizome.x-archive-selection+zip" as const;
-export const X_ARCHIVE_ACCOUNT_PATH = "account.json" as const;
 export const X_ARCHIVE_POSTS_PATH = "posts.json" as const;
 export const X_ARCHIVE_MANIFEST_PATH = "manifest.json" as const;
+export const X_ARCHIVE_MAX_POST_ATTACHMENTS = 4;
 
 export interface XArchiveLayout {
   readonly tweetGlobal: "tweet" | "tweets";
@@ -57,18 +57,18 @@ export interface XArchiveSelectionManifest {
 
 export interface RawXArchiveTweetEnvelope {
   readonly tweet: Readonly<Record<string, unknown>>;
-}
-
-export interface ParsedXArchiveSource {
-  readonly account: XAccountIdentity;
-  readonly archiveGeneratedAt?: string;
-  readonly tweets: readonly RawXArchiveTweetEnvelope[];
+  /** Current downloadable archives store long-form text separately from the tweet row. */
+  readonly noteTweet?: Readonly<Record<string, unknown>>;
 }
 
 export interface XArchiveSourceManifest {
   readonly archiveGeneratedAt?: string;
   readonly accountId?: string;
   readonly tweetFiles: readonly {
+    readonly path: string;
+    readonly globalName: string;
+  }[];
+  readonly noteTweetFiles: readonly {
     readonly path: string;
     readonly globalName: string;
   }[];
@@ -88,6 +88,7 @@ export interface NormalizedRawArchivePost {
 }
 
 const DECIMAL_ID = /^[0-9]+$/;
+const CANONICAL_DECIMAL_INTEGER = /^(?:0|[1-9][0-9]*)$/;
 const HASH = /^sha256:[a-f0-9]{64}$/;
 
 /** Parses only the expected assignment followed by JSON. Archive JavaScript is never evaluated. */
@@ -114,6 +115,13 @@ export function parseArchiveDataAssignment(value: string, globalName: string): u
   return parseAssignment(value, `window.${globalName} = `, "tweet data");
 }
 
+export function parseArchiveNoteTweetDataAssignment(value: string, globalName: string): unknown {
+  if (!/^YTD\.note_tweet\.part[0-9]+$/.test(globalName)) {
+    throw new Error("X archive Note Tweet global name is invalid");
+  }
+  return parseAssignment(value, `window.${globalName} = `, "Note Tweet data");
+}
+
 export function parseRawArchiveManifest(value: string): XArchiveSourceManifest {
   const parsed = parseAssignment(value, "window.__THAR_CONFIG = ", "manifest");
   if (!record(parsed)) throw new Error("X archive manifest is invalid");
@@ -134,26 +142,50 @@ export function parseRawArchiveManifest(value: string): XArchiveSourceManifest {
   if (!tweetType || !Array.isArray(tweetType.files) || tweetType.files.length === 0) {
     throw new Error("X archive manifest does not declare tweet data");
   }
-  const tweetFiles = tweetType.files.map((file, index) => {
-    if (
-      !record(file) ||
-      !safePath(file.fileName) ||
-      typeof file.globalName !== "string" ||
-      !/^YTD\.(?:tweet|tweets)\.part[0-9]+$/.test(file.globalName)
-    ) {
-      throw new Error(`X archive manifest tweet file ${index} is invalid`);
-    }
-    return { path: file.fileName, globalName: file.globalName };
-  });
+  const tweetFiles = archiveDataFiles(
+    tweetType.files,
+    /^YTD\.(?:tweet|tweets)\.part[0-9]+$/,
+    "tweet",
+  );
   const family = tweetFiles[0]!.globalName.split(".")[1];
   if (tweetFiles.some(({ globalName }) => globalName.split(".")[1] !== family)) {
     throw new Error("X archive manifest mixes tweet layouts");
   }
+  const noteTweetType = dataTypes.noteTweet;
+  if (noteTweetType !== undefined && !record(noteTweetType)) {
+    throw new Error("X archive manifest Note Tweet data is invalid");
+  }
+  const noteTweetFiles = noteTweetType
+    ? archiveDataFiles(noteTweetType.files, /^YTD\.note_tweet\.part[0-9]+$/, "Note Tweet", true)
+    : [];
   return {
     ...(generatedAt ? { archiveGeneratedAt: generatedAt } : {}),
     ...(accountId ? { accountId } : {}),
     tweetFiles,
+    noteTweetFiles,
   };
+}
+
+function archiveDataFiles(
+  value: unknown,
+  globalPattern: RegExp,
+  label: string,
+  allowEmpty = false,
+): Array<{ path: string; globalName: string }> {
+  if (!Array.isArray(value) || (!allowEmpty && value.length === 0)) {
+    throw new Error(`X archive manifest does not declare ${label} data`);
+  }
+  return value.map((file, index) => {
+    if (
+      !record(file) ||
+      !safePath(file.fileName) ||
+      typeof file.globalName !== "string" ||
+      !globalPattern.test(file.globalName)
+    ) {
+      throw new Error(`X archive manifest ${label} file ${index} is invalid`);
+    }
+    return { path: file.fileName, globalName: file.globalName };
+  });
 }
 
 export function parseRawArchiveAccount(value: unknown): XAccountIdentity & {
@@ -180,11 +212,82 @@ export function parseRawArchiveAccount(value: unknown): XAccountIdentity & {
 export function parseRawArchiveTweets(value: unknown): RawXArchiveTweetEnvelope[] {
   if (!Array.isArray(value)) throw new Error("X archive tweets payload must be an array");
   return value.map((entry, index) => {
-    if (!record(entry) || !record(entry.tweet)) {
+    if (
+      !record(entry) ||
+      !record(entry.tweet) ||
+      (entry.noteTweet !== undefined && !record(entry.noteTweet))
+    ) {
       throw new Error(`X archive tweet record ${index} is invalid`);
     }
-    return { tweet: entry.tweet };
+    return {
+      tweet: entry.tweet,
+      ...(record(entry.noteTweet) ? { noteTweet: entry.noteTweet } : {}),
+    };
   });
+}
+
+export function parseRawArchiveNoteTweets(value: unknown): Readonly<Record<string, unknown>>[] {
+  if (!Array.isArray(value)) throw new Error("X archive Note Tweet payload must be an array");
+  return value.map((entry, index) => {
+    if (!record(entry) || !record(entry.noteTweet)) {
+      throw new Error(`X archive Note Tweet record ${index} is invalid`);
+    }
+    parseCurrentNoteTweet(entry.noteTweet, index);
+    return entry.noteTweet;
+  });
+}
+
+/**
+ * Current archives do not expose a tweet ID on Note Tweet rows. Associate by the exact creation
+ * instant and the provider's truncated tweet-text prefix, rejecting missing or ambiguous matches.
+ */
+export function associateArchiveNoteTweets(
+  tweets: readonly RawXArchiveTweetEnvelope[],
+  noteTweets: readonly Readonly<Record<string, unknown>>[],
+): RawXArchiveTweetEnvelope[] {
+  const result: RawXArchiveTweetEnvelope[] = tweets.map(({ tweet }) => ({ tweet }));
+  const claimedTweets = new Set<number>();
+  const noteIds = new Set<string>();
+  const tweetsByCreatedAt = new Map<
+    string,
+    Array<{
+      readonly index: number;
+      readonly id: string;
+      readonly raw: Readonly<Record<string, unknown>>;
+    }>
+  >();
+  for (const [index, { tweet: raw }] of tweets.entries()) {
+    const id = requiredDecimal(raw.id_str, "tweet id");
+    const publishedAt = twitterDateTime(raw.created_at, id);
+    const sameInstant = tweetsByCreatedAt.get(publishedAt) ?? [];
+    sameInstant.push({ index, id, raw });
+    tweetsByCreatedAt.set(publishedAt, sameInstant);
+  }
+  for (const [noteIndex, rawNote] of noteTweets.entries()) {
+    const note = parseCurrentNoteTweet(rawNote, noteIndex);
+    if (noteIds.has(note.id)) throw new Error(`X archive repeats Note Tweet ${note.id}`);
+    noteIds.add(note.id);
+    const matches: number[] = [];
+    for (const { index, id, raw } of tweetsByCreatedAt.get(note.createdAt) ?? []) {
+      const rawText = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
+      const text = resolvedNoteTweetText(raw, rawText, note.text, id);
+      if (text !== undefined) matches.push(index);
+    }
+    if (matches.length !== 1) {
+      throw new Error(
+        `X archive Note Tweet ${note.id} has ${matches.length === 0 ? "no" : "an ambiguous"} tweet association`,
+      );
+    }
+    const index = matches[0]!;
+    if (claimedTweets.has(index)) {
+      throw new Error(
+        `X archive tweet ${String(tweets[index]!.tweet.id_str)} repeats Note Tweet data`,
+      );
+    }
+    claimedTweets.add(index);
+    result[index] = { tweet: tweets[index]!.tweet, noteTweet: rawNote };
+  }
+  return result;
 }
 
 export function normalizeRawArchiveTweet(
@@ -194,9 +297,25 @@ export function normalizeRawArchiveTweet(
 ): NormalizedRawArchivePost {
   const raw = envelope.tweet;
   const id = requiredDecimal(raw.id_str, "tweet id");
-  const text = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
   const publishedAt = twitterDateTime(raw.created_at, id);
-  const entities = normalizeArchiveEntities(raw.entities, text, id);
+  const rawText = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
+  const associatedNote = envelope.noteTweet
+    ? resolvedAssociatedNoteTweet(raw, rawText, publishedAt, envelope.noteTweet, id)
+    : undefined;
+  const text = associatedNote?.text ?? rawText;
+  const archiveEntities = normalizeArchiveEntities(
+    raw.entities,
+    associatedNote ? rawText : text,
+    id,
+  );
+  const entities = associatedNote
+    ? mergeArchiveNoteEntities(
+        text,
+        archiveEntities,
+        associatedNote.note.entities,
+        associatedNote.prefix,
+      )
+    : archiveEntities;
   const references: NormalizedXPostReference[] = [];
   if (decimal(raw.in_reply_to_status_id_str)) {
     references.push({ kind: "replied_to", postId: raw.in_reply_to_status_id_str });
@@ -249,6 +368,7 @@ export function normalizeRawArchiveTweet(
       ...(account.name !== undefined ? { authorName: account.name } : {}),
       ...(decimal(raw.conversation_id_str) ? { conversationId: raw.conversation_id_str } : {}),
       references,
+      ...(isBareArchiveRepost(raw, rawText, id) ? { isRepost: true as const } : {}),
       ...(optionalString(raw.lang, 35) ? { language: raw.lang as string } : {}),
       ...(typeof raw.possibly_sensitive === "boolean"
         ? { possiblySensitive: raw.possibly_sensitive }
@@ -259,6 +379,232 @@ export function normalizeRawArchiveTweet(
     },
     media,
   };
+}
+
+interface ParsedCurrentNoteTweet {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly text: string;
+  readonly entities: NormalizedXEntities | undefined;
+}
+
+function parseCurrentNoteTweet(
+  value: Readonly<Record<string, unknown>>,
+  index: number,
+): ParsedCurrentNoteTweet {
+  const id = requiredDecimal(value.noteTweetId, `Note Tweet ${index} id`);
+  const createdAt = optionalDateTime(value.createdAt);
+  const updatedAt = optionalDateTime(value.updatedAt);
+  if (!createdAt || !updatedAt || !record(value.lifecycle) || !record(value.core)) {
+    throw new Error(`X archive Note Tweet ${id} metadata is invalid`);
+  }
+  const lifecycle = value.lifecycle;
+  for (const key of ["value", "name", "originalName"] as const) {
+    if (typeof lifecycle[key] !== "string" || !lifecycle[key]) {
+      throw new Error(`X archive Note Tweet ${id} lifecycle is invalid`);
+    }
+  }
+  const core = value.core;
+  const text = requiredString(core.text, `Note Tweet ${id} text`, 1_000_000);
+  const styleTags =
+    core.styletags === undefined ? [] : noteEntityArray(core.styletags, id, "style tags");
+  if (styleTags.some((entry) => !record(entry))) {
+    throw new Error(`X archive Note Tweet ${id} style tags are invalid`);
+  }
+  const entities = normalizeXEntities(text, {
+    urls: noteEntityArray(core.urls, id, "URLs").map((entry, entityIndex) => {
+      if (!record(entry)) throw new Error(`X archive Note Tweet ${id} URL is invalid`);
+      const span = noteEntitySpan(entry, id, "URL", entityIndex);
+      requiredString(entry.displayUrl, `Note Tweet ${id} display URL`, 8_192);
+      return {
+        url: requiredString(entry.shortUrl, `Note Tweet ${id} URL`, 8_192),
+        expandedUrl: requiredString(entry.expandedUrl, `Note Tweet ${id} expanded URL`, 8_192),
+        ...span,
+      };
+    }),
+    mentions: noteEntityArray(core.mentions, id, "mentions").map((entry, entityIndex) => {
+      if (!record(entry)) throw new Error(`X archive Note Tweet ${id} mention is invalid`);
+      return {
+        username: requiredString(entry.screenName, `Note Tweet ${id} mention username`, 15),
+        ...noteEntitySpan(entry, id, "mention", entityIndex),
+      };
+    }),
+    hashtags: noteEntityArray(core.hashtags, id, "hashtags").map((entry) => ({
+      tag: requiredString(entry, `Note Tweet ${id} hashtag`, 256),
+    })),
+    cashtags: noteEntityArray(core.cashtags, id, "cashtags").map((entry) => ({
+      tag: requiredString(entry, `Note Tweet ${id} cashtag`, 256),
+    })),
+  });
+  return { id, createdAt, text, entities };
+}
+
+function noteEntityArray(value: unknown, noteId: string, label: string): readonly unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`X archive Note Tweet ${noteId} ${label} are invalid`);
+  }
+  return value;
+}
+
+function noteEntitySpan(
+  value: Readonly<Record<string, unknown>>,
+  noteId: string,
+  label: string,
+  index: number,
+): { readonly start: number; readonly end: number } {
+  if (
+    typeof value.fromIndex !== "string" ||
+    typeof value.toIndex !== "string" ||
+    !CANONICAL_DECIMAL_INTEGER.test(value.fromIndex) ||
+    !CANONICAL_DECIMAL_INTEGER.test(value.toIndex)
+  ) {
+    throw new Error(`X archive Note Tweet ${noteId} ${label} index ${index} is invalid`);
+  }
+  const start = Number(value.fromIndex);
+  const end = Number(value.toIndex);
+  if (!nonnegativeInteger(start) || !nonnegativeInteger(end) || end <= start) {
+    throw new Error(`X archive Note Tweet ${noteId} ${label} index ${index} is invalid`);
+  }
+  return { start, end };
+}
+
+function resolvedAssociatedNoteTweet(
+  raw: Readonly<Record<string, unknown>>,
+  rawText: string,
+  publishedAt: string,
+  rawNote: Readonly<Record<string, unknown>>,
+  postId: string,
+): { readonly text: string; readonly prefix: string; readonly note: ParsedCurrentNoteTweet } {
+  const note = parseCurrentNoteTweet(rawNote, 0);
+  const resolved =
+    note.createdAt === publishedAt
+      ? resolvedNoteTweetText(raw, rawText, note.text, postId)
+      : undefined;
+  if (!resolved) {
+    throw new Error(`X archive Note Tweet ${note.id} contradicts tweet ${postId}`);
+  }
+  return { ...resolved, note };
+}
+
+function resolvedNoteTweetText(
+  raw: Readonly<Record<string, unknown>>,
+  rawText: string,
+  noteText: string,
+  postId: string,
+): { readonly text: string; readonly prefix: string } | undefined {
+  if (!rawText.endsWith("…")) return undefined;
+  const isReply = decimal(raw.in_reply_to_status_id_str);
+  const prefix = isReply ? leadingReplyPrefix(raw, rawText, postId) : "";
+  if (prefix === undefined) return undefined;
+  const truncatedBody = rawText.slice(prefix.length, -1);
+  if (
+    truncatedBody.length === 0 ||
+    noteText.length <= truncatedBody.length ||
+    !noteText.startsWith(truncatedBody)
+  ) {
+    return undefined;
+  }
+  return { text: `${prefix}${noteText}`, prefix };
+}
+
+function leadingReplyPrefix(
+  raw: Readonly<Record<string, unknown>>,
+  text: string,
+  postId: string,
+): string | undefined {
+  const expectedUsername = optionalString(raw.in_reply_to_screen_name, 15);
+  const mentions = normalizeArchiveEntities(raw.entities, text, postId)?.mentions ?? [];
+  if (!expectedUsername || mentions[0]?.start !== 0 || mentions[0].username !== expectedUsername) {
+    return undefined;
+  }
+  let cursor = 0;
+  let count = 0;
+  for (const mention of mentions) {
+    if (
+      mention.start !== cursor ||
+      text.slice(mention.start, mention.end) !== `@${mention.username}`
+    ) {
+      break;
+    }
+    cursor = mention.end;
+    while (cursor < text.length && /\s/u.test(text[cursor]!)) cursor += 1;
+    count += 1;
+  }
+  return count > 0 && cursor > mentions[count - 1]!.end ? text.slice(0, cursor) : undefined;
+}
+
+function mergeArchiveNoteEntities(
+  text: string,
+  archive: NormalizedXEntities | undefined,
+  note: NormalizedXEntities | undefined,
+  prefix: string,
+): NormalizedXEntities | undefined {
+  const input: XEntitiesInput = {
+    urls: [
+      ...(archive?.urls ?? [])
+        .filter(({ end }) => end <= prefix.length)
+        .map((entity) => ({
+          url: entity.url,
+          ...(entity.expanded_url ? { expandedUrl: entity.expanded_url } : {}),
+          start: entity.start,
+          end: entity.end,
+        })),
+      ...(note?.urls ?? []).map((entity) => ({
+        url: entity.url,
+        ...(entity.expanded_url ? { expandedUrl: entity.expanded_url } : {}),
+        start: entity.start + prefix.length,
+        end: entity.end + prefix.length,
+      })),
+    ],
+    mentions: [
+      ...(archive?.mentions ?? [])
+        .filter(({ end }) => end <= prefix.length)
+        .map((entity) => ({ ...entity })),
+      ...(note?.mentions ?? []).map((entity) => ({
+        ...entity,
+        start: entity.start + prefix.length,
+        end: entity.end + prefix.length,
+      })),
+    ],
+    hashtags: [
+      ...(archive?.hashtags ?? [])
+        .filter(({ end }) => end <= prefix.length)
+        .map((entity) => ({ ...entity })),
+      ...(note?.hashtags ?? []).map((entity) => ({
+        ...entity,
+        start: entity.start + prefix.length,
+        end: entity.end + prefix.length,
+      })),
+    ],
+    cashtags: [
+      ...(archive?.cashtags ?? [])
+        .filter(({ end }) => end <= prefix.length)
+        .map((entity) => ({ ...entity })),
+      ...(note?.cashtags ?? []).map((entity) => ({
+        ...entity,
+        start: entity.start + prefix.length,
+        end: entity.end + prefix.length,
+      })),
+    ],
+  };
+  return normalizeXEntities(text, input);
+}
+
+function isBareArchiveRepost(
+  raw: Readonly<Record<string, unknown>>,
+  text: string,
+  postId: string,
+): boolean {
+  if (decimal(raw.retweeted_status_id_str)) return false;
+  const mention = normalizeArchiveEntities(raw.entities, text, postId)?.mentions?.find(
+    ({ start }) => start === 3,
+  );
+  return Boolean(
+    mention &&
+    text.startsWith("RT ") &&
+    text.slice(3, mention.end) === `@${mention.username}` &&
+    text[mention.end] === ":",
+  );
 }
 
 export function assertSelectionManifest(
@@ -357,6 +703,9 @@ function archiveMedia(
 ): XArchiveMediaDescriptor[] {
   const extended = raw.extended_entities;
   if (!record(extended) || !Array.isArray(extended.media)) return [];
+  if (extended.media.length > X_ARCHIVE_MAX_POST_ATTACHMENTS) {
+    throw new Error(`X tweet ${postId} has too many attachments`);
+  }
   return extended.media.flatMap((value, index): XArchiveMediaDescriptor[] => {
     if (!record(value)) throw new Error(`X tweet ${postId} media ${index} is invalid`);
     const type = value.type;
@@ -484,14 +833,19 @@ function archiveEntitySpan(
   index: number,
 ): { readonly start?: number; readonly end?: number } {
   if (entity.indices === undefined) return {};
-  if (
-    !Array.isArray(entity.indices) ||
-    entity.indices.length !== 2 ||
-    !entity.indices.every(nonnegativeInteger)
-  ) {
+  if (!Array.isArray(entity.indices) || entity.indices.length !== 2) {
     throw new Error(`X archive tweet ${postId} ${label} entity indices ${index} are invalid`);
   }
-  return { start: entity.indices[0], end: entity.indices[1] };
+  const [rawStart, rawEnd] = entity.indices;
+  const homogeneous =
+    (typeof rawStart === "number" && typeof rawEnd === "number") ||
+    (typeof rawStart === "string" && typeof rawEnd === "string");
+  const start = homogeneous ? archiveEntityIndex(rawStart) : undefined;
+  const end = homogeneous ? archiveEntityIndex(rawEnd) : undefined;
+  if (start === undefined || end === undefined || end <= start) {
+    throw new Error(`X archive tweet ${postId} ${label} entity indices ${index} are invalid`);
+  }
+  return { start, end };
 }
 
 function findQuoteEntity(entities: NormalizedXEntities | undefined, quoteId: string) {
@@ -588,6 +942,13 @@ function dateTime(value: unknown): boolean {
 
 function nonnegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && Number(value) >= 0;
+}
+
+function archiveEntityIndex(value: unknown): number | undefined {
+  if (nonnegativeInteger(value)) return value;
+  if (typeof value !== "string" || !CANONICAL_DECIMAL_INTEGER.test(value)) return undefined;
+  const parsed = Number(value);
+  return nonnegativeInteger(parsed) ? parsed : undefined;
 }
 
 function positiveInteger(value: unknown): value is number {

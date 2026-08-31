@@ -9,10 +9,17 @@ import {
   ZipWriter,
 } from "@zip.js/zip.js";
 
+import { sha256 } from "../contracts.ts";
 import { compileXPostCandidates } from "../tweet-candidates.ts";
 import { prepareXArchiveCapture } from "./browser-capture.ts";
-import { X_ARCHIVE_CAPTURE_MIME } from "./contracts.ts";
+import {
+  X_ARCHIVE_CAPTURE_MIME,
+  associateArchiveNoteTweets,
+  normalizeRawArchiveTweet,
+  type RawXArchiveTweetEnvelope,
+} from "./contracts.ts";
 import { xArchiveParser } from "./parser.ts";
+import { xArchiveSourceSkill } from "./source.ts";
 
 const limits = {
   maxCandidates: 3,
@@ -20,6 +27,15 @@ const limits = {
   maxElementBytes: 64,
   maxTotalElementBytes: 256,
 } as const;
+
+const currentShapes = (await Bun.file(
+  new URL("../fixtures/archive-current-shapes.json", import.meta.url),
+).json()) as {
+  truncatedNoteTweet: RawXArchiveTweetEnvelope;
+  currentNoteTweet: { noteTweet: Readonly<Record<string, unknown>> };
+  bareRepost: RawXArchiveTweetEnvelope;
+  stringIndexTweet: RawXArchiveTweetEnvelope;
+};
 
 describe("X archive selective capture", () => {
   test("selects eligible posts, reads only their media, and revalidates the compact capture", async () => {
@@ -34,7 +50,10 @@ describe("X archive selective capture", () => {
     expect(prepared.mime).toBe(X_ARCHIVE_CAPTURE_MIME);
     expect(prepared.blob.size).toBeLessThan(limits.maxCaptureBytes);
     expect([...(await unzip(prepared.blob)).keys()]).not.toContain("data/direct-messages.js");
-    const selected = await xArchiveParser.parse(new Uint8Array(await prepared.blob.arrayBuffer()));
+    const selected = await xArchiveParser.parse(
+      new Uint8Array(await prepared.blob.arrayBuffer()),
+      limits,
+    );
     expect(selected.posts.map(({ id }) => id)).toEqual(["105", "101", "100"]);
     expect(selected.counts).toMatchObject({
       sourceRecordCount: 7,
@@ -97,20 +116,23 @@ describe("X archive selective capture", () => {
   });
 
   test("declares oversized and missing media while continuing to later smaller attachments", async () => {
-    const constrained = { ...limits, maxElementBytes: 4, maxTotalElementBytes: 200 };
+    const constrained = { ...limits, maxElementBytes: 40, maxTotalElementBytes: 200 };
     const archive = await sourceArchive({
-      firstMedia: new Uint8Array(8),
+      firstMedia: new Uint8Array(64),
       secondMedia: new Uint8Array(2),
     });
     const prepared = await prepareXArchiveCapture(new File([archive], "bounded.zip"), constrained);
-    const selected = await xArchiveParser.parse(new Uint8Array(await prepared.blob.arrayBuffer()));
+    const selected = await xArchiveParser.parse(
+      new Uint8Array(await prepared.blob.arrayBuffer()),
+      constrained,
+    );
     const first = selected.posts[0]!;
     expect(first.attachments.map((attachment) => attachment.status)).toEqual([
       "omitted",
       "available",
       "omitted",
     ]);
-    expect(first.attachments[0]).toMatchObject({ reason: "element_too_large", byteSize: 8 });
+    expect(first.attachments[0]).toMatchObject({ reason: "element_too_large", byteSize: 64 });
     expect((first.attachments[1] as { bytes: Uint8Array }).bytes.byteLength).toBe(2);
   });
 
@@ -121,12 +143,16 @@ describe("X archive selective capture", () => {
     );
     const entries = await unzip(prepared.blob);
     entries.set("unexpected.txt", new TextEncoder().encode("unexpected"));
-    await expect(xArchiveParser.parse(await zipBytes(entries))).rejects.toThrow("undeclared entry");
+    await expect(xArchiveParser.parse(await zipBytes(entries), limits)).rejects.toThrow(
+      "undeclared entry",
+    );
 
     entries.delete("unexpected.txt");
     const mediaPath = [...entries.keys()].find((path) => path.startsWith("media/"))!;
-    entries.set(mediaPath, new TextEncoder().encode("changed"));
-    await expect(xArchiveParser.parse(await zipBytes(entries))).rejects.toThrow("integrity failed");
+    entries.set(mediaPath, new Uint8Array(entries.get(mediaPath)!.byteLength).fill(0xff));
+    await expect(xArchiveParser.parse(await zipBytes(entries), limits)).rejects.toThrow(
+      "integrity failed",
+    );
   });
 
   test("rejects highly compressed ZIP-bomb entries before reading their payload", async () => {
@@ -199,9 +225,187 @@ describe("X archive selective capture", () => {
       archiveGeneratedAt: "2026-08-21T12:00:00.000Z",
       archiveLayout: { tweetGlobal: "tweet", mediaDirectory: "data/tweet_media" },
     });
-    const selected = await xArchiveParser.parse(new Uint8Array(await prepared.blob.arrayBuffer()));
+    const selected = await xArchiveParser.parse(
+      new Uint8Array(await prepared.blob.arrayBuffer()),
+      limits,
+    );
     expect(selected.posts.map(({ id }) => id)).toEqual(["11", "10"]);
     expect(selected.posts[0]?.attachments[0]?.status).toBe("available");
+  });
+
+  test("associates current Note Tweet rows without assuming their ID and preserves exact UTF-8", async () => {
+    const noteLimits = {
+      ...limits,
+      maxElementBytes: 1_024,
+      maxTotalElementBytes: 4_096,
+    };
+    const archive = await zip([
+      ["data/account.js", accountAssignment()],
+      [
+        "data/manifest.js",
+        `window.__THAR_CONFIG = ${JSON.stringify({
+          userInfo: { accountId: "42" },
+          dataTypes: {
+            tweets: {
+              files: [{ fileName: "data/tweets.js", globalName: "YTD.tweets.part0", count: "1" }],
+            },
+            noteTweet: {
+              files: [
+                {
+                  fileName: "data/note-tweet.js",
+                  globalName: "YTD.note_tweet.part0",
+                  count: "1",
+                },
+              ],
+            },
+          },
+        })}`,
+      ],
+      [
+        "data/tweets.js",
+        `window.YTD.tweets.part0 = ${JSON.stringify([currentShapes.truncatedNoteTweet])}`,
+      ],
+      [
+        "data/note-tweet.js",
+        `window.YTD.note_tweet.part0 = ${JSON.stringify([currentShapes.currentNoteTweet])}`,
+      ],
+    ]);
+    const prepared = await prepareXArchiveCapture(
+      new File([archive], "note-tweet.zip"),
+      noteLimits,
+    );
+    const compact = await unzip(prepared.blob);
+    expect([...compact.keys()].sort()).toEqual(["manifest.json", "posts.json"]);
+
+    const bytes = new Uint8Array(await prepared.blob.arrayBuffer());
+    const selected = await xArchiveParser.parse(bytes, noteLimits);
+    const expectedText = String(
+      (currentShapes.currentNoteTweet.noteTweet.core as Readonly<Record<string, unknown>>).text,
+    );
+    expect(selected.posts[0]?.id).toBe("2000000000000000001");
+    expect(selected.posts[0]?.text).toBe(expectedText);
+    expect(selected.posts[0]?.entities?.urls).toEqual([
+      {
+        start: 53,
+        end: 70,
+        url: "https://t.co/full",
+        expanded_url: "https://example.test/full",
+      },
+    ]);
+
+    const bundle = await xArchiveSourceSkill.compiledSource.compile({ bytes, limits: noteLimits });
+    expect(new TextDecoder().decode(bundle.candidates[0]?.elements[0]?.bytes)).toBe(expectedText);
+  });
+
+  test("rejects ambiguous Note Tweet associations", () => {
+    const duplicate = structuredClone(currentShapes.truncatedNoteTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    duplicate.tweet.id_str = "2000000000000000004";
+    duplicate.tweet.conversation_id_str = "2000000000000000004";
+    expect(() =>
+      associateArchiveNoteTweets(
+        [currentShapes.truncatedNoteTweet, duplicate],
+        [currentShapes.currentNoteTweet.noteTweet],
+      ),
+    ).toThrow("ambiguous");
+  });
+
+  test("normalizes homogeneous decimal-string entity pairs and rejects mixed pairs", () => {
+    const account = { id: "42", handle: "example_user" } as const;
+    const normalized = normalizeRawArchiveTweet(currentShapes.stringIndexTweet, account);
+    expect(normalized.post.entities?.urls?.[0]).toMatchObject({ start: 5, end: 19 });
+
+    const mixed = structuredClone(currentShapes.stringIndexTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    const entities = mixed.tweet.entities as Record<string, unknown>;
+    const urls = entities.urls as Array<Record<string, unknown>>;
+    urls[0]!.indices = [5, "19"];
+    expect(() => normalizeRawArchiveTweet(mixed, account)).toThrow("indices");
+  });
+
+  test("rejects more attachments than the provider archive shape permits", () => {
+    const tooMany = structuredClone(currentShapes.stringIndexTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    tooMany.tweet.extended_entities = {
+      media: Array.from({ length: 5 }, (_, index) => ({
+        type: "photo",
+        media_url_https: `https://pbs.twimg.com/media/${index}.jpg`,
+      })),
+    };
+    expect(() => normalizeRawArchiveTweet(tooMany, { id: "42", handle: "example_user" })).toThrow(
+      "too many attachments",
+    );
+  });
+
+  test("excludes provider-shaped bare reposts without inventing a target ID", async () => {
+    const original = {
+      tweet: {
+        id_str: "2000000000000000005",
+        conversation_id_str: "2000000000000000005",
+        created_at: "Tue Dec 02 05:02:00 +0000 2025",
+        full_text: "An eligible original",
+        entities: { hashtags: [], symbols: [], user_mentions: [], urls: [] },
+      },
+    };
+    const archive = await zip([
+      ["data/account.js", accountAssignment()],
+      [
+        "data/tweets.js",
+        `window.YTD.tweets.part0 = ${JSON.stringify([currentShapes.bareRepost, original])}`,
+      ],
+    ]);
+    const prepared = await prepareXArchiveCapture(new File([archive], "bare-repost.zip"), limits);
+    const selected = await xArchiveParser.parse(
+      new Uint8Array(await prepared.blob.arrayBuffer()),
+      limits,
+    );
+    expect(selected.posts.map(({ id }) => id)).toEqual(["2000000000000000005"]);
+    expect(selected.counts).toMatchObject({ repostsExcluded: 1, sourceRecordCount: 2 });
+  });
+
+  test("re-enforces per-element limits through the compiled-source server boundary", async () => {
+    const prepared = await prepareXArchiveCapture(
+      new File([await sourceArchive({})], "source.zip"),
+      limits,
+    );
+    const entries = await unzip(prepared.blob);
+    const manifest = JSON.parse(new TextDecoder().decode(entries.get("manifest.json"))) as {
+      includedMedia: Array<{
+        capturePath: string;
+        byteSize: number;
+        contentHash: `sha256:${string}`;
+      }>;
+    };
+    const included = manifest.includedMedia[0]!;
+    const oversized = new Uint8Array(4_096);
+    included.byteSize = oversized.byteLength;
+    included.contentHash = await sha256(oversized);
+    entries.set(included.capturePath, oversized);
+    entries.set("manifest.json", new TextEncoder().encode(JSON.stringify(manifest)));
+
+    await expect(
+      xArchiveSourceSkill.compiledSource.compile({
+        bytes: await zipBytes(entries),
+        limits,
+      }),
+    ).rejects.toThrow("element limit");
+  });
+
+  test("re-enforces the aggregate text and media budget on compact captures", async () => {
+    const prepared = await prepareXArchiveCapture(
+      new File([await sourceArchive({})], "source.zip"),
+      limits,
+    );
+    const aggregateLimits = { ...limits, maxElementBytes: 1_024, maxTotalElementBytes: 80 };
+    await expect(
+      xArchiveSourceSkill.compiledSource.compile({
+        bytes: new Uint8Array(await prepared.blob.arrayBuffer()),
+        limits: aggregateLimits,
+      }),
+    ).rejects.toThrow("aggregate element budget");
   });
 });
 

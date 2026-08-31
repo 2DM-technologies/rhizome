@@ -43,11 +43,12 @@ describe("X OAuth connected-source adapter", () => {
       timeline([
         {
           id: "105",
-          text: "Exact provider text",
+          text: "Truncated provider text…",
           author_id: "42",
           created_at: "2026-08-20T10:00:00.000Z",
           conversation_id: "105",
           edit_history_tweet_ids: ["105"],
+          note_tweet: { text: "Exact long-form provider text — “why?” 🤔" },
         },
       ]),
     ]);
@@ -67,7 +68,7 @@ describe("X OAuth connected-source adapter", () => {
       sourceProperties: { published_at: "2026-08-20T10:00:00.000Z" },
     });
     expect(new TextDecoder().decode(bundle.candidates[0]!.elements[0]!.bytes)).toBe(
-      "Exact provider text",
+      "Exact long-form provider text — “why?” 🤔",
     );
     expect(bundle.destination).toEqual({ title: "@example_user Tweets" });
     expect(provider.identityCalls).toBe(1);
@@ -85,6 +86,7 @@ describe("X OAuth connected-source adapter", () => {
       "edit_history_tweet_ids",
       "entities",
       "lang",
+      "note_tweet",
       "possibly_sensitive",
       "referenced_tweets",
     ]);

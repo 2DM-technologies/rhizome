@@ -138,9 +138,6 @@ export interface MockSourceSkillAdapter {
   readonly oauth?: {
     readonly authorizationEndpoint: string;
     readonly authorizationCode: string;
-    /** Server-only sentinels used to prove these values never cross the browser boundary. */
-    readonly pkceVerifier: string;
-    readonly accessToken: string;
   };
   readonly sourceAction?: MockSourceActionDefinition;
   readonly sourceId: string;

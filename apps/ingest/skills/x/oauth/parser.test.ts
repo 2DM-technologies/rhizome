@@ -4,6 +4,7 @@ import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from "@zip.js/zip
 import { normalizeRawArchiveTweet } from "../archive/contracts.ts";
 import { sha256 } from "../contracts.ts";
 import { X_SOURCE_LIMITS } from "../definition.ts";
+import { normalizeXTextSpan } from "../entities.ts";
 import { compileXPostCandidates, selectXPosts } from "../tweet-candidates.ts";
 import {
   X_OAUTH_CAPTURE_FORMAT,
@@ -12,11 +13,9 @@ import {
   X_OAUTH_TIMELINE_PATH,
   normalizeXOAuthTimeline,
   parseXOAuthCapture,
-  providerTextSpan,
-  type XApiTimelinePageRecord,
-  type XApiPostRecord,
   type XOAuthCaptureManifest,
 } from "./parser.ts";
+import type { XApiPost, XApiTimelinePage } from "./timeline.ts";
 
 const account = { id: "42", handle: "example_user", name: "Example User" } as const;
 const retrievedAt = "2026-08-21T12:00:00.000Z";
@@ -144,7 +143,7 @@ describe("X OAuth parser", () => {
     const text = "🔥 authored https://t.co/quote";
     const token = "https://t.co/quote";
     const scalarStart = [..."🔥 authored "].length;
-    const span = providerTextSpan(text, token, scalarStart, scalarStart + [...token].length);
+    const span = normalizeXTextSpan(text, token, scalarStart, scalarStart + [...token].length);
     expect(span).toEqual({ start: text.indexOf(token), end: text.length });
 
     const normalized = normalizeXOAuthTimeline({
@@ -391,7 +390,7 @@ describe("X OAuth parser", () => {
         limits: X_SOURCE_LIMITS,
         retrievedAt,
       }),
-    ).toThrow("identity is invalid");
+    ).toThrow("author is invalid");
     expect(() =>
       normalizeXOAuthTimeline({
         account,
@@ -496,10 +495,19 @@ describe("X OAuth parser", () => {
     await expect(parseXOAuthCapture(wrongDeclaredSize, X_SOURCE_LIMITS)).rejects.toThrow(
       "size contradicts its ZIP entry",
     );
+
+    const validLongFormTimeline = page([post({ id: "9" })]);
+    const malformedLongFormCapture = await captureBytes(validLongFormTimeline, [], [], undefined, {
+      ...validLongFormTimeline,
+      data: [{ ...validLongFormTimeline.data[0], note_tweet: { text: 42 } }],
+    });
+    await expect(parseXOAuthCapture(malformedLongFormCapture, X_SOURCE_LIMITS)).rejects.toThrow(
+      "note tweet text is invalid",
+    );
   });
 });
 
-function post(overrides: Partial<XApiPostRecord> = {}): XApiPostRecord {
+function post(overrides: Partial<XApiPost> = {}): XApiPost {
   return {
     id: "100",
     text: "An original post",
@@ -516,7 +524,7 @@ function post(overrides: Partial<XApiPostRecord> = {}): XApiPostRecord {
 function page(
   posts: readonly ReturnType<typeof post>[],
   media: readonly Record<string, unknown>[] = [],
-): XApiTimelinePageRecord {
+): XApiTimelinePage {
   return {
     data: posts,
     includes: { media: media as never },
@@ -529,7 +537,7 @@ function page(
 }
 
 async function captureBytes(
-  timeline: XApiTimelinePageRecord,
+  timeline: XApiTimelinePage,
   included: readonly {
     postId: string;
     attachmentIndex: number;
@@ -544,6 +552,7 @@ async function captureBytes(
   }[],
   omissions: XOAuthCaptureManifest["mediaOmissions"],
   replacementPayload?: Uint8Array,
+  persistedTimeline: unknown = timeline,
 ): Promise<Uint8Array> {
   const normalized = normalizeXOAuthTimeline({
     account,
@@ -558,8 +567,6 @@ async function captureBytes(
     limits: X_SOURCE_LIMITS,
     request: { maxResults: 100, exclude: ["replies", "retweets"] },
     ...(normalized.checkpoint ? { checkpoint: normalized.checkpoint } : {}),
-    counts: normalized.selection.counts,
-    selectedPostIds: normalized.selection.posts.map(({ id }) => id),
     includedMedia: await Promise.all(
       included.map(async ({ bytes, declaredByteSize, ...media }) => ({
         ...media,
@@ -571,7 +578,7 @@ async function captureBytes(
   };
   const writer = new ZipWriter(new BlobWriter(X_OAUTH_CAPTURE_MIME));
   await writer.add(X_OAUTH_MANIFEST_PATH, new TextReader(JSON.stringify(manifest)));
-  await writer.add(X_OAUTH_TIMELINE_PATH, new TextReader(JSON.stringify(timeline)));
+  await writer.add(X_OAUTH_TIMELINE_PATH, new TextReader(JSON.stringify(persistedTimeline)));
   for (const media of included) {
     await writer.add(media.capturePath, new Uint8ArrayReader(replacementPayload ?? media.bytes));
   }

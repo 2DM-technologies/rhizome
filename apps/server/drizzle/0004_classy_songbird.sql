@@ -14,7 +14,6 @@ CREATE TABLE "source_connection_attempts" (
 	"error_code" text,
 	"expires_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"completed_at" timestamp with time zone,
 	CONSTRAINT "source_connection_attempts_status_check" CHECK ("source_connection_attempts"."status" IN ('pending', 'exchanging', 'succeeded', 'rejected', 'failed', 'expired')),
 	CONSTRAINT "source_connection_attempts_result_check" CHECK ((
@@ -27,4 +26,5 @@ CREATE TABLE "source_connection_attempts" (
 ALTER TABLE "source_connection_attempts" ADD CONSTRAINT "source_connection_attempts_user_uuid_users_uuid_fk" FOREIGN KEY ("user_uuid") REFERENCES "public"."users"("uuid") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "source_connection_attempts" ADD CONSTRAINT "source_connection_attempts_credential_owner_skill_version_fk" FOREIGN KEY ("credential_uuid","user_uuid","skill_id","connector_version") REFERENCES "public"."source_credentials"("uuid","user_uuid","skill_id","connector_version") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "source_connection_attempts_state_hash_unique_idx" ON "source_connection_attempts" USING btree ("state_hash");--> statement-breakpoint
-CREATE INDEX "source_connection_attempts_owner_created_idx" ON "source_connection_attempts" USING btree ("user_uuid","created_at");
+CREATE INDEX "source_connection_attempts_owner_created_idx" ON "source_connection_attempts" USING btree ("user_uuid","created_at");--> statement-breakpoint
+ALTER TABLE "source_credentials" ADD COLUMN "provider_revoked_at" timestamp with time zone;

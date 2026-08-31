@@ -11,7 +11,6 @@ import { serializeXOAuthSecret } from "../../oauth.ts";
 import { createXOAuthSkill } from "../../source.ts";
 
 export const X_OAUTH_AUTHORIZATION_CODE = "x-mock-authorization-code-browser-only";
-export const X_OAUTH_PKCE_VERIFIER = "x-mock-server-only-pkce-verifier";
 export const X_OAUTH_ACCESS_TOKEN = "x-mock-server-only-access-token";
 
 const X_OAUTH_SOURCE_ID = "0198f2a1-2a01-7a01-8a01-000000000001";
@@ -60,8 +59,6 @@ export function createMockXOAuthSkill(): {
     oauth: {
       authorizationEndpoint: X_OAUTH_AUTHORIZATION_ENDPOINT,
       authorizationCode: X_OAUTH_AUTHORIZATION_CODE,
-      pkceVerifier: X_OAUTH_PKCE_VERIFIER,
-      accessToken: X_OAUTH_ACCESS_TOKEN,
     },
     async capture(context) {
       const prepared = await skill.prepareFetch({

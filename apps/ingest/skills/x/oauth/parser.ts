@@ -10,12 +10,12 @@ import type {
   SelectedXPosts,
   XAccountIdentity,
   XMediaOmissionReason,
-  XSelectionCounts,
 } from "../contracts.ts";
 import { sha256 } from "../contracts.ts";
 import { X_POST_PARSER_NAME, X_POST_PARSER_VERSION, X_SOURCE_LIMITS } from "../definition.ts";
-import { isXStatusUrl, normalizeXEntities, normalizeXTextSpan } from "../entities.ts";
+import { isXStatusUrl, normalizeXEntities } from "../entities.ts";
 import { compareXPostsNewestFirst, selectXPosts } from "../tweet-candidates.ts";
+import { parseXTimelinePage, type XApiMedia, type XApiPost } from "./timeline.ts";
 
 export const X_OAUTH_CAPTURE_FORMAT = "rhizome.x-oauth-capture@1" as const;
 export const X_OAUTH_CAPTURE_MIME = "application/vnd.rhizome.x-oauth-capture+zip" as const;
@@ -30,80 +30,6 @@ const MAX_CAPTURE_MEDIA = 100 * MAX_POST_ATTACHMENTS;
 const DECIMAL_ID = /^[0-9]+$/;
 const HASH = /^sha256:[a-f0-9]{64}$/;
 const SUPPORTED_IMAGE_MIMES = new Set(["image/gif", "image/jpeg", "image/png", "image/webp"]);
-
-export interface XApiUserRecord {
-  readonly id: string;
-  readonly username?: string;
-  readonly name?: string;
-}
-
-export interface XApiUrlEntityRecord {
-  readonly start?: number;
-  readonly end?: number;
-  readonly url: string;
-  readonly expanded_url?: string;
-  readonly display_url?: string;
-  readonly unwound_url?: string;
-}
-
-export interface XApiMentionEntityRecord {
-  readonly start?: number;
-  readonly end?: number;
-  readonly username: string;
-}
-
-export interface XApiTagEntityRecord {
-  readonly start?: number;
-  readonly end?: number;
-  readonly tag: string;
-}
-
-export interface XApiMediaRecord {
-  readonly media_key: string;
-  readonly type: string;
-  readonly url?: string;
-  readonly preview_image_url?: string;
-  readonly alt_text?: string;
-  readonly variants?: readonly {
-    readonly bit_rate?: number;
-    readonly content_type?: string;
-    readonly url?: string;
-  }[];
-}
-
-export interface XApiPostRecord {
-  readonly id: string;
-  readonly text: string;
-  readonly author_id: string;
-  readonly created_at: string;
-  readonly conversation_id?: string;
-  readonly referenced_tweets?: readonly {
-    readonly type: "replied_to" | "quoted" | "retweeted";
-    readonly id: string;
-  }[];
-  readonly attachments?: { readonly media_keys?: readonly string[] };
-  readonly lang?: string;
-  readonly possibly_sensitive?: boolean;
-  readonly edit_history_tweet_ids?: readonly string[];
-  readonly entities?: Readonly<Record<string, unknown>> & {
-    readonly urls?: readonly XApiUrlEntityRecord[];
-    readonly mentions?: readonly XApiMentionEntityRecord[];
-    readonly hashtags?: readonly XApiTagEntityRecord[];
-    readonly cashtags?: readonly XApiTagEntityRecord[];
-  };
-}
-
-export interface XApiTimelinePageRecord {
-  readonly data?: readonly XApiPostRecord[];
-  readonly includes?: { readonly media?: readonly XApiMediaRecord[] };
-  readonly meta?: {
-    readonly result_count?: number;
-    readonly newest_id?: string;
-    readonly oldest_id?: string;
-    readonly next_token?: string;
-  };
-  readonly errors?: readonly unknown[];
-}
 
 export interface XOAuthCheckpoint {
   /** Newest provider record seen, including one later excluded by source VERIFY. */
@@ -151,8 +77,6 @@ export interface XOAuthCaptureManifest {
   readonly limits: SourceExecutionLimits;
   readonly request: XOAuthTimelineRequestEvidence;
   readonly checkpoint?: XOAuthCheckpoint;
-  readonly counts: XSelectionCounts;
-  readonly selectedPostIds: readonly string[];
   readonly includedMedia: readonly XOAuthIncludedMedia[];
   readonly mediaOmissions: readonly XOAuthMediaOmission[];
 }
@@ -189,48 +113,25 @@ export function normalizeXOAuthTimeline(input: {
   readonly previousCheckpoint?: XOAuthCheckpoint;
 }): NormalizedXOAuthTimeline {
   const account = assertAccount(input.account);
-  const timeline = parseTimeline(input.timeline);
+  const timeline = parseXTimelinePage(input.timeline);
   assertLimits(input.limits);
   assertDateTime(input.retrievedAt, "retrieval timestamp");
   if (input.previousCheckpoint) assertCheckpoint(input.previousCheckpoint, "previous checkpoint");
-  if ((timeline.data?.length ?? 0) > 100) {
-    throw new Error("X OAuth timeline exceeds the one-page product cap");
-  }
-  if ((timeline.includes?.media?.length ?? 0) > MAX_CAPTURE_MEDIA) {
-    throw new Error("X OAuth timeline has too many media expansions");
-  }
 
-  const mediaByKey = new Map<string, XApiMediaRecord>();
-  for (const media of timeline.includes?.media ?? []) {
-    const parsed = parseMedia(media);
-    if (mediaByKey.has(parsed.media_key)) {
-      throw new Error(`X OAuth timeline repeats media key ${parsed.media_key}`);
+  const mediaByKey = new Map<string, XApiMedia>();
+  for (const media of timeline.includes.media) {
+    if (mediaByKey.has(media.media_key)) {
+      throw new Error(`X OAuth timeline repeats media key ${media.media_key}`);
     }
-    mediaByKey.set(parsed.media_key, parsed);
+    mediaByKey.set(media.media_key, media);
   }
 
   const mediaByPostId = new Map<string, readonly XOAuthMediaDescriptor[]>();
-  const posts = (timeline.data ?? []).map((value, index) => {
-    const post = parsePost(value, index);
+  const posts = timeline.data.map((post) => {
     const normalized = normalizePost(post, account, mediaByKey);
     mediaByPostId.set(normalized.post.id, normalized.media);
     return normalized.post;
   });
-  if (timeline.meta?.result_count !== undefined && timeline.meta.result_count !== posts.length) {
-    throw new Error("X OAuth timeline result count contradicts its records");
-  }
-  if (
-    timeline.meta?.newest_id !== undefined &&
-    !posts.some(({ id }) => id === timeline.meta!.newest_id)
-  ) {
-    throw new Error("X OAuth timeline newest id contradicts its records");
-  }
-  if (
-    timeline.meta?.oldest_id !== undefined &&
-    !posts.some(({ id }) => id === timeline.meta!.oldest_id)
-  ) {
-    throw new Error("X OAuth timeline oldest id contradicts its records");
-  }
 
   const selection = selectXPosts({
     account,
@@ -277,17 +178,6 @@ export async function parseXOAuthCapture(
         ? { previousCheckpoint: manifest.request.previousCheckpoint }
         : {}),
     });
-    if (!sameJson(normalized.selection.counts, manifest.counts)) {
-      throw new Error("X OAuth capture counts contradict the provider records");
-    }
-    if (
-      !sameJson(
-        normalized.selection.posts.map(({ id }) => id),
-        manifest.selectedPostIds,
-      )
-    ) {
-      throw new Error("X OAuth capture selected IDs contradict the provider records");
-    }
     if (!sameJson(normalized.checkpoint, manifest.checkpoint)) {
       throw new Error("X OAuth capture checkpoint contradicts the provider records");
     }
@@ -409,20 +299,21 @@ export async function planXOAuthTimelineRequest(
 }
 
 function normalizePost(
-  post: XApiPostRecord,
+  post: XApiPost,
   account: XAccountIdentity,
-  mediaByKey: ReadonlyMap<string, XApiMediaRecord>,
+  mediaByKey: ReadonlyMap<string, XApiMedia>,
 ): { post: NormalizedXPost; media: readonly XOAuthMediaDescriptor[] } {
-  const entities = normalizeXEntities(post.text, {
-    urls: (post.entities?.urls ?? []).map((entity) => ({
+  const content = post.note_tweet ?? post;
+  const entities = normalizeXEntities(content.text, {
+    urls: (content.entities?.urls ?? []).map((entity) => ({
       url: entity.url,
       ...(entity.expanded_url !== undefined ? { expandedUrl: entity.expanded_url } : {}),
       ...(entity.start !== undefined ? { start: entity.start } : {}),
       ...(entity.end !== undefined ? { end: entity.end } : {}),
     })),
-    mentions: (post.entities?.mentions ?? []).map((entity) => ({ ...entity })),
-    hashtags: (post.entities?.hashtags ?? []).map((entity) => ({ ...entity })),
-    cashtags: (post.entities?.cashtags ?? []).map((entity) => ({ ...entity })),
+    mentions: (content.entities?.mentions ?? []).map((entity) => ({ ...entity })),
+    hashtags: (content.entities?.hashtags ?? []).map((entity) => ({ ...entity })),
+    cashtags: (content.entities?.cashtags ?? []).map((entity) => ({ ...entity })),
   });
   const references = normalizeReferences(post, entities);
   const mediaKeys = post.attachments?.media_keys ?? [];
@@ -436,7 +327,7 @@ function normalizePost(
       authorId: post.author_id,
       canonicalUrl: `https://x.com/${account.handle ?? "i/web"}/status/${post.id}`,
       publishedAt: new Date(post.created_at).toISOString(),
-      text: post.text,
+      text: content.text,
       ...(account.handle ? { authorHandle: account.handle } : {}),
       ...(account.name !== undefined ? { authorName: account.name } : {}),
       ...(post.conversation_id ? { conversationId: post.conversation_id } : {}),
@@ -472,7 +363,7 @@ function normalizePost(
 }
 
 function normalizeReferences(
-  post: XApiPostRecord,
+  post: XApiPost,
   entities: NormalizedXEntities | undefined,
 ): NormalizedXPostReference[] {
   const references: NormalizedXPostReference[] = [];
@@ -511,13 +402,7 @@ function findQuoteEntity(entities: NormalizedXEntities | undefined, quoteId: str
   };
 }
 
-/** Backward-compatible test seam for the shared provider-offset normalizer. */
-export const providerTextSpan = normalizeXTextSpan;
-
-function mediaDescriptor(
-  mediaKey: string,
-  media: XApiMediaRecord | undefined,
-): XOAuthMediaDescriptor {
+function mediaDescriptor(mediaKey: string, media: XApiMedia | undefined): XOAuthMediaDescriptor {
   if (!media) return { mediaKey, declaredOmission: "missing_media" };
   const alt = media.alt_text?.trim() ? media.alt_text : undefined;
   if (media.type === "photo") {
@@ -591,234 +476,6 @@ function newestCheckpoint(
   return current.newestSeenId.localeCompare(previous.newestSeenId) > 0 ? current : previous;
 }
 
-function parseTimeline(value: unknown): XApiTimelinePageRecord {
-  if (!record(value)) throw new Error("X OAuth timeline response is invalid");
-  if (value.errors !== undefined) {
-    if (!Array.isArray(value.errors) || value.errors.length > 0) {
-      throw new Error("X OAuth timeline contains provider errors");
-    }
-  }
-  if (value.data !== undefined && !Array.isArray(value.data)) {
-    throw new Error("X OAuth timeline data is invalid");
-  }
-  if (value.includes !== undefined && !record(value.includes)) {
-    throw new Error("X OAuth timeline includes are invalid");
-  }
-  if (
-    record(value.includes) &&
-    value.includes.media !== undefined &&
-    !Array.isArray(value.includes.media)
-  ) {
-    throw new Error("X OAuth timeline media includes are invalid");
-  }
-  if (value.meta !== undefined && !record(value.meta)) {
-    throw new Error("X OAuth timeline metadata is invalid");
-  }
-  if (record(value.meta)) {
-    if (value.meta.result_count !== undefined && !nonnegativeInteger(value.meta.result_count)) {
-      throw new Error("X OAuth timeline result count is invalid");
-    }
-    for (const key of ["newest_id", "oldest_id"] as const) {
-      if (value.meta[key] !== undefined && !decimal(value.meta[key])) {
-        throw new Error(`X OAuth timeline ${key} is invalid`);
-      }
-    }
-    if (
-      value.meta.next_token !== undefined &&
-      (typeof value.meta.next_token !== "string" || !value.meta.next_token)
-    ) {
-      throw new Error("X OAuth timeline pagination token is invalid");
-    }
-  }
-  return value as unknown as XApiTimelinePageRecord;
-}
-
-function parsePost(value: unknown, index: number): XApiPostRecord {
-  if (!record(value) || !decimal(value.id) || !decimal(value.author_id)) {
-    throw new Error(`X OAuth post ${index} identity is invalid`);
-  }
-  if (typeof value.text !== "string" || value.text.length === 0 || value.text.length > 1_000_000) {
-    throw new Error(`X OAuth post ${value.id} text is invalid`);
-  }
-  if (typeof value.created_at !== "string") {
-    throw new Error(`X OAuth post ${value.id} publication timestamp is invalid`);
-  }
-  assertDateTime(value.created_at, `post ${value.id} publication timestamp`);
-  if (value.conversation_id !== undefined && !decimal(value.conversation_id)) {
-    throw new Error(`X OAuth post ${value.id} conversation id is invalid`);
-  }
-  if (
-    value.lang !== undefined &&
-    (typeof value.lang !== "string" || !value.lang || value.lang.length > 35)
-  ) {
-    throw new Error(`X OAuth post ${value.id} language is invalid`);
-  }
-  if (value.possibly_sensitive !== undefined && typeof value.possibly_sensitive !== "boolean") {
-    throw new Error(`X OAuth post ${value.id} sensitivity flag is invalid`);
-  }
-  if (value.referenced_tweets !== undefined) {
-    if (!Array.isArray(value.referenced_tweets)) {
-      throw new Error(`X OAuth post ${value.id} references are invalid`);
-    }
-    for (const reference of value.referenced_tweets) {
-      if (
-        !record(reference) ||
-        !["replied_to", "quoted", "retweeted"].includes(String(reference.type)) ||
-        !decimal(reference.id)
-      ) {
-        throw new Error(`X OAuth post ${value.id} reference is invalid`);
-      }
-    }
-  }
-  if (value.attachments !== undefined) {
-    if (
-      !record(value.attachments) ||
-      (value.attachments.media_keys !== undefined && !Array.isArray(value.attachments.media_keys))
-    ) {
-      throw new Error(`X OAuth post ${value.id} attachments are invalid`);
-    }
-    for (const mediaKey of (value.attachments.media_keys as unknown[] | undefined) ?? []) {
-      if (typeof mediaKey !== "string" || !mediaKey) {
-        throw new Error(`X OAuth post ${value.id} media key is invalid`);
-      }
-    }
-    if (
-      ((value.attachments.media_keys as unknown[] | undefined) ?? []).length > MAX_POST_ATTACHMENTS
-    ) {
-      throw new Error(`X OAuth post ${value.id} has too many media attachments`);
-    }
-  }
-  if (value.edit_history_tweet_ids !== undefined) {
-    if (
-      !Array.isArray(value.edit_history_tweet_ids) ||
-      value.edit_history_tweet_ids.some((id) => !decimal(id))
-    ) {
-      throw new Error(`X OAuth post ${value.id} edit history is invalid`);
-    }
-  }
-  if (value.entities !== undefined && !record(value.entities)) {
-    throw new Error(`X OAuth post ${value.id} entities are invalid`);
-  }
-  if (record(value.entities)) {
-    const entityKeys = ["urls", "mentions", "hashtags", "cashtags"] as const;
-    let entityCount = 0;
-    for (const key of entityKeys) {
-      const entities = value.entities[key];
-      if (entities === undefined) continue;
-      if (!Array.isArray(entities)) {
-        throw new Error(`X OAuth post ${value.id} ${key} entities are invalid`);
-      }
-      entityCount += entities.length;
-      for (const entity of entities) {
-        if (key === "urls") parseUrlEntity(entity, value.id);
-        else if (key === "mentions") parseMentionEntity(entity, value.id);
-        else parseTagEntity(entity, value.id, key === "hashtags" ? "hashtag" : "cashtag");
-      }
-    }
-    if (entityCount > 1_024) {
-      throw new Error(`X OAuth post ${value.id} has too many structured entities`);
-    }
-  }
-  return value as unknown as XApiPostRecord;
-}
-
-function parseUrlEntity(value: unknown, postId: string): XApiUrlEntityRecord {
-  if (!record(value) || typeof value.url !== "string" || !value.url) {
-    throw new Error(`X OAuth post ${postId} URL entity is invalid`);
-  }
-  if (
-    (value.start === undefined) !== (value.end === undefined) ||
-    (value.start !== undefined &&
-      (!nonnegativeInteger(value.start) || !nonnegativeInteger(value.end)))
-  ) {
-    throw new Error(`X OAuth post ${postId} URL entity offsets are invalid`);
-  }
-  for (const key of ["expanded_url", "display_url", "unwound_url"] as const) {
-    if (value[key] !== undefined && typeof value[key] !== "string") {
-      throw new Error(`X OAuth post ${postId} URL entity ${key} is invalid`);
-    }
-  }
-  return value as unknown as XApiUrlEntityRecord;
-}
-
-function parseMentionEntity(value: unknown, postId: string): XApiMentionEntityRecord {
-  if (
-    !record(value) ||
-    typeof value.username !== "string" ||
-    !/^[A-Za-z0-9_]{1,15}$/u.test(value.username)
-  ) {
-    throw new Error(`X OAuth post ${postId} mention entity is invalid`);
-  }
-  assertEntityOffsets(value, postId, "mention");
-  return value as unknown as XApiMentionEntityRecord;
-}
-
-function parseTagEntity(
-  value: unknown,
-  postId: string,
-  label: "hashtag" | "cashtag",
-): XApiTagEntityRecord {
-  if (
-    !record(value) ||
-    typeof value.tag !== "string" ||
-    !value.tag ||
-    value.tag.length > 256 ||
-    /[\s\u0000-\u001f\u007f]/u.test(value.tag)
-  ) {
-    throw new Error(`X OAuth post ${postId} ${label} entity is invalid`);
-  }
-  assertEntityOffsets(value, postId, label);
-  return value as unknown as XApiTagEntityRecord;
-}
-
-function assertEntityOffsets(
-  value: Readonly<Record<string, unknown>>,
-  postId: string,
-  label: string,
-): void {
-  if (
-    (value.start === undefined) !== (value.end === undefined) ||
-    (value.start !== undefined &&
-      (!nonnegativeInteger(value.start) ||
-        !nonnegativeInteger(value.end) ||
-        Number(value.end) <= Number(value.start)))
-  ) {
-    throw new Error(`X OAuth post ${postId} ${label} entity offsets are invalid`);
-  }
-}
-
-function parseMedia(value: unknown): XApiMediaRecord {
-  if (
-    !record(value) ||
-    typeof value.media_key !== "string" ||
-    !value.media_key ||
-    typeof value.type !== "string" ||
-    !value.type
-  ) {
-    throw new Error("X OAuth media expansion is invalid");
-  }
-  for (const key of ["url", "preview_image_url", "alt_text"] as const) {
-    if (value[key] !== undefined && typeof value[key] !== "string") {
-      throw new Error(`X OAuth media ${value.media_key} ${key} is invalid`);
-    }
-  }
-  if (value.variants !== undefined) {
-    if (!Array.isArray(value.variants))
-      throw new Error(`X OAuth media ${value.media_key} variants are invalid`);
-    for (const variant of value.variants) {
-      if (
-        !record(variant) ||
-        (variant.bit_rate !== undefined && !nonnegativeInteger(variant.bit_rate)) ||
-        (variant.content_type !== undefined && typeof variant.content_type !== "string") ||
-        (variant.url !== undefined && typeof variant.url !== "string")
-      ) {
-        throw new Error(`X OAuth media ${value.media_key} variant is invalid`);
-      }
-    }
-  }
-  return value as unknown as XApiMediaRecord;
-}
-
 function assertCaptureManifest(value: unknown): asserts value is XOAuthCaptureManifest {
   if (!record(value) || value.format !== X_OAUTH_CAPTURE_FORMAT) {
     throw new Error("X OAuth capture manifest is invalid");
@@ -844,15 +501,6 @@ function assertCaptureManifest(value: unknown): asserts value is XOAuthCaptureMa
     throw new Error("X OAuth capture has a start time without a previous checkpoint");
   }
   if (value.checkpoint !== undefined) assertCheckpoint(value.checkpoint, "capture checkpoint");
-  assertCounts(value.counts, value.limits.maxCandidates);
-  if (
-    !Array.isArray(value.selectedPostIds) ||
-    value.selectedPostIds.some((id) => !decimal(id)) ||
-    new Set(value.selectedPostIds).size !== value.selectedPostIds.length ||
-    value.selectedPostIds.length !== value.counts.importedCount
-  ) {
-    throw new Error("X OAuth capture selected post IDs are invalid");
-  }
   if (!Array.isArray(value.includedMedia) || !Array.isArray(value.mediaOmissions)) {
     throw new Error("X OAuth capture media evidence is invalid");
   }
@@ -998,23 +646,6 @@ function sameLimits(left: SourceExecutionLimits, right: SourceExecutionLimits): 
     left.maxElementBytes === right.maxElementBytes &&
     left.maxTotalElementBytes === right.maxTotalElementBytes
   );
-}
-
-function assertCounts(value: unknown, cap: number): asserts value is XSelectionCounts {
-  if (!record(value)) throw new Error("X OAuth capture counts are invalid");
-  const keys = [
-    "sourceRecordCount",
-    "repliesExcluded",
-    "repostsExcluded",
-    "quotesWithoutCommentaryExcluded",
-    "authorMismatchesExcluded",
-    "eligibleCount",
-    "importedCount",
-    "cap",
-  ] as const;
-  if (keys.some((key) => !nonnegativeInteger(value[key])) || value.cap !== cap) {
-    throw new Error("X OAuth capture counts are invalid");
-  }
 }
 
 function assertCheckpoint(value: unknown, label: string): asserts value is XOAuthCheckpoint {

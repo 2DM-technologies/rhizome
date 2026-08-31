@@ -5,16 +5,18 @@ import type { PreparedSourceCapture } from "../../../file-sources/preprocessing.
 import { sha256 } from "../contracts.ts";
 import { selectXPosts } from "../tweet-candidates.ts";
 import {
-  X_ARCHIVE_ACCOUNT_PATH,
   X_ARCHIVE_CAPTURE_FORMAT,
   X_ARCHIVE_CAPTURE_MIME,
   X_ARCHIVE_MANIFEST_PATH,
   X_ARCHIVE_POSTS_PATH,
+  associateArchiveNoteTweets,
   normalizeRawArchiveTweet,
   parseArchiveAssignment,
   parseArchiveDataAssignment,
+  parseArchiveNoteTweetDataAssignment,
   parseRawArchiveAccount,
   parseRawArchiveManifest,
+  parseRawArchiveNoteTweets,
   parseRawArchiveTweets,
   type RawXArchiveTweetEnvelope,
   type XArchiveIncludedMedia,
@@ -49,6 +51,7 @@ export async function prepareXArchiveCapture(
       throw new Error("X archive manifest account contradicts account data");
     }
     const tweetFiles = sourceManifest?.tweetFiles ?? fallbackTweetFiles(archive.byPath);
+    const noteTweetFiles = sourceManifest?.noteTweetFiles ?? fallbackNoteTweetFiles(archive.byPath);
     const tweetGlobal = tweetFiles[0]!.globalName.includes(".tweets.") ? "tweets" : "tweet";
     const mediaDirectory = `data/${tweetGlobal}_media` as "data/tweet_media" | "data/tweets_media";
     const tweets: RawXArchiveTweetEnvelope[] = [];
@@ -56,6 +59,7 @@ export async function prepareXArchiveCapture(
       accountEntry,
       ...(sourceManifestEntry ? [sourceManifestEntry] : []),
       ...tweetFiles.map(({ path }) => archive.byPath.get(path)),
+      ...noteTweetFiles.map(({ path }) => archive.byPath.get(path)),
     ];
     if (
       metadataEntries.some((entry) => !entry) ||
@@ -76,7 +80,23 @@ export async function prepareXArchiveCapture(
         ),
       );
     }
-    const normalized = tweets.map((tweet) =>
+    const noteTweets: Readonly<Record<string, unknown>>[] = [];
+    for (const noteTweetFile of noteTweetFiles) {
+      const entry = archive.byPath.get(noteTweetFile.path);
+      if (!entry) {
+        throw new Error(`X archive is missing declared Note Tweet data: ${noteTweetFile.path}`);
+      }
+      noteTweets.push(
+        ...parseRawArchiveNoteTweets(
+          parseArchiveNoteTweetDataAssignment(
+            await readZipText(entry, MAX_METADATA_BYTES),
+            noteTweetFile.globalName,
+          ),
+        ),
+      );
+    }
+    const tweetsWithNotes = associateArchiveNoteTweets(tweets, noteTweets);
+    const normalized = tweetsWithNotes.map((tweet) =>
       normalizeRawArchiveTweet(tweet, account, mediaDirectory),
     );
     const selection = selectXPosts({
@@ -85,15 +105,20 @@ export async function prepareXArchiveCapture(
       cap: limits.maxCandidates,
       retrievedAt: now().toISOString(),
     });
-    const rawById = new Map(tweets.map((tweet) => [String(tweet.tweet.id_str), tweet] as const));
+    const rawById = new Map(
+      tweetsWithNotes.map((tweet) => [String(tweet.tweet.id_str), tweet] as const),
+    );
     const normalizedById = new Map(normalized.map((item) => [item.post.id, item] as const));
     const includedMedia: XArchiveIncludedMedia[] = [];
     const mediaOmissions: XArchiveMediaOmission[] = [];
     const mediaPayloads = new Map<string, Uint8Array>();
-    let totalElementBytes = selection.posts.reduce(
-      (sum, post) => sum + new TextEncoder().encode(post.text).byteLength,
-      0,
+    const textByteSizes = selection.posts.map(
+      (post) => new TextEncoder().encode(post.text).byteLength,
     );
+    if (textByteSizes.some((byteSize) => byteSize === 0 || byteSize > limits.maxElementBytes)) {
+      throw new Error("Selected X post text exceeds the per-element budget");
+    }
+    let totalElementBytes = textByteSizes.reduce((sum, byteSize) => sum + byteSize, 0);
     if (totalElementBytes > limits.maxTotalElementBytes) {
       throw new Error("Selected X post text exceeds the aggregate element budget");
     }
@@ -193,7 +218,6 @@ export async function prepareXArchiveCapture(
     };
     const writer = new ZipWriter(new BlobWriter(X_ARCHIVE_CAPTURE_MIME));
     await writer.add(X_ARCHIVE_MANIFEST_PATH, new TextReader(JSON.stringify(manifest)));
-    await writer.add(X_ARCHIVE_ACCOUNT_PATH, new TextReader(JSON.stringify(manifest.account)));
     await writer.add(X_ARCHIVE_POSTS_PATH, new TextReader(JSON.stringify(selectedRaw)));
     for (const media of includedMedia) {
       await writer.add(
@@ -224,6 +248,12 @@ function fallbackTweetFiles(byPath: ReadonlyMap<string, unknown>) {
     return [{ path: "data/tweet.js", globalName: "YTD.tweet.part0" }] as const;
   }
   throw new Error("X archive is missing tweet data");
+}
+
+function fallbackNoteTweetFiles(byPath: ReadonlyMap<string, unknown>) {
+  return byPath.has("data/note-tweet.js")
+    ? ([{ path: "data/note-tweet.js", globalName: "YTD.note_tweet.part0" }] as const)
+    : [];
 }
 
 export const xArchivePreprocessorRegistration = {

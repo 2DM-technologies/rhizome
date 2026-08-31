@@ -114,14 +114,6 @@ export function normalizeXEntities(
   };
 }
 
-/** Convenience wrapper retained for URL-only call sites and focused tests. */
-export function normalizeXUrlEntities(
-  text: string,
-  inputs: readonly XUrlEntityInput[],
-): NormalizedXEntities | undefined {
-  return normalizeXEntities(text, { urls: inputs });
-}
-
 function normalizeTagEntities(
   text: string,
   inputs: readonly XTagEntityInput[],

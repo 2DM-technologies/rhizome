@@ -54,4 +54,18 @@ describe("X provider quarantine", () => {
     }
     expect(violations).toEqual([]);
   });
+
+  test("prevents the host from importing X provider TypeScript directly", async () => {
+    const violations: string[] = [];
+    const hostRoot = resolve(repoRoot, "apps/host");
+    const glob = new Bun.Glob("**/*.{ts,tsx}");
+    const providerSkillImport = /(?:from\s+|import\s*\(\s*)["'][^"']*\/skills\/x\//u;
+    for await (const path of glob.scan({ cwd: hostRoot, onlyFiles: true })) {
+      const absolute = resolve(hostRoot, path);
+      if (providerSkillImport.test(await readFile(absolute, "utf8"))) {
+        violations.push(relative(repoRoot, absolute));
+      }
+    }
+    expect(violations).toEqual([]);
+  });
 });

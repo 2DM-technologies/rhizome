@@ -32,34 +32,18 @@ export function ImportSurface() {
   useEffect(() => {
     if (
       sourceConnectionReturn.attempt &&
-      !sourceConnectionReturn.destinationError &&
+      !sourceConnectionReturn.failureMessage &&
       sourceConnectionReturn.attempt.intent.destination.kind === "new_vibe"
     ) {
       setTargetUuid("pending");
     }
-  }, [sourceConnectionReturn.attempt, sourceConnectionReturn.destinationError]);
+  }, [sourceConnectionReturn.attempt, sourceConnectionReturn.failureMessage]);
 
   useEffect(() => {
-    let message: string | undefined;
-    if (sourceConnectionReturn.callbackFailed) {
-      message = "The source connection could not be completed. Start the connection again.";
-    } else if (sourceConnectionReturn.invalidParameter) {
-      message = "The source connection return was invalid. Start the connection again.";
-    } else if (sourceConnectionReturn.destinationError) {
-      message = sourceConnectionReturn.destinationError;
-    } else if (sourceConnectionReturn.isError) {
-      message = "The source connection could not be loaded. Start the connection again.";
-    }
-    if (!message) return;
-    setConnectionReturnError(message);
+    if (!sourceConnectionReturn.failureMessage) return;
+    setConnectionReturnError(sourceConnectionReturn.failureMessage);
     sourceConnectionReturn.consume();
-  }, [
-    sourceConnectionReturn.callbackFailed,
-    sourceConnectionReturn.consume,
-    sourceConnectionReturn.destinationError,
-    sourceConnectionReturn.invalidParameter,
-    sourceConnectionReturn.isError,
-  ]);
+  }, [sourceConnectionReturn.consume, sourceConnectionReturn.failureMessage]);
 
   function chooseAnotherTarget() {
     setTargetUuid(undefined);

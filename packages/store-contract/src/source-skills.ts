@@ -17,7 +17,6 @@ export const SOURCE_SKILL_INPUT_CONTROLS = ["text", "url", "file", "checkbox", "
 /** Platform review workflows that a skill may opt into. */
 export const SOURCE_SKILL_REVIEW_ACTIONS = ["review_import", "refresh_source"] as const;
 export const SOURCE_CREDENTIAL_CLAIM_POLICIES = ["single_use_global"] as const;
-export const SOURCE_CONNECTION_MODES = ["claim_exchange", "oauth2_pkce"] as const;
 export const FILE_CAPTURE_PREPROCESSOR_CAPABILITY = "file_capture_preprocessor@1" as const;
 
 export const sourceExecutionLimitsSchema = {

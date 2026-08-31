@@ -1,3 +1,4 @@
+import { SOURCE_CONNECTION_STATUSES } from "@rhizome/store-contract";
 import { sql } from "drizzle-orm";
 import {
   check,
@@ -20,14 +21,7 @@ const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
   dataType: () => "bytea",
 });
 
-export const SOURCE_CONNECTION_ATTEMPT_STATUSES = [
-  "pending",
-  "exchanging",
-  "succeeded",
-  "rejected",
-  "failed",
-  "expired",
-] as const;
+export const SOURCE_CONNECTION_ATTEMPT_STATUSES = SOURCE_CONNECTION_STATUSES;
 export type SourceConnectionAttemptStatus = (typeof SOURCE_CONNECTION_ATTEMPT_STATUSES)[number];
 
 /** Durable OAuth state. Raw state, verifier, authorization code, and tokens never appear here. */
@@ -53,7 +47,6 @@ export const sourceConnectionAttempts = pgTable(
     errorCode: text("error_code"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
   },
   (attempt) => [

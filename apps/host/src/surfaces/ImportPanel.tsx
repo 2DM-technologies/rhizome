@@ -166,24 +166,9 @@ export function ImportPanel({
 
   useEffect(() => {
     if (!sourceConnectionReturn) return;
-    if (sourceConnectionReturn.callbackFailed) {
+    if (sourceConnectionReturn.failureMessage) {
       sourceConnectionReturn.consume();
-      setLocalError("The source connection could not be completed. Start the connection again.");
-      return;
-    }
-    if (sourceConnectionReturn.invalidParameter) {
-      sourceConnectionReturn.consume();
-      setLocalError("The source connection return was invalid. Start the connection again.");
-      return;
-    }
-    if (sourceConnectionReturn.destinationError) {
-      sourceConnectionReturn.consume();
-      setLocalError(sourceConnectionReturn.destinationError);
-      return;
-    }
-    if (sourceConnectionReturn.isError) {
-      sourceConnectionReturn.consume();
-      setLocalError("The source connection could not be loaded. Start the connection again.");
+      setLocalError(sourceConnectionReturn.failureMessage);
       return;
     }
     const attempt = sourceConnectionReturn.attempt;
@@ -239,11 +224,8 @@ export function ImportPanel({
     importSkills,
     sourceConnectionReturn?.attempt,
     sourceConnectionReturn?.attemptId,
-    sourceConnectionReturn?.callbackFailed,
     sourceConnectionReturn?.consume,
-    sourceConnectionReturn?.destinationError,
-    sourceConnectionReturn?.invalidParameter,
-    sourceConnectionReturn?.isError,
+    sourceConnectionReturn?.failureMessage,
     sourceSkills.isError,
     sourceSkills.isPending,
   ]);

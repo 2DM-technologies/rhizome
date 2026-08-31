@@ -208,8 +208,6 @@ export async function captureXOAuthTimeline(
     limits: { ...input.limits },
     request,
     ...(normalized.checkpoint ? { checkpoint: normalized.checkpoint } : {}),
-    counts: normalized.selection.counts,
-    selectedPostIds: normalized.selection.posts.map(({ id }) => id),
     includedMedia,
     mediaOmissions,
   };

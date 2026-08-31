@@ -123,19 +123,11 @@ export function createXOAuthConnection(
     },
     async revoke(secret, { signal }) {
       const credential = parseXOAuthSecret(secret);
-      const tokens = [
-        ...new Set([credential.refreshToken, credential.accessToken].filter(Boolean)),
-      ] as string[];
-      let failure: unknown;
-      for (const token of tokens) {
-        try {
-          await client.revokeToken(settings, token, signal);
-        } catch (error) {
-          failure ??= error;
-          if (signal.aborted) throw signal.reason;
-        }
+      try {
+        await revokeTokenSet(client, settings, credential, signal);
+      } catch (error) {
+        throw connectionError(error, "X could not revoke authorization");
       }
-      if (failure) throw connectionError(failure, "X could not revoke authorization");
     },
   };
 }
@@ -247,7 +239,7 @@ function credentialResult(
 async function revokeTokenSet(
   client: XApiClient,
   settings: XOAuthSettings,
-  token: XApiTokenResponse,
+  token: Pick<XApiTokenResponse, "accessToken" | "refreshToken">,
   signal: AbortSignal,
 ): Promise<void> {
   let failure: unknown;

@@ -24,11 +24,8 @@ export interface SourceConnectionReturn {
   readonly attemptId?: string;
   readonly attempt?: SourceConnectionAttemptDocument;
   readonly isPending: boolean;
-  readonly isError: boolean;
-  readonly error?: unknown;
-  readonly invalidParameter: boolean;
-  readonly callbackFailed: boolean;
-  readonly destinationError?: string;
+  /** Safe, generic message for any terminal callback-marker or attempt-loading failure. */
+  readonly failureMessage?: string;
   /** Removes the one-shot callback marker without retaining it in browser storage or history. */
   readonly consume: () => void;
 }
@@ -64,6 +61,12 @@ export function useSourceConnectionReturn(
       ? undefined
       : "This source connection does not belong to this import destination. Start the connection again."
     : undefined;
+  const failureMessage = sourceConnectionReturnFailureMessage({
+    callbackFailed: captured.kind === "callback_failure",
+    invalidParameter: captured.kind === "invalid",
+    destinationError,
+    loadFailed: query.isError,
+  });
 
   const consume = useCallback(() => {
     setCaptured({ kind: "none" });
@@ -92,13 +95,28 @@ export function useSourceConnectionReturn(
     attemptId,
     attempt: query.data,
     isPending: query.isPending && Boolean(attemptId),
-    isError: query.isError,
-    error: query.error,
-    invalidParameter: captured.kind === "invalid",
-    callbackFailed: captured.kind === "callback_failure",
-    destinationError,
+    failureMessage,
     consume,
   };
+}
+
+export function sourceConnectionReturnFailureMessage(input: {
+  readonly callbackFailed: boolean;
+  readonly invalidParameter: boolean;
+  readonly destinationError?: string;
+  readonly loadFailed: boolean;
+}): string | undefined {
+  if (input.callbackFailed) {
+    return "The source connection could not be completed. Start the connection again.";
+  }
+  if (input.invalidParameter) {
+    return "The source connection return was invalid. Start the connection again.";
+  }
+  if (input.destinationError) return input.destinationError;
+  if (input.loadFailed) {
+    return "The source connection could not be loaded. Start the connection again.";
+  }
+  return undefined;
 }
 
 function connectionFromSearch(search: string): CapturedConnection {

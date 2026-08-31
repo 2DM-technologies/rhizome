@@ -33,8 +33,6 @@ export const SYNTHETIC_OAUTH_SKILL_LABEL = "Synthetic OAuth source";
 export const SYNTHETIC_OAUTH_BUTTON_LABEL = "Connect synthetic account";
 export const SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT = "https://oauth.synthetic.invalid/authorize";
 export const SYNTHETIC_OAUTH_AUTHORIZATION_CODE = "synthetic-authorization-code-browser-only";
-export const SYNTHETIC_OAUTH_PKCE_VERIFIER = "synthetic-server-only-pkce-verifier";
-export const SYNTHETIC_OAUTH_ACCESS_TOKEN = "synthetic-server-only-access-token";
 export const SYNTHETIC_CREDENTIAL_INPUT_LABEL = "Synthetic access token";
 export const SYNTHETIC_COLLECTION_INPUT_LABEL = "Synthetic collection";
 export const SYNTHETIC_COLLECTION = "browser-conformance";
@@ -261,8 +259,6 @@ export const mockSyntheticOAuthSourceSkill = {
   oauth: {
     authorizationEndpoint: SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT,
     authorizationCode: SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
-    pkceVerifier: SYNTHETIC_OAUTH_PKCE_VERIFIER,
-    accessToken: SYNTHETIC_OAUTH_ACCESS_TOKEN,
   },
   capture: (context) => captureSyntheticFixture(context, "oauth"),
   normalizeConfig(input) {

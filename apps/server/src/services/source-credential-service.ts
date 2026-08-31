@@ -5,7 +5,6 @@ import { v7 as uuidv7 } from "uuid";
 import {
   CredentialConnectionError,
   type CredentialedSourceCatalog,
-  type CredentialClaimPolicy,
   type CredentialSourceConnector,
   type PreparedCredentialConnection,
   type SourceJsonObject,
@@ -47,7 +46,7 @@ interface SourceCredentialServiceContext extends ServiceContext {
   credentialEncryptionKey?: Uint8Array;
   credentialEncryptionKeys?: CredentialEncryptionKeys;
   claimStore?: SourceCredentialClaimStore;
-  credentialedSources?: CredentialedSourceCatalog;
+  credentialedSources: CredentialedSourceCatalog;
   providerLeasePool: ProviderLeasePool;
 }
 
@@ -89,7 +88,7 @@ export class SourceCredentialsService {
   private readonly actor: ServiceContext["actor"];
   private readonly credentialCrypto: SourceCredentialCrypto;
   private readonly claimStore: SourceCredentialClaimStore;
-  private readonly credentialedSources?: CredentialedSourceCatalog;
+  private readonly credentialedSources: CredentialedSourceCatalog;
   private readonly providerLeasePool: ProviderLeasePool;
 
   constructor(context: SourceCredentialServiceContext) {
@@ -120,7 +119,7 @@ export class SourceCredentialsService {
 
     const skillId = skill.skillId;
     const connectorVersion = skill.manifest.connector_version;
-    const claimPolicy = supportedClaimPolicy(skill.connection.claimPolicy);
+    supportedClaimPolicy(skill.connection.claimPolicy);
     let preparedConnection: PreparedCredentialConnection;
     try {
       preparedConnection = skill.connection.prepare(input);
@@ -229,15 +228,16 @@ export class SourceCredentialsService {
   async revoke(credentialUuid: string): Promise<void> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const credential = await this.getOwned(credentialUuid);
-    if (credential.revokedAt) return;
-    const skill = this.credentialedSources?.forInstalledSkillId(credential.skillId);
+    const skill = this.credentialedSources.forInstalledSkillId(credential.skillId);
     if (
       skill?.manifest.connector_version === credential.connectorVersion &&
       skill.connection.mode === "oauth2_pkce"
     ) {
+      if (credential.revokedAt && credential.providerRevokedAt) return;
       await this.revokeOAuthCredential(credential, skill.connection.revoke);
       return;
     }
+    if (credential.revokedAt) return;
     await this.revokeLocally(credentialUuid);
   }
 
@@ -251,8 +251,14 @@ export class SourceCredentialsService {
     try {
       await connection`begin`;
       try {
-        const [locked] = await connection<Array<{ revoked_at: Date | null; secret: Uint8Array }>>`
-          select revoked_at, secret
+        const [locked] = await connection<
+          Array<{
+            provider_revoked_at: Date | null;
+            revoked_at: Date | null;
+            secret: Uint8Array;
+          }>
+        >`
+          select provider_revoked_at, revoked_at, secret
           from source_credentials
           where uuid = ${credential.uuid}
             and user_uuid = ${credential.userUuid}
@@ -261,11 +267,6 @@ export class SourceCredentialsService {
           for update
         `;
         if (!locked) throw notFound("Source credential");
-        if (locked.revoked_at) {
-          await connection`commit`;
-          return;
-        }
-        currentSecret = locked.secret;
         const [lease] = await connection<[{ acquired: boolean }]>`
           select pg_try_advisory_lock(
             hashtextextended(${credential.uuid}::text, ${CREDENTIAL_FETCH_LOCK_SEED}::bigint)
@@ -280,11 +281,29 @@ export class SourceCredentialsService {
           );
         }
         leaseHeld = true;
+        const [revoked] = await connection<Array<{ revoked_at: Date }>>`
+          update source_credentials
+          set revoked_at = coalesce(revoked_at, now())
+          where uuid = ${credential.uuid}
+            and user_uuid = ${credential.userUuid}
+          returning revoked_at
+        `;
+        if (!revoked) throw notFound("Source credential");
+        await connection`
+          update ingestion_sources
+          set revoked_at = ${revoked.revoked_at}
+          where credential_uuid = ${credential.uuid}
+            and owner_uuid = ${credential.userUuid}
+            and revoked_at is null
+        `;
         await connection`commit`;
+        if (locked.provider_revoked_at) return;
+        currentSecret = locked.secret;
       } catch (error) {
         await connection`rollback`;
         throw error;
       }
+      let providerFailed = false;
       let providerFailure: unknown;
       if (revokeProvider) {
         try {
@@ -295,33 +314,28 @@ export class SourceCredentialsService {
           );
           await withProviderRequestDeadline((signal) => revokeProvider(secret, { signal }));
         } catch (error) {
+          providerFailed = true;
           providerFailure = error;
         }
       }
-      await connection`begin`;
-      try {
-        const [revoked] = await connection<Array<{ uuid: string }>>`
-          update source_credentials
-          set revoked_at = now()
-          where uuid = ${credential.uuid}
-            and user_uuid = ${credential.userUuid}
-            and revoked_at is null
-          returning uuid
-        `;
-        if (!revoked) throw notFound("Source credential");
-        await connection`
-          update ingestion_sources
-          set revoked_at = now()
-          where credential_uuid = ${credential.uuid}
-            and owner_uuid = ${credential.userUuid}
-            and revoked_at is null
-        `;
-        await connection`commit`;
-      } catch (error) {
-        await connection`rollback`;
-        throw error;
+      if (!providerFailed) {
+        await connection`begin`;
+        try {
+          const [providerRevoked] = await connection<Array<{ uuid: string }>>`
+            update source_credentials
+            set provider_revoked_at = coalesce(provider_revoked_at, now())
+            where uuid = ${credential.uuid}
+              and user_uuid = ${credential.userUuid}
+            returning uuid
+          `;
+          if (!providerRevoked) throw notFound("Source credential");
+          await connection`commit`;
+        } catch (error) {
+          await connection`rollback`;
+          throw error;
+        }
       }
-      if (providerFailure) {
+      if (providerFailed) {
         throw connectionProblem(
           providerFailure,
           "The source provider could not complete the disconnect",
@@ -597,12 +611,11 @@ function assertClaimAttemptAllowance(recentAttemptCount: number, attemptLimit: n
   );
 }
 
-function supportedClaimPolicy(value: unknown): CredentialClaimPolicy {
+function supportedClaimPolicy(value: unknown): void {
   const kind = (value as { kind?: unknown } | undefined)?.kind;
   if (!value || typeof value !== "object" || Array.isArray(value) || kind !== "single_use_global") {
     throw new Error("Credential source has an unsupported claim policy");
   }
-  return Object.freeze({ kind });
 }
 
 function claimWindowStart(windowHours: number): Date {

@@ -20,6 +20,7 @@ export const sourceCredentials = pgTable(
     metadata: jsonb("metadata").$type<JsonObject>(),
     connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    providerRevokedAt: timestamp("provider_revoked_at", { withTimezone: true }),
   },
   (credential) => [
     unique("source_credentials_uuid_user_uuid_unique").on(credential.uuid, credential.userUuid),

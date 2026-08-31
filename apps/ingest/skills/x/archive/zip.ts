@@ -1,4 +1,4 @@
-import { BlobReader, TextWriter, Uint8ArrayWriter, ZipReader, type Entry } from "@zip.js/zip.js";
+import { BlobReader, Uint8ArrayWriter, ZipReader, type Entry } from "@zip.js/zip.js";
 
 import { safePath } from "./contracts.ts";
 
@@ -52,23 +52,39 @@ export async function openValidatedZip(
 }
 
 export async function readZipText(entry: Entry, maxBytes: number): Promise<string> {
-  if (entry.directory || entry.uncompressedSize <= 0 || entry.uncompressedSize > maxBytes) {
-    throw new Error(`ZIP text entry exceeds its limit: ${entry.filename}`);
+  const bytes = await readZipBytes(entry, maxBytes);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`ZIP text entry is not valid UTF-8: ${entry.filename}`);
   }
-  const value = await entry.getData(new TextWriter());
-  if (new TextEncoder().encode(value).byteLength > maxBytes) {
-    throw new Error(`ZIP text entry exceeds its limit: ${entry.filename}`);
-  }
-  return value;
 }
 
 export async function readZipBytes(entry: Entry, maxBytes: number): Promise<Uint8Array> {
   if (entry.directory || entry.uncompressedSize <= 0 || entry.uncompressedSize > maxBytes) {
     throw new Error(`ZIP binary entry exceeds its limit: ${entry.filename}`);
   }
-  const value = await entry.getData(new Uint8ArrayWriter());
+  const value = await entry.getData(new BoundedUint8ArrayWriter(maxBytes));
   if (value.byteLength !== entry.uncompressedSize || value.byteLength > maxBytes) {
     throw new Error(`ZIP binary entry size changed while reading: ${entry.filename}`);
   }
   return value;
+}
+
+class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
+  readonly #maxBytes: number;
+  #writtenBytes = 0;
+
+  constructor(maxBytes: number) {
+    super(Math.min(maxBytes, 64 * 1_024));
+    this.#maxBytes = maxBytes;
+  }
+
+  override async writeUint8Array(value: Uint8Array): Promise<void> {
+    if (this.#writtenBytes + value.byteLength > this.#maxBytes) {
+      throw new Error("ZIP entry exceeded its limit while decompressing");
+    }
+    this.#writtenBytes += value.byteLength;
+    await super.writeUint8Array(value);
+  }
 }

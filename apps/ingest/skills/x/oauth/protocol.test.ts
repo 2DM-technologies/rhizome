@@ -255,6 +255,25 @@ describe("X OAuth provider protocol", () => {
     });
   });
 
+  test("attempts the complete unique token set when provider revocation partially fails", async () => {
+    const revoked: string[] = [];
+    const connection = connectionWith(async (input, init) => {
+      if (String(input) !== endpoints.revoke) throw new Error(`Unexpected request ${input}`);
+      revoked.push(new URLSearchParams(await new Request(input, init).text()).get("token") ?? "");
+      return new Response(null, { status: revoked.length === 1 ? 503 : 200 });
+    });
+    const secret = serializeXOAuthSecret({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      account: { id: "2244994945", handle: "XDevelopers" },
+    });
+
+    await expect(connection.revoke!(secret, { signal: noAbort })).rejects.toBeInstanceOf(
+      CredentialConnectionError,
+    );
+    expect(revoked).toEqual(["refresh-token", "access-token"]);
+  });
+
   test("builds the exact one-page timeline query and strictly rejects malformed optional fields", async () => {
     const requests: Request[] = [];
     const client = new XApiClient({
