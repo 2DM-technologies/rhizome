@@ -2335,11 +2335,9 @@ describe("rNet M1 store", () => {
     expect(document.source.ingest).toEqual({ method: "authored", reproducible: false });
     expect(document.source.origins).toEqual(["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"]);
     const mediaElementReference = document.elements[0];
-    expect(mediaElementReference).toMatchObject({
-      uri: expect.stringMatching(/^rnet:\/\/element\/[0-9a-f-]{36}$/),
-      role: "content",
-      alt: "Authored note body",
-    });
+    expect(mediaElementReference.uri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
+    expect(mediaElementReference.role).toBe("content");
+    expect(mediaElementReference.alt).toBe("Authored note body");
     const mediaElementRead = await request(
       `/rnet/v0/elements/${mediaElementReference.uri.split("/").at(-1)}`,
       { headers: dmachine },
