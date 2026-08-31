@@ -12,6 +12,7 @@ import { MenuItem } from "./MenuItem.tsx";
 import { ProgressBar } from "./ProgressBar.tsx";
 import { SearchField } from "./SearchField.tsx";
 import { Select } from "./Select.tsx";
+import { SelectInput } from "./SelectInput.tsx";
 import { StatusChip } from "./StatusChip.tsx";
 import { Tabs } from "./Tabs.tsx";
 import { TextArea } from "./TextArea.tsx";
@@ -44,6 +45,10 @@ export const Fields: Story = {
     <div className="flex w-120 flex-col gap-4">
       <TextInput aria-label="Vibe title" placeholder="Name a new Vibe" />
       <TextInput aria-label="Object URI" placeholder="rnet://object/…" typography="mono" />
+      <SelectInput aria-label="Source" defaultValue="arena">
+        <option value="arena">Are.na</option>
+        <option value="csv">CSV transactions</option>
+      </SelectInput>
       <TextArea
         aria-label="Properties"
         defaultValue={'{\n  "favorite": true\n}'}

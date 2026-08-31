@@ -82,11 +82,23 @@ function postsTo(pathname: string): Request[] {
 test("the host renders every installed source kind from the generic catalog", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
 
-  await expect(page.getByLabel("Import source", { exact: true }).locator("option")).toHaveText([
+  const sourceSelect = page.getByLabel("Import source", { exact: true });
+  await expect(sourceSelect.locator("option")).toHaveText([
     SYNTHETIC_FILE_SKILL_LABEL,
     SYNTHETIC_PUBLIC_SKILL_LABEL,
     SYNTHETIC_CREDENTIAL_SKILL_LABEL,
   ]);
+  await expect(sourceSelect).toHaveCSS("appearance", "none");
+  await expect(sourceSelect).toHaveCSS("border-radius", "12px");
+
+  const caret = sourceSelect.locator("xpath=..").locator("[data-select-input-caret]");
+  const selectBox = await sourceSelect.boundingBox();
+  const caretBox = await caret.boundingBox();
+  expect(selectBox).not.toBeNull();
+  expect(caretBox).not.toBeNull();
+  expect(
+    Math.abs(selectBox!.y + selectBox!.height / 2 - (caretBox!.y + caretBox!.height / 2)),
+  ).toBe(0);
   expect(
     mockStore.requests.filter(
       (request) =>

@@ -877,6 +877,8 @@ test("an image payload remains decodable when its previewing surface is replaced
 
   const image = page.getByRole("img", { name: `Payload for ${ELEMENT_URI}` });
   await expect(image).toBeVisible();
+  await expect(image).toHaveCSS("border-top-width", "1px");
+  await expect(image).toHaveCSS("border-top-color", "rgb(184, 68, 254)");
   await expect
     .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0);

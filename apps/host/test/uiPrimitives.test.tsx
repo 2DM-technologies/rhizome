@@ -1,7 +1,16 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ElementPreview, EntityRow, FilePicker, SearchField, TextInput } from "../src/ui/index.ts";
+import {
+  ElementPreview,
+  EntityRow,
+  FilePicker,
+  ReferenceCard,
+  SearchField,
+  SelectInput,
+  TextArea,
+  TextInput,
+} from "../src/ui/index.ts";
 
 test("renders SearchField as a reusable embedded search input", () => {
   const markup = renderToStaticMarkup(
@@ -30,6 +39,27 @@ test("renders shared text and file inputs with native form controls", () => {
   expect(file).toContain("Choose a file");
 });
 
+test("renders native selects with a centered custom caret and medium radius", () => {
+  const markup = renderToStaticMarkup(
+    <SelectInput aria-label="Import source" defaultValue="arena">
+      <option value="arena">Are.na</option>
+    </SelectInput>,
+  );
+
+  expect(markup).toContain("<select");
+  expect(markup).toContain("appearance-none");
+  expect(markup).toContain("rounded-md");
+  expect(markup).toContain("data-select-input-caret");
+});
+
+test("supports borderless text areas without changing the default", () => {
+  const borderless = renderToStaticMarkup(<TextArea bordered={false} />);
+  const bordered = renderToStaticMarkup(<TextArea />);
+
+  expect(borderless).not.toContain("border-hairline");
+  expect(bordered).toContain("border-hairline");
+});
+
 test("renders selectable entity rows with an accessible native button", () => {
   const markup = renderToStaticMarkup(
     <EntityRow
@@ -53,4 +83,51 @@ test("renders browser-native element previews through the shared media component
   expect(markup).toContain('data-element-presentation="image"');
   expect(markup).toContain('src="/preview.png"');
   expect(markup).toContain('alt="Preview"');
+});
+
+test("frames every detailed native element preview with the shared hairline", () => {
+  for (const [kind, mime] of [
+    ["image", "image/png"],
+    ["audio", "audio/mpeg"],
+    ["video", "video/mp4"],
+    ["text", "text/plain"],
+    ["document", "application/pdf"],
+  ] as const) {
+    const markup = renderToStaticMarkup(
+      <ElementPreview
+        title={`${kind} preview`}
+        kind={kind}
+        mime={mime}
+        src={`/preview.${kind}`}
+        variant="detail"
+      />,
+    );
+
+    expect(markup).toContain("border-hairline");
+  }
+});
+
+test("supports the secondary accent for nested element cards and previews", () => {
+  const card = renderToStaticMarkup(
+    <ReferenceCard
+      label="element 1"
+      reference="rnet://element/example"
+      borderTone="accent-secondary"
+    />,
+  );
+  const preview = renderToStaticMarkup(
+    <ElementPreview
+      title="Image preview"
+      kind="image"
+      mime="image/png"
+      src="/preview.png"
+      variant="detail"
+      borderTone="accent-secondary"
+    />,
+  );
+
+  expect(card).toContain("border-accent-secondary");
+  expect(preview).toContain("border-accent-secondary");
+  expect(card).not.toContain("border-hairline");
+  expect(preview).not.toContain("border-hairline");
 });

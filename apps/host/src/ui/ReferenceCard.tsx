@@ -4,6 +4,7 @@ import { Badge } from "./Badge.tsx";
 import { cn } from "./cn.ts";
 
 export interface ReferenceCardProps extends Omit<HTMLAttributes<HTMLLIElement>, "children"> {
+  borderTone?: "hairline" | "accent-secondary";
   children?: ReactNode;
   label: string;
   reference: string;
@@ -11,6 +12,7 @@ export interface ReferenceCardProps extends Omit<HTMLAttributes<HTMLLIElement>, 
 }
 
 export function ReferenceCard({
+  borderTone = "hairline",
   children,
   className,
   compact = false,
@@ -21,7 +23,8 @@ export function ReferenceCard({
   return (
     <li
       className={cn(
-        "flex rounded-sm border border-hairline",
+        "flex rounded-sm border",
+        borderTone === "accent-secondary" ? "border-accent-secondary" : "border-hairline",
         compact ? "min-w-0 items-center gap-2 p-3" : "flex-col gap-3 p-4",
         className,
       )}

@@ -109,7 +109,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   const importedCards = page.locator("[data-media-object-card]");
   await expect(importedCards).toHaveCount(6);
   for (const title of BOARD_TITLES) {
-    await expect(importedCards.filter({ hasText: title })).toHaveCount(1);
+    const card = importedCards.filter({ hasText: title });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByRole("button", { name: /^Remove rnet:\/\/object\// })).toHaveCount(0);
   }
   await expect(page.getByText("6 objects", { exact: true })).toBeVisible();
   const markdownPreview = page.getByTitle("Markdown content for A small manifesto");
@@ -117,9 +119,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(markdownPreview).toHaveCSS("color-scheme", "light");
   await expect(page.getByRole("img", { name: "One synthetic pixel" })).toBeVisible();
   await expect(page.getByRole("img", { name: "A safe example destination" })).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Open source for Inert synthetic embed" }),
-  ).toHaveAttribute("href", "https://video.example.test/watch/synthetic");
+  await expect(page.getByRole("link", { name: /^Open source for/ })).toHaveCount(0);
   await expect(page.getByTitle("PDF preview for Synthetic field notes")).toBeVisible();
   await expect(page.getByText("Loading image…")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toHaveLength(initialMembership.length + 5);
