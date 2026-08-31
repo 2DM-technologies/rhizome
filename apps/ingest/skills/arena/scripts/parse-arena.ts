@@ -883,14 +883,12 @@ function decodeJsonResponse(response: CapturedArenaResponse, label: string): Jso
 }
 
 function decodeBase64(value: string, label: string): Uint8Array {
-  if (
-    value.length === 0 ||
-    value.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
-  ) {
+  if (value.length === 0 || value.length % 4 !== 0) {
     throw new Error(`${label} is not canonical base64`);
   }
   const buffer = Buffer.from(value, "base64");
+  // Buffer's decoder is permissive. Exact re-encoding enforces the canonical alphabet, padding,
+  // and trailing bits without a size-sensitive regular expression over multi-megabyte assets.
   if (buffer.toString("base64") !== value) throw new Error(`${label} is not canonical base64`);
   return new Uint8Array(buffer);
 }

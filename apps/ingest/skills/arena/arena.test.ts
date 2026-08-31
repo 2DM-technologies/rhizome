@@ -318,6 +318,15 @@ describe("M2 committed Are.na v3 parser", () => {
     );
   });
 
+  test("accepts large canonical base64 responses without regex subject-size limits", async () => {
+    const capture = await fixtureCapture();
+    const channelBody = Buffer.from(capture.channel.body_base64, "base64");
+    const paddedChannelBody = Buffer.concat([channelBody, Buffer.alloc(4_500_000, 0x20)]);
+    capture.channel.body_base64 = paddedChannelBody.toString("base64");
+
+    expect(parseArenaCapture(captureBytes(capture))).toMatchObject({ channelId: "7001" });
+  });
+
   test("rejects incomplete framing, pagination, order, and unsupported block types", async () => {
     const base64 = await fixtureCapture();
     base64.channel.body_base64 = `${base64.channel.body_base64.slice(0, -1)}!`;
