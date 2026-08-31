@@ -1,0 +1,132 @@
+{
+  "account": {
+    "id": "42",
+    "handle": "example_user",
+    "name": "Example User"
+  },
+  "retrievedAt": "2026-08-21T12:00:00Z",
+  "posts": [
+    {
+      "id": "105",
+      "authorId": "42",
+      "canonicalUrl": "https://x.com/example_user/status/105",
+      "publishedAt": "2026-08-20T10:00:00Z",
+      "text": "Newest original with https://t.co/unchanged",
+      "authorHandle": "example_user",
+      "authorName": "Example User",
+      "conversationId": "105",
+      "references": [],
+      "language": "en",
+      "possiblySensitive": false,
+      "editHistoryIds": ["105"],
+      "entities": {
+        "urls": [
+          {
+            "url": "https://t.co/unchanged",
+            "expanded_url": "https://example.test/article"
+          }
+        ]
+      },
+      "attachments": [
+        {
+          "status": "available",
+          "kind": "image",
+          "mime": "image/jpeg",
+          "sourceRef": "tweet_media/105-one.jpg",
+          "alt": "A synthetic landscape",
+          "body": "image-one"
+        },
+        {
+          "status": "omitted",
+          "reason": "unsupported_media",
+          "kind": "image",
+          "mime": "image/svg+xml",
+          "sourceRef": "tweet_media/105-two.svg",
+          "byteSize": 120
+        }
+      ]
+    },
+    {
+      "id": "104",
+      "authorId": "42",
+      "canonicalUrl": "https://x.com/example_user/status/104",
+      "publishedAt": "2026-08-19T10:00:00Z",
+      "text": "A reply",
+      "references": [{ "kind": "replied_to", "postId": "70" }],
+      "attachments": []
+    },
+    {
+      "id": "103",
+      "authorId": "42",
+      "canonicalUrl": "https://x.com/example_user/status/103",
+      "publishedAt": "2026-08-18T10:00:00Z",
+      "text": "A repost",
+      "references": [{ "kind": "reposted", "postId": "71" }],
+      "attachments": []
+    },
+    {
+      "id": "102",
+      "authorId": "42",
+      "canonicalUrl": "https://x.com/example_user/status/102",
+      "publishedAt": "2026-08-17T10:00:00Z",
+      "text": "  https://x.com/quoted/status/72  ",
+      "references": [
+        {
+          "kind": "quoted",
+          "postId": "72",
+          "url": "https://x.com/quoted/status/72",
+          "textUrl": "https://x.com/quoted/status/72"
+        }
+      ],
+      "attachments": []
+    },
+    {
+      "id": "101",
+      "authorId": "42",
+      "canonicalUrl": "https://x.com/example_user/status/101",
+      "publishedAt": "2026-08-16T10:00:00Z",
+      "text": "Worth reading 🔥 https://x.com/quoted/status/73",
+      "references": [
+        {
+          "kind": "quoted",
+          "postId": "73",
+          "url": "https://x.com/quoted/status/73",
+          "textUrl": "https://x.com/quoted/status/73"
+        }
+      ],
+      "attachments": [
+        {
+          "status": "available",
+          "kind": "video",
+          "mime": "video/mp4",
+          "sourceRef": "tweet_media/101-video.mp4",
+          "body": "video-one"
+        },
+        {
+          "status": "omitted",
+          "reason": "missing_media",
+          "kind": "image",
+          "sourceRef": "tweet_media/101-missing.jpg"
+        }
+      ]
+    },
+    {
+      "id": "100",
+      "authorId": "42",
+      "canonicalUrl": "https://x.com/example_user/status/100",
+      "publishedAt": "2026-08-16T10:00:00Z",
+      "text": "Same-time original",
+      "references": [],
+      "attachments": []
+    },
+    {
+      "id": "99",
+      "authorId": "7",
+      "canonicalUrl": "https://x.com/someone_else/status/99",
+      "publishedAt": "2026-08-15T10:00:00Z",
+      "text": "Not authored by the captured account",
+      "references": [],
+      "attachments": []
+    }
+  ]
+}
