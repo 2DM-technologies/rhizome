@@ -10,13 +10,14 @@ import {
   assertSourceSkillManifest,
   immutableJson,
 } from "../source-skills/manifest-catalog.ts";
-import type { TransactionParser, ParsedTransactions } from "../transactions/types.ts";
-import type { VerifyReport, VerifyTransactionsOptions } from "../transactions/verify.ts";
+import type {
+  CandidateBundleCapability,
+  SourceJsonObject,
+  SourceJsonValue,
+  SourceParser,
+} from "../source-skills/candidate-bundle.ts";
 
-export type SourceJsonValue =
-  boolean | number | string | null | SourceJsonValue[] | { [key: string]: SourceJsonValue };
-
-export type SourceJsonObject = { [key: string]: SourceJsonValue };
+export type { SourceJsonObject, SourceJsonValue } from "../source-skills/candidate-bundle.ts";
 
 export type ConnectedSourceActionKind = (typeof SOURCE_ACTION_KINDS)[number];
 
@@ -126,7 +127,7 @@ export interface CredentialConnectionDefinition {
 
 export interface PreparedConnectedSourceFetch {
   retrieve(secret: string): Promise<Uint8Array>;
-  readonly verifyOptions: VerifyTransactionsOptions;
+  readonly compiledSource: CandidateBundleCapability<{ readonly bytes: Uint8Array }>;
   readonly actionEvidence?: ConnectedSourceActionEvidence;
 }
 
@@ -137,9 +138,9 @@ export interface CredentialSourceConnector {
   readonly connection: CredentialConnectionDefinition;
 }
 
-/** Transaction-specific execution capability layered on the generic credential connector. */
+/** Credentialed capture capability layered on the generic connector and compiled-source boundary. */
 export interface CredentialedSourceSkill extends CredentialSourceConnector {
-  readonly parser: TransactionParser;
+  readonly parser: SourceParser;
   /** Closed schema for caller-supplied, non-secret source configuration. */
   readonly sourceRequestSchema: Readonly<Record<string, unknown>>;
   readonly fetchPolicy: {
@@ -152,20 +153,17 @@ export interface CredentialedSourceSkill extends CredentialSourceConnector {
   };
 
   parseConfig(value: unknown): unknown;
-  normalize(parsed: ParsedTransactions, config: unknown): ParsedTransactions;
-  identitySourceProperties(properties: Record<string, unknown>): Record<string, unknown>;
   prepareFetch(input: {
     config: unknown;
     endDateEpoch: number;
-    previous?: ParsedTransactions;
+    previousCapture?: Uint8Array;
     resume?: SourceJsonValue;
-  }): PreparedConnectedSourceFetch;
-  verificationError(report: VerifyReport): ConnectedSourceActionRequired | undefined;
+  }): PreparedConnectedSourceFetch | Promise<PreparedConnectedSourceFetch>;
 }
 
 export interface SourceSkillDefinition<Settings> {
   readonly skillId: string;
-  readonly parser: TransactionParser;
+  readonly parser: SourceParser;
   loadSettings(environment: Record<string, string | undefined>): Settings;
   create(settings: Settings): CredentialedSourceSkill;
 }

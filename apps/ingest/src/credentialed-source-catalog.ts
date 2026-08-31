@@ -2,7 +2,7 @@ import {
   CredentialedSourceCatalog,
   type SourceSkillDefinition,
 } from "../connected-sources/types.ts";
-import { simpleFinSourceSkillDefinition } from "../skills/simplefin/definition.ts";
+import { simpleFinSourceSkillDefinition } from "../skills/transactions/simplefin/definition.ts";
 
 export type CredentialedSourceSettings = Readonly<Record<string, unknown>>;
 

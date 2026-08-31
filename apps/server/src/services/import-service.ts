@@ -11,9 +11,16 @@ import type { FileSourceCatalog, FileSourceSkill } from "../../../ingest/file-so
 import type {
   PublicRemoteSourceCatalog,
   PublicRemoteSourceSkill,
-  PublicSourceCandidateDraft,
-  PublicSourceVerifyReport,
 } from "../../../ingest/public-sources/types.ts";
+import {
+  CANDIDATE_BUNDLE_CAPABILITY,
+  type CandidateBundle,
+  type CandidateBundleCapability,
+  type SourceCandidateDraft,
+  type SourceJsonObject,
+  type SourceJsonValue,
+  type SourceVerifyReport,
+} from "../../../ingest/source-skills/candidate-bundle.ts";
 import {
   ConnectedSourceActionRequired,
   ConnectedSourceError,
@@ -24,11 +31,7 @@ import {
   type ConnectedSourceActionKind,
   type CredentialedSourceSkill,
   type PreparedConnectedSourceFetch,
-  type SourceJsonObject,
-  type SourceJsonValue,
 } from "../../../ingest/connected-sources/types.ts";
-import type { ParsedTransactions } from "../../../ingest/transactions/types.ts";
-import { verifyTransactions, type VerifyReport } from "../../../ingest/transactions/verify.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
 import type { Database, DatabaseTransaction } from "../db/index.ts";
@@ -70,6 +73,7 @@ import type { ServiceContext } from "./types.ts";
 interface ImportPreviewResult {
   action_evidence?: ConnectedSourceActionEvidence;
   candidates: MediaObject[];
+  candidate_metadata: StagedCandidateMetadata[];
   elements: StagedElement[];
   verify: SourceVerifyReport;
   source_digest: string;
@@ -83,7 +87,15 @@ interface StagedCandidate {
   elements: StagedElement[];
   identity: string;
   origin_uuid: string;
+  semantic_identity: SourceJsonValue;
+  semantic_source_properties: SourceJsonObject;
   source_uuid: string;
+}
+
+interface StagedCandidateMetadata {
+  object_uri: string;
+  semantic_identity: SourceJsonValue;
+  semantic_source_properties: SourceJsonObject;
 }
 
 interface PullSourceResult {
@@ -131,14 +143,11 @@ interface ResolvedRemoteSource extends ResolvedSourceBase {
 
 type ResolvedSource = ResolvedOriginSource | ResolvedCredentialSource | ResolvedRemoteSource;
 
-type SourceVerifyReport = VerifyReport | PublicSourceVerifyReport;
-
 type StagedElementRole = "title" | "content" | "preview";
 
 /**
- * A provider-neutral manifest for a payload captured during preview. File transaction
- * parsers currently emit zero elements, while later media providers can populate this
- * same reviewed and atomically committed path.
+ * A provider-neutral manifest for a payload captured during preview. Sources can emit zero or
+ * more elements through this same reviewed and atomically committed path.
  */
 export interface StagedElement {
   uri: string;
@@ -428,6 +437,7 @@ export class ImportService {
       const expectedReviewDigest = await digest({
         ...(result.action_evidence ? { action_evidence: result.action_evidence } : {}),
         candidates: result.candidates,
+        candidate_metadata: result.candidate_metadata,
         elements: result.elements,
         verify: result.verify,
         source_digest: result.source_digest,
@@ -438,11 +448,12 @@ export class ImportService {
       }
 
       const stagedCandidates: StagedCandidate[] = [];
-      const identitySourceProperties =
-        resolved.kind === "credential"
-          ? resolved.skill.identitySourceProperties
-          : identityProperties;
+      const metadataByObjectUri = new Map(
+        result.candidate_metadata.map((metadata) => [metadata.object_uri, metadata]),
+      );
       for (const candidate of result.candidates) {
+        const metadata = metadataByObjectUri.get(candidate.uri);
+        if (!metadata) throw invalidReview("The preview is missing candidate metadata");
         const candidateElements = result.elements.filter(
           ({ object_uri }) => object_uri === candidate.uri,
         );
@@ -452,13 +463,18 @@ export class ImportService {
           candidate_digest: await candidateSemanticDigest(
             candidate,
             candidateElements,
-            identitySourceProperties,
+            () => metadata.semantic_source_properties,
           ),
           elements: candidateElements,
-          identity: await identityForCandidate(candidate),
+          identity: await digest(metadata.semantic_identity),
           origin_uuid: stagedOrigin.uuid,
+          semantic_identity: metadata.semantic_identity,
+          semantic_source_properties: metadata.semantic_source_properties,
           source_uuid: resolved.source.uuid,
         });
+      }
+      if (metadataByObjectUri.size !== stagedCandidates.length) {
+        throw invalidReview("The preview contains unreferenced candidate metadata");
       }
       if (
         new Set(stagedCandidates.map(({ identity }) => identity)).size !== stagedCandidates.length
@@ -599,11 +615,19 @@ export class ImportService {
       throw await this.sourceActionError(error, resolved, vibe);
     }
     const candidates = staged.candidates.map(({ candidate }) => candidate);
+    const candidateMetadata = staged.candidates.map(
+      ({ candidate, semantic_identity, semantic_source_properties }): StagedCandidateMetadata => ({
+        object_uri: candidate.uri,
+        semantic_identity,
+        semantic_source_properties,
+      }),
+    );
     const elements = staged.candidates.flatMap(({ elements }) => elements);
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
     const reviewDigest = await digest({
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
       candidates,
+      candidate_metadata: candidateMetadata,
       elements,
       verify: staged.verify,
       source_digest: staged.sourceStateDigest,
@@ -612,6 +636,7 @@ export class ImportService {
     const result: ImportPreviewResult = {
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
       candidates,
+      candidate_metadata: candidateMetadata,
       elements,
       verify: staged.verify,
       source_digest: staged.sourceStateDigest,
@@ -692,7 +717,7 @@ export class ImportService {
       return this.stagePublicRemoteSource(resolved, ownerUuid, operationUuid);
     }
     if (continuation) throw invalidContinuation();
-    return this.stageOriginSource(resolved, ownerUuid);
+    return this.stageOriginSource(resolved, ownerUuid, operationUuid);
   }
 
   private async stagePublicRemoteSource(
@@ -731,20 +756,20 @@ export class ImportService {
       if (!fetched) throw new Error("Public-remote fetch state changed unexpectedly");
 
       phase = "parse";
-      const parsed = await reservedSource.skill.parser.parse(bytes);
+      const bundle = await compileCandidateBundle(reservedSource.skill.compiledSource, {
+        bytes,
+        config,
+      });
       phase = "verify";
-      const verify = reservedSource.skill.verify(parsed, config);
-      assertPublicSourceVerifyReport(verify);
-      if (!verify.ok) {
-        throw new Error(`VERIFY rejected the public source: ${failedChecks(verify)}`);
-      }
+      assertVerifiedCandidateBundle(bundle, reservedSource.skill.compiledSource);
       phase = "candidate";
-      const candidates = await publicCandidatesFromDrafts(
-        reservedSource.skill.candidates(parsed, config),
-        reservedSource,
+      const candidates = await candidatesFromBundle(
+        bundle,
+        reservedSource.source,
         origin,
         ownerUuid,
         operationUuid,
+        reservedSource.skill.parser.version,
         this.baseUrl,
         this.blobs,
       );
@@ -766,7 +791,7 @@ export class ImportService {
         origin,
         source: reservedSource.source,
         sourceStateDigest: reservedSource.sourceStateDigest,
-        verify,
+        verify: bundle.verify,
       };
     } catch (error) {
       try {
@@ -790,28 +815,29 @@ export class ImportService {
   private async stageOriginSource(
     resolved: ResolvedOriginSource,
     ownerUuid: string,
+    operationUuid: string,
   ): Promise<StagedSourceCapture> {
-    const parser = assertPinnedFileSkill(resolved.source, this.fileSources).parser;
+    const skill = assertPinnedFileSkill(resolved.source, this.fileSources);
     const blob = await this.blobs.get("origins", resolved.origin.contentHash);
     if (!blob) throw new Error("Origin payload is unavailable");
-    const parsed = await parser.parse(blob.bytes);
-    const verify = verifyTransactions(parsed);
-    if (!verify.ok) {
-      throw new Error("VERIFY rejected the candidate transaction set: " + failedChecks(verify));
-    }
+    const bundle = await compileCandidateBundle(skill.compiledSource, { bytes: blob.bytes });
+    assertVerifiedCandidateBundle(bundle, skill.compiledSource);
     return {
-      candidates: await candidatesFromParsed(
-        parsed,
+      candidates: await candidatesFromBundle(
+        bundle,
         resolved.source,
         resolved.origin,
         ownerUuid,
-        parser.version,
+        operationUuid,
+        skill.parser.version,
+        this.baseUrl,
+        this.blobs,
       ),
       kind: "origin",
       origin: resolved.origin,
       source: resolved.source,
       sourceStateDigest: resolved.sourceStateDigest,
-      verify,
+      verify: bundle.verify,
     };
   }
 
@@ -873,28 +899,24 @@ export class ImportService {
       if (!fetched) throw new Error("Connected fetch state changed unexpectedly");
 
       phase = "parse";
-      const parser = reservedSource.skill.parser;
-      const current = reservedSource.skill.normalize(await parser.parse(bytes), prepared.config);
+      const bundle = await compileCandidateBundle(prepared.fetch.compiledSource, { bytes });
 
       phase = "verify";
-      const verify = verifyTransactions(current, prepared.fetch.verifyOptions);
-      if (!verify.ok) {
-        const action = reservedSource.skill.verificationError(verify);
-        if (action) throw action;
-        throw new Error(`VERIFY rejected the connected transaction set: ${failedChecks(verify)}`);
-      }
+      assertVerifiedCandidateBundle(bundle, prepared.fetch.compiledSource);
 
       phase = "candidate";
       if (prepared.fetch.actionEvidence) {
         assertDeclaredReviewAction(reservedSource.skill, prepared.fetch.actionEvidence.kind);
       }
-      const candidates = await candidatesFromParsed(
-        current,
+      const candidates = await candidatesFromBundle(
+        bundle,
         reservation.resolved.source,
         origin,
         ownerUuid,
-        parser.version,
-        reservedSource.skill.identitySourceProperties,
+        operationUuid,
+        reservedSource.skill.parser.version,
+        this.baseUrl,
+        this.blobs,
       );
       const verifiedAt = new Date();
       const [verified] = await this.db
@@ -916,7 +938,7 @@ export class ImportService {
         origin,
         source: reservation.resolved.source,
         sourceStateDigest: reservation.resolved.sourceStateDigest,
-        verify,
+        verify: bundle.verify,
       };
     } catch (error) {
       // Preserve the provider/parser failure and ledger transition even if lease cleanup sees a
@@ -959,21 +981,18 @@ export class ImportService {
     endDateEpoch = Math.floor(Date.now() / 1_000),
   ): Promise<{ config: unknown; fetch: PreparedConnectedSourceFetch }> {
     const config = resolved.skill.parseConfig(resolved.source.config);
-    let previous: ParsedTransactions | undefined;
+    let previousCapture: Uint8Array | undefined;
     if (resolved.baseline) {
       const previousBlob = await this.blobs.get("origins", resolved.baseline.origin.contentHash);
       if (!previousBlob) throw new Error("Previous connected capture is unavailable");
-      previous = resolved.skill.normalize(
-        await resolved.skill.parser.parse(previousBlob.bytes),
-        config,
-      );
+      previousCapture = previousBlob.bytes;
     }
     return {
       config,
-      fetch: resolved.skill.prepareFetch({
+      fetch: await resolved.skill.prepareFetch({
         config,
         endDateEpoch,
-        ...(previous ? { previous } : {}),
+        ...(previousCapture ? { previousCapture } : {}),
         ...(resume === undefined ? {} : { resume }),
       }),
     };
@@ -2147,75 +2166,48 @@ function failedChecks(report: SourceVerifyReport): string {
   return names.length ? names.join(", ") : "unknown_check";
 }
 
-async function candidatesFromParsed(
-  parsed: ParsedTransactions,
+async function compileCandidateBundle<Input>(
+  capability: CandidateBundleCapability<Input>,
+  input: Input,
+): Promise<CandidateBundle> {
+  if (capability.kind !== CANDIDATE_BUNDLE_CAPABILITY) {
+    throw new Error(`Unsupported compiled-source capability: ${String(capability.kind)}`);
+  }
+  const bundle = await capability.compile(input);
+  if (!bundle || bundle.kind !== CANDIDATE_BUNDLE_CAPABILITY || !Array.isArray(bundle.candidates)) {
+    throw new Error("Compiled source returned a malformed candidate bundle");
+  }
+  assertSourceVerifyReport(bundle.verify);
+  return bundle;
+}
+
+function assertVerifiedCandidateBundle<Input>(
+  bundle: CandidateBundle,
+  capability: CandidateBundleCapability<Input>,
+): void {
+  if (bundle.verify.ok) return;
+  const sourceError = capability.verificationError?.(bundle.verify);
+  if (sourceError) throw sourceError;
+  throw new Error(`VERIFY rejected candidate bundle: ${failedChecks(bundle.verify)}`);
+}
+
+async function candidatesFromBundle(
+  bundle: CandidateBundle,
   source: DbIngestionSource,
   origin: DbOriginArtifact,
   ownerUuid: string,
-  parserVersion: string,
-  identitySourceProperties: IdentitySourceProperties = identityProperties,
-): Promise<StagedCandidate[]> {
-  const candidates: StagedCandidate[] = [];
-  for (const transaction of parsed.transactions) {
-    const accountHash = await digest(transaction.accountIdentity ?? "default");
-    const candidate: MediaObject = {
-      rnet_schema: RNET_SCHEMA_VERSION,
-      uri: "rnet://object/" + uuidv7(),
-      owner: "rnet://id/" + ownerUuid,
-      type: "transaction",
-      elements: [],
-      keys: {
-        ...transaction.keys,
-        ...(transaction.fitid ? { fitid: transaction.fitid } : {}),
-        account_hash: accountHash,
-      },
-      source: {
-        ingest: { method: "parser", reproducible: true, skill: parserVersion },
-        origins: ["rnet://origin/" + origin.uuid],
-        properties: {
-          amount: transaction.amount,
-          currency: transaction.currency,
-          ...(transaction.postedAt ? { posted_at: transaction.postedAt } : {}),
-          ...(transaction.rawDescription
-            ? { raw_description: transaction.rawDescription.slice(0, 1024) }
-            : {}),
-          ...transaction.sourceProperties,
-        },
-      },
-    };
-    const validation = validateMediaObject(candidate);
-    if (!validation.ok) {
-      throw new Error(
-        "Parser produced a nonconformant candidate: " +
-          validation.issues.map((issue) => issue.instancePath + " " + issue.message).join(", "),
-      );
-    }
-    candidates.push({
-      candidate,
-      candidate_digest: await candidateSemanticDigest(candidate, [], identitySourceProperties),
-      elements: [],
-      identity: await identityForCandidate(candidate),
-      origin_uuid: origin.uuid,
-      source_uuid: source.uuid,
-    });
-  }
-  return candidates;
-}
-
-async function publicCandidatesFromDrafts(
-  drafts: readonly PublicSourceCandidateDraft[],
-  resolved: ResolvedRemoteSource,
-  origin: DbOriginArtifact,
-  ownerUuid: string,
   operationUuid: string,
+  parserVersion: string,
   baseUrl: string,
   blobs: BlobStore,
 ): Promise<StagedCandidate[]> {
-  if (!Array.isArray(drafts)) throw new Error("Public-source skill returned no candidate list");
+  if (!Array.isArray(bundle.candidates)) {
+    throw new Error("Compiled source returned no candidate list");
+  }
   const candidates: StagedCandidate[] = [];
   const identities = new Set<string>();
-  for (const draft of drafts) {
-    assertPublicSourceDraft(draft);
+  for (const draft of bundle.candidates) {
+    assertSourceCandidateDraft(draft);
     const objectUri = `rnet://object/${uuidv7()}`;
     const elements: StagedElement[] = [];
     for (const element of draft.elements) {
@@ -2225,7 +2217,7 @@ async function publicCandidatesFromDrafts(
         !/^sha256:[a-f0-9]{64}$/.test(element.contentHash) ||
         (await contentHash(element.bytes)) !== element.contentHash
       ) {
-        throw new Error("Public-source skill produced inconsistent element metadata");
+        throw new Error("Compiled source produced inconsistent element metadata");
       }
       await blobs.put("elements", element.contentHash, element.bytes, element.mime);
       const elementUuid = uuidv7();
@@ -2251,7 +2243,7 @@ async function publicCandidatesFromDrafts(
         ingest: {
           method: "parser",
           reproducible: true,
-          skill: resolved.skill.parser.version,
+          skill: parserVersion,
         },
         origins: [`rnet://origin/${origin.uuid}`],
         ...(draft.retrievedAt ? { retrieved_at: draft.retrievedAt } : {}),
@@ -2261,29 +2253,35 @@ async function publicCandidatesFromDrafts(
     const validation = validateMediaObject(candidate);
     if (!validation.ok) {
       throw new Error(
-        `Public-source skill produced a nonconformant candidate: ${validation.issues
+        `Compiled source produced a nonconformant candidate: ${validation.issues
           .map((issue) => `${issue.instancePath} ${issue.message}`)
           .join(", ")}`,
       );
     }
-    const identity = await identityForCandidate(candidate);
+    const identity = await digest(draft.semanticIdentity);
     if (identities.has(identity)) {
-      throw new Error("Public-source skill repeated a candidate identity");
+      throw new Error("Compiled source repeated a candidate identity");
     }
     identities.add(identity);
     candidates.push({
       candidate,
-      candidate_digest: await candidateSemanticDigest(candidate, elements),
+      candidate_digest: await candidateSemanticDigest(
+        candidate,
+        elements,
+        () => draft.semanticSourceProperties ?? draft.sourceProperties,
+      ),
       elements,
       identity,
       origin_uuid: origin.uuid,
-      source_uuid: resolved.source.uuid,
+      semantic_identity: draft.semanticIdentity,
+      semantic_source_properties: draft.semanticSourceProperties ?? draft.sourceProperties,
+      source_uuid: source.uuid,
     });
   }
   return candidates;
 }
 
-function assertPublicSourceDraft(value: PublicSourceCandidateDraft): void {
+function assertSourceCandidateDraft(value: SourceCandidateDraft): void {
   if (
     !value ||
     typeof value !== "object" ||
@@ -2296,15 +2294,20 @@ function assertPublicSourceDraft(value: PublicSourceCandidateDraft): void {
     !value.sourceProperties ||
     typeof value.sourceProperties !== "object" ||
     Array.isArray(value.sourceProperties) ||
-    !Array.isArray(value.elements)
+    !Array.isArray(value.elements) ||
+    value.semanticIdentity === undefined
   ) {
-    throw new Error("Public-source skill produced a malformed candidate draft");
+    throw new Error("Compiled source produced a malformed candidate draft");
   }
-  assertJsonSerializable(value.keys, "Public-source candidate keys");
-  assertJsonSerializable(value.sourceProperties, "Public-source candidate properties");
+  assertJsonSerializable(value.keys, "Candidate keys");
+  assertJsonSerializable(value.sourceProperties, "Candidate properties");
+  assertJsonSerializable(value.semanticIdentity, "Candidate semantic identity");
+  if (value.semanticSourceProperties !== undefined) {
+    assertJsonSerializable(value.semanticSourceProperties, "Candidate semantic properties");
+  }
 }
 
-function assertPublicSourceVerifyReport(report: PublicSourceVerifyReport): void {
+function assertSourceVerifyReport(report: SourceVerifyReport): void {
   if (
     !report ||
     typeof report !== "object" ||
@@ -2320,9 +2323,9 @@ function assertPublicSourceVerifyReport(report: PublicSourceVerifyReport): void 
         typeof check.detail !== "string",
     )
   ) {
-    throw new Error("Public-source skill produced a malformed VERIFY report");
+    throw new Error("Compiled source produced a malformed VERIFY report");
   }
-  assertJsonSerializable(report, "Public-source VERIFY report");
+  assertJsonSerializable(report, "Source VERIFY report");
 }
 
 function assertJsonSerializable(value: unknown, label: string): void {
@@ -2338,23 +2341,6 @@ function assertJsonSerializable(value: unknown, label: string): void {
 async function digest(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(typeof value === "string" ? value : canonicalJson(value));
   return contentHash(bytes);
-}
-
-async function identityForCandidate(candidate: MediaObject): Promise<string> {
-  if (candidate.type !== "transaction") {
-    return digest({ type: candidate.type, keys: candidate.keys ?? {} });
-  }
-  const accountHash = candidate.keys?.account_hash ?? "default";
-  const fitid = candidate.keys?.fitid;
-  return digest(
-    fitid
-      ? { type: candidate.type, account_hash: accountHash, fitid }
-      : {
-          type: candidate.type,
-          account_hash: accountHash,
-          properties: candidate.source.properties,
-        },
-  );
 }
 
 /**
@@ -2409,6 +2395,7 @@ function importPreviewResult(value: unknown): ImportPreviewResult {
   const result = value as Partial<ImportPreviewResult>;
   if (
     !Array.isArray(result.candidates) ||
+    !Array.isArray(result.candidate_metadata) ||
     !Array.isArray(result.elements) ||
     !result.verify ||
     typeof result.source_digest !== "string" ||
@@ -2418,12 +2405,41 @@ function importPreviewResult(value: unknown): ImportPreviewResult {
     throw invalidReview("The staged result is malformed");
   }
   if (
+    result.candidate_metadata.length !== result.candidates.length ||
+    result.candidate_metadata.some((metadata) => !validStagedCandidateMetadata(metadata)) ||
+    new Set(result.candidate_metadata.map(({ object_uri }) => object_uri)).size !==
+      result.candidate_metadata.length
+  ) {
+    throw invalidReview("The staged candidate metadata is malformed");
+  }
+  if (
     result.action_evidence !== undefined &&
     !validConnectedSourceActionEvidence(result.action_evidence)
   ) {
     throw invalidReview("The staged action evidence is malformed");
   }
   return result as ImportPreviewResult;
+}
+
+function validStagedCandidateMetadata(value: unknown): value is StagedCandidateMetadata {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const metadata = value as Partial<StagedCandidateMetadata>;
+  if (
+    typeof metadata.object_uri !== "string" ||
+    metadata.semantic_identity === undefined ||
+    !metadata.semantic_source_properties ||
+    typeof metadata.semantic_source_properties !== "object" ||
+    Array.isArray(metadata.semantic_source_properties)
+  ) {
+    return false;
+  }
+  try {
+    assertJsonSerializable(metadata.semantic_identity, "Candidate semantic identity");
+    assertJsonSerializable(metadata.semantic_source_properties, "Candidate semantic properties");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function validConnectedSourceActionEvidence(

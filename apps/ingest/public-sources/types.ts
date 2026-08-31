@@ -4,19 +4,12 @@ import {
   SourceSkillManifestCatalog,
   assertManifestTargetSchemaCoverage,
 } from "../source-skills/manifest-catalog.ts";
-
-export type PublicSourceJsonValue =
-  | boolean
-  | number
-  | string
-  | null
-  | PublicSourceJsonValue[]
-  | { [key: string]: PublicSourceJsonValue };
-
-export type PublicSourceJsonObject = { [key: string]: PublicSourceJsonValue };
-
-export type PublicSourceElementKind = "text" | "image" | "audio" | "video" | "document";
-export type PublicSourceElementRole = "title" | "content" | "preview";
+import type {
+  CandidateBundleCapability,
+  SourceJsonObject,
+  SourceJsonValue,
+  SourceParser,
+} from "../source-skills/candidate-bundle.ts";
 
 export interface PublicAssetFetchRequest {
   readonly url: string;
@@ -46,47 +39,6 @@ export type PublicAssetFetcher = (
   request: PublicAssetFetchRequest,
 ) => Promise<PublicAssetFetchResult>;
 
-export interface PublicSourceElementDraft {
-  readonly role: PublicSourceElementRole;
-  readonly kind: PublicSourceElementKind;
-  readonly mime: string;
-  readonly bytes: Uint8Array;
-  readonly byteSize: number;
-  readonly contentHash: `sha256:${string}`;
-}
-
-/**
- * Provider-neutral material emitted by a public-remote skill after parsing and VERIFY.
- * Array order is semantic: the host commits candidates and their elements in this exact order.
- */
-export interface PublicSourceCandidateDraft {
-  readonly type: string;
-  /** Stable external identifiers; the server derives source identity from `type` + this map. */
-  readonly keys: Readonly<Record<string, string>>;
-  readonly sourceProperties: PublicSourceJsonObject;
-  readonly retrievedAt?: string;
-  readonly elements: readonly PublicSourceElementDraft[];
-}
-
-export interface PublicSourceVerifyCheck {
-  readonly name: string;
-  readonly ok: boolean;
-  readonly detail: string;
-}
-
-/** Additional report fields must also be JSON-safe before the server persists them. */
-export interface PublicSourceVerifyReport {
-  readonly ok: boolean;
-  readonly checks: readonly PublicSourceVerifyCheck[];
-  readonly [key: string]: unknown;
-}
-
-export interface PublicRemoteParser {
-  readonly name: string;
-  readonly version: string;
-  parse(bytes: Uint8Array): Promise<unknown>;
-}
-
 export type PublicRemoteNetworkCapability =
   | {
       /** Provider APIs are constructed by the skill and never taken from caller input. */
@@ -102,7 +54,11 @@ export interface PublicRemoteSourceSkill {
   readonly skillId: string;
   readonly displayName: string;
   readonly manifest: SourceSkillManifest & { readonly source_kind: "public_remote" };
-  readonly parser: PublicRemoteParser;
+  readonly parser: SourceParser;
+  readonly compiledSource: CandidateBundleCapability<{
+    readonly bytes: Uint8Array;
+    readonly config: unknown;
+  }>;
   /** Closed schema for caller-supplied source configuration. */
   readonly sourceRequestSchema: Readonly<Record<string, unknown>>;
   readonly fetchPolicy: {
@@ -120,14 +76,12 @@ export interface PublicRemoteSourceSkill {
   };
 
   /** Validates caller-facing source fields and returns the JSON persisted with the source. */
-  normalizeConfig(input: unknown): PublicSourceJsonObject;
+  normalizeConfig(input: unknown): SourceJsonObject;
   /** Validates and decodes an already-persisted configuration. */
   parseConfig(value: unknown): unknown;
   /** Stable, secret-free skill state included in the server's source-state digest. */
-  stateDigest(config: unknown): PublicSourceJsonValue;
+  stateDigest(config: unknown): SourceJsonValue;
   retrieve(config: unknown): Promise<Uint8Array>;
-  verify(parsed: unknown, config: unknown): PublicSourceVerifyReport;
-  candidates(parsed: unknown, config: unknown): readonly PublicSourceCandidateDraft[];
 }
 
 export interface PublicRemoteSourceCatalogInput {
@@ -145,8 +99,8 @@ export interface PublicRemoteSourcePin {
 }
 
 /**
- * Executable public-remote capabilities. This runtime allowlist is deliberately separate from
- * transaction parsers because media-oriented skills emit a different intermediate representation.
+ * Executable public-remote capture capabilities. Every installed implementation compiles through
+ * the same candidate-bundle boundary after retrieval.
  */
 export class PublicRemoteSourceCatalog {
   readonly #currentSkills: readonly PublicRemoteSourceSkill[];
@@ -223,6 +177,9 @@ function validatePublicRemoteSourceSkill(value: PublicRemoteSourceSkill): Public
     value.parser.version !== manifest.parser.version
   ) {
     throw new Error(`Public-remote source ${value.skillId} has inconsistent parser metadata`);
+  }
+  if (value.compiledSource.kind !== "candidate_bundle@1") {
+    throw new Error(`Public-remote source ${value.skillId} has an unsupported compiled capability`);
   }
   assertManifestTargetSchemaCoverage({
     skillId: value.skillId,

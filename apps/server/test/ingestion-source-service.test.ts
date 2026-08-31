@@ -6,8 +6,12 @@ import {
   PublicRemoteSourceCatalog,
   type PublicRemoteSourceSkill,
 } from "../../ingest/public-sources/types.ts";
-import { SIMPLEFIN_CONNECTOR_VERSION } from "../../ingest/skills/simplefin/contracts.ts";
-import { createSimpleFinSkill } from "../../ingest/skills/simplefin/source.ts";
+import {
+  CANDIDATE_BUNDLE_CAPABILITY,
+  candidateBundle,
+} from "../../ingest/source-skills/candidate-bundle.ts";
+import { SIMPLEFIN_CONNECTOR_VERSION } from "../../ingest/skills/transactions/simplefin/contracts.ts";
+import { createSimpleFinSkill } from "../../ingest/skills/transactions/simplefin/source.ts";
 import { installedFileSourceSkills } from "../../ingest/src/source-skill-catalog.ts";
 import type { Database } from "../src/db/index.ts";
 import { ingestionSources, type DbIngestionSource } from "../src/db/models/ingestion-source.ts";
@@ -363,6 +367,12 @@ function syntheticPublicSkill(): PublicRemoteSourceSkill {
       review_actions: ["review_import"],
     },
     parser,
+    compiledSource: {
+      kind: CANDIDATE_BUNDLE_CAPABILITY,
+      async compile() {
+        return candidateBundle([], { ok: true, checks: [] });
+      },
+    },
     sourceRequestSchema: {
       type: "object",
       required: ["url"],
@@ -390,8 +400,6 @@ function syntheticPublicSkill(): PublicRemoteSourceSkill {
     async retrieve() {
       return new Uint8Array();
     },
-    verify: () => ({ ok: true, checks: [] }),
-    candidates: () => [],
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { CANDIDATE_BUNDLE_CAPABILITY, candidateBundle } from "../source-skills/candidate-bundle.ts";
 import type { PublicRemoteNetworkCapability, PublicRemoteSourceSkill } from "./types.ts";
 import { PublicRemoteSourceCatalog } from "./types.ts";
 
@@ -44,6 +45,12 @@ function syntheticSkill(options: SyntheticSkillOptions = {}): PublicRemoteSource
       review_actions: ["review_import"],
     },
     parser,
+    compiledSource: {
+      kind: CANDIDATE_BUNDLE_CAPABILITY,
+      async compile() {
+        return candidateBundle([], { ok: true, checks: [] });
+      },
+    },
     sourceRequestSchema: {
       type: "object",
       required: ["url"],
@@ -61,8 +68,6 @@ function syntheticSkill(options: SyntheticSkillOptions = {}): PublicRemoteSource
     async retrieve() {
       return new Uint8Array();
     },
-    verify: () => ({ ok: true, checks: [] }),
-    candidates: () => [],
   };
 }
 

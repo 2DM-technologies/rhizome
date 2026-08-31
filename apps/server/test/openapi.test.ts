@@ -3,6 +3,10 @@ import openapiTS, { astToString, type OpenAPI3 } from "openapi-typescript";
 import ts from "typescript";
 
 import { FileSourceCatalog } from "../../ingest/file-sources/types.ts";
+import {
+  CANDIDATE_BUNDLE_CAPABILITY,
+  candidateBundle,
+} from "../../ingest/source-skills/candidate-bundle.ts";
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
@@ -171,6 +175,12 @@ describe("OpenAPI", () => {
           review_actions: ["review_import"],
         },
         parser,
+        compiledSource: {
+          kind: CANDIDATE_BUNDLE_CAPABILITY,
+          async compile() {
+            return candidateBundle([], { ok: true, checks: [] });
+          },
+        },
       },
     ]);
     const injected = createApp({

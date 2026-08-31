@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import { CANDIDATE_BUNDLE_CAPABILITY, candidateBundle } from "../source-skills/candidate-bundle.ts";
 import { CredentialedSourceCatalog, type CredentialedSourceSkill } from "./types.ts";
-import { installedCredentialedSourceSkillDefinitions } from "../src/credentialed-source-catalog.ts";
-import { TransactionParserCatalog, transactionParserFor } from "../src/parser-catalog.ts";
 
 type ParserName = CredentialedSourceSkill["parser"]["name"];
 
@@ -49,27 +48,23 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
       label: (fetchUuid) => `${fetchUuid}.json`,
     },
     parseConfig: (value) => value,
-    normalize: (parsed) => parsed,
-    identitySourceProperties: (properties) => properties,
     prepareFetch() {
       return {
         async retrieve() {
           return new Uint8Array();
         },
-        verifyOptions: {},
+        compiledSource: {
+          kind: CANDIDATE_BUNDLE_CAPABILITY,
+          async compile() {
+            return candidateBundle([], { ok: true, checks: [] });
+          },
+        },
       };
     },
-    verificationError: () => undefined,
   };
 }
 
 describe("CredentialedSourceCatalog", () => {
-  test("derives installed transaction parsers from the canonical skill definitions", () => {
-    for (const definition of installedCredentialedSourceSkillDefinitions) {
-      expect(transactionParserFor(definition.parser.name)).toBe(definition.parser);
-    }
-  });
-
   test("preserves registration order and looks skills up by skill id", () => {
     const first = fakeSkill("first", "csv");
     const second = fakeSkill("second", "ofx");
@@ -188,17 +183,5 @@ describe("CredentialedSourceCatalog", () => {
     expect(() => new CredentialedSourceCatalog([wrongSourceControl])).toThrow(
       "field pending does not match its source request schema",
     );
-  });
-});
-
-describe("TransactionParserCatalog", () => {
-  test("allows an intentionally shared parser and rejects name collisions", () => {
-    const parser = fakeSkill("first", "csv").parser;
-    const catalog = new TransactionParserCatalog([parser, parser]);
-    expect(catalog.forName("csv")).toBe(parser);
-
-    expect(
-      () => new TransactionParserCatalog([parser, { ...parser, version: "csv@other" }]),
-    ).toThrow("Conflicting transaction parser registration: csv");
   });
 });

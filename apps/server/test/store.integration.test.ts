@@ -19,11 +19,15 @@ import {
   type PublicRemoteSourceSkill,
 } from "../../ingest/public-sources/types.ts";
 import {
+  CANDIDATE_BUNDLE_CAPABILITY,
+  candidateBundle,
+} from "../../ingest/source-skills/candidate-bundle.ts";
+import {
   SIMPLEFIN_CONNECTOR_VERSION,
   SIMPLEFIN_PARSER_NAME,
   SIMPLEFIN_SKILL_ID,
-} from "../../ingest/skills/simplefin/contracts.ts";
-import { createSimpleFinSkill } from "../../ingest/skills/simplefin/source.ts";
+} from "../../ingest/skills/transactions/simplefin/contracts.ts";
+import { createSimpleFinSkill } from "../../ingest/skills/transactions/simplefin/source.ts";
 import { createApp } from "../src/app.ts";
 import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../src/auth.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
@@ -1318,7 +1322,7 @@ describe("rNet M1 store", () => {
     const importVibeId = importVibe.uri.split("/").at(-1);
 
     const csvBytes = await Bun.file(
-      new URL("../../ingest/skills/csv/fixtures/rhizome-bank.csv", import.meta.url),
+      new URL("../../ingest/skills/transactions/csv/fixtures/rhizome-bank.csv", import.meta.url),
     ).text();
     const csvOriginResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
       method: "POST",
@@ -1418,7 +1422,7 @@ describe("rNet M1 store", () => {
     expect(afterCancel?.count).toBe(afterConfirm?.count);
 
     const qfxBytes = await Bun.file(
-      new URL("../../ingest/skills/ofx/fixtures/checking.qfx", import.meta.url),
+      new URL("../../ingest/skills/transactions/ofx/fixtures/checking.qfx", import.meta.url),
     ).text();
     const qfxOriginResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
       method: "POST",
@@ -2658,6 +2662,49 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
         return parseSyntheticPublicCapture(JSON.parse(text));
       },
     },
+    compiledSource: {
+      kind: CANDIDATE_BUNDLE_CAPABILITY,
+      async compile({ bytes, config }) {
+        parseSyntheticPublicConfig(config);
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        if (text !== new TextDecoder().decode(captureBytes)) {
+          throw new Error("Synthetic public capture changed");
+        }
+        const value = parseSyntheticPublicCapture(JSON.parse(text));
+        const ordered = value.items.map(({ position }) => position).join(",") === "20,10";
+        const candidates = value.items.map((item) => {
+          const elementBytes = new TextEncoder().encode(item.title);
+          return {
+            type: "synthetic.note",
+            keys: { synthetic_item_id: item.id },
+            sourceProperties: { title: item.title, position: item.position },
+            retrievedAt: "2026-08-30T12:00:00.000Z",
+            elements: [
+              {
+                role: "title" as const,
+                kind: "text" as const,
+                mime: "text/plain",
+                bytes: elementBytes,
+                byteSize: elementBytes.byteLength,
+                contentHash: sha256(elementBytes),
+              },
+            ],
+            semanticIdentity: { type: "synthetic.note", synthetic_item_id: item.id },
+          };
+        });
+        return candidateBundle(candidates, {
+          ok: ordered,
+          candidate_count: value.items.length,
+          checks: [
+            {
+              name: "provider_order",
+              ok: ordered,
+              detail: ordered ? "Provider order is preserved" : "Provider order changed",
+            },
+          ],
+        });
+      },
+    },
     sourceRequestSchema: {
       type: "object",
       required: ["url"],
@@ -2690,44 +2737,6 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
     async retrieve(config) {
       parseSyntheticPublicConfig(config);
       return captureBytes.slice();
-    },
-    verify(parsed, config) {
-      parseSyntheticPublicConfig(config);
-      const value = parseSyntheticPublicCapture(parsed);
-      const ordered = value.items.map(({ position }) => position).join(",") === "20,10";
-      return {
-        ok: ordered,
-        candidate_count: value.items.length,
-        checks: [
-          {
-            name: "provider_order",
-            ok: ordered,
-            detail: ordered ? "Provider order is preserved" : "Provider order changed",
-          },
-        ],
-      };
-    },
-    candidates(parsed, config) {
-      parseSyntheticPublicConfig(config);
-      return parseSyntheticPublicCapture(parsed).items.map((item) => {
-        const bytes = new TextEncoder().encode(item.title);
-        return {
-          type: "synthetic.note",
-          keys: { synthetic_item_id: item.id },
-          sourceProperties: { title: item.title, position: item.position },
-          retrievedAt: "2026-08-30T12:00:00.000Z",
-          elements: [
-            {
-              role: "title" as const,
-              kind: "text" as const,
-              mime: "text/plain",
-              bytes,
-              byteSize: bytes.byteLength,
-              contentHash: sha256(bytes),
-            },
-          ],
-        };
-      });
     },
   };
 }
@@ -2846,7 +2855,7 @@ async function createCsvSourceFixture(label: string): Promise<{
   source: { source: string };
 }> {
   const bytes = await Bun.file(
-    new URL("../../ingest/skills/csv/fixtures/rhizome-bank.csv", import.meta.url),
+    new URL("../../ingest/skills/transactions/csv/fixtures/rhizome-bank.csv", import.meta.url),
   ).text();
   const originResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
     method: "POST",
@@ -2938,7 +2947,7 @@ async function connectedFetches(
 async function simpleFinFixtureBytes(name: string): Promise<Uint8Array> {
   return new Uint8Array(
     await Bun.file(
-      new URL(`../../ingest/skills/simplefin/fixtures/${name}`, import.meta.url),
+      new URL(`../../ingest/skills/transactions/simplefin/fixtures/${name}`, import.meta.url),
     ).arrayBuffer(),
   );
 }

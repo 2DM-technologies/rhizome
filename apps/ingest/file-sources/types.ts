@@ -1,11 +1,12 @@
 import type { SourceSkillManifest } from "../../../packages/store-contract/src/source-skills.ts";
 
+import type { CandidateBundleCapability, SourceParser } from "../source-skills/candidate-bundle.ts";
 import { SourceSkillManifestCatalog } from "../source-skills/manifest-catalog.ts";
-import type { TransactionParser } from "../transactions/types.ts";
 
 export interface FileSourceSkill {
   readonly manifest: SourceSkillManifest & { readonly source_kind: "file" };
-  readonly parser: TransactionParser;
+  readonly parser: SourceParser;
+  readonly compiledSource: CandidateBundleCapability<{ readonly bytes: Uint8Array }>;
 }
 
 /** Executable file-source capabilities, keyed by stable skill identity rather than parser name. */
@@ -29,7 +30,14 @@ export class FileSourceCatalog {
       ) {
         throw new Error(`File source ${manifest.skill_id} has inconsistent parser metadata`);
       }
-      const skill = Object.freeze({ manifest, parser: value.parser }) as FileSourceSkill;
+      if (value.compiledSource.kind !== "candidate_bundle@1") {
+        throw new Error(`File source ${manifest.skill_id} has an unsupported compiled capability`);
+      }
+      const skill = Object.freeze({
+        manifest,
+        parser: value.parser,
+        compiledSource: value.compiledSource,
+      }) as FileSourceSkill;
       bySkillId.set(manifest.skill_id, skill);
       return skill;
     });

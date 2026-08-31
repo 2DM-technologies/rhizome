@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { CANDIDATE_BUNDLE_CAPABILITY, candidateBundle } from "../source-skills/candidate-bundle.ts";
 import { FileSourceCatalog, type FileSourceSkill } from "./types.ts";
 
 function fakeFileSkill(skillId: string, parserName: string): FileSourceSkill {
@@ -31,6 +32,12 @@ function fakeFileSkill(skillId: string, parserName: string): FileSourceSkill {
       review_actions: ["review_import"],
     },
     parser,
+    compiledSource: {
+      kind: CANDIDATE_BUNDLE_CAPABILITY,
+      async compile() {
+        return candidateBundle([], { ok: true, checks: [] });
+      },
+    },
   };
 }
 

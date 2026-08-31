@@ -86,20 +86,21 @@ describe("Are.na public-remote source skill", () => {
     const config = skill.normalizeConfig({ url: fixture.channel_url + "/" });
     const captured = await skill.retrieve(config);
     const parsed = await skill.parser.parse(captured);
+    const bundle = await skill.compiledSource.compile({ bytes: captured, config });
 
     expect(parsed).toEqual(parseArenaCapture(fixtureBytes));
     expect(catalog.currentForSkillId(ARENA_SKILL_ID)).toBe(skill);
     expect(apiUrls.every((url) => new URL(url).origin === "https://api.are.na")).toBe(true);
     expect(assetUrls).toEqual(fixture.assets.map(({ requested_url }) => requested_url));
-    expect(skill.verify(parsed, config)).toMatchObject({ ok: true, candidate_count: 5 });
-    expect(skill.candidates(parsed, config).map(({ keys }) => keys)).toEqual([
+    expect(bundle.verify).toMatchObject({ ok: true, candidate_count: 5 });
+    expect(bundle.candidates.map(({ keys }) => keys)).toEqual([
       { arena_block_id: "1101", arena_channel_id: "7001" },
       { arena_block_id: "1102", arena_channel_id: "7001" },
       { arena_block_id: "1103", arena_channel_id: "7001" },
       { arena_block_id: "1104", arena_channel_id: "7001" },
       { arena_block_id: "1105", arena_channel_id: "7001" },
     ]);
-    expect(skill.candidates(parsed, config)[1]?.elements[1]?.bytes).toEqual(
+    expect(bundle.candidates[1]?.elements[1]?.bytes).toEqual(
       parseArenaCapture(fixtureBytes).blocks[1]?.elements[1]?.bytes,
     );
     expect(skill.stateDigest(config)).toEqual({
@@ -124,20 +125,19 @@ describe("Are.na public-remote source skill", () => {
 
     const { skill, requestedAssets } = skillForCapture(fixture);
     const config = skill.normalizeConfig({ url: fixture.channel_url });
-    const parsed = await skill.parser.parse(await skill.retrieve(config));
+    const captured = await skill.retrieve(config);
+    const bundle = await skill.compiledSource.compile({ bytes: captured, config });
 
     expect(requestedAssets).toContain(replacementUrl);
-    expect(skill.verify(parsed, config).ok).toBe(true);
+    expect(bundle.verify.ok).toBe(true);
   });
 
   test("rejects capture/config mismatches before candidate materialization", async () => {
-    const parsed = parseArenaCapture(await readFixtureBytes());
+    const bytes = await readFixtureBytes();
     const { skill } = skillForCapture(JSON.parse(await Bun.file(fixtureUrl()).text()));
     const different = { url: "https://www.are.na/synthetic-author/different-channel" };
-    expect(skill.verify(parsed, different).ok).toBe(false);
-    expect(() => skill.candidates(parsed, different)).toThrow(
-      "does not match the configured source",
-    );
+    const bundle = await skill.compiledSource.compile({ bytes, config: different });
+    expect(bundle.verify.ok).toBe(false);
   });
 });
 

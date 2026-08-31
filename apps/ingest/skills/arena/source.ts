@@ -1,10 +1,11 @@
-import type {
-  PublicRemoteSourceSkill,
-  PublicSourceCandidateDraft,
-  PublicSourceJsonObject,
-  PublicSourceJsonValue,
-  PublicSourceVerifyReport,
-} from "../../public-sources/types.ts";
+import type { PublicRemoteSourceSkill } from "../../public-sources/types.ts";
+import {
+  CANDIDATE_BUNDLE_CAPABILITY,
+  candidateBundle,
+  type SourceCandidateDraft,
+  type SourceJsonObject,
+  type SourceJsonValue,
+} from "../../source-skills/candidate-bundle.ts";
 
 import { ARENA_API_ORIGIN, ArenaClient, type ArenaClientOptions } from "./client.ts";
 import {
@@ -29,6 +30,48 @@ export function createArenaSourceSkill(
     displayName: arenaSourceSkillManifest.label,
     manifest: arenaSourceSkillManifest,
     parser: arenaParser,
+    compiledSource: {
+      kind: CANDIDATE_BUNDLE_CAPABILITY,
+      async compile({ bytes, config }) {
+        const channel = parsedChannel(await arenaParser.parse(bytes));
+        const normalized = parseConfig(config);
+        const report = verifyArena(channel);
+        const locatorMatches = channel.channelUrl === normalized.url;
+        const verify = {
+          ...report,
+          ok: report.ok && locatorMatches,
+          checks: [
+            ...report.checks,
+            {
+              name: "source_locator",
+              ok: locatorMatches,
+              detail: locatorMatches
+                ? "The capture matches the configured Are.na channel URL"
+                : "The capture does not match the configured Are.na channel URL",
+            },
+          ],
+        };
+        const candidates = channel.blocks.map((block): SourceCandidateDraft => ({
+          type: "arena.block",
+          keys: block.keys,
+          sourceProperties: sourceJsonObject(
+            block.sourceProperties,
+            `Are.na block ${block.blockId}`,
+          ),
+          retrievedAt: channel.retrievedAt,
+          elements: block.elements.map((element) => ({
+            role: element.role,
+            kind: element.kind,
+            mime: element.mime,
+            bytes: element.bytes,
+            byteSize: element.byteSize,
+            contentHash: element.contentHash,
+          })),
+          semanticIdentity: { type: "arena.block", keys: block.keys },
+        }));
+        return candidateBundle(candidates, verify);
+      },
+    },
     sourceRequestSchema: arenaSourceConfigSchema,
     fetchPolicy: { attempts: 24, windowHours: 24 },
     networkPolicy: {
@@ -58,47 +101,6 @@ export function createArenaSourceSkill(
     retrieve(config) {
       return client.fetchChannelCapture(parseConfig(config));
     },
-    verify(parsed, config) {
-      const channel = parsedChannel(parsed);
-      const normalized = parseConfig(config);
-      const report = verifyArena(channel);
-      const locatorMatches = channel.channelUrl === normalized.url;
-      return {
-        ...report,
-        ok: report.ok && locatorMatches,
-        checks: [
-          ...report.checks,
-          {
-            name: "source_locator",
-            ok: locatorMatches,
-            detail: locatorMatches
-              ? "The capture matches the configured Are.na channel URL"
-              : "The capture does not match the configured Are.na channel URL",
-          },
-        ],
-      } satisfies PublicSourceVerifyReport;
-    },
-    candidates(parsed, config) {
-      const channel = parsedChannel(parsed);
-      const normalized = parseConfig(config);
-      if (channel.channelUrl !== normalized.url) {
-        throw new Error("Are.na capture does not match the configured source");
-      }
-      return channel.blocks.map((block): PublicSourceCandidateDraft => ({
-        type: "arena.block",
-        keys: block.keys,
-        sourceProperties: publicJsonObject(block.sourceProperties, `Are.na block ${block.blockId}`),
-        retrievedAt: channel.retrievedAt,
-        elements: block.elements.map((element) => ({
-          role: element.role,
-          kind: element.kind,
-          mime: element.mime,
-          bytes: element.bytes,
-          byteSize: element.byteSize,
-          contentHash: element.contentHash,
-        })),
-      }));
-    },
   } satisfies PublicRemoteSourceSkill;
 }
 
@@ -120,19 +122,15 @@ function parsedChannel(value: unknown): ParsedArenaChannel {
   return value as ParsedArenaChannel;
 }
 
-function publicJsonObject(value: unknown, label: string): PublicSourceJsonObject {
-  const converted = publicJsonValue(value, new Set(), label);
+function sourceJsonObject(value: unknown, label: string): SourceJsonObject {
+  const converted = sourceJsonValue(value, new Set(), label);
   if (!converted || typeof converted !== "object" || Array.isArray(converted)) {
     throw new Error(`${label} source properties are not an object`);
   }
-  return converted as PublicSourceJsonObject;
+  return converted as SourceJsonObject;
 }
 
-function publicJsonValue(
-  value: unknown,
-  ancestors: Set<object>,
-  label: string,
-): PublicSourceJsonValue {
+function sourceJsonValue(value: unknown, ancestors: Set<object>, label: string): SourceJsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (!value || typeof value !== "object") throw new Error(`${label} is not JSON-safe`);
@@ -140,12 +138,12 @@ function publicJsonValue(
   ancestors.add(value);
   try {
     if (Array.isArray(value)) {
-      return value.map((entry) => publicJsonValue(entry, ancestors, label));
+      return value.map((entry) => sourceJsonValue(entry, ancestors, label));
     }
-    const result: PublicSourceJsonObject = {};
+    const result: SourceJsonObject = {};
     for (const [key, entry] of Object.entries(value)) {
       if (entry === undefined) throw new Error(`${label}.${key} is undefined`);
-      result[key] = publicJsonValue(entry, ancestors, `${label}.${key}`);
+      result[key] = sourceJsonValue(entry, ancestors, `${label}.${key}`);
     }
     return result;
   } finally {
