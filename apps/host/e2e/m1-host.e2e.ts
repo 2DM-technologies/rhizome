@@ -839,12 +839,13 @@ test("an existing element payload is fetched and presented", async ({ page }) =>
     response.url().endsWith(`/elements/${ELEMENT_ID}/bytes`),
   );
   await page.goto(`/objects/${OBJECT_ID}`);
-  await payloadResponse;
+  const response = await payloadResponse;
+  expect(response.headers()["content-type"]).toBe("text/plain; charset=utf-8");
 
   const preview = page.getByTitle("Monthly plan");
   await expect(preview).toBeVisible();
   await expect(preview).toHaveCSS("color-scheme", "light");
-  await expect(preview.contentFrame().locator("body")).toContainText(PAYLOAD_TEXT.trim());
+  await expect(preview).toContainText(PAYLOAD_TEXT.trim());
   const download = page.getByRole("link", { name: `Download payload ${ELEMENT_URI}` });
   await download.scrollIntoViewIfNeeded();
   await expect(download).toBeInViewport();

@@ -96,6 +96,7 @@ const syntheticOAuthCaptureBytes = new TextEncoder().encode(
 const syntheticOAuthRefreshSecrets: string[] = [];
 const syntheticOAuthRetrieveSecrets: string[] = [];
 const syntheticOAuthRevokeSecrets: string[] = [];
+const SYNTHETIC_PUBLIC_TITLES = ["“Zeta” stays first 🤔", "Alpha stays second"] as const;
 let syntheticOAuthRefresh: (
   secret: string,
   signal: AbortSignal,
@@ -1633,6 +1634,44 @@ describe("rNet M1 store", () => {
     expect(duplicate.content_hash).toBe(originHash);
   });
 
+  test("serves text elements as UTF-8 without assigning an encoding to raw origins", async () => {
+    const text = "She said “hello” and paused 🤔";
+    const elementResponse = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: {
+        ...owner,
+        "Content-Type": "text/plain; charset=utf-8",
+        "X-Rnet-Kind": "text",
+      },
+      body: text,
+    });
+    expect(elementResponse.status).toBe(201);
+    const element = (await elementResponse.json()) as { bytes: string; mime: string };
+    expect(element.mime).toBe("text/plain");
+
+    const elementBytes = await app.request(element.bytes, { headers: owner });
+    expect(elementBytes.status).toBe(200);
+    expect(elementBytes.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(new Uint8Array(await elementBytes.arrayBuffer())).toEqual(
+      new TextEncoder().encode(text),
+    );
+
+    const windows1252Origin = Uint8Array.of(0x93, 0x68, 0x69, 0x94);
+    const originResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "text/plain; charset=windows-1252" },
+      body: windows1252Origin,
+    });
+    expect(originResponse.status).toBe(201);
+    const origin = (await originResponse.json()) as { bytes: string; mime: string };
+    expect(origin.mime).toBe("text/plain");
+
+    const originBytes = await app.request(origin.bytes, { headers: owner });
+    expect(originBytes.status).toBe(200);
+    expect(originBytes.headers.get("Content-Type")).toBe("text/plain");
+    expect(new Uint8Array(await originBytes.arrayBuffer())).toEqual(windows1252Origin);
+  });
+
   test("stages, verifies, and atomically confirms supported CSV and QFX imports", async () => {
     const vibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
@@ -2048,8 +2087,10 @@ describe("rNet M1 store", () => {
     const secondPreviewBytes = await app.request(result.elements[1]!.preview_url, {
       headers: owner,
     });
-    expect(await firstPreviewBytes.text()).toBe("Zeta stays first");
-    expect(await secondPreviewBytes.text()).toBe("Alpha stays second");
+    expect(firstPreviewBytes.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(secondPreviewBytes.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(await firstPreviewBytes.text()).toBe(SYNTHETIC_PUBLIC_TITLES[0]);
+    expect(await secondPreviewBytes.text()).toBe(SYNTHETIC_PUBLIC_TITLES[1]);
 
     const confirmResponse = await request(
       `/rnet/v0/vibes/${targetVibeId}/imports/${preview.operation_id}/confirm`,
@@ -2076,9 +2117,8 @@ describe("rNet M1 store", () => {
         `/rnet/v0/elements/${committed.elements[0]!.uri.split("/").at(-1)}/bytes`,
         { headers: owner },
       );
-      expect(await elementResponse.text()).toBe(
-        index === 0 ? "Zeta stays first" : "Alpha stays second",
-      );
+      expect(elementResponse.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+      expect(await elementResponse.text()).toBe(SYNTHETIC_PUBLIC_TITLES[index]!);
     }
 
     const repeatResponse = await request(`/rnet/v0/vibes/${targetVibeId}/pull`, {
@@ -2882,7 +2922,7 @@ describe("rNet M1 store", () => {
     expect(originBytes.status).toBe(200);
     expect(originBytes.headers.get("Content-Type")).toBe("text/plain");
     expect(elementBytes.status).toBe(200);
-    expect(elementBytes.headers.get("Content-Type")).toBe("text/plain");
+    expect(elementBytes.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
 
     const mediaObjectResponse = await request("/rnet/v0/objects", {
       method: "POST",
@@ -3174,8 +3214,8 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
   const capture: SyntheticPublicCapture = {
     version: "synthetic-public-capture@1",
     items: [
-      { id: "item-z", position: 20, title: "Zeta stays first" },
-      { id: "item-a", position: 10, title: "Alpha stays second" },
+      { id: "item-z", position: 20, title: SYNTHETIC_PUBLIC_TITLES[0] },
+      { id: "item-a", position: 10, title: SYNTHETIC_PUBLIC_TITLES[1] },
     ],
   };
   const captureBytes = new TextEncoder().encode(JSON.stringify(capture));
