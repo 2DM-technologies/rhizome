@@ -230,7 +230,7 @@ export class SourceCredentialsService {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const credential = await this.getOwned(credentialUuid);
     if (credential.revokedAt) return;
-    const skill = this.credentialedSources?.forSkillId(credential.skillId);
+    const skill = this.credentialedSources?.forInstalledSkillId(credential.skillId);
     if (
       skill?.manifest.connector_version === credential.connectorVersion &&
       skill.connection.mode === "oauth2_pkce"

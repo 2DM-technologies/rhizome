@@ -11,6 +11,27 @@ export interface XTextSpan {
   readonly end: number;
 }
 
+/** Canonical source-fact shape shared by archive v1 and API v2 URL entities. */
+export interface NormalizedXUrlEntity extends XTextSpan {
+  readonly url: string;
+  readonly expanded_url?: string;
+}
+
+export interface NormalizedXMentionEntity extends XTextSpan {
+  readonly username: string;
+}
+
+export interface NormalizedXTagEntity extends XTextSpan {
+  readonly tag: string;
+}
+
+export interface NormalizedXEntities {
+  readonly urls?: readonly NormalizedXUrlEntity[];
+  readonly mentions?: readonly NormalizedXMentionEntity[];
+  readonly hashtags?: readonly NormalizedXTagEntity[];
+  readonly cashtags?: readonly NormalizedXTagEntity[];
+}
+
 export interface NormalizedXPostReference {
   readonly kind: XPostReferenceKind;
   readonly postId: string;
@@ -56,11 +77,12 @@ export interface NormalizedXPost {
   readonly authorHandle?: string;
   readonly authorName?: string;
   readonly conversationId?: string;
+  /** Provider-native entity dialects are adapter input; stable link facts normalize here. */
   readonly references: readonly NormalizedXPostReference[];
   readonly language?: string;
   readonly possiblySensitive?: boolean;
   readonly editHistoryIds?: readonly string[];
-  readonly entities?: SourceJsonObject;
+  readonly entities?: NormalizedXEntities;
   readonly attachments: readonly NormalizedXAttachment[];
 }
 

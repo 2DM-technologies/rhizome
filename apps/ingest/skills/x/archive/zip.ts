@@ -11,14 +11,21 @@ export interface ValidatedZip {
   close(): Promise<void>;
 }
 
-export async function openValidatedZip(blob: Blob): Promise<ValidatedZip> {
+export async function openValidatedZip(
+  blob: Blob,
+  maxEntries = MAX_ARCHIVE_ENTRIES,
+): Promise<ValidatedZip> {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0 || maxEntries > MAX_ARCHIVE_ENTRIES) {
+    throw new Error("ZIP entry limit is invalid");
+  }
   const reader = new ZipReader(new BlobReader(blob), { strictness: "strict" });
   try {
-    const entries = await reader.getEntries({ strictness: "strict" });
-    if (entries.length > MAX_ARCHIVE_ENTRIES) throw new Error("ZIP has too many entries");
+    const entries: Entry[] = [];
     const byPath = new Map<string, Entry>();
     const folded = new Set<string>();
-    for (const entry of entries) {
+    for await (const entry of reader.getEntriesGenerator({ strictness: "strict" })) {
+      if (entries.length >= maxEntries) throw new Error("ZIP has too many entries");
+      entries.push(entry);
       if (!safePath(entry.filename))
         throw new Error(`ZIP contains an unsafe path: ${entry.filename}`);
       const key = entry.filename.toLocaleLowerCase("en-US");

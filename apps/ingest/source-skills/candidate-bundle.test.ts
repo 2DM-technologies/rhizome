@@ -92,10 +92,12 @@ describe("candidate_bundle@1 compiled-source contract", () => {
       },
     ]);
     expect(
-      installedCredentialedSourceSkillDefinitions.map(({ skillId, parser }) => ({
-        skillId,
-        parser: { name: parser.name, version: parser.version },
-      })),
+      installedCredentialedSourceSkillDefinitions
+        .filter(({ skillId }) => skillId === "simplefin")
+        .map(({ skillId, parser }) => ({
+          skillId,
+          parser: { name: parser.name, version: parser.version },
+        })),
     ).toEqual([
       {
         skillId: "simplefin",

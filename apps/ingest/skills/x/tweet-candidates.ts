@@ -18,6 +18,7 @@ import type {
   XVerifyReport,
 } from "./contracts.ts";
 import { sha256, sourceJsonObject } from "./contracts.ts";
+import { normalizeXEntities } from "./entities.ts";
 import { verifyXPostCandidates } from "./verify.ts";
 
 export type XPostDisposition =
@@ -244,7 +245,7 @@ function postSourceProperties(
     ...(post.language ? { language: post.language } : {}),
     ...(post.possiblySensitive !== undefined ? { possibly_sensitive: post.possiblySensitive } : {}),
     ...(post.editHistoryIds ? { edit_history_ids: post.editHistoryIds } : {}),
-    ...(post.entities ? { entities: post.entities } : {}),
+    ...(post.entities ? { entities: canonicalEntityFacts(post.entities) } : {}),
     ...(omissions.length
       ? {
           media_omissions: omissions.map((omission) => ({
@@ -369,6 +370,39 @@ export function assertNormalizedXPost(post: NormalizedXPost): void {
       editIds.add(id);
     }
   }
+  if (post.entities) {
+    const allowedKeys = ["cashtags", "hashtags", "mentions", "urls"];
+    if (Object.keys(post.entities).some((key) => !allowedKeys.includes(key))) {
+      throw new Error(`X post ${post.id} has invalid structured entities`);
+    }
+    const normalized = normalizeXEntities(post.text, {
+      urls: post.entities.urls?.map((entity) => ({
+        url: entity.url,
+        ...(entity.expanded_url ? { expandedUrl: entity.expanded_url } : {}),
+        start: entity.start,
+        end: entity.end,
+      })),
+      mentions: post.entities.mentions?.map((entity) => ({ ...entity })),
+      hashtags: post.entities.hashtags?.map((entity) => ({ ...entity })),
+      cashtags: post.entities.cashtags?.map((entity) => ({ ...entity })),
+    });
+    if (!normalized || !sameJson(normalized, canonicalEntityFacts(post.entities))) {
+      throw new Error(`X post ${post.id} has invalid or noncanonical structured entities`);
+    }
+  }
+  for (const reference of post.references) {
+    if (reference.kind !== "quoted" || !reference.textSpan || !reference.textUrl) continue;
+    const matchingEntities = (post.entities?.urls ?? []).filter(
+      (entity) =>
+        entity.start === reference.textSpan!.start &&
+        entity.end === reference.textSpan!.end &&
+        entity.url === reference.textUrl &&
+        (reference.url === undefined || entity.expanded_url === reference.url),
+    );
+    if (matchingEntities.length !== 1) {
+      throw new Error(`X post ${post.id} quote span lacks one matching structured entity`);
+    }
+  }
   const attachmentRefs = new Set<string>();
   for (const attachment of post.attachments) {
     if (!attachment.sourceRef || attachmentRefs.has(attachment.sourceRef)) {
@@ -386,6 +420,52 @@ export function assertNormalizedXPost(post: NormalizedXPost): void {
       throw new Error(`X post ${post.id} has an invalid omitted media size`);
     }
   }
+}
+
+function canonicalEntityFacts(entities: NonNullable<NormalizedXPost["entities"]>) {
+  return {
+    ...(entities.urls?.length
+      ? {
+          urls: entities.urls.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            url: entity.url,
+            ...(entity.expanded_url ? { expanded_url: entity.expanded_url } : {}),
+          })),
+        }
+      : {}),
+    ...(entities.mentions?.length
+      ? {
+          mentions: entities.mentions.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            username: entity.username,
+          })),
+        }
+      : {}),
+    ...(entities.hashtags?.length
+      ? {
+          hashtags: entities.hashtags.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            tag: entity.tag,
+          })),
+        }
+      : {}),
+    ...(entities.cashtags?.length
+      ? {
+          cashtags: entities.cashtags.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            tag: entity.tag,
+          })),
+        }
+      : {}),
+  };
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function assertXId(value: string, label: string): void {

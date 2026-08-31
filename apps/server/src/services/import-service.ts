@@ -66,7 +66,10 @@ import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { VibeAggregate } from "../serializers/vibe-serializer.ts";
 import { AccessService } from "./access-service.ts";
 import { CREDENTIAL_FETCH_LOCK_SEED } from "./credential-lease.ts";
-import { withProviderRequestDeadline } from "./provider-request-deadline.ts";
+import {
+  sourceCaptureProviderTimeoutMilliseconds,
+  withProviderRequestDeadline,
+} from "./provider-request-deadline.ts";
 import { storeOwnedOriginArtifact } from "./origin-artifact-service.ts";
 import {
   createLocalSourceCredentialCrypto,
@@ -1029,8 +1032,9 @@ export class ImportService {
       providerRequestStarted = true;
       let bytes: Uint8Array;
       try {
-        bytes = await withProviderRequestDeadline((signal) =>
-          prepared.fetch.retrieve(secret, { signal }),
+        bytes = await withProviderRequestDeadline(
+          (signal) => prepared.fetch.retrieve(secret, { signal }),
+          sourceCaptureProviderTimeoutMilliseconds(reservedSource.source.executionLimits),
         );
       } catch (error) {
         if (
@@ -1218,6 +1222,7 @@ export class ImportService {
       fetch: await resolved.skill.prepareFetch({
         config,
         endDateEpoch,
+        limits: resolved.source.executionLimits,
         ...(previousCapture ? { previousCapture } : {}),
         ...(resume === undefined ? {} : { resume }),
       }),

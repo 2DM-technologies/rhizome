@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../../../..");
 const allowedRoot = resolve(import.meta.dir);
@@ -8,11 +8,21 @@ const providerPatterns = [
   /\bx_archive\b/,
   /\bx_oauth\b/,
   /api\.x\.com/,
+  /https:\/\/(?:[A-Za-z0-9-]+\.)*x\.com(?:[/?#:]|$)/u,
+  /https:\/\/t\.co(?:[/?#:]|$)/u,
   /help\.x\.com/,
   /twitter\.com/,
+  /pbs\.twimg\.com/,
+  /video\.twimg\.com/,
   /\btweet\.read\b/,
   /\busers\.read\b/,
   /\boffline\.access\b/,
+  /\bRHIZOME_X_[A-Z0-9_]+\b/,
+  /\b(?:referenced_tweets|edit_history_tweet_ids|possibly_sensitive|media_key)\b/,
+  /\b(?:tweet\.fields|media\.fields|x-rate-limit-reset)\b/,
+  /\/i\/oauth2\/authorize\b/,
+  /\/oauth2\/(?:token|revoke)\b/,
+  /\/users\/me\b/,
 ];
 
 describe("X provider quarantine", () => {
@@ -21,8 +31,10 @@ describe("X provider quarantine", () => {
     const glob = new Bun.Glob("**/*.{ts,tsx,js,mjs,json,md}");
     for await (const path of glob.scan({ cwd: repoRoot, onlyFiles: true })) {
       const absolute = resolve(repoRoot, path);
+      const fromAllowedRoot = relative(allowedRoot, absolute);
       if (
-        absolute.startsWith(allowedRoot) ||
+        fromAllowedRoot === "" ||
+        (!fromAllowedRoot.startsWith("..") && !isAbsolute(fromAllowedRoot)) ||
         path.startsWith("impl/") ||
         path.startsWith("node_modules/") ||
         path.split("/").includes("dist") ||

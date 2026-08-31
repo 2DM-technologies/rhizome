@@ -101,6 +101,16 @@ describe("X shared post candidates", () => {
     expect(original?.elements[1]?.alt).toBe("A synthetic landscape");
     expect(original?.sourceProperties.text).toBeUndefined();
     expect(original?.sourceProperties.full_text).toBeUndefined();
+    expect(original?.sourceProperties.entities).toEqual({
+      urls: [
+        {
+          start: 21,
+          end: 43,
+          url: "https://t.co/unchanged",
+          expanded_url: "https://example.test/article",
+        },
+      ],
+    });
     expect(original?.sourceProperties.media_omissions).toEqual([
       {
         attachment_index: 1,
@@ -173,6 +183,7 @@ describe("X shared post candidates", () => {
 
   test("fails closed on duplicate IDs, invalid spans, and required text that cannot fit", async () => {
     const post = normalizedPosts().find(({ id }) => id === "100")!;
+    const quote = normalizedPosts().find(({ id }) => id === "101")!;
     expect(() => selectXPosts({ account: fixture.account, posts: [post, post], cap: 2 })).toThrow(
       "Duplicate X post id",
     );
@@ -185,6 +196,21 @@ describe("X shared post candidates", () => {
         fixture.account.id,
       ),
     ).toThrow("invalid quote URL span");
+    expect(() => classifyXPost({ ...quote, entities: undefined }, fixture.account.id)).toThrow(
+      "matching structured entity",
+    );
+    expect(() =>
+      selectXPosts({
+        account: fixture.account,
+        posts: [
+          {
+            ...post,
+            entities: { urls: [{ start: 0, end: 1, url: "not-the-text" }] },
+          },
+        ],
+        cap: 1,
+      }),
+    ).toThrow("offsets do not match");
     const selection = selectXPosts({ account: fixture.account, posts: [post], cap: 1 });
     await expect(
       compileXPostCandidates(selection, {

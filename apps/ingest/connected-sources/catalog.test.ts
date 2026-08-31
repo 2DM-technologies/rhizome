@@ -91,6 +91,20 @@ describe("CredentialedSourceCatalog", () => {
     expect(catalog.forSkillId("missing")).toBeUndefined();
   });
 
+  test("keeps lifecycle-only adapters installed without publishing or dispatching them", () => {
+    const lifecycleOnly = {
+      ...fakeSkill("disabled", "csv"),
+      availability: "lifecycle_only" as const,
+    };
+    const catalog = new CredentialedSourceCatalog([lifecycleOnly]);
+
+    expect(catalog.all()).toEqual([]);
+    expect(catalog.manifests()).toEqual([]);
+    expect(catalog.forSkillId("disabled")).toBeUndefined();
+    expect(catalog.forSource("disabled", "csv")).toBeUndefined();
+    expect(catalog.forInstalledSkillId("disabled")).toBe(lifecycleOnly);
+  });
+
   test("requires the skill id and parser to identify the same skill", () => {
     const first = fakeSkill("first", "csv");
     const second = fakeSkill("second", "ofx");

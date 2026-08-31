@@ -1,12 +1,15 @@
 import type {
   NormalizedXAttachment,
+  NormalizedXEntities,
   NormalizedXPost,
   NormalizedXPostReference,
+  NormalizedXUrlEntity,
   XAccountIdentity,
   XDeclaredMediaOmissionReason,
   XMediaOmissionReason,
   XSelectionCounts,
 } from "../contracts.ts";
+import { isXStatusUrl, normalizeXEntities } from "../entities.ts";
 
 export const X_ARCHIVE_CAPTURE_FORMAT = "rhizome.x-archive-selection@1" as const;
 export const X_ARCHIVE_CAPTURE_MIME = "application/vnd.rhizome.x-archive-selection+zip" as const;
@@ -193,6 +196,7 @@ export function normalizeRawArchiveTweet(
   const id = requiredDecimal(raw.id_str, "tweet id");
   const text = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
   const publishedAt = twitterDateTime(raw.created_at, id);
+  const entities = normalizeArchiveEntities(raw.entities, text, id);
   const references: NormalizedXPostReference[] = [];
   if (decimal(raw.in_reply_to_status_id_str)) {
     references.push({ kind: "replied_to", postId: raw.in_reply_to_status_id_str });
@@ -201,17 +205,16 @@ export function normalizeRawArchiveTweet(
     references.push({ kind: "reposted", postId: raw.retweeted_status_id_str });
   }
   if (decimal(raw.quoted_status_id_str)) {
-    const quoteEntity = findQuoteEntity(raw, raw.quoted_status_id_str);
+    const quoteEntity = findQuoteEntity(entities, raw.quoted_status_id_str);
+    if (!quoteEntity) {
+      throw new Error(`X archive quoted post ${id} lacks one exact provider URL entity`);
+    }
     references.push({
       kind: "quoted",
       postId: raw.quoted_status_id_str,
-      ...(quoteEntity?.expandedUrl ? { url: quoteEntity.expandedUrl } : {}),
-      ...(quoteEntity
-        ? {
-            textUrl: quoteEntity.textUrl,
-            textSpan: quoteEntity.textSpan,
-          }
-        : {}),
+      url: quoteEntity.expanded_url,
+      textUrl: quoteEntity.url,
+      textSpan: { start: quoteEntity.start, end: quoteEntity.end },
     });
   }
 
@@ -251,9 +254,7 @@ export function normalizeRawArchiveTweet(
         ? { possiblySensitive: raw.possibly_sensitive }
         : {}),
       ...(editHistory(raw, id).length ? { editHistoryIds: editHistory(raw, id) } : {}),
-      ...(record(raw.entities)
-        ? { entities: jsonObject(raw.entities, `tweet ${id} entities`) }
-        : {}),
+      ...(entities ? { entities } : {}),
       attachments,
     },
     media,
@@ -411,38 +412,94 @@ function archiveMedia(
   });
 }
 
-function findQuoteEntity(raw: Readonly<Record<string, unknown>>, quoteId: string) {
-  const entities = raw.entities;
-  if (!record(entities) || !Array.isArray(entities.urls)) return undefined;
-  for (const value of entities.urls) {
-    if (!record(value) || typeof value.url !== "string") continue;
-    const expanded = typeof value.expanded_url === "string" ? value.expanded_url : undefined;
-    if (!expanded?.includes(`/status/${quoteId}`)) continue;
-    const text = requiredString(raw.full_text, "quote text", 1_000_000);
-    const indices = value.indices;
-    let start: number;
-    let end: number;
-    if (
-      Array.isArray(indices) &&
-      indices.length === 2 &&
-      indices.every(nonnegativeInteger) &&
-      text.slice(indices[0], indices[1]) === value.url
-    ) {
-      [start, end] = indices as [number, number];
-    } else {
-      start = text.indexOf(value.url);
-      if (start < 0 || text.indexOf(value.url, start + value.url.length) >= 0) {
-        throw new Error("X quote URL entity has no unambiguous exact-text span");
+function normalizeArchiveEntities(
+  value: unknown,
+  text: string,
+  postId: string,
+): NormalizedXEntities | undefined {
+  if (value === undefined) return undefined;
+  if (!record(value)) throw new Error(`X archive tweet ${postId} entities are invalid`);
+  return normalizeXEntities(text, {
+    urls: archiveEntityArray(value, "urls", postId).map((entity, index) => {
+      if (!record(entity) || typeof entity.url !== "string") {
+        throw new Error(`X archive tweet ${postId} URL entity ${index} is invalid`);
       }
-      end = start + value.url.length;
-    }
-    return {
-      textUrl: value.url,
-      expandedUrl: expanded,
-      textSpan: { start, end },
-    };
+      if (entity.expanded_url !== undefined && typeof entity.expanded_url !== "string") {
+        throw new Error(`X archive tweet ${postId} expanded URL entity ${index} is invalid`);
+      }
+      const span = archiveEntitySpan(entity, postId, "URL", index);
+      return {
+        url: entity.url,
+        ...(entity.expanded_url !== undefined ? { expandedUrl: entity.expanded_url } : {}),
+        ...span,
+      };
+    }),
+    mentions: archiveEntityArray(value, "user_mentions", postId).map((entity, index) => {
+      if (!record(entity) || typeof entity.screen_name !== "string") {
+        throw new Error(`X archive tweet ${postId} mention entity ${index} is invalid`);
+      }
+      return {
+        username: entity.screen_name,
+        ...archiveEntitySpan(entity, postId, "mention", index),
+      };
+    }),
+    hashtags: archiveEntityArray(value, "hashtags", postId).map((entity, index) => {
+      if (!record(entity) || typeof entity.text !== "string") {
+        throw new Error(`X archive tweet ${postId} hashtag entity ${index} is invalid`);
+      }
+      return {
+        tag: entity.text,
+        ...archiveEntitySpan(entity, postId, "hashtag", index),
+      };
+    }),
+    cashtags: archiveEntityArray(value, "symbols", postId).map((entity, index) => {
+      if (!record(entity) || typeof entity.text !== "string") {
+        throw new Error(`X archive tweet ${postId} cashtag entity ${index} is invalid`);
+      }
+      return {
+        tag: entity.text,
+        ...archiveEntitySpan(entity, postId, "cashtag", index),
+      };
+    }),
+  });
+}
+
+function archiveEntityArray(
+  entities: Readonly<Record<string, unknown>>,
+  key: string,
+  postId: string,
+): readonly unknown[] {
+  const value = entities[key];
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error(`X archive tweet ${postId} ${key} entities are invalid`);
   }
-  return undefined;
+  return value;
+}
+
+function archiveEntitySpan(
+  entity: Readonly<Record<string, unknown>>,
+  postId: string,
+  label: string,
+  index: number,
+): { readonly start?: number; readonly end?: number } {
+  if (entity.indices === undefined) return {};
+  if (
+    !Array.isArray(entity.indices) ||
+    entity.indices.length !== 2 ||
+    !entity.indices.every(nonnegativeInteger)
+  ) {
+    throw new Error(`X archive tweet ${postId} ${label} entity indices ${index} are invalid`);
+  }
+  return { start: entity.indices[0], end: entity.indices[1] };
+}
+
+function findQuoteEntity(entities: NormalizedXEntities | undefined, quoteId: string) {
+  const matches = (entities?.urls ?? []).filter(
+    (entity): entity is NormalizedXUrlEntity & { readonly expanded_url: string } =>
+      entity.expanded_url !== undefined && isXStatusUrl(entity.expanded_url, quoteId),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function parseAssignment(value: string, prefix: string, label: string): unknown {
@@ -489,14 +546,6 @@ function mimeForPath(value: string | undefined, fallback: string): string {
   if (pathname.endsWith(".gif")) return "image/gif";
   if (pathname.endsWith(".webp")) return "image/webp";
   return fallback;
-}
-
-function jsonObject(value: unknown, label: string): Record<string, never> {
-  try {
-    return JSON.parse(JSON.stringify(value)) as Record<string, never>;
-  } catch {
-    throw new Error(`${label} is not JSON-safe`);
-  }
 }
 
 function record(value: unknown): value is Record<string, unknown> {
