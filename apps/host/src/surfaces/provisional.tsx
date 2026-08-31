@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { isStoreError } from "../api/client.ts";
+import { isStoreError } from "../api/storeError.ts";
 import { StatusChip, cn } from "../ui/index.ts";
 
 /**
