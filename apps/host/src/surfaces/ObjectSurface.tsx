@@ -229,25 +229,7 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
               <JsonBlock value={object.data.source} />
             </GraphSection>
 
-            <GraphSection title="Origins">
-              <ul className="flex flex-col gap-3">
-                {object.data.source.origins.map((uri, position) => (
-                  <OriginReference key={`${uri}:${position}`} uri={uri} inspectArtifact={isOwner} />
-                ))}
-              </ul>
-            </GraphSection>
-
-            <GraphSection title="Keys">
-              <JsonBlock value={object.data.keys ?? {}} />
-            </GraphSection>
-
-            <GraphSection title="Inferred">
-              <JsonBlock value={object.data.inferred ?? {}} />
-            </GraphSection>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-5">
-            <GraphSection title="User properties">
+            <GraphSection title="User">
               {isOwner ? (
                 <>
                   <div className="flex items-center gap-3">
@@ -294,6 +276,12 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
               )}
             </GraphSection>
 
+            <GraphSection title="Inferred">
+              <JsonBlock value={object.data.inferred ?? {}} />
+            </GraphSection>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-5">
             <GraphSection title={`Elements (${object.data.elements.length})`}>
               {object.data.elements.length ? (
                 <ol className="flex flex-col gap-3">
@@ -308,6 +296,16 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
               ) : (
                 <span className="text-body text-tertiary">This object has no media elements.</span>
               )}
+            </GraphSection>
+            <GraphSection title="Keys">
+              <JsonBlock value={object.data.keys ?? {}} />
+            </GraphSection>
+            <GraphSection title="Origins">
+              <ul className="flex flex-col gap-3">
+                {object.data.source.origins.map((uri, position) => (
+                  <OriginReference key={`${uri}:${position}`} uri={uri} inspectArtifact={isOwner} />
+                ))}
+              </ul>
             </GraphSection>
           </div>
         </div>

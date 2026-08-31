@@ -66,12 +66,12 @@
   --rz-gray-600: #525252;
   --rz-gray-700: #3f3f3f;
   --rz-gray-800: #252525;
-  --rz-gray-900: #000000;
+  --rz-gray-900: #111111;
 
   /* Dock chrome. Raw values in the design — the dock does not follow tier, so these are
      named rather than tokenised into the tier sets. The translucent fills stay in the
      colour itself so backdrop-filter can sample the desktop behind them. */
-  --rz-dock-tray: rgb(from var(--rz-gray-900) r g b / 80%);
+  --rz-dock-tray: rgb(from var(--rz-gray-900) r g b / 90%);
   --rz-dock-search: rgb(255 255 250 / 90%);
   --rz-dock-search-text: #14151a;
   --rz-dock-search-placeholder: #6b6b70;
