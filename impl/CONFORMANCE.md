@@ -23,10 +23,10 @@ Implemented in M2:
   adapters live beside their skills while the host suite exercises synthetic capabilities.
 - Public Are.na v3 channel ingestion is operational. The supplied page URL is a validated channel
   locator; exact fixed-origin API pages and referenced assets are captured before deterministic
-  parsing and VERIFY. Arbitrary public asset domains cross the DNS-pinned, redirect-revalidating,
-  private-range-blocking SafePublicFetcher with credential stripping and resource limits. Reviewed
-  candidates carry previewable staged MediaElements, confirmation atomically
-  creates object-plus-element bundles and membership, cancellation creates no derived records,
+  parsing and VERIFY. Arbitrary public asset domains over HTTPS/443 cross the DNS-pinned,
+  redirect-revalidating, private-range-blocking SafePublicFetcher with credential stripping and
+  resource limits. Reviewed candidates carry previewable staged MediaElements; confirmation
+  atomically creates object-plus-element bundles and membership; cancellation creates no derived records;
   each imported Block starts with its canonical title as a `text/plain` element, and unchanged
   pulls deduplicate by block identity plus semantic fields, element roles, and element hashes. Vibe
   cards choose previews from generic media metadata and defer element/payload fetches until they are
@@ -39,6 +39,13 @@ Milestone-scheduled gaps:
 - Full ingest-record method conformance becomes reachable and enforced in M5; M1 accepts only the milestone's constant `parser` and `authored` stamps at creation.
 - M2 credentialed-remote execution is transaction-specific: `CredentialedSourceSkill` requires the transaction parser, intermediate representation, and VERIFY pipeline, and the server always builds transaction candidates. Before installing a credentialed media or other non-transaction skill, M5 must split the generic credential lifecycle from a capability-dispatched parse, verify, and candidate pipeline; dispatch must use a platform capability kind, never a skill or provider ID.
 - M2 installed credentialed skills execute inside the server process and load skill-owned settings from that process's environment, such as `RHIZOME_SIMPLEFIN_ALLOWED_HOSTS`. Before separately packaged skill discovery, M5 must introduce bounded deployment configuration keyed by skill ID and implementation pin and validated by each installed skill. Endpoint policy remains skill-owned and fail-closed.
+- M2 public asset fetches cross a DNS-pinned, redirect-revalidating `SafePublicFetcher`, but its
+  `PublicAssetFetcher` adapter still executes inside the API process, which also holds database and
+  provider credentials. Before production, M8 must put that capability behind a separately deployed,
+  least-privilege egress worker with no database/provider credentials and no route to database,
+  loopback, link-local, private, or special networks. Its production smoke test must prove bounded
+  public HTTPS/443 fetches succeed while denied destinations remain unreachable and the API has no
+  direct arbitrary-domain fetch path.
 - Production phone OTP and passkey authentication replace the development bearer identities in M7.
 - Content-addressed payloads staged by a failed preview/transaction, or retained by a successful
   preview that is later canceled, expires, or is abandoned, are not yet garbage-collected. Operation
