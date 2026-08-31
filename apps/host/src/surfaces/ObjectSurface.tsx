@@ -80,7 +80,7 @@ function RenderedPayload({
         mime={mime}
         src={payload.data}
         variant="detail"
-        borderTone="accent-secondary"
+        className="!rounded-none !border-black/10"
       />
       <TextLink
         href={payload.data}
@@ -99,7 +99,7 @@ function MediaElementReference({ uri, position }: { uri: string; position: numbe
   const element = useMediaElement(uuid);
 
   return (
-    <ReferenceCard label={`element ${position + 1}`} reference={uri} borderTone="accent-secondary">
+    <ReferenceCard label={`element ${position + 1}`} reference={uri}>
       {element.isPending ? <Pending label="element" /> : null}
       {element.isError ? <Failed error={element.error} /> : null}
       {element.data ? (
