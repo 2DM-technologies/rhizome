@@ -1423,6 +1423,64 @@ describe("rNet M1 store", () => {
     const [afterCancel] = await client.unsafe("select count(*)::int as count from media_objects");
     expect(afterCancel?.count).toBe(afterConfirm?.count);
 
+    const [vibesBeforePending] = await client.unsafe("select count(*)::int as count from vibes");
+    const pendingResponse = await request("/rnet/v0/imports", {
+      method: "POST",
+      headers: owner,
+      json: { source: csvSource.source },
+    });
+    expect(pendingResponse.status).toBe(202);
+    const pending = await waitForOperation(await pendingResponse.json(), owner);
+    expect(pending.status).toBe("done");
+    expect(pending.request).toMatchObject({
+      mode: "import_preview",
+      source: csvSource.source,
+      pending_destination: { vibe_uuid: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+    });
+    const [vibesAfterPreview] = await client.unsafe("select count(*)::int as count from vibes");
+    expect(vibesAfterPreview?.count).toBe(vibesBeforePending?.count);
+    expect(
+      (
+        await request(`/rnet/v0/imports/${pending.operation_id}/confirm`, {
+          method: "POST",
+          headers: otherOwner,
+          json: { title: "Stolen import" },
+        })
+      ).status,
+    ).toBe(422);
+    expect(
+      (
+        await request(`/rnet/v0/imports/${pending.operation_id}/confirm`, {
+          method: "POST",
+          headers: owner,
+          json: { title: "" },
+        })
+      ).status,
+    ).toBe(422);
+    const pendingConfirm = await request(`/rnet/v0/imports/${pending.operation_id}/confirm`, {
+      method: "POST",
+      headers: owner,
+      json: { title: "Confirmed only now" },
+    });
+    expect(pendingConfirm.status).toBe(200);
+    const pendingVibe = await pendingConfirm.json();
+    expect(pendingVibe).toMatchObject({
+      title: "Confirmed only now",
+      pull: { sources: expect.arrayContaining([csvSource.source]) },
+    });
+    expect(pendingVibe.objects).toHaveLength(3);
+    const [vibesAfterConfirm] = await client.unsafe("select count(*)::int as count from vibes");
+    expect(vibesAfterConfirm?.count).toBe((vibesBeforePending?.count ?? 0) + 1);
+    expect(
+      (
+        await request(`/rnet/v0/imports/${pending.operation_id}/confirm`, {
+          method: "POST",
+          headers: owner,
+          json: { title: "Replay" },
+        })
+      ).status,
+    ).toBe(422);
+
     const qfxBytes = await Bun.file(
       new URL("../../ingest/skills/transactions/ofx/fixtures/checking.qfx", import.meta.url),
     ).text();

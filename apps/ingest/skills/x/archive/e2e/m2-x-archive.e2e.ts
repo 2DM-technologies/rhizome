@@ -2,6 +2,7 @@ import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from "@zip.js/zip
 
 import { expect, test } from "../../../../../host/e2e/support/playwright.ts";
 import {
+  NEW_VIBE_ID,
   VIBE_ID,
   installMockStore,
   type MockStore,
@@ -16,6 +17,35 @@ test.beforeEach(async ({ page }) => {
   const target = mockStore.vibes[0];
   if (!target) throw new Error("Missing mocked target Vibe");
   delete target.pull;
+});
+
+test("an X archive suggests its source-owned title and creates no Vibe before confirmation", async ({
+  page,
+}) => {
+  const source = await sourceArchive();
+  await page.goto("/imports");
+  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
+  await page.getByLabel("X archive ZIP").setInputFiles({
+    name: "synthetic-x-archive.zip",
+    mimeType: "application/zip",
+    buffer: Buffer.from(await source.arrayBuffer()),
+  });
+  await page.getByRole("button", { name: "Review X archive" }).click();
+
+  await expect(page.getByLabel("VERIFY reconciliation")).toContainText("2 objects passed VERIFY");
+  await expect(page.getByLabel("New Vibe title")).toHaveValue("@example_user Tweets");
+  await expect(
+    page
+      .getByRole("list", { name: "Candidate media objects" })
+      .locator('[data-element-presentation="image"]'),
+  ).toBeVisible();
+  expect(mockStore.vibes.some(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
+
+  await page.getByRole("button", { name: "Confirm import" }).click();
+  await expect(page.getByText("Target Vibe: @example_user Tweets", { exact: true })).toBeVisible();
+  const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
+  expect(created?.title).toBe("@example_user Tweets");
+  expect(created?.objects).toHaveLength(2);
 });
 
 test("the generic file capability selectively captures and imports an X archive", async ({

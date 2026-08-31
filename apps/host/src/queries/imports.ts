@@ -36,6 +36,15 @@ export function useCreateImportPreview() {
   });
 }
 
+export function useCreatePendingVibeImportPreview() {
+  const client = useQueryClient();
+  return api.useMutation("post", "/rnet/v0/imports", {
+    gcTime: 0,
+    onSuccess: (operation) =>
+      client.setQueryData(operationQuery(operation.operation_id).queryKey, operation),
+  });
+}
+
 export function usePullVibe() {
   const client = useQueryClient();
   return api.useMutation("post", "/rnet/v0/vibes/{id}/pull", {
@@ -116,6 +125,23 @@ export function useConfirmImportPreview() {
       });
       void client.invalidateQueries({
         queryKey: operationQuery(request.params.path.operation_id).queryKey,
+      });
+    },
+  });
+}
+
+export function useConfirmPendingVibeImportPreview() {
+  const client = useQueryClient();
+  return api.useMutation("post", "/rnet/v0/imports/{operation_id}/confirm", {
+    onSuccess: (vibe) => {
+      client.setQueryData(
+        api.queryOptions("get", "/rnet/v0/vibes/{id}", {
+          params: { path: { id: vibe.uri.split("/").at(-1)! } },
+        }).queryKey,
+        vibe,
+      );
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
       });
     },
   });

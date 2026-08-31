@@ -221,7 +221,12 @@ export async function compileXPostCandidates(
   }
 
   const verify = await verifyXPostCandidates(selection, candidates, omissions);
-  return candidateBundle(candidates, verify);
+  return {
+    ...candidateBundle(candidates, verify),
+    destination: {
+      title: selection.account.handle ? `@${selection.account.handle} Tweets` : "Tweets",
+    },
+  };
 }
 
 function postSourceProperties(

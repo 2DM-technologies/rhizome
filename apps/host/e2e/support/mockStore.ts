@@ -77,6 +77,8 @@ interface MockImportOperation {
   polls: number;
   source: string;
   verify: MockImportVerification;
+  destination?: { title: string };
+  pendingVibe?: boolean;
 }
 
 export interface MockImportVerification {
@@ -101,6 +103,7 @@ export interface MockStagedImport {
   candidates: MediaObject[];
   elements?: MockStagedElement[];
   verification: MockImportVerification;
+  destination?: { title: string };
 }
 
 export interface MockSourceActionDefinition {
@@ -594,6 +597,45 @@ export async function installMockStore(
       }
     }
 
+    const pendingImportConfirm = path.match(/^\/rnet\/v0\/imports\/([^/]+)\/confirm$/);
+    if (method === "POST" && pendingImportConfirm) {
+      const staged = importOperations.get(pendingImportConfirm[1] ?? "");
+      if (
+        !staged?.pendingVibe ||
+        staged.document.status !== "done" ||
+        staged.document.committed_at
+      ) {
+        return problem(route, 422, "import_review_invalid", "The staged import cannot be consumed");
+      }
+      const input = request.postDataJSON() as { title: string };
+      const vibe = {
+        rnet_schema: "0.1",
+        uri: `rnet://vibe/${NEW_VIBE_ID}`,
+        owner: `rnet://id/${OWNER_ID}`,
+        title: input.title,
+        objects: staged.candidates.map(({ uri }) => uri),
+        created_at: "2026-08-28T12:00:04.000Z",
+        grants: [],
+        inferred: {},
+        pull: {
+          enabled: true,
+          policy: "append_new",
+          sources: [staged.source],
+        },
+      } satisfies Vibe;
+      store.vibes.push(vibe);
+      for (const candidate of staged.candidates) {
+        store.objects.set(candidate.uri.split("/").at(-1) ?? "", candidate);
+      }
+      for (const element of staged.elements) {
+        const id = element.document.uri.split("/").at(-1) ?? "";
+        store.elements.set(id, element.document);
+        elementPayloads.set(id, element.payload);
+      }
+      staged.document.committed_at = "2026-08-28T12:00:04.000Z";
+      return json(route, vibe);
+    }
+
     const importConfirm = path.match(/^\/rnet\/v0\/vibes\/([^/]+)\/imports\/([^/]+)\/confirm$/);
     if (method === "POST" && importConfirm) {
       const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${importConfirm[1]}`));
@@ -627,8 +669,12 @@ export async function installMockStore(
     }
 
     const vibeImports = path.match(/^\/rnet\/v0\/vibes\/([^/]+)\/imports$/);
-    if (method === "POST" && vibeImports) {
-      const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${vibeImports[1]}`));
+    const pendingVibeImport = path === "/rnet/v0/imports";
+    if (method === "POST" && (vibeImports || pendingVibeImport)) {
+      const targetVibeId = pendingVibeImport ? NEW_VIBE_ID : vibeImports?.[1];
+      const vibe = pendingVibeImport
+        ? true
+        : store.vibes.find((candidate) => candidate.uri.endsWith(`/${targetVibeId}`));
       if (!vibe) return problem(route, 404, "not_found", "The Vibe does not exist");
       const input: CreateImportPreviewRequest = request.postDataJSON();
       const source = store.ingestionSources.get(input.source);
@@ -651,7 +697,7 @@ export async function installMockStore(
           !continuation ||
           continuation.source !== source.source ||
           continuation.skillId !== adapter.manifest.skill_id ||
-          continuation.vibeId !== vibeImports[1]
+          continuation.vibeId !== targetVibeId
         ) {
           return problem(route, 422, "schema_violation", "The continuation is invalid or expired");
         }
@@ -681,6 +727,7 @@ export async function installMockStore(
         request: {
           mode: "import_preview",
           source: source.source,
+          ...(pendingVibeImport ? { pending_destination: { vibe_uuid: NEW_VIBE_ID } } : {}),
           ...(actionResumed ? { action: "review_import" } : {}),
         },
         result: null,
@@ -689,11 +736,13 @@ export async function installMockStore(
       } satisfies OperationDocument;
       importOperations.set(operationId, {
         candidates,
+        ...(staged.destination ? { destination: staged.destination } : {}),
         document,
         elements,
         polls: 0,
         source: source.source,
         verify,
+        ...(pendingVibeImport ? { pendingVibe: true } : {}),
       });
       return json(route, document, 202);
     }
@@ -771,6 +820,7 @@ export async function installMockStore(
           staged.document.status = "done";
           staged.document.result = {
             candidates: staged.candidates,
+            ...(staged.destination ? { destination: staged.destination } : {}),
             elements: staged.elements.map((element) => ({
               uri: element.document.uri,
               kind: element.document.kind,

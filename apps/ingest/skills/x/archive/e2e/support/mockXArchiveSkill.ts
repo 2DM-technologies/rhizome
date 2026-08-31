@@ -80,6 +80,7 @@ export const mockXArchiveSkill = {
     }
     return {
       candidates,
+      destination: bundle.destination,
       elements,
       verification: {
         ...bundle.verify,

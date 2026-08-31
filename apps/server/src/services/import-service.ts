@@ -1,7 +1,9 @@
 import { rnetUriPattern, validateMediaObject, type MediaObject, type Vibe } from "@rnet/types";
 import {
   SOURCE_ID_PATTERN,
+  type ConfirmPendingVibeImportRequest,
   type CreateImportPreviewRequest,
+  type CreatePendingVibeImportRequest,
   type PullVibeRequest,
   type SourceExecutionLimits,
 } from "@rhizome/store-contract";
@@ -84,6 +86,7 @@ interface ImportPreviewResult {
   source_digest: string;
   staged_origin: string;
   review_digest: string;
+  destination?: { title: string };
 }
 
 interface StagedCandidate {
@@ -175,6 +178,7 @@ interface StagedSourceCapture {
   source: DbIngestionSource;
   sourceStateDigest: string;
   verify: SourceVerifyReport;
+  destination?: { title: string };
 }
 
 interface CredentialFetchReservation {
@@ -297,6 +301,80 @@ export class ImportService {
     return operation;
   }
 
+  async startPendingVibePreview(input: CreatePendingVibeImportRequest): Promise<DbOperation> {
+    await this.access.assertAuthenticated();
+    if (this.actor.kind !== "user") throw grantMissing("owner");
+    const actor = this.actor;
+    const pendingVibeUuid = input.destination?.id ?? uuidv7();
+    const sourceUuid = sourceUuidOf(input.source);
+    const source = await this.snapshotSource(sourceUuid, actor.uuid);
+    const continuation = input.continuation_token
+      ? await this.openSourceContinuation(
+          input.continuation_token,
+          pendingVibeUuid,
+          actor.uuid,
+          source,
+        )
+      : undefined;
+    const pendingVibe: DbVibe = {
+      uuid: pendingVibeUuid,
+      title: "Pending import",
+      ownerUuid: actor.uuid,
+      rnetSchema: RNET_SCHEMA_VERSION,
+      inferred: {},
+      pullConfig: null,
+      extensions: {},
+      createdAt: new Date(),
+      rev: 0,
+    };
+    if (source.kind === "credential") {
+      try {
+        await this.prepareConnectedFetch(source, continuation?.resume);
+      } catch (error) {
+        if (!(error instanceof ConnectedSourceActionRequired)) throw error;
+        if (continuation) throw invalidContinuation();
+        throw await this.sourceActionError(error, source, pendingVibe, true);
+      }
+    } else if (continuation) {
+      throw invalidContinuation();
+    }
+    const operationUuid = uuidv7();
+    const [operation] = await this.db
+      .insert(operations)
+      .values({
+        uuid: operationUuid,
+        kind: "pull",
+        status: "queued",
+        invokedBy: actor.subject,
+        vibeUuid: null,
+        request: {
+          mode: "import_preview",
+          source: input.source,
+          pending_destination: { vibe_uuid: pendingVibeUuid },
+          ...(continuation ? { continuation_action: continuation.kind } : {}),
+        },
+      })
+      .returning();
+    if (!operation) throw new Error("Pending-Vibe import operation insert did not return a row");
+
+    queueMicrotask(() => {
+      void this.runPreview(operationUuid, sourceUuid, pendingVibe, continuation).catch(
+        async (error: unknown) => {
+          await this.db
+            .update(operations)
+            .set({
+              status: "failed",
+              result: connectedSourceOperationResult(error),
+              error: error instanceof Error ? error.message : "Import preview failed",
+              finishedAt: new Date(),
+            })
+            .where(eq(operations.uuid, operationUuid));
+        },
+      );
+    });
+    return operation;
+  }
+
   async startPull(vibeUuid: string, input: PullVibeRequest): Promise<DbOperation> {
     const vibe = await this.access.assertVibeScope(vibeUuid, "pull");
     if (!vibe.pullConfig?.enabled || !vibe.pullConfig.sources?.length) {
@@ -366,28 +444,70 @@ export class ImportService {
     return operation;
   }
 
-  async confirm(vibeUuid: string, operationUuid: string): Promise<VibeAggregate> {
-    await this.access.assertVibeOwner(vibeUuid);
+  async confirm(
+    existingVibeUuid: string | undefined,
+    operationUuid: string,
+    pendingDestination?: ConfirmPendingVibeImportRequest,
+  ): Promise<VibeAggregate> {
+    if (existingVibeUuid) await this.access.assertVibeOwner(existingVibeUuid);
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const actor = this.actor;
+    let committedVibeUuid = existingVibeUuid;
 
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      const [lockedVibe] = await transaction
-        .select()
-        .from(vibes)
-        .where(and(eq(vibes.uuid, vibeUuid), eq(vibes.ownerUuid, actor.uuid)))
-        .for("update");
-      if (!lockedVibe) throw notFound("Vibe");
-      const [operation] = await transaction
-        .select()
-        .from(operations)
-        .where(eq(operations.uuid, operationUuid))
-        .for("update");
+      let operation: DbOperation | undefined;
+      let lockedVibe: DbVibe | undefined;
+      if (existingVibeUuid) {
+        [lockedVibe] = await transaction
+          .select()
+          .from(vibes)
+          .where(and(eq(vibes.uuid, existingVibeUuid), eq(vibes.ownerUuid, actor.uuid)))
+          .for("update");
+        if (!lockedVibe) throw notFound("Vibe");
+        [operation] = await transaction
+          .select()
+          .from(operations)
+          .where(eq(operations.uuid, operationUuid))
+          .for("update");
+      } else {
+        [operation] = await transaction
+          .select()
+          .from(operations)
+          .where(eq(operations.uuid, operationUuid))
+          .for("update");
+        if (!operation) throw notFound("Operation");
+        const pendingVibeUuid = pendingDestinationUuid(operation.request);
+        if (!pendingDestination || !pendingVibeUuid || operation.vibeUuid !== null) {
+          throw invalidReview("The preview does not target a pending Vibe");
+        }
+        const [existing] = await transaction
+          .select({ uuid: vibes.uuid })
+          .from(vibes)
+          .where(eq(vibes.uuid, pendingVibeUuid))
+          .for("update");
+        if (existing) throw invalidReview("The pending Vibe destination already exists");
+        [lockedVibe] = await transaction
+          .insert(vibes)
+          .values({
+            uuid: pendingVibeUuid,
+            title: pendingDestination.title,
+            ownerUuid: actor.uuid,
+            rnetSchema: RNET_SCHEMA_VERSION,
+            inferred: {},
+            pullConfig: null,
+            extensions: {},
+            rev: 0,
+          })
+          .returning();
+        committedVibeUuid = pendingVibeUuid;
+      }
       if (!operation) throw notFound("Operation");
+      if (!lockedVibe) throw new Error("Import destination was not resolved");
+      const vibeUuid = lockedVibe.uuid;
       if (
         operation.kind !== "pull" ||
         operation.status !== "done" ||
-        operation.vibeUuid !== vibeUuid ||
+        operation.vibeUuid !== (existingVibeUuid ? vibeUuid : null) ||
         operation.invokedBy !== actor.subject ||
         operation.request.mode !== "import_preview" ||
         operation.committedAt
@@ -442,6 +562,7 @@ export class ImportService {
       }
       const expectedReviewDigest = await digest({
         ...(result.action_evidence ? { action_evidence: result.action_evidence } : {}),
+        ...(result.destination ? { destination: result.destination } : {}),
         candidates: result.candidates,
         candidate_metadata: result.candidate_metadata,
         elements: result.elements,
@@ -575,11 +696,13 @@ export class ImportService {
       });
       await transaction
         .update(operations)
-        .set({ committedAt: new Date() })
+        .set({ committedAt: new Date(), vibeUuid })
         .where(eq(operations.uuid, operationUuid));
       if (stagedFetch) await this.commitFetch(transaction, stagedFetch.uuid);
     });
 
+    if (!committedVibeUuid) throw new Error("Import confirmation did not resolve a destination");
+    const vibeUuid = committedVibeUuid;
     const [vibe] = await this.db.select().from(vibes).where(eq(vibes.uuid, vibeUuid));
     if (!vibe) throw notFound("Vibe");
     const [activeGrants, memberships] = await Promise.all([
@@ -632,6 +755,7 @@ export class ImportService {
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
     const reviewDigest = await digest({
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
+      ...(staged.destination ? { destination: staged.destination } : {}),
       candidates,
       candidate_metadata: candidateMetadata,
       elements,
@@ -641,6 +765,7 @@ export class ImportService {
     });
     const result: ImportPreviewResult = {
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
+      ...(staged.destination ? { destination: staged.destination } : {}),
       candidates,
       candidate_metadata: candidateMetadata,
       elements,
@@ -798,6 +923,7 @@ export class ImportService {
       if (!verified) throw new Error("Public-remote fetch state changed unexpectedly");
       return {
         candidates,
+        ...(bundle.destination ? { destination: bundle.destination } : {}),
         fetchUuid,
         kind: "remote",
         origin,
@@ -850,6 +976,7 @@ export class ImportService {
         this.baseUrl,
         this.blobs,
       ),
+      ...(bundle.destination ? { destination: bundle.destination } : {}),
       kind: "origin",
       origin: resolved.origin,
       source: resolved.source,
@@ -955,6 +1082,7 @@ export class ImportService {
       return {
         ...(prepared.fetch.actionEvidence ? { actionEvidence: prepared.fetch.actionEvidence } : {}),
         candidates,
+        ...(bundle.destination ? { destination: bundle.destination } : {}),
         fetchUuid,
         kind: "credential",
         origin,
@@ -1024,6 +1152,7 @@ export class ImportService {
     requirement: ConnectedSourceActionRequired,
     resolved: ResolvedCredentialSource,
     vibe: DbVibe,
+    pendingVibe = false,
   ): Promise<ConnectedSourceError> {
     if (requirement.skillId !== resolved.skill.skillId) {
       throw new Error("Connected-source action skill id does not match its registered skill");
@@ -1052,6 +1181,7 @@ export class ImportService {
       detail: requirement.detail,
       source,
       continuation_token: continuationToken,
+      ...(pendingVibe ? { destination: { kind: "pending_vibe", id: vibe.uuid } } : {}),
     };
     return new ConnectedSourceError(requirement.skillId, {
       status: 422,
@@ -2040,6 +2170,15 @@ function operationContinuationAction(
   throw invalidReview("The preview continuation action is malformed");
 }
 
+function pendingDestinationUuid(request: DbOperation["request"]): string | undefined {
+  const destination = request.pending_destination;
+  if (!destination || typeof destination !== "object" || Array.isArray(destination)) {
+    return undefined;
+  }
+  const uuid = (destination as Record<string, unknown>).vibe_uuid;
+  return typeof uuid === "string" ? uuid : undefined;
+}
+
 function delegatedSourceActionError(skillId: string): ConnectedSourceError {
   const title = "Connected source requires owner review";
   const detail = "The connected source owner must review an import before pulling again.";
@@ -2221,6 +2360,14 @@ async function compileCandidateBundle<Input>(
     throw new Error("Compiled source returned a malformed candidate bundle");
   }
   assertSourceVerifyReport(bundle.verify);
+  if (
+    bundle.destination !== undefined &&
+    (typeof bundle.destination.title !== "string" ||
+      !bundle.destination.title.trim() ||
+      bundle.destination.title.length > 256)
+  ) {
+    throw new Error("Compiled source returned an invalid destination suggestion");
+  }
   assertCandidateBundleLimits(bundle, limits);
   return bundle;
 }
@@ -2467,6 +2614,16 @@ function importPreviewResult(value: unknown): ImportPreviewResult {
     !validConnectedSourceActionEvidence(result.action_evidence)
   ) {
     throw invalidReview("The staged action evidence is malformed");
+  }
+  if (
+    result.destination !== undefined &&
+    (!result.destination ||
+      typeof result.destination !== "object" ||
+      typeof result.destination.title !== "string" ||
+      !result.destination.title.trim() ||
+      result.destination.title.length > 256)
+  ) {
+    throw invalidReview("The staged destination suggestion is malformed");
   }
   return result as ImportPreviewResult;
 }

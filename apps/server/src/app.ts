@@ -27,6 +27,7 @@ import { createOpenApiDocument } from "./openapi.ts";
 import { createSafePublicAssetFetcher, SafePublicFetcher } from "./public-fetch/index.ts";
 import { createMediaElementRoutes } from "./routes/media-elements.ts";
 import { createIngestionSourceRoutes } from "./routes/ingestion-sources.ts";
+import { createPendingImportRoutes } from "./routes/imports.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
@@ -135,6 +136,16 @@ export function createApp({
 
   app.get("/health", (context) => context.json({ ok: true, service: "rhizome" }));
   const routeGroups = [
+    {
+      basePath: "/rnet/v0/imports",
+      router: createPendingImportRoutes(db, blobs, {
+        baseUrl: config.baseUrl,
+        credentialCrypto,
+        credentialedSources: resolvedCredentialedSources,
+        fileSources: resolvedFileSources,
+        publicRemoteSources: resolvedPublicRemoteSources,
+      }),
+    },
     {
       basePath: "/rnet/v0/vibes",
       router: createVibeRoutes(db, blobs, {

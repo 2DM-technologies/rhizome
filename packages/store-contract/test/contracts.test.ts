@@ -8,6 +8,7 @@ import {
   createCredentialIngestionSourceRequestSchema,
   createFileIngestionSourceRequestSchema,
   createImportPreviewRequestSchema,
+  createPendingVibeImportRequestSchema,
   createIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
   createPublicRemoteIngestionSourceRequestSchema,
@@ -22,6 +23,7 @@ import {
   publicRemoteIngestionSourceDocumentSchema,
   setMediaObjectUserRequestSchema,
   reviewImportContinuationRequestSchema,
+  confirmPendingVibeImportRequestSchema,
   sourceActionRequiredSchema,
   sourceExecutionLimitsSchema,
   sourceSkillManifestSchema,
@@ -86,6 +88,12 @@ describe("shared store schemas", () => {
     );
     expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
       createImportPreviewRequestSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.CreatePendingVibeImportRequest).toBe(
+      createPendingVibeImportRequestSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.ConfirmPendingVibeImportRequest).toBe(
+      confirmPendingVibeImportRequestSchema,
     );
     expect(createImportPreviewRequestSchema.properties.continuation_token).toBe(
       reviewImportContinuationRequestSchema.properties.continuation_token,
@@ -194,6 +202,13 @@ describe("shared store schemas", () => {
       continuation_token: { type: "string" },
     });
     expect(sourceActionRequiredSchema.properties).not.toHaveProperty("rebaseline");
+    expect(sourceActionRequiredSchema.properties.destination).toMatchObject({
+      type: "object",
+      required: ["kind", "id"],
+      additionalProperties: false,
+    });
+    expect(createPendingVibeImportRequestSchema.required).toEqual(["source"]);
+    expect(confirmPendingVibeImportRequestSchema.required).toEqual(["title"]);
     expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("secret");
   });
 });

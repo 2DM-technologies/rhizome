@@ -14,6 +14,7 @@ import {
   SOURCE_CREDENTIAL_ID_PATTERN,
   SOURCE_ID_PATTERN,
   reviewImportContinuationRequestSchema,
+  pendingVibeDestinationSchema,
   sourceActionRequiredSchema,
   sourceExecutionLimitsSchema,
   sourceSkillManifestsResponseSchema,
@@ -264,6 +265,22 @@ export const createImportPreviewRequestSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
+/** Stages an import for a server-allocated Vibe that does not exist until confirmation. */
+export const createPendingVibeImportRequestSchema = {
+  ...createImportPreviewRequestSchema,
+  properties: {
+    ...createImportPreviewRequestSchema.properties,
+    destination: pendingVibeDestinationSchema,
+  },
+} as const satisfies JSONSchema;
+
+export const confirmPendingVibeImportRequestSchema = {
+  type: "object",
+  required: ["title"],
+  properties: { title: vibeSchema.properties.title },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
 export const pullVibeRequestSchema = {
   type: "object",
   properties: { dry_run: { type: "boolean", default: false } },
@@ -274,6 +291,12 @@ export type CreateIngestionSourceRequest = ContractValue<typeof createIngestionS
 export type IngestionSourceDocument = ContractValue<typeof ingestionSourceDocumentSchema>;
 export type SourceCredentialDocument = ContractValue<typeof sourceCredentialDocumentSchema>;
 export type CreateImportPreviewRequest = ContractValue<typeof createImportPreviewRequestSchema>;
+export type CreatePendingVibeImportRequest = ContractValue<
+  typeof createPendingVibeImportRequestSchema
+>;
+export type ConfirmPendingVibeImportRequest = ContractValue<
+  typeof confirmPendingVibeImportRequestSchema
+>;
 export type PullVibeRequest = ContractValue<typeof pullVibeRequestSchema>;
 
 const vibeWritableProperties = {
@@ -533,6 +556,8 @@ export const STORE_SCHEMA_COMPONENTS = {
   IngestionSource: ingestionSourceDocumentSchema,
   CreateIngestionSourceRequest: createIngestionSourceRequestSchema,
   CreateImportPreviewRequest: createImportPreviewRequestSchema,
+  CreatePendingVibeImportRequest: createPendingVibeImportRequestSchema,
+  ConfirmPendingVibeImportRequest: confirmPendingVibeImportRequestSchema,
   PullVibeRequest: pullVibeRequestSchema,
   CreateVibeRequest: createVibeRequestSchema,
   UpdateVibeRequest: updateVibeRequestSchema,

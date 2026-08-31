@@ -91,6 +91,7 @@ describe("X shared post candidates", () => {
     const bundle = await compileXPostCandidates(selection, X_SOURCE_LIMITS);
 
     expect(bundle.kind).toBe("candidate_bundle@1");
+    expect(bundle.destination).toEqual({ title: "@example_user Tweets" });
     expect(bundle.verify.ok).toBe(true);
     const [original, quote] = bundle.candidates;
     expect(new TextDecoder().decode(original?.elements[0]?.bytes)).toBe(

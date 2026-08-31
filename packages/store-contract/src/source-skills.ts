@@ -155,6 +155,16 @@ export type SourceSkillManifestsResponse = FromSchema<typeof sourceSkillManifest
 
 export const SOURCE_ACTION_KINDS = ["review_import"] as const;
 
+export const pendingVibeDestinationSchema = {
+  type: "object",
+  required: ["kind", "id"],
+  properties: {
+    kind: { const: "pending_vibe" },
+    id: { type: "string", pattern: UUIDV7_PATTERN },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
 /**
  * Provider-neutral, server-issued recovery instruction. The continuation is an opaque bearer value
  * whose actor, Vibe, source, action, and expiry are validated by the server before it is consumed.
@@ -174,6 +184,7 @@ export const sourceActionRequiredSchema = {
       maxLength: 8_192,
       pattern: "^\\S+$",
     },
+    destination: pendingVibeDestinationSchema,
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;

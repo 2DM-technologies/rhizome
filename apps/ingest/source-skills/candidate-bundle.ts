@@ -51,6 +51,8 @@ export interface CandidateBundle<Verify extends SourceVerifyReport = SourceVerif
   readonly kind: typeof CANDIDATE_BUNDLE_CAPABILITY;
   readonly candidates: readonly SourceCandidateDraft[];
   readonly verify: Verify;
+  /** Optional source-owned suggestion; the generic host lets the owner edit it before commit. */
+  readonly destination?: { readonly title: string };
 }
 
 export interface SourceParser<Output = unknown> {

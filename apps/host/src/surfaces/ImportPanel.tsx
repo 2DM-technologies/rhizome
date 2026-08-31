@@ -1,12 +1,14 @@
 import type { SourceActionRequired, SourceSkillManifest } from "@rhizome/store-contract";
-import { useMemo, useRef, useState, type FormEvent, type Ref } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type Ref } from "react";
 
 import { isStoreError } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
 import {
   useConnectSourceCredential,
   useConfirmImportPreview,
+  useConfirmPendingVibeImportPreview,
   useCreateImportPreview,
+  useCreatePendingVibeImportPreview,
   useCreateIngestionSource,
   useCreateOriginArtifact,
   useForgetOperation,
@@ -24,6 +26,7 @@ import {
   EntityRow,
   FilePicker,
   InlineError,
+  primaryPayloadCandidate,
   SelectInput,
   StatusChip,
   TextInput,
@@ -73,14 +76,17 @@ interface ImportPreview {
     checks: VerifyCheckSummary[];
   };
   candidates: CandidateSummary[];
+  destinationTitle?: string;
 }
 
 export function ImportPanel({
   vibeUuid,
   configuredSources,
+  onPendingVibeConfirmed,
 }: {
-  vibeUuid: string;
+  vibeUuid?: string;
   configuredSources: readonly string[];
+  onPendingVibeConfirmed?: (vibeUuid: string) => void;
 }) {
   const sourceForm = useRef<HTMLFormElement>(null);
   const sourceSkills = useSourceSkills();
@@ -88,7 +94,9 @@ export function ImportPanel({
   const connectCredential = useConnectSourceCredential();
   const createSource = useCreateIngestionSource();
   const createPreview = useCreateImportPreview();
+  const createPendingPreview = useCreatePendingVibeImportPreview();
   const confirm = useConfirmImportPreview();
+  const confirmPending = useConfirmPendingVibeImportPreview();
   const pull = usePullVibe();
   const forgetOperation = useForgetOperation();
   const [selectedSkillId, setSelectedSkillId] = useState<string>();
@@ -98,6 +106,7 @@ export function ImportPanel({
   const [sourceLabel, setSourceLabel] = useState<string>();
   const [localError, setLocalError] = useState<string>();
   const [outcome, setOutcome] = useState<string>();
+  const [pendingVibeTitle, setPendingVibeTitle] = useState("");
 
   const importSkills = useMemo(
     () =>
@@ -117,8 +126,10 @@ export function ImportPanel({
     connectCredential.isPending ||
     createSource.isPending ||
     createPreview.isPending ||
+    createPendingPreview.isPending ||
     pull.isPending ||
     confirm.isPending ||
+    confirmPending.isPending ||
     operationInFlight;
   const malformedImportResult =
     operationMode === "import" && operation.data?.status === "done" && !preview;
@@ -128,15 +139,27 @@ export function ImportPanel({
     operationMode === "pull" && operation.data?.status === "failed"
       ? operation.data.result
       : undefined;
-  const requiredAction = sourceActionRequired(pull.error, failedPullResult, configuredSources);
+  const requiredAction = sourceActionRequired(
+    createPendingPreview.error ?? createPreview.error ?? pull.error,
+    failedPullResult,
+    configuredSources,
+    !vibeUuid,
+  );
   const activeSkill = importSkills.find((skill) => skill.skill_id === activeSkillId);
+
+  useEffect(() => {
+    if (vibeUuid || !preview || pendingVibeTitle) return;
+    setPendingVibeTitle(preview.destinationTitle ?? "Imported objects");
+  }, [pendingVibeTitle, preview, vibeUuid]);
 
   function resetMutationErrors() {
     createOrigin.reset();
     connectCredential.reset();
     createSource.reset();
     createPreview.reset();
+    createPendingPreview.reset();
     confirm.reset();
+    confirmPending.reset();
     pull.reset();
   }
 
@@ -145,6 +168,7 @@ export function ImportPanel({
     setSourceLabel(undefined);
     setActiveSkillId(undefined);
     setLocalError(undefined);
+    setPendingVibeTitle("");
   }
 
   function selectSkill(skillId: string) {
@@ -202,10 +226,12 @@ export function ImportPanel({
         createSource: (body) => createSource.mutateAsync({ body }),
       });
       setSourceLabel(source.displayLabel ?? manifest.label);
-      const staged = await createPreview.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: { source: source.source },
-      });
+      const staged = vibeUuid
+        ? await createPreview.mutateAsync({
+            params: { path: { id: vibeUuid } },
+            body: { source: source.source },
+          })
+        : await createPendingPreview.mutateAsync({ body: { source: source.source } });
       setOperationId(staged.operation_id);
     } catch (error) {
       if (error instanceof ManifestInputError || error instanceof CredentialRequestError) {
@@ -219,6 +245,7 @@ export function ImportPanel({
   }
 
   async function refreshSources() {
+    if (!vibeUuid) return;
     resetMutationErrors();
     setOutcome(undefined);
     setLocalError(undefined);
@@ -247,10 +274,18 @@ export function ImportPanel({
     setActiveSkillId(undefined);
     setSourceLabel(action.title);
     try {
-      const staged = await createPreview.mutateAsync({
-        params: { path: { id: vibeUuid } },
-        body: { source: action.source, continuation_token: action.continuation_token },
-      });
+      const staged = vibeUuid
+        ? await createPreview.mutateAsync({
+            params: { path: { id: vibeUuid } },
+            body: { source: action.source, continuation_token: action.continuation_token },
+          })
+        : await createPendingPreview.mutateAsync({
+            body: {
+              source: action.source,
+              continuation_token: action.continuation_token,
+              ...(action.destination ? { destination: action.destination } : {}),
+            },
+          });
       setOperationId(staged.operation_id);
     } catch (error) {
       // The preview mutation is reset below to evict the continuation bearer, so retain only the
@@ -258,6 +293,7 @@ export function ImportPanel({
       setLocalError(errorMessage(error));
     } finally {
       createPreview.reset();
+      createPendingPreview.reset();
       if (actionOperationId) forgetOperation(actionOperationId);
     }
   }
@@ -265,6 +301,7 @@ export function ImportPanel({
   function cancelReview() {
     clearReview();
     confirm.reset();
+    confirmPending.reset();
     setOutcome("Review canceled. Nothing was imported.");
   }
 
@@ -273,17 +310,28 @@ export function ImportPanel({
     const importedCount = preview.verify.candidateCount;
     const importedSource = sourceLabel;
     const importedObjects = candidateCountLabel(preview.candidates, importedCount);
+    const onSuccess = (createdVibe?: { uri: string }) => {
+      clearReview();
+      setOutcome(
+        `Imported ${importedCount} ${importedObjects}${
+          importedSource ? ` from ${importedSource}` : ""
+        }.`,
+      );
+      if (createdVibe) onPendingVibeConfirmed?.(uuidOf(createdVibe.uri));
+    };
+    if (!vibeUuid) {
+      const title = pendingVibeTitle.trim();
+      if (!title) return;
+      confirmPending.mutate(
+        { params: { path: { operation_id: operationId } }, body: { title } },
+        { onSuccess },
+      );
+      return;
+    }
     confirm.mutate(
       { params: { path: { id: vibeUuid, operation_id: operationId } } },
       {
-        onSuccess: () => {
-          clearReview();
-          setOutcome(
-            `Imported ${importedCount} ${importedObjects}${
-              importedSource ? ` from ${importedSource}` : ""
-            }.`,
-          );
-        },
+        onSuccess: () => onSuccess(),
       },
     );
   }
@@ -292,13 +340,15 @@ export function ImportPanel({
     <Card as="section" className="flex max-w-[52rem] flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <h2 className="text-label text-primary">Import into this Vibe</h2>
+          <h2 className="text-label text-primary">
+            {vibeUuid ? "Import into this Vibe" : "Stage a new Vibe import"}
+          </h2>
           <p className="mt-1 text-body text-secondary">
             Choose an installed source, review what it found, then explicitly confirm before
-            anything derived is saved.
+            {vibeUuid ? " anything derived is saved." : " the new Vibe is created."}
           </p>
         </div>
-        {configuredSources.length > 0 ? (
+        {vibeUuid && configuredSources.length > 0 ? (
           <Button variant="secondary" disabled={busy} onClick={() => void refreshSources()}>
             {operationMode === "pull" && busy ? "Refreshing…" : "Refresh sources"}
           </Button>
@@ -407,7 +457,9 @@ export function ImportPanel({
         <ImportReview
           preview={preview}
           operationId={operationId}
-          confirming={confirm.isPending}
+          confirming={confirm.isPending || confirmPending.isPending}
+          pendingVibeTitle={vibeUuid ? undefined : pendingVibeTitle}
+          onPendingVibeTitleChange={setPendingVibeTitle}
           onCancel={cancelReview}
           onConfirm={confirmReview}
         />
@@ -428,9 +480,11 @@ export function ImportPanel({
       {createOrigin.isError ? <Failed error={createOrigin.error} /> : null}
       {createSource.isError ? <Failed error={createSource.error} /> : null}
       {createPreview.isError ? <Failed error={createPreview.error} /> : null}
+      {createPendingPreview.isError ? <Failed error={createPendingPreview.error} /> : null}
       {pull.isError && !requiredAction ? <Failed error={pull.error} /> : null}
       {operation.isError ? <Failed error={operation.error} /> : null}
       {confirm.isError ? <Failed error={confirm.error} /> : null}
+      {confirmPending.isError ? <Failed error={confirmPending.error} /> : null}
     </Card>
   );
 }
@@ -558,12 +612,16 @@ function ImportReview({
   confirming,
   onCancel,
   onConfirm,
+  pendingVibeTitle,
+  onPendingVibeTitleChange,
 }: {
   preview: ImportPreview;
   operationId: string | undefined;
   confirming: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  pendingVibeTitle?: string;
+  onPendingVibeTitleChange: (title: string) => void;
 }) {
   const elementCount = preview.candidates.reduce(
     (total, candidate) => total + candidate.elementCount,
@@ -618,11 +676,32 @@ function ImportReview({
           <CandidateReview key={candidate.uri} candidate={candidate} operationId={operationId} />
         ))}
       </ul>
+      {pendingVibeTitle !== undefined ? (
+        <label>
+          <span className="text-caption text-secondary">New Vibe title</span>
+          <TextInput
+            className="mt-1"
+            aria-label="New Vibe title"
+            value={pendingVibeTitle}
+            maxLength={256}
+            required
+            onChange={(event) => onPendingVibeTitleChange(event.target.value)}
+          />
+        </label>
+      ) : null}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel} disabled={confirming}>
           Cancel
         </Button>
-        <Button disabled={confirming || !operationId || !preview.verify.ok} onClick={onConfirm}>
+        <Button
+          disabled={
+            confirming ||
+            !operationId ||
+            !preview.verify.ok ||
+            (pendingVibeTitle !== undefined && !pendingVibeTitle.trim())
+          }
+          onClick={onConfirm}
+        >
           {confirming ? "Importing…" : "Confirm import"}
         </Button>
       </div>
@@ -668,8 +747,8 @@ function CandidateReview({
       className="last:border-b-0"
       leading={
         <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-card bg-surface">
-          {primaryElement?.previewUrl && primaryElement.kind === "image" ? (
-            <ImportPreviewImage
+          {primaryElement?.previewUrl ? (
+            <ImportPreviewPayload
               element={primaryElement}
               operationId={operationId}
               title={candidate.title}
@@ -697,7 +776,7 @@ function CandidateReview({
   );
 }
 
-function ImportPreviewImage({
+function ImportPreviewPayload({
   element,
   operationId,
   title,
@@ -716,7 +795,7 @@ function ImportPreviewImage({
       kind={element.kind}
       mime={element.mime}
       src={payload.data}
-      variant="thumbnail"
+      variant="card"
       isPending={payload.isPending}
       isError={payload.isError}
       loadingLabel={element.kind}
@@ -917,11 +996,9 @@ function pullResult(value: unknown):
 function primaryPreviewElement(
   elements: PreviewElementSummary[],
 ): PreviewElementSummary | undefined {
-  return (
-    elements.find((element) => element.role === "content") ??
-    elements.find((element) => element.role === "preview") ??
-    elements.find((element) => element.role !== "title")
-  );
+  return primaryPayloadCandidate(
+    elements.map((element, index) => ({ element, index, role: element.role })),
+  )?.element;
 }
 
 function formatByteSize(bytes: number): string {
@@ -1021,6 +1098,11 @@ function previewResult(value: unknown): ImportPreview | undefined {
       checks,
     },
     candidates,
+    ...(result.destination &&
+    typeof result.destination === "object" &&
+    typeof (result.destination as Record<string, unknown>).title === "string"
+      ? { destinationTitle: (result.destination as { title: string }).title }
+      : {}),
   };
 }
 
