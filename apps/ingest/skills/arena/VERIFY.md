@@ -15,11 +15,12 @@ The runtime must reject the preview or pull result unless every applicable check
    to its canonical title. Text, Image, and Attachment Blocks then each have exactly one content
    element. Link and Embed Blocks then have either no element or exactly one safely-fetched
    preview-image element.
-6. Captured assets match their Block ID, role, requested Block URL, final public-HTTPS response
-   URL, validated redirect chain, and MIME. Image Block content must use its original asset URL;
-   declared renditions remain valid only for Link and Embed previews. Required assets may not be
-   omitted, and unreferenced or duplicate assets are rejected. Network safety is enforced while
-   fetching by the server-owned SafePublicFetcher; the parser validates its immutable evidence.
+6. Captured assets match their Block ID, role, requested Block URL, final public-HTTPS response URL
+   on the default port 443, validated redirect chain, and MIME. Image Block content must use its
+   original asset URL; declared renditions remain valid only for Link and Embed previews. Required
+   assets may not be omitted, and unreferenced or duplicate assets are rejected. Network safety is
+   enforced while fetching by the server-owned SafePublicFetcher; the parser validates its
+   immutable evidence.
 7. Every element has non-empty bytes, a matching exact byte size, a role- and kind-compatible
    MIME, and a SHA-256 that recomputes from its bytes.
 

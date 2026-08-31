@@ -121,7 +121,7 @@ describe("SafePublicFetcher IP policy", () => {
 });
 
 describe("SafePublicFetcher request boundary", () => {
-  test("rejects malformed, credentialed, and non-HTTPS URLs before I/O", async () => {
+  test("rejects malformed, credentialed, non-HTTPS, and non-default-port URLs before I/O", async () => {
     let resolverCalls = 0;
     let transportCalls = 0;
     const fetcher = new SafePublicFetcher({
@@ -140,6 +140,9 @@ describe("SafePublicFetcher request boundary", () => {
       kind: "invalid_url",
     });
     await expect(fetcher.fetch("https://user:secret@example.com/file")).rejects.toMatchObject({
+      kind: "invalid_url",
+    });
+    await expect(fetcher.fetch("https://example.com:8443/file")).rejects.toMatchObject({
       kind: "invalid_url",
     });
     expect(resolverCalls).toBe(0);
@@ -187,7 +190,7 @@ describe("SafePublicFetcher request boundary", () => {
       transport: repliesTransport(
         new Map([
           [
-            "https://assets.example:8443/image.png?size=2",
+            "https://assets.example/image.png?size=2",
             [
               {
                 body: ["abc", "def"],
@@ -201,7 +204,7 @@ describe("SafePublicFetcher request boundary", () => {
       ),
     });
 
-    const result = await fetcher.fetch("https://assets.example:8443/image.png?size=2#ignored", {
+    const result = await fetcher.fetch("https://assets.example:443/image.png?size=2#ignored", {
       headers: {
         Accept: "image/png",
         Authorization: "Bearer secret",
@@ -216,16 +219,16 @@ describe("SafePublicFetcher request boundary", () => {
       {
         address: publicV4("8.8.4.4"),
         headers: { accept: "image/png", "accept-encoding": "identity" },
-        hostHeader: "assets.example:8443",
+        hostHeader: "assets.example",
         tlsServername: "assets.example",
-        url: "https://assets.example:8443/image.png?size=2",
+        url: "https://assets.example/image.png?size=2",
       },
     ]);
     expect(decoder.decode(result.bytes)).toBe("abcdef");
     expect(result).toMatchObject({
-      finalUrl: "https://assets.example:8443/image.png?size=2",
+      finalUrl: "https://assets.example/image.png?size=2",
       redirects: [],
-      requestedUrl: "https://assets.example:8443/image.png?size=2",
+      requestedUrl: "https://assets.example/image.png?size=2",
       status: 206,
     });
     expect(result.headers.get("content-type")).toBe("image/png");
@@ -314,6 +317,29 @@ describe("SafePublicFetcher request boundary", () => {
     await expect(fetcher.fetch("https://first.example/start")).rejects.toMatchObject({
       kind: "unsafe_address",
     });
+    expect(requests.map(({ url }) => url)).toEqual(["https://first.example/start"]);
+  });
+
+  test("rejects a redirect to a non-default HTTPS port before more I/O", async () => {
+    const resolverCalls: string[] = [];
+    const requests: CapturedRequest[] = [];
+    const fetcher = new SafePublicFetcher({
+      resolver: fixedResolver({ "first.example": [publicV4()] }, resolverCalls),
+      transport: repliesTransport(
+        new Map([
+          [
+            "https://first.example/start",
+            [{ headers: { Location: "https://assets.example:8443/file" }, status: 302 }],
+          ],
+        ]),
+        requests,
+      ),
+    });
+
+    await expect(fetcher.fetch("https://first.example/start")).rejects.toMatchObject({
+      kind: "invalid_url",
+    });
+    expect(resolverCalls).toEqual(["first.example"]);
     expect(requests.map(({ url }) => url)).toEqual(["https://first.example/start"]);
   });
 

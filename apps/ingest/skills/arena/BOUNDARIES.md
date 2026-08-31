@@ -9,11 +9,12 @@ OriginArtifact storage before parsing. The supplied page URL is a locator and is
 scraped. API redirects are rejected, and the only API origin is `https://api.are.na`.
 
 Provider-declared asset URLs are delegated to the server-owned SafePublicFetcher boundary. The
-skill has no direct asset-network fallback. That boundary accepts public HTTPS destinations only,
-blocks private and special networks after DNS resolution, pins the approved resolution, manually
-revalidates every redirect, strips ambient credentials, and enforces byte, time, redirect, and
-concurrency limits. The capture records the requested URL, every redirect status/from/location/to
-tuple, and the final response URL so the deterministic parser can validate provenance offline.
+skill has no direct asset-network fallback. That boundary accepts public HTTPS destinations on the
+default port 443 only, blocks private and special networks after DNS resolution, pins the approved
+resolution, manually revalidates every redirect, strips ambient credentials, and enforces byte,
+time, redirect, and concurrency limits. The capture records the requested URL, every redirect
+status/from/location/to tuple, and the final response URL so the deterministic parser can validate
+provenance offline.
 
 Private channels, OAuth, recursive nested-channel traversal, direct arbitrary URL fetching, link
 crawling, provider embed HTML, and destination-page screenshots are outside this skill. Link and

@@ -91,7 +91,7 @@ export type PublicRemoteNetworkCapability =
       readonly origins: readonly string[];
     }
   | {
-      /** Caller- or provider-supplied URLs must cross the server-owned public egress boundary. */
+      /** Caller- or provider-supplied URLs cross the server-owned public HTTPS/443 boundary. */
       readonly kind: "safe_public_https";
     };
 

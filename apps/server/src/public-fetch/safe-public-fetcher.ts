@@ -125,7 +125,7 @@ export interface SafePublicFetchResult {
 }
 
 /**
- * A server-owned public HTTPS boundary with DNS rebinding and SSRF defenses.
+ * A server-owned public HTTPS/443 boundary with DNS rebinding and SSRF defenses.
  *
  * Each hop is resolved independently, every returned address must be public, and the chosen answer
  * is passed to a transport that pins the TCP connection while retaining the original TLS identity.
@@ -479,8 +479,11 @@ function normalizePublicUrl(input: string | URL): URL {
   if (url.hostname === "" || hostnameFromUrl(url).includes("%")) {
     throw new SafePublicFetchError("invalid_url", "Public fetch URL has an invalid hostname");
   }
-  if (url.port === "0") {
-    throw new SafePublicFetchError("invalid_url", "Public fetch URL has an invalid port");
+  if (url.port !== "") {
+    throw new SafePublicFetchError(
+      "invalid_url",
+      "Public fetch URL must use the default HTTPS port",
+    );
   }
   url.hash = "";
   return url;
