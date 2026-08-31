@@ -21,7 +21,7 @@ import {
 import { devAuth } from "./auth.ts";
 import type { BlobStore } from "./blobs/index.ts";
 import type { ServerConfig } from "./config.ts";
-import type { Database } from "./db/index.ts";
+import type { Database, ProviderLeasePool } from "./db/index.ts";
 import { notFound, Problem, problemResponse } from "./errors.ts";
 import { createOpenApiDocument } from "./openapi.ts";
 import { createSafePublicAssetFetcher, SafePublicFetcher } from "./public-fetch/index.ts";
@@ -44,6 +44,7 @@ export interface AppDependencies {
   config: ServerConfig;
   db: Database;
   blobs: BlobStore;
+  providerLeasePool: ProviderLeasePool;
   credentialedSources?: CredentialedSourceCatalog;
   fileSources?: FileSourceCatalog;
   publicAssetFetcher?: PublicAssetFetcher;
@@ -55,6 +56,7 @@ export function createApp({
   config,
   db,
   blobs,
+  providerLeasePool,
   credentialedSources,
   fileSources,
   publicAssetFetcher,
@@ -154,6 +156,7 @@ export function createApp({
         credentialCrypto,
         credentialedSources: resolvedCredentialedSources,
         fileSources: resolvedFileSources,
+        providerLeasePool,
         publicRemoteSources: resolvedPublicRemoteSources,
       }),
     },
@@ -164,6 +167,7 @@ export function createApp({
         credentialCrypto,
         credentialedSources: resolvedCredentialedSources,
         fileSources: resolvedFileSources,
+        providerLeasePool,
         publicRemoteSources: resolvedPublicRemoteSources,
       }),
     },
@@ -185,7 +189,12 @@ export function createApp({
     },
     {
       basePath: "/rnet/v0/source-credentials",
-      router: createSourceCredentialRoutes(db, resolvedCredentialedSources, credentialCrypto),
+      router: createSourceCredentialRoutes(
+        db,
+        resolvedCredentialedSources,
+        credentialCrypto,
+        providerLeasePool,
+      ),
     },
     {
       basePath: "/rnet/v0/source-skills",

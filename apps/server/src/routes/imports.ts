@@ -9,7 +9,7 @@ import type { CredentialedSourceCatalog } from "../../../ingest/connected-source
 import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
-import type { Database } from "../db/index.ts";
+import type { Database, ProviderLeasePool } from "../db/index.ts";
 import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { serializeVibe } from "../serializers/vibe-serializer.ts";
 import { ImportService } from "../services/import-service.ts";
@@ -36,6 +36,7 @@ export function createPendingImportRoutes(
     credentialedSources: CredentialedSourceCatalog;
     credentialCrypto: SourceCredentialCrypto;
     fileSources: FileSourceCatalog;
+    providerLeasePool: ProviderLeasePool;
     publicRemoteSources: PublicRemoteSourceCatalog;
   },
 ) {

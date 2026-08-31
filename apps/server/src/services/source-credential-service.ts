@@ -10,7 +10,7 @@ import {
   type PreparedCredentialConnection,
   type SourceJsonObject,
 } from "../../../ingest/connected-sources/types.ts";
-import type { Database } from "../db/index.ts";
+import type { Database, ProviderLeasePool } from "../db/index.ts";
 import {
   sourceCredentialClaimAttempts,
   type SourceCredentialClaimStatus,
@@ -48,6 +48,7 @@ interface SourceCredentialServiceContext extends ServiceContext {
   credentialEncryptionKeys?: CredentialEncryptionKeys;
   claimStore?: SourceCredentialClaimStore;
   credentialedSources?: CredentialedSourceCatalog;
+  providerLeasePool: ProviderLeasePool;
 }
 
 type ClaimReservation =
@@ -89,6 +90,7 @@ export class SourceCredentialsService {
   private readonly credentialCrypto: SourceCredentialCrypto;
   private readonly claimStore: SourceCredentialClaimStore;
   private readonly credentialedSources?: CredentialedSourceCatalog;
+  private readonly providerLeasePool: ProviderLeasePool;
 
   constructor(context: SourceCredentialServiceContext) {
     this.db = context.db;
@@ -102,6 +104,7 @@ export class SourceCredentialsService {
       context.credentialCrypto ?? createLocalSourceCredentialCrypto(credentialEncryptionKeys!);
     this.claimStore = context.claimStore ?? new DatabaseSourceCredentialClaimStore(context.db);
     this.credentialedSources = context.credentialedSources;
+    this.providerLeasePool = context.providerLeasePool;
   }
 
   async connect(skill: CredentialSourceConnector, input: unknown): Promise<DbSourceCredential> {
@@ -242,7 +245,7 @@ export class SourceCredentialsService {
     credential: DbSourceCredential,
     revokeProvider: ((secret: string, input: { signal: AbortSignal }) => Promise<void>) | undefined,
   ): Promise<void> {
-    const connection = await this.db.$client.reserve();
+    const connection = await this.providerLeasePool.reserve();
     let leaseHeld = false;
     let currentSecret: Uint8Array | undefined;
     try {

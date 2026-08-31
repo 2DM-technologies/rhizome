@@ -42,7 +42,7 @@ import {
 } from "../../../ingest/connected-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
-import type { Database, DatabaseTransaction } from "../db/index.ts";
+import type { Database, DatabaseTransaction, ProviderLeasePool } from "../db/index.ts";
 import { grants } from "../db/models/grant.ts";
 import {
   ingestionSourceFetches,
@@ -213,6 +213,7 @@ export class ImportService {
   private readonly credentialedSources: CredentialedSourceCatalog;
   private readonly fileSources: FileSourceCatalog;
   private readonly publicRemoteSources: PublicRemoteSourceCatalog;
+  private readonly providerLeasePool: ProviderLeasePool;
   private readonly baseUrl: string;
   private readonly sourceContinuations: SourceContinuationCodec;
 
@@ -222,6 +223,7 @@ export class ImportService {
       credentialedSources: CredentialedSourceCatalog;
       fileSources: FileSourceCatalog;
       publicRemoteSources: PublicRemoteSourceCatalog;
+      providerLeasePool: ProviderLeasePool;
       baseUrl: string;
       credentialCrypto?: SourceCredentialCrypto;
       credentialEncryptionKey?: CredentialEncryptionKeys;
@@ -241,6 +243,7 @@ export class ImportService {
     this.credentialedSources = context.credentialedSources;
     this.fileSources = context.fileSources;
     this.publicRemoteSources = context.publicRemoteSources;
+    this.providerLeasePool = context.providerLeasePool;
     this.baseUrl = context.baseUrl.replace(/\/$/, "");
   }
 
@@ -870,6 +873,9 @@ export class ImportService {
     try {
       const bytes = await reservedSource.skill.retrieve(config);
       assertCaptureLimit(bytes.byteLength, reservedSource.source.executionLimits);
+      // Provider bytes are now immutable in memory; release the provider-pool session before
+      // ordinary database/blob persistence so the bounded provider pool gates only network I/O.
+      await reservation.release();
       // Public data is still staged immutably before any parser or verifier runs.
       const origin = await storeOwnedOriginArtifact(
         { db: this.db, blobs: this.blobs },
@@ -880,7 +886,6 @@ export class ImportService {
           label: reservedSource.skill.capture.label(config, fetchUuid),
         },
       );
-      await reservation.release();
       const [fetched] = await this.db
         .update(ingestionSourceFetches)
         .set({ originUuid: origin.uuid, status: "fetched", retrievedAt: new Date() })
@@ -1024,7 +1029,9 @@ export class ImportService {
       providerRequestStarted = true;
       let bytes: Uint8Array;
       try {
-        bytes = await prepared.fetch.retrieve(secret);
+        bytes = await withProviderRequestDeadline((signal) =>
+          prepared.fetch.retrieve(secret, { signal }),
+        );
       } catch (error) {
         if (
           error instanceof ConnectedSourceError &&
@@ -1315,7 +1322,7 @@ export class ImportService {
     ownerUuid: string,
     operationUuid: string,
   ): Promise<CredentialFetchReservation> {
-    const connection = await this.db.$client.reserve();
+    const connection = await this.providerLeasePool.reserve();
     const fetchUuid = uuidv7();
     let leaseHeld = false;
     let connectionReleased = false;
@@ -1544,7 +1551,7 @@ export class ImportService {
     ownerUuid: string,
     operationUuid: string,
   ): Promise<PublicRemoteFetchReservation> {
-    const connection = await this.db.$client.reserve();
+    const connection = await this.providerLeasePool.reserve();
     const fetchUuid = uuidv7();
     let leaseHeld = false;
     let connectionReleased = false;

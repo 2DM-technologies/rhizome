@@ -100,15 +100,19 @@ export function createSimpleFinSkill(options: SimpleFinClientOptions): Credentia
         ...(history.historyRecovery ? { historyRecovery: history.historyRecovery } : {}),
       };
       return {
-        retrieve(secret) {
-          return client.fetchAccounts(secret, {
-            ...(normalizedConfig.accounts
-              ? { accountIds: normalizedConfig.accounts.map(({ account_id }) => account_id) }
-              : {}),
-            startDateEpoch: history.startDateEpoch,
-            endDateEpoch,
-            includePending: normalizedConfig.include_pending === true,
-          });
+        retrieve(secret, { signal }) {
+          return client.fetchAccounts(
+            secret,
+            {
+              ...(normalizedConfig.accounts
+                ? { accountIds: normalizedConfig.accounts.map(({ account_id }) => account_id) }
+                : {}),
+              startDateEpoch: history.startDateEpoch,
+              endDateEpoch,
+              includePending: normalizedConfig.include_pending === true,
+            },
+            signal,
+          );
         },
         compiledSource: {
           kind: CANDIDATE_BUNDLE_CAPABILITY,

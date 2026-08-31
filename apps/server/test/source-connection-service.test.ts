@@ -13,6 +13,7 @@ import {
 import { createLocalSourceCredentialCrypto } from "../src/services/source-credential-crypto.ts";
 import type { SourceCredentialCrypto } from "../src/services/source-credential-crypto.ts";
 import {
+  AmbiguousCredentialCommitError,
   SourceConnectionService,
   oauthVerifierAssociatedData,
   type SourceConnectionAttemptStore,
@@ -420,6 +421,56 @@ describe("generic OAuth 2.0 PKCE connections", () => {
     expect(status).toMatchObject({ status: "failed", error_code: "oauth_exchange_failed" });
     expect(JSON.stringify(status)).not.toContain(acquiredSecret);
   });
+
+  test("revokes an ambiguously committed token only when failure transition proves rollback", async () => {
+    const rolledBackSecret = "AMBIGUOUS-ROLLBACK-SECRET";
+    const committedSecret = "AMBIGUOUS-COMMIT-SECRET";
+    const revoked: string[] = [];
+    const skill = oauthSkill({
+      async exchange(input) {
+        return {
+          secret: input.code === "rolled-back" ? rolledBackSecret : committedSecret,
+        };
+      },
+      async revoke(secret) {
+        revoked.push(secret);
+      },
+    });
+
+    const rolledBackStore = new AmbiguousSucceedAttemptStore(false);
+    const rolledBackService = serviceFor({ store: rolledBackStore, skill });
+    const rolledBack = await rolledBackService.start("synthetic_oauth", {
+      return_to: returnUrl,
+      intent,
+    });
+    const rolledBackState = new URL(rolledBack.attempt.authorization_url).searchParams.get(
+      "state",
+    )!;
+    await rolledBackService.complete(
+      { state: rolledBackState, code: "rolled-back" },
+      cookieHeader(rolledBack),
+    );
+
+    const committedStore = new AmbiguousSucceedAttemptStore(true);
+    const committedService = serviceFor({ store: committedStore, skill });
+    const committed = await committedService.start("synthetic_oauth", {
+      return_to: returnUrl,
+      intent,
+    });
+    const committedState = new URL(committed.attempt.authorization_url).searchParams.get("state")!;
+    await committedService.complete(
+      { state: committedState, code: "committed" },
+      cookieHeader(committed),
+    );
+
+    expect(revoked).toEqual([rolledBackSecret]);
+    expect(await rolledBackService.getOwned(rolledBack.attempt.attempt_id)).toMatchObject({
+      status: "failed",
+    });
+    expect(await committedService.getOwned(committed.attempt.attempt_id)).toMatchObject({
+      status: "succeeded",
+    });
+  });
 });
 
 function serviceFor(options: {
@@ -607,12 +658,14 @@ class MemoryAttemptStore implements SourceConnectionAttemptStore {
     now: Date;
   }) {
     const attempt = this.attempts.get(input.attemptUuid)!;
+    if (attempt.status !== "exchanging") return false;
     Object.assign(attempt, {
       status: input.status,
       errorCode: input.errorCode,
       completedAt: input.now,
       updatedAt: input.now,
     });
+    return true;
   }
 
   async getOwned(attemptUuid: string, ownerUuid: string, now: Date) {
@@ -661,6 +714,21 @@ class RateLimitedAttemptStore extends MemoryAttemptStore {
 class FailingSucceedAttemptStore extends MemoryAttemptStore {
   override async succeed(): Promise<DbSourceConnectionAttempt> {
     throw new Error("synthetic credential commit failure");
+  }
+}
+
+class AmbiguousSucceedAttemptStore extends MemoryAttemptStore {
+  constructor(private readonly commitBeforeFailure: boolean) {
+    super();
+  }
+
+  override async succeed(input: {
+    attemptUuid: string;
+    credential: NewDbSourceCredential;
+    now: Date;
+  }): Promise<DbSourceConnectionAttempt> {
+    if (this.commitBeforeFailure) await super.succeed(input);
+    throw new AmbiguousCredentialCommitError();
   }
 }
 

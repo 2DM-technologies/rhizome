@@ -25,6 +25,11 @@ describe("X provider quarantine", () => {
         absolute.startsWith(allowedRoot) ||
         path.startsWith("impl/") ||
         path.startsWith("node_modules/") ||
+        path.split("/").includes("dist") ||
+        path.startsWith("coverage/") ||
+        path.startsWith("dist-storybook/") ||
+        path.startsWith("storybook-static/") ||
+        path.startsWith(".rhizome/") ||
         path.startsWith(".git/") ||
         path === "bun.lock"
       ) {

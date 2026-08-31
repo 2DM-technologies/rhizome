@@ -1,7 +1,7 @@
 import { SOURCE_SKILL_ID_PATTERN, sourceCredentialDocumentSchema } from "@rhizome/store-contract";
 
 import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
-import type { Database } from "../db/index.ts";
+import type { Database, ProviderLeasePool } from "../db/index.ts";
 import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
 import { Problem } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
@@ -28,6 +28,7 @@ export function createSourceCredentialRoutes(
   db: Database,
   catalog: CredentialedSourceCatalog,
   credentialCrypto: SourceCredentialCrypto,
+  providerLeasePool: ProviderLeasePool,
 ) {
   const router = createRhizomeRouter();
   const connectionSchemas = new Map(
@@ -84,6 +85,7 @@ export function createSourceCredentialRoutes(
         actor: context.get("actor"),
         credentialCrypto,
         credentialedSources: catalog,
+        providerLeasePool,
       });
       const credential = await service.connect(skill, validation.value);
       return context.json(serializeSourceCredential(credential), 201);
@@ -110,6 +112,7 @@ export function createSourceCredentialRoutes(
         actor: context.get("actor"),
         credentialCrypto,
         credentialedSources: catalog,
+        providerLeasePool,
       });
       const credential = await service.getOwned(context.req.valid("param").id);
       return context.json(serializeSourceCredential(credential));
@@ -137,6 +140,7 @@ export function createSourceCredentialRoutes(
         actor: context.get("actor"),
         credentialCrypto,
         credentialedSources: catalog,
+        providerLeasePool,
       });
       await service.revoke(context.req.valid("param").id);
       return context.body(null, 204);

@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
-import type { Database } from "../src/db/index.ts";
+import type { Database, ProviderLeasePool } from "../src/db/index.ts";
 import { createCredentialKeyring } from "../src/services/source-credential-crypto.ts";
 
 const config: ServerConfig = {
@@ -34,11 +34,13 @@ const config: ServerConfig = {
     },
   },
 };
+const providerLeasePool = {} as ProviderLeasePool;
 
 const created = createApp({
   config,
   db: {} as Database,
   blobs: {} as BlobStore,
+  providerLeasePool,
 });
 
 describe("generic OAuth route contract", () => {

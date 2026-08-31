@@ -67,7 +67,7 @@ export interface SourceConnectionAttemptStore {
     errorCode: string;
     status: Extract<SourceConnectionAttemptStatus, "failed" | "rejected">;
     now: Date;
-  }): Promise<void>;
+  }): Promise<boolean>;
   getOwned(
     attemptUuid: string,
     ownerUuid: string,
@@ -294,12 +294,27 @@ export class SourceConnectionService {
         credentialSeal.destroy();
       }
     } catch (error) {
+      const failureStatus =
+        error instanceof CredentialConnectionError && error.disposition === "rejected"
+          ? "rejected"
+          : "failed";
+      const failureCode =
+        connectionErrorCode(error) === "connection_acquire_failed"
+          ? "oauth_exchange_failed"
+          : connectionErrorCode(error);
+      let failureProvedNoCommit = false;
+      let failureWriteError: unknown;
+      try {
+        failureProvedNoCommit = await this.fail(attempt.uuid, failureCode, failureStatus);
+      } catch (failError) {
+        failureWriteError = failError;
+      }
       const revoke = oauthConnection.revoke;
       if (
         acquiredSecret &&
         !credentialCommitted &&
         revoke &&
-        !(error instanceof AmbiguousCredentialCommitError)
+        (!(error instanceof AmbiguousCredentialCommitError) || failureProvedNoCommit)
       ) {
         try {
           const secret = acquiredSecret;
@@ -308,15 +323,7 @@ export class SourceConnectionService {
           // The attempt still becomes terminal. Provider cleanup is best effort and never exposed.
         }
       }
-      await this.fail(
-        attempt.uuid,
-        connectionErrorCode(error) === "connection_acquire_failed"
-          ? "oauth_exchange_failed"
-          : connectionErrorCode(error),
-        error instanceof CredentialConnectionError && error.disposition === "rejected"
-          ? "rejected"
-          : "failed",
-      );
+      if (failureWriteError) throw failureWriteError;
     }
     return { attemptUuid: attempt.uuid, returnUrl: completionUrl(attempt.returnUrl, attempt.uuid) };
   }
@@ -344,7 +351,7 @@ export class SourceConnectionService {
     attemptUuid: string,
     errorCode: string,
     status: Extract<SourceConnectionAttemptStatus, "failed" | "rejected">,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return this.store.fail({ attemptUuid, errorCode, status, now: this.now() });
   }
 }
@@ -459,8 +466,8 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
     errorCode: string;
     status: Extract<SourceConnectionAttemptStatus, "failed" | "rejected">;
     now: Date;
-  }): Promise<void> {
-    await this.db
+  }): Promise<boolean> {
+    const transitioned = await this.db
       .update(sourceConnectionAttempts)
       .set({
         status: input.status,
@@ -473,7 +480,9 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
           eq(sourceConnectionAttempts.uuid, input.attemptUuid),
           eq(sourceConnectionAttempts.status, "exchanging"),
         ),
-      );
+      )
+      .returning({ uuid: sourceConnectionAttempts.uuid });
+    return Boolean(transitioned[0]);
   }
 
   getOwned(
@@ -596,7 +605,7 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
   }
 }
 
-class AmbiguousCredentialCommitError extends Error {
+export class AmbiguousCredentialCommitError extends Error {
   constructor() {
     super("OAuth credential commit outcome is ambiguous");
     this.name = "AmbiguousCredentialCommitError";
@@ -708,7 +717,7 @@ function validatedAuthorizationUrl(
 }
 
 function isSensitiveAuthorizationParameter(name: string): boolean {
-  const normalized = name.toLocaleLowerCase().replace(/[^a-z0-9]/gu, "");
+  const normalized = name.toLowerCase().replace(/[^a-z0-9]/gu, "");
   return (
     normalized === "code" ||
     normalized === "authorizationcode" ||

@@ -152,7 +152,7 @@ export type CredentialConnectionDefinition =
   ClaimExchangeConnectionDefinition | OAuth2PkceConnectionDefinition;
 
 export interface PreparedConnectedSourceFetch {
-  retrieve(secret: string): Promise<Uint8Array>;
+  retrieve(secret: string, input: { signal: AbortSignal }): Promise<Uint8Array>;
   readonly compiledSource: CandidateBundleCapability<{
     readonly bytes: Uint8Array;
     readonly limits: SourceExecutionLimits;

@@ -39,7 +39,7 @@ import { createApp } from "../src/app.ts";
 import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../src/auth.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
-import { createDatabase } from "../src/db/index.ts";
+import { createDatabase, createProviderLeasePool } from "../src/db/index.ts";
 import { ingestionSourceFetches } from "../src/db/models/ingestion-source-fetch.ts";
 import { ingestionSources } from "../src/db/models/ingestion-source.ts";
 import { mediaObjectRevisions } from "../src/db/models/media-object-revision.ts";
@@ -56,6 +56,7 @@ import {
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 4 });
+const providerLeasePool = createProviderLeasePool(databaseUrl, { max: 4 });
 let scratch = "";
 let s3: S3rver | undefined;
 let app: ReturnType<typeof createApp>["app"];
@@ -99,8 +100,10 @@ let syntheticOAuthRefresh: (
   secret: string,
   signal: AbortSignal,
 ) => Promise<OAuth2PkceCredentialResult | undefined> = async () => undefined;
-let syntheticOAuthRetrieve: (secret: string) => Promise<Uint8Array> = async () =>
-  syntheticOAuthCaptureBytes.slice();
+let syntheticOAuthRetrieve: (
+  secret: string,
+  signal: AbortSignal,
+) => Promise<Uint8Array> = async () => syntheticOAuthCaptureBytes.slice();
 let syntheticOAuthRevoke: (secret: string, signal: AbortSignal) => Promise<void> = async () => {};
 const syntheticOAuthSourceSkill = createSyntheticOAuthSourceSkill();
 const syntheticPublicSourceSkill = createSyntheticPublicSourceSkill();
@@ -150,6 +153,7 @@ beforeAll(async () => {
     config,
     db,
     blobs: createBlobStore(config),
+    providerLeasePool,
     credentialedSources: new CredentialedSourceCatalog([
       createSimpleFinSkill({
         allowedHosts: ["bridge.simplefin.test"],
@@ -183,6 +187,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await s3?.close();
+  await providerLeasePool.end();
   await client.end();
   if (scratch) await rm(scratch, { recursive: true, force: true });
 });
@@ -1454,8 +1459,13 @@ describe("rNet M1 store", () => {
       allStarted.then(() => true),
       Bun.sleep(1_000).then(() => false),
     ]);
+    const ordinaryDatabaseResponse = await Promise.race([
+      request("/rnet/v0/vibes", { headers: owner }),
+      Bun.sleep(1_000).then(() => undefined),
+    ]);
     releaseAll();
     expect(reachedProvider).toBe(true);
+    expect(ordinaryDatabaseResponse?.status).toBe(200);
     const completed = await Promise.all(
       accepted.map((operation) => waitForOperation(operation, owner)),
     );
@@ -3131,9 +3141,9 @@ function createSyntheticOAuthSourceSkill(): CredentialedSourceSkill {
     },
     async prepareFetch() {
       return {
-        async retrieve(secret) {
+        async retrieve(secret, { signal }) {
           syntheticOAuthRetrieveSecrets.push(secret);
-          return syntheticOAuthRetrieve(secret);
+          return syntheticOAuthRetrieve(secret, signal);
         },
         compiledSource,
       };

@@ -76,7 +76,9 @@ describe("SimpleFIN connected-source skill", () => {
       endDateEpoch: 1_800_000_000,
     });
 
-    await fetch.retrieve(`https://user:secret@${allowedHost}/simplefin`);
+    await fetch.retrieve(`https://user:secret@${allowedHost}/simplefin`, {
+      signal: new AbortController().signal,
+    });
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.searchParams.get("start-date")).toBe(String(1_800_000_000 - 45 * 86_400));
@@ -87,6 +89,41 @@ describe("SimpleFIN connected-source skill", () => {
     expect(() => skill.parseConfig({ include_pending: "yes" })).toThrow(
       "Stored SimpleFIN source configuration is invalid",
     );
+  });
+
+  test("cooperatively cancels an in-flight provider request", async () => {
+    let providerSignal: AbortSignal | undefined;
+    let providerSettled = false;
+    const skill = createSimpleFinSkill({
+      allowedHosts: [allowedHost],
+      fetch: async (_input, init) => {
+        providerSignal = init?.signal ?? undefined;
+        if (!providerSignal) throw new Error("Expected a provider abort signal");
+        return new Promise<Response>((_resolve, reject) => {
+          const rejectOnAbort = () => {
+            providerSettled = true;
+            reject(providerSignal?.reason);
+          };
+          if (providerSignal?.aborted) rejectOnAbort();
+          else providerSignal?.addEventListener("abort", rejectOnAbort, { once: true });
+        });
+      },
+    });
+    const prepared = await skill.prepareFetch({
+      config: {},
+      endDateEpoch: 1_800_000_000,
+    });
+    const caller = new AbortController();
+    const reason = new Error("retrieval cancelled");
+
+    const retrieval = prepared.retrieve(`https://user:secret@${allowedHost}/simplefin`, {
+      signal: caller.signal,
+    });
+    caller.abort(reason);
+
+    await expect(retrieval).rejects.toBe(reason);
+    expect(providerSignal?.aborted).toBe(true);
+    expect(providerSettled).toBe(true);
   });
 
   test("extends one request beyond 45 days and requires reviewed recovery past 90 days", async () => {
