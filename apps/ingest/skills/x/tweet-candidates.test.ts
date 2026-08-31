@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { validateMediaObjectProperties } from "@rnet/types";
+import { validateMediaObject, validateMediaObjectProperties, type MediaObject } from "@rnet/types";
 
 import { SourceSkillManifestCatalog } from "../../source-skills/manifest-catalog.ts";
 import { xArchiveSourceSkillManifest } from "./archive/manifest.ts";
@@ -122,6 +122,34 @@ describe("X shared post candidates", () => {
       },
     ]);
     expect(validateMediaObjectProperties("tweet", original?.sourceProperties).ok).toBe(true);
+    const elementUuids = [
+      "0198f2a1-a005-7a05-8005-000000000005",
+      "0198f2a1-a006-7a06-8006-000000000006",
+    ];
+    const stagedCandidate: MediaObject = {
+      rnet_schema: "0.1",
+      uri: "rnet://object/0198f2a1-a001-7a01-8001-000000000001",
+      owner: "rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
+      type: original!.type,
+      elements: original!.elements.map(({ role, alt }, index) => ({
+        uri: `rnet://element/${elementUuids[index]}`,
+        role,
+        ...(alt === undefined ? {} : { alt }),
+      })),
+      keys: { ...original!.keys },
+      source: {
+        ingest: {
+          method: "parser",
+          reproducible: true,
+          skill: xOAuthSourceManifest.parser.version,
+        },
+        origins: ["rnet://origin/0198f2a1-a002-7a02-8002-000000000002"],
+        retrieved_at: original!.retrievedAt,
+        properties: { ...original!.sourceProperties },
+      },
+    };
+    expect(stagedCandidate.source.ingest.skill).toBe("x-posts@1.0.0");
+    expect(validateMediaObject(stagedCandidate).ok).toBe(true);
     expect(quote?.keys).toMatchObject({
       x_tweet_id: "101",
       x_quoted_tweet_id: "73",

@@ -15,7 +15,7 @@ describe("X OAuth connected-source adapter", () => {
     expect(skill).toMatchObject({
       skillId: "x_oauth",
       displayName: "X account",
-      parser: { name: "x-posts", version: "x-posts@1" },
+      parser: { name: "x-posts", version: "x-posts@1.0.0" },
       connection: { mode: "oauth2_pkce" },
       sourceRequestSchema: {
         type: "object",

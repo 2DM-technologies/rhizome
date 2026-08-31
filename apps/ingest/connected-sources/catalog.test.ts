@@ -22,7 +22,7 @@ function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill 
       description: `${skillId} test source`,
       source_kind: "credentialed_remote",
       connector_version: `${skillId}-connector@test`,
-      parser: { name: parserName, version: `${parserName}@test` },
+      parser: { name: parserName, version: `${parserName}@0.0.0-test` },
       limits: {
         maxCandidates: 10,
         maxCaptureBytes: 1_024,
@@ -38,7 +38,7 @@ function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill 
     },
     parser: {
       name: parserName,
-      version: `${parserName}@test`,
+      version: `${parserName}@0.0.0-test`,
       async parse() {
         return { transactions: [], sourceRecordCount: 0 };
       },

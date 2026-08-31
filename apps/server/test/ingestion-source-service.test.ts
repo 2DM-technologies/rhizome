@@ -128,7 +128,7 @@ describe("ingestion sources", () => {
           skillId: "synthetic_public",
           connectorVersion: "synthetic-public-connector@1",
           parser: "synthetic-public",
-          parserVersion: "synthetic-public@1",
+          parserVersion: "synthetic-public@1.0.0",
           originUuid: null,
           config: { locator: "https://public.example.test/feed" },
         }),
@@ -139,7 +139,7 @@ describe("ingestion sources", () => {
       skill_id: "synthetic_public",
       connector_version: "synthetic-public-connector@1",
       parser: "synthetic-public",
-      parser_version: "synthetic-public@1",
+      parser_version: "synthetic-public@1.0.0",
       limits: sourceExecutionLimits,
       config: { locator: "https://public.example.test/feed" },
       created_at: "2026-08-29T12:00:00.000Z",
@@ -166,7 +166,7 @@ describe("ingestion sources", () => {
       skillId: "synthetic_public",
       connectorVersion: "synthetic-public-connector@1",
       parser: "synthetic-public",
-      parserVersion: "synthetic-public@1",
+      parserVersion: "synthetic-public@1.0.0",
       config: { locator: "https://public.example.test/feed" },
     });
   });
@@ -364,7 +364,7 @@ function ownedService(
 function syntheticPublicSkill(): PublicRemoteSourceSkill {
   const parser = {
     name: "synthetic-public",
-    version: "synthetic-public@1",
+    version: "synthetic-public@1.0.0",
     async parse() {
       return {};
     },

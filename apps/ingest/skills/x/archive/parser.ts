@@ -1,6 +1,7 @@
 import type { SourceParser } from "../../../source-skills/candidate-bundle.ts";
 import { sha256 } from "../contracts.ts";
 import type { NormalizedXAttachment, NormalizedXPost, SelectedXPosts } from "../contracts.ts";
+import { X_POST_PARSER_NAME, X_POST_PARSER_VERSION } from "../definition.ts";
 import {
   X_ARCHIVE_ACCOUNT_PATH,
   X_ARCHIVE_MANIFEST_PATH,
@@ -17,8 +18,8 @@ const MAX_MANIFEST_BYTES = 2 * 1_024 * 1_024;
 const MAX_POSTS_BYTES = 32 * 1_024 * 1_024;
 
 export const xArchiveParser: SourceParser<SelectedXPosts> = {
-  name: "x-posts",
-  version: "x-posts@1",
+  name: X_POST_PARSER_NAME,
+  version: X_POST_PARSER_VERSION,
   async parse(bytes) {
     const ownedBytes = new Uint8Array(bytes.byteLength);
     ownedBytes.set(bytes);

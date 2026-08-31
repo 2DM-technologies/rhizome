@@ -82,7 +82,7 @@ export const mockArenaSourceSkill = {
         elements: elementReferences,
         keys: block.keys,
         source: {
-          ingest: { method: "parser", reproducible: true, skill: "arena@test" },
+          ingest: { method: "parser", reproducible: true, skill: "arena@0.0.0-test" },
           origins: [origin.document.uri],
           properties: block.sourceProperties,
         },

@@ -11,7 +11,7 @@ const firstCandidate: MediaObject = {
   elements: [],
   keys: { fitid: "transaction-1", account_hash: "sha256:account" },
   source: {
-    ingest: { method: "parser", reproducible: true, skill: "csv@1" },
+    ingest: { method: "parser", reproducible: true, skill: "csv@1.0.0" },
     origins: ["rnet://origin/0198f2a1-a002-7a02-8002-000000000002"],
     properties: { amount: "-12.34", currency: "USD", posted_at: "2026-08-29" },
   },

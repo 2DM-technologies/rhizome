@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mediaObjectSchema, vibeSchema } from "@rnet/types/schemas";
+import { ingestRecordSchema, mediaObjectSchema, vibeSchema } from "@rnet/types/schemas";
 
 import {
   STORE_SCHEMA_COMPONENTS,
+  SOURCE_PARSER_VERSION_PATTERN,
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
   createCredentialIngestionSourceRequestSchema,
@@ -195,6 +196,10 @@ describe("shared store schemas", () => {
       input_fields: { type: "array" },
       review_actions: { type: "array" },
     });
+    expect(SOURCE_PARSER_VERSION_PATTERN).toBe(ingestRecordSchema.properties.skill.pattern);
+    expect(sourceSkillManifestSchema.properties.parser.properties.version.pattern).toBe(
+      ingestRecordSchema.properties.skill.pattern,
+    );
     expect(sourceSkillManifestSchema.properties.connection.oneOf).toEqual([
       expect.objectContaining({
         required: ["mode", "claim_policy"],

@@ -520,7 +520,7 @@ function oauthSkill(
       description: "Synthetic OAuth source for generic platform conformance.",
       source_kind: "credentialed_remote",
       connector_version: "synthetic-oauth@1",
-      parser: { name: "synthetic-oauth", version: "synthetic-oauth@1" },
+      parser: { name: "synthetic-oauth", version: "synthetic-oauth@1.0.0" },
       limits: {
         maxCandidates: 10,
         maxCaptureBytes: 1_024,
@@ -544,7 +544,7 @@ function oauthSkill(
     },
     parser: {
       name: "synthetic-oauth",
-      version: "synthetic-oauth@1",
+      version: "synthetic-oauth@1.0.0",
       async parse() {
         return {};
       },

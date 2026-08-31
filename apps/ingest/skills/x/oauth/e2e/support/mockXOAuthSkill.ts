@@ -141,7 +141,7 @@ export function createMockXOAuthSkill(): {
           elements: references,
           keys: candidate.keys,
           source: {
-            ingest: { method: "parser", reproducible: true, skill: "x-posts@test" },
+            ingest: { method: "parser", reproducible: true, skill: "x-posts@0.0.0-test" },
             origins: [origin.document.uri],
             properties: candidate.sourceProperties,
           },

@@ -328,7 +328,7 @@ function stageSyntheticRecords({
     elements: [],
     keys: { synthetic_id: record.id },
     source: {
-      ingest: { method: "parser", reproducible: true, skill: `${skillId}@test` },
+      ingest: { method: "parser", reproducible: true, skill: `${skillId}@0.0.0-test` },
       origins: [origin.document.uri],
       properties: {
         title: record.title,
