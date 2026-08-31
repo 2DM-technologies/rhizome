@@ -15,6 +15,7 @@ import type {
   XEligiblePostKind,
   XMediaOmission,
   XPostExclusionReason,
+  XVerifyReport,
 } from "./contracts.ts";
 import { sha256, sourceJsonObject } from "./contracts.ts";
 import { verifyXPostCandidates } from "./verify.ts";
@@ -103,7 +104,7 @@ export function selectXPosts(input: {
 export async function compileXPostCandidates(
   selection: SelectedXPosts,
   limits: SourceExecutionLimits,
-): Promise<CandidateBundle> {
+): Promise<CandidateBundle<XVerifyReport>> {
   if (selection.counts.cap !== limits.maxCandidates) {
     throw new XPostCompilationError("X selection cap does not match the effective source limit");
   }

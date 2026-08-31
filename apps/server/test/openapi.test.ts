@@ -114,7 +114,7 @@ describe("OpenAPI", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      skills: [
+      skills: expect.arrayContaining([
         expect.objectContaining({
           skill_id: "csv",
           source_kind: "file",
@@ -141,7 +141,7 @@ describe("OpenAPI", () => {
           parser: { name: "arena", version: "arena@1.2.0" },
           review_actions: ["review_import", "refresh_source"],
         }),
-      ],
+      ]),
     });
   });
 

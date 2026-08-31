@@ -40,7 +40,7 @@ export type NormalizedXAttachment =
     })
   | (NormalizedXAttachmentBase & {
       readonly status: "omitted";
-      readonly reason: XDeclaredMediaOmissionReason;
+      readonly reason: XMediaOmissionReason;
       readonly kind?: "image" | "video";
       readonly mime?: string;
       readonly byteSize?: number;
