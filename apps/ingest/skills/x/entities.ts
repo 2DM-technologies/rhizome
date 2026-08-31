@@ -96,10 +96,10 @@ export function normalizeXEntities(
   const hashtags = normalizeTagEntities(text, input.hashtags ?? [], "#", "hashtag");
   const cashtags = normalizeTagEntities(text, input.cashtags ?? [], "$", "cashtag");
 
-  sortEntities(urls, (value) => `${value.url}\u0000${value.expanded_url ?? ""}`);
-  sortEntities(mentions, (value) => value.username);
-  sortEntities(hashtags, (value) => value.tag);
-  sortEntities(cashtags, (value) => value.tag);
+  sortAndDedupeEntities(urls, (value) => `${value.url}\u0000${value.expanded_url ?? ""}`);
+  sortAndDedupeEntities(mentions, (value) => value.username);
+  sortAndDedupeEntities(hashtags, (value) => value.tag);
+  sortAndDedupeEntities(cashtags, (value) => value.tag);
   assertNoEntityOverlap([
     ...urls.map((value) => ({ ...value, category: "URL" })),
     ...mentions.map((value) => ({ ...value, category: "mention" })),
@@ -140,13 +140,32 @@ function normalizeTagEntities(
   });
 }
 
-function sortEntities<T extends XTextSpan>(values: T[], stableValue: (value: T) => string): void {
+function sortAndDedupeEntities<T extends XTextSpan>(
+  values: T[],
+  stableValue: (value: T) => string,
+): void {
   values.sort(
     (left, right) =>
       left.start - right.start ||
       left.end - right.end ||
       stableValue(left).localeCompare(stableValue(right)),
   );
+  let writeIndex = 0;
+  let previous: T | undefined;
+  for (const value of values) {
+    if (
+      previous &&
+      value.start === previous.start &&
+      value.end === previous.end &&
+      stableValue(value) === stableValue(previous)
+    ) {
+      continue;
+    }
+    values[writeIndex] = value;
+    writeIndex += 1;
+    previous = value;
+  }
+  values.length = writeIndex;
 }
 
 function assertNoEntityOverlap(values: Array<XTextSpan & { readonly category: string }>): void {
