@@ -21,6 +21,7 @@ const COMPONENT_NAMES = {
   "media-object": "MediaObject",
   "origin-artifact": "OriginArtifact",
   track: "TrackProperties",
+  tweet: "TweetProperties",
   transaction: "TransactionProperties",
   vibe: "Vibe",
 } as const;

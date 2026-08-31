@@ -5,6 +5,7 @@ import type {
   MediaObject as RnetMediaObject,
   OriginArtifact as RnetOriginArtifact,
   TrackProperties as RnetTrackProperties,
+  TweetProperties as RnetTweetProperties,
   TransactionProperties as RnetTransactionProperties,
   Vibe as RnetVibe,
 } from "@rnet/types";
@@ -431,6 +432,11 @@ export interface components {
      * @description Registered core type. Validates source.properties for objects with type "track". Normally a ZERO-element object: audio lives inside a streaming platform, so it is referenced through the object's keys (isrc as the cross-service join key; spotify_uri, apple_music_id, etc. as handoff locators) rather than modelled as an element. Identity and meaning live here in properties — title, artist, and album are fields because they are queried on. Album art, if stored, is an image element.
      */
     TrackProperties: RnetTrackProperties;
+    /**
+     * tweet — source.properties vocabulary
+     * @description Registered core type. Validates source.properties for objects with type "tweet". Exact post text is a text/plain MediaElement and is deliberately not duplicated here. Stable provider identifiers and the canonical post URL belong in keys.
+     */
+    TweetProperties: RnetTweetProperties;
     /**
      * transaction — source.properties vocabulary
      * @description Registered core type. Validates source.properties for objects with type "transaction". Typically zero elements (fields are facts); authored attachments — memos, receipts — are the element case. Recommended keys: fitid (OFX transaction id), account_hash.

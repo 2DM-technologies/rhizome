@@ -12,6 +12,7 @@ const RNET_COMPONENT_TYPES = {
   MediaObject: "RnetMediaObject",
   OriginArtifact: "RnetOriginArtifact",
   TrackProperties: "RnetTrackProperties",
+  TweetProperties: "RnetTweetProperties",
   TransactionProperties: "RnetTransactionProperties",
   Vibe: "RnetVibe",
 } as const;
@@ -50,6 +51,7 @@ import type {
   MediaObject as RnetMediaObject,
   OriginArtifact as RnetOriginArtifact,
   TrackProperties as RnetTrackProperties,
+  TweetProperties as RnetTweetProperties,
   TransactionProperties as RnetTransactionProperties,
   Vibe as RnetVibe,
 } from "@rnet/types";

@@ -5,6 +5,7 @@ import {
   mediaObjectSchema,
   originArtifactSchema,
   trackPropertiesSchema,
+  tweetPropertiesSchema,
   transactionPropertiesSchema,
   validateMediaObject,
   validateSchema,
@@ -132,6 +133,7 @@ type RnetSchemaReferences = [
   typeof mediaObjectSchema,
   typeof originArtifactSchema,
   typeof trackPropertiesSchema,
+  typeof tweetPropertiesSchema,
   typeof transactionPropertiesSchema,
   typeof vibeSchema,
 ];
@@ -156,6 +158,7 @@ export const RNET_DOCUMENTS = {
   "media-object": mediaObjectSchema,
   "origin-artifact": originArtifactSchema,
   track: trackPropertiesSchema,
+  tweet: tweetPropertiesSchema,
   transaction: transactionPropertiesSchema,
   vibe: vibeSchema,
 } satisfies Record<SchemaName, JsonSchemaDocument>;
