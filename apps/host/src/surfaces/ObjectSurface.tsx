@@ -74,7 +74,14 @@ function RenderedPayload({
   const label = `Payload for ${uri}`;
   return (
     <div className="flex flex-col items-start gap-3">
-      <ElementPreview title={label} kind={kind} mime={mime} src={payload.data} variant="detail" />
+      <ElementPreview
+        title={label}
+        kind={kind}
+        mime={mime}
+        src={payload.data}
+        variant="detail"
+        className="!rounded-none !border-black/10"
+      />
       <TextLink
         href={payload.data}
         download={`element-${uuid}`}
