@@ -1,5 +1,7 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 
+const actualReactQuery = { ...(await import("@tanstack/react-query")) };
+
 const invalidateQueries = mock(async () => undefined);
 const removeQueries = mock(() => undefined);
 const setQueryData = mock(() => undefined);
@@ -12,6 +14,7 @@ const queryOptions = mock((method: string, path: string, request?: unknown) => (
 }));
 
 mock.module("@tanstack/react-query", () => ({
+  ...actualReactQuery,
   useQueryClient: () => ({ invalidateQueries, removeQueries, setQueryData }),
 }));
 
