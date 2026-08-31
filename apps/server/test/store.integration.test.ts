@@ -460,6 +460,7 @@ describe("rNet M1 store", () => {
       ownerUuid: DEV_USER_UUID,
       credentialUuid,
       parserVersion: "simplefin@2.0.0",
+      executionLimits: source.limits,
       status: "verified",
     });
     expect(previewFetch?.originUuid).toBe(
@@ -1138,6 +1139,7 @@ describe("rNet M1 store", () => {
         connectorVersion: SIMPLEFIN_CONNECTOR_VERSION,
         parserVersion: "simplefin@2.0.0",
         sourceStateDigest: "sha256:rate-limit-fixture",
+        executionLimits: fixture.sources[0]!.limits,
         status: "rejected" as const,
         errorCode: "fetch_failed",
       })),
@@ -2661,6 +2663,12 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
       source_kind: "public_remote",
       connector_version: "synthetic-public-connector@1.0.0",
       parser: { name: "synthetic-public", version: "synthetic-public@1.0.0" },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024 * 1_024,
+        maxElementBytes: 256 * 1_024,
+        maxTotalElementBytes: 512 * 1_024,
+      },
       input_fields: [
         {
           name: "url",

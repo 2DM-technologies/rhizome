@@ -39,6 +39,13 @@ export const SYNTHETIC_FILE_FIXTURE = fileURLToPath(
   new URL("../fixtures/synthetic-source.json", import.meta.url),
 );
 
+export const SYNTHETIC_SOURCE_LIMITS = {
+  maxCandidates: 10,
+  maxCaptureBytes: 1_024 * 1_024,
+  maxElementBytes: 256 * 1_024,
+  maxTotalElementBytes: 512 * 1_024,
+} as const;
+
 export const syntheticFileSourceSkillManifest = {
   skill_id: "synthetic-file",
   label: SYNTHETIC_FILE_SKILL_LABEL,
@@ -46,6 +53,7 @@ export const syntheticFileSourceSkillManifest = {
   source_kind: "file",
   connector_version: "synthetic-file@1.0.0",
   parser: { name: "synthetic-records", version: "1.0.0" },
+  limits: SYNTHETIC_SOURCE_LIMITS,
   input_fields: [
     {
       name: "file",
@@ -67,6 +75,7 @@ export const syntheticPublicSourceSkillManifest = {
   source_kind: "public_remote",
   connector_version: "synthetic-public@1.0.0",
   parser: { name: "synthetic-records", version: "1.0.0" },
+  limits: SYNTHETIC_SOURCE_LIMITS,
   input_fields: [
     {
       name: "url",
@@ -97,6 +106,7 @@ export const syntheticCredentialedSourceSkillManifest = {
   source_kind: "credentialed_remote",
   connector_version: "synthetic-credentialed@1.0.0",
   parser: { name: "synthetic-records", version: "1.0.0" },
+  limits: SYNTHETIC_SOURCE_LIMITS,
   connection: {
     claim_policy: { kind: "single_use_global", attempts: 3, window_hours: 1 },
   },

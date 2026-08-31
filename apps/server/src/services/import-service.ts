@@ -3,6 +3,7 @@ import {
   SOURCE_ID_PATTERN,
   type CreateImportPreviewRequest,
   type PullVibeRequest,
+  type SourceExecutionLimits,
 } from "@rhizome/store-contract";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
@@ -21,6 +22,10 @@ import {
   type SourceJsonValue,
   type SourceVerifyReport,
 } from "../../../ingest/source-skills/candidate-bundle.ts";
+import {
+  assertCandidateBundleLimits,
+  assertCaptureLimit,
+} from "../../../ingest/source-skills/execution-limits.ts";
 import {
   ConnectedSourceActionRequired,
   ConnectedSourceError,
@@ -733,6 +738,7 @@ export class ImportService {
     let phase: "fetch" | "parse" | "verify" | "candidate" = "fetch";
     try {
       const bytes = await reservedSource.skill.retrieve(config);
+      assertCaptureLimit(bytes.byteLength, reservedSource.source.executionLimits);
       // Public data is still staged immutably before any parser or verifier runs.
       const origin = await storeOwnedOriginArtifact(
         { db: this.db, blobs: this.blobs },
@@ -757,10 +763,15 @@ export class ImportService {
       if (!fetched) throw new Error("Public-remote fetch state changed unexpectedly");
 
       phase = "parse";
-      const bundle = await compileCandidateBundle(reservedSource.skill.compiledSource, {
-        bytes,
-        config,
-      });
+      const bundle = await compileCandidateBundle(
+        reservedSource.skill.compiledSource,
+        {
+          bytes,
+          config,
+          limits: reservedSource.source.executionLimits,
+        },
+        reservedSource.source.executionLimits,
+      );
       phase = "verify";
       assertVerifiedCandidateBundle(bundle, reservedSource.skill.compiledSource);
       phase = "candidate";
@@ -821,7 +832,12 @@ export class ImportService {
     const skill = assertPinnedFileSkill(resolved.source, this.fileSources);
     const blob = await this.blobs.get("origins", resolved.origin.contentHash);
     if (!blob) throw new Error("Origin payload is unavailable");
-    const bundle = await compileCandidateBundle(skill.compiledSource, { bytes: blob.bytes });
+    assertCaptureLimit(blob.bytes.byteLength, resolved.source.executionLimits);
+    const bundle = await compileCandidateBundle(
+      skill.compiledSource,
+      { bytes: blob.bytes, limits: resolved.source.executionLimits },
+      resolved.source.executionLimits,
+    );
     assertVerifiedCandidateBundle(bundle, skill.compiledSource);
     return {
       candidates: await candidatesFromBundle(
@@ -871,6 +887,7 @@ export class ImportService {
       );
       providerRequestStarted = true;
       const bytes = await prepared.fetch.retrieve(secret);
+      assertCaptureLimit(bytes.byteLength, reservedSource.source.executionLimits);
       // Persist the exact successful provider response before lease cleanup. If unlocking the
       // dedicated connection fails, the rate-counted response remains retained as an immutable
       // OriginArtifact instead of disappearing before the fetch ledger can record its failure.
@@ -900,7 +917,11 @@ export class ImportService {
       if (!fetched) throw new Error("Connected fetch state changed unexpectedly");
 
       phase = "parse";
-      const bundle = await compileCandidateBundle(prepared.fetch.compiledSource, { bytes });
+      const bundle = await compileCandidateBundle(
+        prepared.fetch.compiledSource,
+        { bytes, limits: reservedSource.source.executionLimits },
+        reservedSource.source.executionLimits,
+      );
 
       phase = "verify";
       assertVerifiedCandidateBundle(bundle, prepared.fetch.compiledSource);
@@ -1127,6 +1148,7 @@ export class ImportService {
             owner_uuid: string;
             source_config: unknown;
             source_connector_version: string;
+            source_execution_limits: unknown;
             source_kind: string;
             source_parser: string;
             source_parser_version: string;
@@ -1145,6 +1167,7 @@ export class ImportService {
             source.connector_version as source_connector_version,
             source.parser as source_parser,
             source.parser_version as source_parser_version,
+            source.execution_limits as source_execution_limits,
             source.config as source_config
           from source_credentials as credential
           join ingestion_sources as source
@@ -1200,6 +1223,8 @@ export class ImportService {
           locked.source_connector_version !== expected.source.connectorVersion ||
           locked.source_parser !== expected.source.parser ||
           locked.source_parser_version !== expected.source.parserVersion ||
+          canonicalJson(locked.source_execution_limits) !==
+            canonicalJson(expected.source.executionLimits) ||
           canonicalJson(locked.source_config ?? {}) !==
             canonicalJson(expected.source.config ?? {}) ||
           Boolean(baseline) !== Boolean(expectedBaseline) ||
@@ -1248,7 +1273,8 @@ export class ImportService {
             operation_uuid,
             connector_version,
             parser_version,
-            source_state_digest
+            source_state_digest,
+            execution_limits
           ) values (
             ${fetchUuid},
             ${candidate.source.uuid},
@@ -1257,7 +1283,8 @@ export class ImportService {
             ${operationUuid},
             ${candidate.source.connectorVersion},
             ${candidate.source.parserVersion},
-            ${candidate.sourceStateDigest}
+            ${candidate.sourceStateDigest},
+            ${JSON.stringify(candidate.source.executionLimits)}::jsonb
           )
         `;
         reserved = candidate;
@@ -1306,6 +1333,7 @@ export class ImportService {
           Array<{
             source_config: unknown;
             source_connector_version: string;
+            source_execution_limits: unknown;
             source_kind: string;
             source_parser: string;
             source_parser_version: string;
@@ -1320,6 +1348,7 @@ export class ImportService {
             source.connector_version as source_connector_version,
             source.parser as source_parser,
             source.parser_version as source_parser_version,
+            source.execution_limits as source_execution_limits,
             source.config as source_config
           from ingestion_sources as source
           where source.uuid = ${expected.source.uuid}
@@ -1338,6 +1367,8 @@ export class ImportService {
           locked.source_connector_version !== expected.source.connectorVersion ||
           locked.source_parser !== expected.source.parser ||
           locked.source_parser_version !== expected.source.parserVersion ||
+          canonicalJson(locked.source_execution_limits) !==
+            canonicalJson(expected.source.executionLimits) ||
           canonicalJson(locked.source_config ?? {}) !== canonicalJson(expected.source.config ?? {})
         ) {
           throw new Error("The public-remote source changed before its fetch could start");
@@ -1379,7 +1410,8 @@ export class ImportService {
             operation_uuid,
             connector_version,
             parser_version,
-            source_state_digest
+            source_state_digest,
+            execution_limits
           ) values (
             ${fetchUuid},
             ${expected.source.uuid},
@@ -1388,7 +1420,8 @@ export class ImportService {
             ${operationUuid},
             ${expected.source.connectorVersion},
             ${expected.source.parserVersion},
-            ${expected.sourceStateDigest}
+            ${expected.sourceStateDigest},
+            ${JSON.stringify(expected.source.executionLimits)}::jsonb
           )
         `;
         await connection`commit`;
@@ -1961,6 +1994,9 @@ export class ImportService {
       .where(and(...conditions))
       .for("update");
     if (!fetch) throw invalidReview("The fetched capture is stale or unavailable");
+    if (canonicalJson(fetch.executionLimits) !== canonicalJson(resolved.source.executionLimits)) {
+      throw invalidReview("The fetched capture limits no longer match its source");
+    }
     return fetch;
   }
 
@@ -2070,6 +2106,7 @@ async function originSourceStateDigest(
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     config: source.config ?? {},
     origin: origin.uuid,
     content_hash: origin.contentHash,
@@ -2087,6 +2124,7 @@ async function credentialSourceStateDigest(
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     config: source.config ?? {},
     credential: credential.uuid,
     skill_id: source.skillId,
@@ -2116,6 +2154,7 @@ async function publicRemoteSourceStateDigest(
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     config: source.config ?? {},
     skill_state: skillState,
   });
@@ -2172,6 +2211,7 @@ function failedChecks(report: SourceVerifyReport): string {
 async function compileCandidateBundle<Input>(
   capability: CandidateBundleCapability<Input>,
   input: Input,
+  limits: SourceExecutionLimits,
 ): Promise<CandidateBundle> {
   if (capability.kind !== CANDIDATE_BUNDLE_CAPABILITY) {
     throw new Error(`Unsupported compiled-source capability: ${String(capability.kind)}`);
@@ -2181,6 +2221,7 @@ async function compileCandidateBundle<Input>(
     throw new Error("Compiled source returned a malformed candidate bundle");
   }
   assertSourceVerifyReport(bundle.verify);
+  assertCandidateBundleLimits(bundle, limits);
   return bundle;
 }
 

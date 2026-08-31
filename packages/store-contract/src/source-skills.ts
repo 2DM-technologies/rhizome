@@ -14,6 +14,32 @@ export const SOURCE_SKILL_INPUT_CONTROLS = ["text", "url", "file", "checkbox", "
 /** Platform review workflows that a skill may opt into. */
 export const SOURCE_SKILL_REVIEW_ACTIONS = ["review_import", "refresh_source"] as const;
 export const SOURCE_CREDENTIAL_CLAIM_POLICIES = ["single_use_global"] as const;
+export const FILE_CAPTURE_PREPROCESSOR_CAPABILITY = "file_capture_preprocessor@1" as const;
+
+export const sourceExecutionLimitsSchema = {
+  type: "object",
+  required: ["maxCandidates", "maxCaptureBytes", "maxElementBytes", "maxTotalElementBytes"],
+  properties: {
+    maxCandidates: { type: "integer", minimum: 1, maximum: 2_147_483_647 },
+    maxCaptureBytes: { type: "integer", minimum: 1, maximum: 2_147_483_647 },
+    maxElementBytes: { type: "integer", minimum: 1, maximum: 2_147_483_647 },
+    maxTotalElementBytes: { type: "integer", minimum: 1, maximum: 2_147_483_647 },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export type SourceExecutionLimits = FromSchema<typeof sourceExecutionLimitsSchema>;
+
+export const fileCapturePreprocessorManifestSchema = {
+  type: "object",
+  required: ["kind", "implementation", "version"],
+  properties: {
+    kind: { const: FILE_CAPTURE_PREPROCESSOR_CAPABILITY },
+    implementation: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+    version: { type: "string", minLength: 1, maxLength: 256 },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
 
 export const sourceCredentialClaimPolicySchema = {
   type: "object",
@@ -79,6 +105,7 @@ export const sourceSkillManifestSchema = {
     "source_kind",
     "connector_version",
     "parser",
+    "limits",
     "input_fields",
     "review_actions",
   ],
@@ -97,6 +124,8 @@ export const sourceSkillManifestSchema = {
       },
       additionalProperties: false,
     },
+    limits: sourceExecutionLimitsSchema,
+    file_capture: fileCapturePreprocessorManifestSchema,
     connection: sourceSkillConnectionManifestSchema,
     input_fields: {
       type: "array",

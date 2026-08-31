@@ -32,6 +32,12 @@ function syntheticSkill(options: SyntheticSkillOptions = {}): PublicRemoteSource
       source_kind: "public_remote",
       connector_version: connectorVersion,
       parser: { name: parser.name, version: parser.version },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024,
+        maxElementBytes: 512,
+        maxTotalElementBytes: 1_024,
+      },
       input_fields: [
         {
           name: "url",

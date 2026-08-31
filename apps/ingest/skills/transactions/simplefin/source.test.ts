@@ -159,6 +159,7 @@ describe("SimpleFIN connected-source skill", () => {
     expect(resumed.actionEvidence).toEqual({ kind: "review_import" });
     const resumedBundle = await resumed.compiledSource.compile({
       bytes: await fixtureBytes("accounts-current-v2.json"),
+      limits: skill.manifest.limits,
     });
     expect(resumedBundle.verify).toMatchObject({ history_recovery: { mode: "rebaseline" } });
     await expect(
@@ -227,7 +228,10 @@ describe("SimpleFIN connected-source skill", () => {
       endDateEpoch: 1_786_752_000,
       previousCapture,
     });
-    const bundle = await prepared.compiledSource.compile({ bytes: currentCapture });
+    const bundle = await prepared.compiledSource.compile({
+      bytes: currentCapture,
+      limits: skill.manifest.limits,
+    });
     const first = bundle.candidates[0]!;
     expect(first.sourceProperties).toMatchObject({
       account_balance: "1125.50",
@@ -243,6 +247,7 @@ describe("SimpleFIN connected-source skill", () => {
     const report = (
       await prepared.compiledSource.compile({
         bytes: new TextEncoder().encode(JSON.stringify(mismatched)),
+        limits: skill.manifest.limits,
       })
     ).verify;
     const action = prepared.compiledSource.verificationError?.(report);

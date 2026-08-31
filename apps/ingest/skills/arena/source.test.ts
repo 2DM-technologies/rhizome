@@ -86,7 +86,11 @@ describe("Are.na public-remote source skill", () => {
     const config = skill.normalizeConfig({ url: fixture.channel_url + "/" });
     const captured = await skill.retrieve(config);
     const parsed = await skill.parser.parse(captured);
-    const bundle = await skill.compiledSource.compile({ bytes: captured, config });
+    const bundle = await skill.compiledSource.compile({
+      bytes: captured,
+      config,
+      limits: skill.manifest.limits,
+    });
 
     expect(parsed).toEqual(parseArenaCapture(fixtureBytes));
     expect(catalog.currentForSkillId(ARENA_SKILL_ID)).toBe(skill);
@@ -130,7 +134,11 @@ describe("Are.na public-remote source skill", () => {
     const { skill, requestedAssets } = skillForCapture(fixture);
     const config = skill.normalizeConfig({ url: fixture.channel_url });
     const captured = await skill.retrieve(config);
-    const bundle = await skill.compiledSource.compile({ bytes: captured, config });
+    const bundle = await skill.compiledSource.compile({
+      bytes: captured,
+      config,
+      limits: skill.manifest.limits,
+    });
 
     expect(requestedAssets).toContain(replacementUrl);
     expect(bundle.verify.ok).toBe(true);
@@ -140,7 +148,11 @@ describe("Are.na public-remote source skill", () => {
     const bytes = await readFixtureBytes();
     const { skill } = skillForCapture(JSON.parse(await Bun.file(fixtureUrl()).text()));
     const different = { url: "https://www.are.na/synthetic-author/different-channel" };
-    const bundle = await skill.compiledSource.compile({ bytes, config: different });
+    const bundle = await skill.compiledSource.compile({
+      bytes,
+      config: different,
+      limits: skill.manifest.limits,
+    });
     expect(bundle.verify.ok).toBe(false);
   });
 });

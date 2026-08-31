@@ -2,6 +2,7 @@ import {
   SOURCE_ACTION_KINDS,
   SOURCE_SKILL_ID_PATTERN,
   type ProblemCode,
+  type SourceExecutionLimits,
   type SourceSkillManifest,
 } from "../../../packages/store-contract/src/index.ts";
 
@@ -127,7 +128,10 @@ export interface CredentialConnectionDefinition {
 
 export interface PreparedConnectedSourceFetch {
   retrieve(secret: string): Promise<Uint8Array>;
-  readonly compiledSource: CandidateBundleCapability<{ readonly bytes: Uint8Array }>;
+  readonly compiledSource: CandidateBundleCapability<{
+    readonly bytes: Uint8Array;
+    readonly limits: SourceExecutionLimits;
+  }>;
   readonly actionEvidence?: ConnectedSourceActionEvidence;
 }
 

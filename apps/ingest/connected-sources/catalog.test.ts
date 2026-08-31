@@ -16,6 +16,12 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
       source_kind: "credentialed_remote",
       connector_version: `${skillId}-connector@test`,
       parser: { name: parserName, version: `${parserName}@test` },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024,
+        maxElementBytes: 512,
+        maxTotalElementBytes: 1_024,
+      },
       connection: {
         claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
       },

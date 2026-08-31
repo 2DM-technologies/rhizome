@@ -485,6 +485,12 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
       source_kind: "credentialed_remote",
       connector_version: connectorVersion,
       parser: { name: "csv", version: "test-provider@1.0.0" },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024,
+        maxElementBytes: 512,
+        maxTotalElementBytes: 1_024,
+      },
       connection: {
         claim_policy: {
           kind: claimPolicy.kind,

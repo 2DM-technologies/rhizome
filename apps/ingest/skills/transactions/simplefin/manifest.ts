@@ -15,6 +15,12 @@ export const simpleFinSourceSkillManifest = {
   source_kind: "credentialed_remote",
   connector_version: SIMPLEFIN_CONNECTOR_VERSION,
   parser: { name: SIMPLEFIN_PARSER_NAME, version: SIMPLEFIN_PARSER_VERSION },
+  limits: {
+    maxCandidates: 100_000,
+    maxCaptureBytes: 20 * 1_024 * 1_024,
+    maxElementBytes: 20 * 1_024 * 1_024,
+    maxTotalElementBytes: 20 * 1_024 * 1_024,
+  },
   connection: {
     claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
   },

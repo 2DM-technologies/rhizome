@@ -544,6 +544,7 @@ export async function installMockStore(
         connector_version: manifest.connector_version,
         parser: manifest.parser.name,
         parser_version: manifest.parser.version,
+        limits: manifest.limits,
         created_at: "2026-08-28T12:00:01.000Z",
       } as const;
 

@@ -23,6 +23,7 @@ import {
   setMediaObjectUserRequestSchema,
   reviewImportContinuationRequestSchema,
   sourceActionRequiredSchema,
+  sourceExecutionLimitsSchema,
   sourceSkillManifestSchema,
   sourceSkillManifestsResponseSchema,
   sourceCredentialDocumentSchema,
@@ -110,9 +111,26 @@ describe("shared store schemas", () => {
       connector_version: { type: "string", minLength: 1 },
       parser: { type: "string", minLength: 1 },
       parser_version: { type: "string", minLength: 1 },
+      limits: sourceExecutionLimitsSchema,
     });
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("provider");
+  });
+
+  test("publishes one closed execution-limit contract for manifests and persisted sources", () => {
+    expect(sourceSkillManifestSchema.required).toContain("limits");
+    expect(sourceSkillManifestSchema.properties.limits).toBe(sourceExecutionLimitsSchema);
+    expect(fileIngestionSourceDocumentSchema.properties.limits).toBe(sourceExecutionLimitsSchema);
+    expect(credentialIngestionSourceDocumentSchema.properties.limits).toBe(
+      sourceExecutionLimitsSchema,
+    );
+    expect(publicRemoteIngestionSourceDocumentSchema.properties.limits).toBe(
+      sourceExecutionLimitsSchema,
+    );
+    expect(sourceExecutionLimitsSchema).toMatchObject({
+      required: ["maxCandidates", "maxCaptureBytes", "maxElementBytes", "maxTotalElementBytes"],
+      additionalProperties: false,
+    });
   });
 
   test("keeps provider secrets out of generic credential and source documents", () => {

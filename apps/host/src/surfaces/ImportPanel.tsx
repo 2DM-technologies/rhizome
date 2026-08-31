@@ -15,6 +15,7 @@ import {
   usePullVibe,
   useSourceSkills,
 } from "../queries/index.ts";
+import { prepareSourceCapture } from "../source-skills/fileCapturePreprocessors.ts";
 import {
   Button,
   Callout,
@@ -192,10 +193,11 @@ export function ImportPanel({
             connectCredential.reset();
           }
         },
-        createOrigin: (file) =>
+        prepareCapture: (file) => prepareSourceCapture(manifest, file),
+        createOrigin: (capture) =>
           createOrigin.mutateAsync({
-            body: file,
-            params: { header: { "x-rnet-label": file.name } },
+            body: capture.blob,
+            params: { header: { "x-rnet-label": capture.label } },
           }),
         createSource: (body) => createSource.mutateAsync({ body }),
       });
@@ -453,6 +455,10 @@ function SourceSkillForm({
       <div>
         <span className="text-label text-primary">{manifest.label}</span>
         <span className="mt-1 block text-caption text-secondary">{manifest.description}</span>
+        <span className="mt-1 block text-caption text-tertiary">
+          Up to {manifest.limits.maxCandidates.toLocaleString()} objects · capture limit{" "}
+          {formatByteSize(manifest.limits.maxCaptureBytes)}
+        </span>
       </div>
       {manifest.input_fields.map((field) => (
         <ManifestField
@@ -724,7 +730,8 @@ interface ManifestSourceDependencies {
     skillId: string,
     body: Record<string, unknown>,
   ): Promise<{ credential: string }>;
-  createOrigin(file: File): Promise<{ uri: string }>;
+  prepareCapture(file: File): Promise<{ blob: Blob; label: string; mime: string }>;
+  createOrigin(capture: { blob: Blob; label: string; mime: string }): Promise<{ uri: string }>;
   createSource(body: CreateSourceBody): Promise<{ source: string }>;
 }
 
@@ -757,12 +764,20 @@ async function createSourceForManifest(
   dependencies: ManifestSourceDependencies,
 ): Promise<{ source: string; displayLabel?: string }> {
   if (input.kind === "file") {
-    const origin = await dependencies.createOrigin(input.file);
+    let capture: Awaited<ReturnType<ManifestSourceDependencies["prepareCapture"]>>;
+    try {
+      capture = await dependencies.prepareCapture(input.file);
+    } catch (error) {
+      throw new ManifestInputError(
+        error instanceof Error ? error.message : "The selected file could not be prepared.",
+      );
+    }
+    const origin = await dependencies.createOrigin(capture);
     const created = await dependencies.createSource({
       origin: origin.uri,
       skill_id: manifest.skill_id,
     });
-    return { ...created, displayLabel: input.file.name };
+    return { ...created, displayLabel: capture.label };
   }
   if (input.kind === "credentialed_remote") {
     let credential: { credential: string };
