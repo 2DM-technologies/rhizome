@@ -3,10 +3,13 @@ import {
   ingestRecordSchema,
   mediaElementSchema,
   mediaObjectSchema,
+  originArtifactSchema,
   vibeSchema,
 } from "@rnet/types/schemas";
-import { TASK_PATTERN } from "@rnet/types/patterns";
+import { TASK_PATTERN, UUIDV7_PATTERN } from "@rnet/types/patterns";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
+
+import { FILE_PARSERS } from "./ingestion.ts";
 
 export { FILE_PARSERS, SIMPLEFIN_PARSER_NAME } from "./ingestion.ts";
 
@@ -15,11 +18,13 @@ export const PROBLEM_CODES = [
   "authentication_required",
   "grant_missing",
   "ingest_nonconformant",
+  "import_review_invalid",
   "internal_error",
   "mime_required",
   "not_found",
   "not_implemented",
   "payload_too_large",
+  "parser_unsupported",
   "schema_violation",
   "writer_namespace_mismatch",
 ] as const;
@@ -53,6 +58,8 @@ export const operationDocumentSchema = {
     status: { enum: OPERATION_STATUSES },
     request: { type: "object" },
     result: { type: ["object", "null"] },
+    review_digest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+    committed_at: { type: "string", format: "date-time" },
     error: { type: ["string", "null"] },
     created_at: { type: "string", format: "date-time" },
     finished_at: { type: "string", format: "date-time" },
@@ -61,6 +68,54 @@ export const operationDocumentSchema = {
 } as const satisfies JSONSchema;
 
 export type OperationDocument = FromSchema<typeof operationDocumentSchema>;
+
+export const SOURCE_ID_PATTERN = `^source:${UUIDV7_PATTERN.slice(1, -1)}$`;
+
+export const createFileIngestionSourceRequestSchema = {
+  type: "object",
+  required: ["origin", "parser"],
+  properties: {
+    origin: originArtifactSchema.properties.uri,
+    parser: { enum: FILE_PARSERS },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const createIngestionSourceRequestSchema = createFileIngestionSourceRequestSchema;
+
+export const fileIngestionSourceDocumentSchema = {
+  type: "object",
+  required: ["source", "kind", "parser", "parser_version", "origin", "created_at"],
+  properties: {
+    source: { type: "string", pattern: SOURCE_ID_PATTERN },
+    kind: { const: "origin" },
+    parser: { enum: FILE_PARSERS },
+    parser_version: { type: "string", minLength: 1 },
+    origin: originArtifactSchema.properties.uri,
+    created_at: { type: "string", format: "date-time" },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const ingestionSourceDocumentSchema = fileIngestionSourceDocumentSchema;
+
+export const createImportPreviewRequestSchema = {
+  type: "object",
+  required: ["source"],
+  properties: { source: { type: "string", pattern: SOURCE_ID_PATTERN } },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const pullVibeRequestSchema = {
+  type: "object",
+  properties: { dry_run: { type: "boolean", default: false } },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export type CreateIngestionSourceRequest = ContractValue<typeof createIngestionSourceRequestSchema>;
+export type IngestionSourceDocument = ContractValue<typeof ingestionSourceDocumentSchema>;
+export type CreateImportPreviewRequest = ContractValue<typeof createImportPreviewRequestSchema>;
+export type PullVibeRequest = ContractValue<typeof pullVibeRequestSchema>;
 
 const vibeWritableProperties = {
   title: vibeSchema.properties.title,
@@ -310,6 +365,10 @@ export type MediaObjectsResponse = ContractValue<typeof mediaObjectsResponseSche
 export const STORE_SCHEMA_COMPONENTS = {
   Problem: problemDocumentSchema,
   Operation: operationDocumentSchema,
+  IngestionSource: ingestionSourceDocumentSchema,
+  CreateIngestionSourceRequest: createIngestionSourceRequestSchema,
+  CreateImportPreviewRequest: createImportPreviewRequestSchema,
+  PullVibeRequest: pullVibeRequestSchema,
   CreateVibeRequest: createVibeRequestSchema,
   UpdateVibeRequest: updateVibeRequestSchema,
   MediaObjectRefsRequest: mediaObjectRefsRequestSchema,

@@ -5,8 +5,13 @@ import {
   STORE_SCHEMA_COMPONENTS,
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
+  createFileIngestionSourceRequestSchema,
+  createImportPreviewRequestSchema,
+  createIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
   createVibeRequestSchema,
+  fileIngestionSourceDocumentSchema,
+  ingestionSourceDocumentSchema,
   mediaObjectsResponseSchema,
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
@@ -47,7 +52,25 @@ describe("shared store schemas", () => {
   test("registers stable component names without cloning schema objects", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateVibeRequest).toBe(createVibeRequestSchema);
     expect(STORE_SCHEMA_COMPONENTS.CreateMediaObjectsRequest).toBe(createMediaObjectsRequestSchema);
+    expect(STORE_SCHEMA_COMPONENTS.CreateIngestionSourceRequest).toBe(
+      createIngestionSourceRequestSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
+      createImportPreviewRequestSchema,
+    );
     expect(Object.values(STORE_SCHEMA_COMPONENTS).every((schema) => !("$id" in schema))).toBe(true);
+  });
+
+  test("keeps file ingestion sources pinned to an owned origin and parser version", () => {
+    expect(createIngestionSourceRequestSchema).toBe(createFileIngestionSourceRequestSchema);
+    expect(ingestionSourceDocumentSchema).toBe(fileIngestionSourceDocumentSchema);
+    expect(fileIngestionSourceDocumentSchema.properties).toMatchObject({
+      kind: { const: "origin" },
+      parser: { enum: ["csv", "ofx"] },
+      parser_version: { type: "string", minLength: 1 },
+    });
+    expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
+    expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("provider");
   });
 });
 
