@@ -4,6 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client.ts";
 
 const operationPath = "/rnet/v0/operations/{id}";
+const sourceConnectionAttemptPath = "/rnet/v0/source-connections/{id}";
+const sourceOAuthConnectionPath = "/rnet/v0/source-connections/{skill_id}/oauth";
 const sourceCredentialPath = "/rnet/v0/source-credentials/{skill_id}";
 const sourceSkillsPath = "/rnet/v0/source-skills";
 
@@ -25,6 +27,28 @@ export function useSourceSkills() {
 /** Connects any installed credentialed source through its generated `skill_id` path parameter. */
 export function useConnectSourceCredential() {
   return api.useMutation("post", sourceCredentialPath, { gcTime: 0 });
+}
+
+/** Starts any installed source's advertised OAuth 2.0 + PKCE connection capability. */
+export function useStartSourceOAuthConnection() {
+  return api.useMutation("post", sourceOAuthConnectionPath, { gcTime: 0 });
+}
+
+/** Reads an owner-bound OAuth connection attempt and follows it until it becomes terminal. */
+export function useSourceConnectionAttempt(id: string | undefined) {
+  return api.useQuery(
+    "get",
+    sourceConnectionAttemptPath,
+    { params: { path: { id: id ?? "" } } },
+    {
+      enabled: Boolean(id),
+      gcTime: 0,
+      refetchInterval: (query) =>
+        query.state.data && ["pending", "exchanging"].includes(query.state.data.status)
+          ? 250
+          : false,
+    },
+  );
 }
 
 export function useCreateImportPreview() {

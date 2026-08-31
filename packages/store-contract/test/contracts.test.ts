@@ -192,10 +192,22 @@ describe("shared store schemas", () => {
       source_kind: { enum: ["file", "public_remote", "credentialed_remote"] },
       connector_version: { type: "string" },
       parser: { type: "object" },
-      connection: { type: "object" },
       input_fields: { type: "array" },
       review_actions: { type: "array" },
     });
+    expect(sourceSkillManifestSchema.properties.connection.oneOf).toEqual([
+      expect.objectContaining({
+        required: ["mode", "claim_policy"],
+        properties: expect.objectContaining({ mode: { const: "claim_exchange" } }),
+      }),
+      expect.objectContaining({
+        required: ["mode", "button_label"],
+        properties: expect.objectContaining({ mode: { const: "oauth2_pkce" } }),
+      }),
+    ]);
+    expect(
+      sourceSkillManifestSchema.properties.connection.oneOf[0].properties.claim_policy.properties,
+    ).not.toHaveProperty("attempts");
     expect(sourceActionRequiredSchema.properties).toMatchObject({
       kind: { const: "source_action_required" },
       action: { enum: ["review_import"] },

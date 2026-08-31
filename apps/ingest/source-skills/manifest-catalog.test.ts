@@ -17,7 +17,8 @@ function credentialedManifest() {
       maxTotalElementBytes: 1_024,
     },
     connection: {
-      claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
+      mode: "claim_exchange",
+      claim_policy: { kind: "single_use_global" },
     },
     input_fields: [],
     review_actions: ["review_import"],

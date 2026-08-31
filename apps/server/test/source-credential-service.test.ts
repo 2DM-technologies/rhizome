@@ -296,21 +296,14 @@ describe("source credential service", () => {
     expect(acquisitions).toBe(0);
   });
 
-  test("enforces the installed skill's connection-attempt policy in every claim-store check", async () => {
+  test("enforces one server-owned connection-attempt policy in every claim-store check", async () => {
     const inserted: NewDbSourceCredential[] = [];
     const underlying = memoryClaimStore(inserted);
     const observed: Array<{ attemptLimit: number; windowHours: number }> = [];
-    const claimPolicy = {
-      kind: "single_use_global" as const,
-      attempts: 3,
-      windowHours: 24,
-    };
     const claimStore: SourceCredentialClaimStore = {
       ...underlying,
       async assertCanAttempt(input) {
         observed.push({ attemptLimit: input.attemptLimit, windowHours: input.windowHours });
-        claimPolicy.attempts = 999;
-        claimPolicy.windowHours = 720;
         return underlying.assertCanAttempt(input);
       },
       reserve(input) {
@@ -325,11 +318,11 @@ describe("source credential service", () => {
       credentialEncryptionKey: key,
     });
 
-    await service.connect(fakeCredentialedSkill({ claimPolicy }), { claim: replayKey });
+    await service.connect(fakeCredentialedSkill(), { claim: replayKey });
 
     expect(observed).toEqual([
-      { attemptLimit: 3, windowHours: 24 },
-      { attemptLimit: 3, windowHours: 24 },
+      { attemptLimit: 10, windowHours: 1 },
+      { attemptLimit: 10, windowHours: 1 },
     ]);
     expect(inserted).toHaveLength(1);
   });
@@ -350,7 +343,7 @@ describe("source credential service", () => {
       ...skill,
       connection: {
         ...skill.connection,
-        claimPolicy: { kind: "owner_reusable", attempts: 10, windowHours: 1 },
+        claimPolicy: { kind: "owner_reusable" },
       },
     } as unknown as CredentialSourceConnector;
     const service = new SourceCredentialsService({
@@ -472,8 +465,6 @@ interface FakeSkillOptions {
 function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSourceConnector {
   const claimPolicy = options.claimPolicy ?? {
     kind: "single_use_global",
-    attempts: 10,
-    windowHours: 1,
   };
   return {
     skillId,
@@ -492,11 +483,8 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
         maxTotalElementBytes: 1_024,
       },
       connection: {
-        claim_policy: {
-          kind: claimPolicy.kind,
-          attempts: claimPolicy.attempts,
-          window_hours: claimPolicy.windowHours,
-        },
+        mode: "claim_exchange",
+        claim_policy: { kind: claimPolicy.kind },
       },
       input_fields: [
         {
@@ -511,6 +499,7 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
       review_actions: ["review_import", "refresh_source"],
     },
     connection: {
+      mode: "claim_exchange",
       claimPolicy,
       requestSchema: {
         type: "object",

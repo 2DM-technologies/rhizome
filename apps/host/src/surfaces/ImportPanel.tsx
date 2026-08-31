@@ -2,7 +2,7 @@ import type { SourceActionRequired, SourceSkillManifest } from "@rhizome/store-c
 import { useEffect, useMemo, useRef, useState, type FormEvent, type Ref } from "react";
 
 import { isStoreError } from "../api/client.ts";
-import { uuidOf } from "../api/uris.ts";
+import { uriOf, uuidOf } from "../api/uris.ts";
 import {
   useConnectSourceCredential,
   useConfirmImportPreview,
@@ -15,6 +15,7 @@ import {
   useImportPreviewPayloadUrl,
   useOperation,
   usePullVibe,
+  useStartSourceOAuthConnection,
   useSourceSkills,
 } from "../queries/index.ts";
 import { prepareSourceCapture } from "../source-skills/fileCapturePreprocessors.ts";
@@ -33,6 +34,7 @@ import {
   TextLink,
 } from "../ui/index.ts";
 import { Failed } from "./provisional.tsx";
+import type { SourceConnectionReturn } from "./sourceConnectionReturn.ts";
 import { sourceActionRequired } from "./sourceActionRequired.ts";
 
 type SourceSkillInputField = SourceSkillManifest["input_fields"][number];
@@ -82,16 +84,19 @@ interface ImportPreview {
 export function ImportPanel({
   vibeUuid,
   configuredSources,
+  sourceConnectionReturn,
   onPendingVibeConfirmed,
 }: {
   vibeUuid?: string;
   configuredSources: readonly string[];
+  sourceConnectionReturn?: SourceConnectionReturn;
   onPendingVibeConfirmed?: (vibeUuid: string) => void;
 }) {
   const sourceForm = useRef<HTMLFormElement>(null);
   const sourceSkills = useSourceSkills();
   const createOrigin = useCreateOriginArtifact();
   const connectCredential = useConnectSourceCredential();
+  const startOAuthConnection = useStartSourceOAuthConnection();
   const createSource = useCreateIngestionSource();
   const createPreview = useCreateImportPreview();
   const createPendingPreview = useCreatePendingVibeImportPreview();
@@ -107,6 +112,12 @@ export function ImportPanel({
   const [localError, setLocalError] = useState<string>();
   const [outcome, setOutcome] = useState<string>();
   const [pendingVibeTitle, setPendingVibeTitle] = useState("");
+  const [resumedOAuthCredential, setResumedOAuthCredential] = useState<{
+    attemptId: string;
+    skillId: string;
+    credential: string;
+  }>();
+  const handledConnectionAttempts = useRef(new Set<string>());
 
   const importSkills = useMemo(
     () =>
@@ -124,6 +135,7 @@ export function ImportPanel({
   const busy =
     createOrigin.isPending ||
     connectCredential.isPending ||
+    startOAuthConnection.isPending ||
     createSource.isPending ||
     createPreview.isPending ||
     createPendingPreview.isPending ||
@@ -152,9 +164,94 @@ export function ImportPanel({
     setPendingVibeTitle(preview.destinationTitle ?? "Imported objects");
   }, [pendingVibeTitle, preview, vibeUuid]);
 
+  useEffect(() => {
+    if (!sourceConnectionReturn) return;
+    if (sourceConnectionReturn.callbackFailed) {
+      sourceConnectionReturn.consume();
+      setLocalError("The source connection could not be completed. Start the connection again.");
+      return;
+    }
+    if (sourceConnectionReturn.invalidParameter) {
+      sourceConnectionReturn.consume();
+      setLocalError("The source connection return was invalid. Start the connection again.");
+      return;
+    }
+    if (sourceConnectionReturn.destinationError) {
+      sourceConnectionReturn.consume();
+      setLocalError(sourceConnectionReturn.destinationError);
+      return;
+    }
+    if (sourceConnectionReturn.isError) {
+      sourceConnectionReturn.consume();
+      setLocalError("The source connection could not be loaded. Start the connection again.");
+      return;
+    }
+    const attempt = sourceConnectionReturn.attempt;
+    if (
+      !attempt ||
+      !sourceConnectionReturn.attemptId ||
+      ["pending", "exchanging"].includes(attempt.status) ||
+      sourceSkills.isPending ||
+      sourceSkills.isError ||
+      handledConnectionAttempts.current.has(sourceConnectionReturn.attemptId)
+    ) {
+      return;
+    }
+
+    handledConnectionAttempts.current.add(sourceConnectionReturn.attemptId);
+    sourceConnectionReturn.consume();
+    resetMutationErrors();
+    setOutcome(undefined);
+    setOperationId(undefined);
+    setOperationMode("import");
+    setLocalError(undefined);
+
+    const manifest = importSkills.find((skill) => skill.skill_id === attempt.skill_id);
+    if (!manifest || manifest.connection?.mode !== "oauth2_pkce") {
+      setLocalError("The connected source is no longer installed. Choose another source.");
+      return;
+    }
+    setSelectedSkillId(manifest.skill_id);
+    setActiveSkillId(manifest.skill_id);
+
+    if (attempt.status !== "succeeded") {
+      setLocalError(sourceConnectionStatusMessage(attempt.status));
+      return;
+    }
+    if (!attempt.credential) {
+      setLocalError("The source connection completed without a usable credential. Try again.");
+      return;
+    }
+
+    const resumed = {
+      attemptId: sourceConnectionReturn.attemptId,
+      skillId: manifest.skill_id,
+      credential: attempt.credential,
+    };
+    setResumedOAuthCredential(resumed);
+    setSourceLabel(manifest.label);
+    if (manifest.input_fields.some((field) => field.target === "source")) return;
+
+    void stageOAuthSource(manifest, resumed.credential, {}).catch(() => {
+      // The typed ingestion-source or preview mutation is rendered below.
+    });
+  }, [
+    importSkills,
+    sourceConnectionReturn?.attempt,
+    sourceConnectionReturn?.attemptId,
+    sourceConnectionReturn?.callbackFailed,
+    sourceConnectionReturn?.consume,
+    sourceConnectionReturn?.destinationError,
+    sourceConnectionReturn?.invalidParameter,
+    sourceConnectionReturn?.isError,
+    sourceSkills.isError,
+    sourceSkills.isPending,
+  ]);
+
   function resetMutationErrors() {
     createOrigin.reset();
     connectCredential.reset();
+    startOAuthConnection.reset();
     createSource.reset();
     createPreview.reset();
     createPendingPreview.reset();
@@ -169,6 +266,7 @@ export function ImportPanel({
     setActiveSkillId(undefined);
     setLocalError(undefined);
     setPendingVibeTitle("");
+    setResumedOAuthCredential(undefined);
   }
 
   function selectSkill(skillId: string) {
@@ -177,6 +275,86 @@ export function ImportPanel({
     resetMutationErrors();
     setSelectedSkillId(skillId);
     setOutcome(undefined);
+  }
+
+  async function stageOAuthSource(
+    manifest: SourceSkillManifest,
+    credential: string,
+    source: Record<string, unknown>,
+  ): Promise<void> {
+    const created = await createSource.mutateAsync({
+      body: {
+        credential,
+        ...(Object.keys(source).length > 0 ? { config: source } : {}),
+      },
+    });
+    setSourceLabel(manifest.label);
+    const staged = vibeUuid
+      ? await createPreview.mutateAsync({
+          params: { path: { id: vibeUuid } },
+          body: { source: created.source },
+        })
+      : await createPendingPreview.mutateAsync({ body: { source: created.source } });
+    setOperationId(staged.operation_id);
+  }
+
+  async function beginOAuthConnection() {
+    const manifest = selectedSkill;
+    if (!manifest || manifest.connection?.mode !== "oauth2_pkce") return;
+    resetMutationErrors();
+    setOutcome(undefined);
+    setOperationId(undefined);
+    setSourceLabel(undefined);
+    setLocalError(undefined);
+    setOperationMode("import");
+    setActiveSkillId(manifest.skill_id);
+    setResumedOAuthCredential(undefined);
+
+    try {
+      const returnTo = new URL(
+        vibeUuid ? `/vibes/${vibeUuid}` : "/imports",
+        window.location.origin,
+      );
+      const started = await startOAuthConnection.mutateAsync({
+        params: { path: { skill_id: manifest.skill_id } },
+        body: {
+          return_to: returnTo.href,
+          intent: {
+            kind: "review_import",
+            destination: vibeUuid
+              ? { kind: "existing_vibe", id: uriOf("vibe", vibeUuid) }
+              : { kind: "new_vibe" },
+          },
+        },
+      });
+      if (
+        started.skill_id !== manifest.skill_id ||
+        started.status !== "pending" ||
+        typeof started.authorization_url !== "string"
+      ) {
+        throw new ManifestInputError("The source returned an invalid authorization request.");
+      }
+      let authorization: URL;
+      try {
+        authorization = new URL(started.authorization_url);
+      } catch {
+        throw new ManifestInputError("The source returned an invalid authorization request.");
+      }
+      if (authorization.protocol !== "https:" || authorization.username || authorization.password) {
+        throw new ManifestInputError("The source returned an invalid authorization request.");
+      }
+      const redirectUrl = authorization.href;
+      // Evict the provider authorization URL (which contains one-time state) before leaving the
+      // page, including in test browsers that intercept navigation.
+      startOAuthConnection.reset();
+      window.location.assign(redirectUrl);
+    } catch (error) {
+      if (error instanceof ManifestInputError) {
+        startOAuthConnection.reset();
+        setLocalError(error.message);
+      }
+      // Typed store failures remain in mutation state and are rendered below.
+    }
   }
 
   async function stageSelectedSource(event: FormEvent<HTMLFormElement>) {
@@ -197,6 +375,16 @@ export function ImportPanel({
       // network await. Credential fields are scrubbed again as soon as the connection request
       // settles below.
       const sourceInput = sourceInputForManifest(manifest, new FormData(form));
+      if (manifest.connection?.mode === "oauth2_pkce") {
+        if (
+          sourceInput.kind !== "credentialed_remote" ||
+          resumedOAuthCredential?.skillId !== manifest.skill_id
+        ) {
+          throw new ManifestInputError("Connect this source before preparing its review.");
+        }
+        await stageOAuthSource(manifest, resumedOAuthCredential.credential, sourceInput.source);
+        return;
+      }
       const source = await createSourceForManifest(manifest, sourceInput, {
         connectCredential: async (skillId, body) => {
           try {
@@ -391,8 +579,17 @@ export function ImportPanel({
                 ref={sourceForm}
                 manifest={selectedSkill}
                 busy={busy}
-                active={activeSkillId === selectedSkill.skill_id && operationInFlight}
+                active={
+                  activeSkillId === selectedSkill.skill_id &&
+                  (operationInFlight ||
+                    startOAuthConnection.isPending ||
+                    createSource.isPending ||
+                    createPreview.isPending ||
+                    createPendingPreview.isPending)
+                }
+                oauthCredentialReady={resumedOAuthCredential?.skillId === selectedSkill.skill_id}
                 onSubmit={stageSelectedSource}
+                onStartOAuth={() => void beginOAuthConnection()}
                 onInput={() => {
                   setLocalError(undefined);
                   connectCredential.reset();
@@ -411,6 +608,11 @@ export function ImportPanel({
       {outcome ? (
         <span role="status" className="text-body text-secondary">
           {outcome}
+        </span>
+      ) : null}
+      {sourceConnectionReturn?.isPending ? (
+        <span role="status" className="text-body text-tertiary">
+          Finishing the source connection…
         </span>
       ) : null}
       {operationInFlight ? (
@@ -478,6 +680,7 @@ export function ImportPanel({
 
       {localError ? <InlineError>{localError}</InlineError> : null}
       {createOrigin.isError ? <Failed error={createOrigin.error} /> : null}
+      {startOAuthConnection.isError ? <Failed error={startOAuthConnection.error} /> : null}
       {createSource.isError ? <Failed error={createSource.error} /> : null}
       {createPreview.isError ? <Failed error={createPreview.error} /> : null}
       {createPendingPreview.isError ? <Failed error={createPendingPreview.error} /> : null}
@@ -494,16 +697,28 @@ function SourceSkillForm({
   manifest,
   busy,
   active,
+  oauthCredentialReady,
   onSubmit,
+  onStartOAuth,
   onInput,
 }: {
   ref: Ref<HTMLFormElement>;
   manifest: SourceSkillManifest;
   busy: boolean;
   active: boolean;
+  oauthCredentialReady: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onStartOAuth: () => void;
   onInput: () => void;
 }) {
+  const connection = manifest.connection;
+  const oauth = connection?.mode === "oauth2_pkce";
+  const oauthButtonLabel = connection?.mode === "oauth2_pkce" ? connection.button_label : "";
+  const visibleFields = oauth
+    ? oauthCredentialReady
+      ? manifest.input_fields.filter((field) => field.target === "source")
+      : []
+    : manifest.input_fields;
   return (
     <form ref={ref} className="mt-4 flex flex-col gap-3" onSubmit={onSubmit} onInput={onInput}>
       <div>
@@ -514,7 +729,7 @@ function SourceSkillForm({
           {formatByteSize(manifest.limits.maxCaptureBytes)}
         </span>
       </div>
-      {manifest.input_fields.map((field) => (
+      {visibleFields.map((field) => (
         <ManifestField
           key={`${field.target}:${field.name}`}
           manifest={manifest}
@@ -523,9 +738,15 @@ function SourceSkillForm({
         />
       ))}
       <div className="flex justify-end">
-        <Button type="submit" disabled={busy}>
-          {active ? "Preparing review…" : `Review ${manifest.label}`}
-        </Button>
+        {oauth && !oauthCredentialReady ? (
+          <Button type="button" disabled={busy} onClick={onStartOAuth}>
+            {active ? "Redirecting…" : oauthButtonLabel}
+          </Button>
+        ) : (
+          <Button type="submit" disabled={busy}>
+            {active ? "Preparing review…" : `Review ${manifest.label}`}
+          </Button>
+        )}
       </div>
     </form>
   );
@@ -837,6 +1058,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The source could not be connected.";
 }
 
+function sourceConnectionStatusMessage(status: string): string {
+  switch (status) {
+    case "rejected":
+      return "The source connection was not approved. Choose the source to try again.";
+    case "expired":
+      return "The source connection expired. Choose the source to start again.";
+    case "failed":
+    default:
+      return "The source connection failed. Choose the source to try again.";
+  }
+}
+
 async function createSourceForManifest(
   manifest: SourceSkillManifest,
   input: ManifestSourceInput,
@@ -894,7 +1127,10 @@ function sourceInputForManifest(
   if (manifest.source_kind === "credentialed_remote") {
     return {
       kind: "credentialed_remote",
-      connection: fieldsForTarget(manifest, formData, "connection"),
+      connection:
+        manifest.connection?.mode === "oauth2_pkce"
+          ? {}
+          : fieldsForTarget(manifest, formData, "connection"),
       source,
     };
   }

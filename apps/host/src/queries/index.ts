@@ -29,5 +29,7 @@ export {
   useForgetOperation,
   useOperation,
   usePullVibe,
+  useSourceConnectionAttempt,
   useSourceSkills,
+  useStartSourceOAuthConnection,
 } from "./imports.ts";

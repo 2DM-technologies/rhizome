@@ -32,6 +32,7 @@ import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
 import { createSourceCredentialRoutes } from "./routes/source-credentials.ts";
+import { createSourceConnectionRoutes } from "./routes/source-connections.ts";
 import { createSourceSkillRoutes } from "./routes/source-skills.ts";
 import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 import type { AppEnvironment } from "./routes/types.ts";
@@ -77,13 +78,23 @@ export function createApp({
   const credentialCrypto =
     sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
 
-  app.use(logger());
+  const requestLogger = logger();
+  app.use("*", async (context, next) => {
+    // OAuth providers deliver authorization codes in the callback query. Do not allow the
+    // ordinary request logger to serialize that URL, even transiently.
+    if (context.req.path === "/rnet/v0/source-connections/oauth/callback") {
+      await next();
+      return;
+    }
+    await requestLogger(context, next);
+  });
   app.use(
     "*",
     createMiddleware(async (context, next) => {
       const origin = context.req.header("Origin");
       if (origin && config.allowedOrigins.includes(origin)) {
         context.header("Access-Control-Allow-Origin", origin);
+        context.header("Access-Control-Allow-Credentials", "true");
       }
       context.header(
         "Access-Control-Allow-Headers",
@@ -164,6 +175,13 @@ export function createApp({
         resolvedCredentialedSources,
         resolvedPublicRemoteSources,
       ),
+    },
+    {
+      basePath: "/rnet/v0/source-connections",
+      router: createSourceConnectionRoutes(db, resolvedCredentialedSources, credentialCrypto, {
+        baseUrl: config.baseUrl,
+        allowedReturnOrigins: config.allowedOrigins,
+      }),
     },
     {
       basePath: "/rnet/v0/source-credentials",

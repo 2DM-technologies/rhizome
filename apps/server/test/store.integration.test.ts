@@ -7,13 +7,20 @@ import type { MediaObject } from "@rnet/types";
 import {
   type IngestionSourceDocument,
   type OperationDocument,
+  type SourceConnectionAttemptDocument,
   type SourceCredentialDocument,
+  type StartSourceConnectionResponse,
 } from "@rhizome/store-contract";
 import { and, asc, eq, sql } from "drizzle-orm";
 import S3rver from "s3rver";
 import { v7 as uuidv7 } from "uuid";
 
-import { CredentialedSourceCatalog } from "../../ingest/connected-sources/types.ts";
+import {
+  CredentialedSourceCatalog,
+  CredentialConnectionError,
+  type CredentialedSourceSkill,
+  type OAuth2PkceCredentialResult,
+} from "../../ingest/connected-sources/types.ts";
 import {
   PublicRemoteSourceCatalog,
   type PublicRemoteSourceSkill,
@@ -79,6 +86,23 @@ const compromisedSetupToken = Buffer.from(
 const simpleFinRequests: Request[] = [];
 const simpleFinAccountResponses: Uint8Array[] = [];
 const simpleFinAccountFetches: Array<() => Promise<Uint8Array>> = [];
+const SYNTHETIC_OAUTH_SKILL_ID = "synthetic-oauth";
+const SYNTHETIC_OAUTH_CONNECTOR_VERSION = "synthetic-oauth-connector@1.0.0";
+const SYNTHETIC_OAUTH_PARSER_VERSION = "synthetic-oauth@1.0.0";
+const syntheticOAuthCaptureBytes = new TextEncoder().encode(
+  JSON.stringify({ id: "synthetic-oauth-item", title: "Synthetic OAuth capture" }),
+);
+const syntheticOAuthRefreshSecrets: string[] = [];
+const syntheticOAuthRetrieveSecrets: string[] = [];
+const syntheticOAuthRevokeSecrets: string[] = [];
+let syntheticOAuthRefresh: (
+  secret: string,
+  signal: AbortSignal,
+) => Promise<OAuth2PkceCredentialResult | undefined> = async () => undefined;
+let syntheticOAuthRetrieve: (secret: string) => Promise<Uint8Array> = async () =>
+  syntheticOAuthCaptureBytes.slice();
+let syntheticOAuthRevoke: (secret: string, signal: AbortSignal) => Promise<void> = async () => {};
+const syntheticOAuthSourceSkill = createSyntheticOAuthSourceSkill();
 const syntheticPublicSourceSkill = createSyntheticPublicSourceSkill();
 
 beforeAll(async () => {
@@ -86,7 +110,7 @@ beforeAll(async () => {
     TRUNCATE TABLE
       meter_entry, media_object_revisions, vibe_revisions, media_object_origins, media_object_elements,
       vibe_media_objects, grants, operations, ingestion_source_objects, ingestion_sources,
-      source_credential_claim_attempts, source_credentials, media_objects,
+      source_connection_attempts, source_credential_claim_attempts, source_credentials, media_objects,
       media_elements, origins, vibes, dmachines, users
     CASCADE
   `);
@@ -147,6 +171,7 @@ beforeAll(async () => {
           return new Response(`${simpleFinAccessUrl}\n`);
         },
       }),
+      syntheticOAuthSourceSkill,
     ]),
     publicRemoteSources: new PublicRemoteSourceCatalog({
       current: [syntheticPublicSourceSkill],
@@ -208,6 +233,70 @@ describe("rNet M1 store", () => {
       body: "missing kind",
     });
     expect(missingUploadKind.status).toBe(422);
+  });
+
+  test("completes parallel generic OAuth callbacks without clearing the other binding", async () => {
+    resetSyntheticOAuthRuntime();
+    const started: Array<{
+      attempt: StartSourceConnectionResponse;
+      binding: string;
+      bindingName: string;
+      state: string;
+    }> = [];
+    for (let index = 0; index < 2; index += 1) {
+      const response = await request(
+        `/rnet/v0/source-connections/${SYNTHETIC_OAUTH_SKILL_ID}/oauth`,
+        {
+          method: "POST",
+          headers: owner,
+          json: {
+            return_to: "http://rhizome.test/imports",
+            intent: { kind: "review_import", destination: { kind: "new_vibe" } },
+          },
+        },
+      );
+      expect(response.status).toBe(201);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      const attempt = (await response.json()) as StartSourceConnectionResponse;
+      const binding = response.headers.get("Set-Cookie")!.split(";", 1)[0]!;
+      const authorization = new URL(attempt.authorization_url);
+      started.push({
+        attempt,
+        binding,
+        bindingName: binding.slice(0, binding.indexOf("=")),
+        state: authorization.searchParams.get("state")!,
+      });
+    }
+
+    const browserCookies = started.map(({ binding }) => binding).join("; ");
+    for (const [index, connection] of started.entries()) {
+      const callback = new URL("http://rhizome.test/rnet/v0/source-connections/oauth/callback");
+      callback.searchParams.set("state", connection.state);
+      callback.searchParams.set("code", `authorization-code-${index}`);
+      const response = await app.request(callback, {
+        headers: { ...owner, Cookie: browserCookies },
+        redirect: "manual",
+      });
+      expect(response.status).toBe(303);
+      expect(response.headers.get("Location")).toBe(
+        `http://rhizome.test/imports?source_connection=${connection.attempt.attempt_id}`,
+      );
+      const clearedCookie = response.headers.get("Set-Cookie")!;
+      expect(clearedCookie).toContain(`${connection.bindingName}=`);
+      expect(clearedCookie).toContain("Max-Age=0");
+      expect(clearedCookie).not.toContain(started[1 - index]!.bindingName);
+
+      const statusResponse = await request(
+        `/rnet/v0/source-connections/${connection.attempt.attempt_id}`,
+        { headers: owner },
+      );
+      expect(statusResponse.status).toBe(200);
+      expect((await statusResponse.json()) as SourceConnectionAttemptDocument).toMatchObject({
+        attempt_id: connection.attempt.attempt_id,
+        skill_id: SYNTHETIC_OAUTH_SKILL_ID,
+        status: "succeeded",
+      });
+    }
   });
 
   test("connects, owns, encrypts, uses, and revokes a SimpleFIN credential without leaking it", async () => {
@@ -1210,6 +1299,230 @@ describe("rNet M1 store", () => {
     expect(simpleFinRequests.filter((request) => request.method === "GET")).toHaveLength(
       accountRequestsBefore + 1,
     );
+  });
+
+  test("serializes OAuth refresh, atomically reseals it, and revokes the newest secret", async () => {
+    resetSyntheticOAuthRuntime();
+    const fixture = await createStoredSyntheticOAuthCredential();
+    const source = fixture.source;
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "OAuth credential lease" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+
+    let signalRefreshStarted!: () => void;
+    let releaseRefresh!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      signalRefreshStarted = resolve;
+    });
+    const refreshRelease = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    syntheticOAuthRefresh = async (secret, signal) => {
+      expect(signal.aborted).toBe(false);
+      if (syntheticOAuthRefreshSecrets.length === 1) {
+        expect(secret).toBe("oauth-token-0");
+        signalRefreshStarted();
+        await refreshRelease;
+        return {
+          secret: "oauth-token-1",
+          publicMetadata: { account_label: "Synthetic account" },
+        };
+      }
+      expect(secret).toBe("oauth-token-1");
+      return undefined;
+    };
+
+    const activeResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(activeResponse.status).toBe(202);
+    const active = (await activeResponse.json()) as OperationDocument;
+    await refreshStarted;
+
+    const concurrentResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(concurrentResponse.status).toBe(202);
+    const concurrent = await waitForOperation(await concurrentResponse.json(), owner);
+    expect(concurrent.status).toBe("failed");
+    expect(concurrent.error).toContain("active credential fetch");
+    expect(syntheticOAuthRefreshSecrets).toEqual(["oauth-token-0"]);
+    expect(syntheticOAuthRetrieveSecrets).toEqual([]);
+
+    const busyDisconnect = await request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(busyDisconnect.status).toBe(429);
+    expect(syntheticOAuthRevokeSecrets).toEqual([]);
+
+    releaseRefresh();
+    expect((await waitForOperation(active, owner)).status).toBe("done");
+    expect(syntheticOAuthRetrieveSecrets).toEqual(["oauth-token-1"]);
+
+    const [refreshedCredential] = await db
+      .select()
+      .from(sourceCredentials)
+      .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+    expect(refreshedCredential?.metadata).toEqual({ account_label: "Synthetic account" });
+    expect(
+      await openCredentialSecret(
+        refreshedCredential!.secret,
+        credentialEncryptionKeys,
+        credentialAssociatedData(fixture.credentialUuid, DEV_USER_UUID, SYNTHETIC_OAUTH_SKILL_ID),
+      ),
+    ).toBe("oauth-token-1");
+
+    const nextResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: source.source },
+    });
+    expect(nextResponse.status).toBe(202);
+    expect((await waitForOperation(await nextResponse.json(), owner)).status).toBe("done");
+    expect(syntheticOAuthRefreshSecrets).toEqual(["oauth-token-0", "oauth-token-1"]);
+    expect(syntheticOAuthRetrieveSecrets).toEqual(["oauth-token-1", "oauth-token-1"]);
+
+    const disconnect = await request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(disconnect.status).toBe(204);
+    expect(syntheticOAuthRevokeSecrets).toEqual(["oauth-token-1"]);
+    const [revokedCredential] = await db
+      .select()
+      .from(sourceCredentials)
+      .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+    const [revokedSource] = await db
+      .select()
+      .from(ingestionSources)
+      .where(eq(ingestionSources.uuid, sourceUuid(source.source)));
+    expect(revokedCredential?.revokedAt).toBeInstanceOf(Date);
+    expect(revokedSource?.revokedAt).toBeInstanceOf(Date);
+  });
+
+  test("refreshes one credential per pool connection without starving origin persistence", async () => {
+    resetSyntheticOAuthRuntime();
+    const fixtures = await Promise.all(
+      Array.from({ length: 4 }, () => createStoredSyntheticOAuthCredential()),
+    );
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "OAuth pool saturation" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+
+    let startedCount = 0;
+    let signalAllStarted!: () => void;
+    let releaseAll!: () => void;
+    const allStarted = new Promise<void>((resolve) => {
+      signalAllStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseAll = resolve;
+    });
+    syntheticOAuthRefresh = async (secret) => ({ secret: `${secret}-rotated` });
+    syntheticOAuthRetrieve = async () => {
+      startedCount += 1;
+      if (startedCount === fixtures.length) signalAllStarted();
+      await release;
+      return syntheticOAuthCaptureBytes.slice();
+    };
+
+    const accepted: OperationDocument[] = [];
+    for (const fixture of fixtures) {
+      const response = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+        method: "POST",
+        headers: owner,
+        json: { source: fixture.source.source },
+      });
+      expect(response.status).toBe(202);
+      accepted.push((await response.json()) as OperationDocument);
+    }
+
+    const reachedProvider = await Promise.race([
+      allStarted.then(() => true),
+      Bun.sleep(1_000).then(() => false),
+    ]);
+    releaseAll();
+    expect(reachedProvider).toBe(true);
+    const completed = await Promise.all(
+      accepted.map((operation) => waitForOperation(operation, owner)),
+    );
+    expect(completed.map(({ status }) => status)).toEqual(["done", "done", "done", "done"]);
+  });
+
+  test("fails OAuth provider revocation closed without leaving local access active", async () => {
+    resetSyntheticOAuthRuntime();
+    const fixture = await createStoredSyntheticOAuthCredential();
+    syntheticOAuthRevoke = async () => {
+      throw new CredentialConnectionError(
+        "provider_revoke_failed",
+        "ambiguous",
+        "The provider could not confirm revocation",
+      );
+    };
+
+    const response = await request(`/rnet/v0/source-credentials/${fixture.credentialUuid}`, {
+      method: "DELETE",
+      headers: owner,
+    });
+    expect(response.status).toBe(422);
+    const problem = await response.json();
+    expect(problem.detail).toBe("The provider could not confirm revocation");
+    expect(JSON.stringify(problem)).not.toContain("oauth-token-0");
+    expect(syntheticOAuthRevokeSecrets).toEqual(["oauth-token-0"]);
+
+    const [credential] = await db
+      .select()
+      .from(sourceCredentials)
+      .where(eq(sourceCredentials.uuid, fixture.credentialUuid));
+    const [source] = await db
+      .select()
+      .from(ingestionSources)
+      .where(eq(ingestionSources.uuid, sourceUuid(fixture.source.source)));
+    expect(credential?.revokedAt).toBeInstanceOf(Date);
+    expect(source?.revokedAt).toBeInstanceOf(Date);
+  });
+
+  test("never persists an unknown provider error that contains the credential secret", async () => {
+    resetSyntheticOAuthRuntime();
+    const fixture = await createStoredSyntheticOAuthCredential();
+    syntheticOAuthRetrieve = async (secret) => {
+      throw new Error(`Authorization: Bearer ${secret}`);
+    };
+    const vibeResponse = await request("/rnet/v0/vibes", {
+      method: "POST",
+      headers: owner,
+      json: { title: "Provider error redaction" },
+    });
+    expect(vibeResponse.status).toBe(201);
+    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
+    const previewResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
+      method: "POST",
+      headers: owner,
+      json: { source: fixture.source.source },
+    });
+    expect(previewResponse.status).toBe(202);
+    const failed = await waitForOperation(await previewResponse.json(), owner);
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toBe("The connected source could not retrieve data from its provider");
+    expect(JSON.stringify(failed)).not.toContain("oauth-token-0");
+    const [stored] = await db
+      .select()
+      .from(operations)
+      .where(eq(operations.uuid, failed.operation_id));
+    expect(JSON.stringify(stored)).not.toContain("oauth-token-0");
   });
 
   test("creates a Vibe with a real dMachine grant", async () => {
@@ -2702,6 +3015,151 @@ interface SyntheticPublicCapture {
   }>;
 }
 
+function createSyntheticOAuthSourceSkill(): CredentialedSourceSkill {
+  const parser = {
+    name: SYNTHETIC_OAUTH_SKILL_ID,
+    version: SYNTHETIC_OAUTH_PARSER_VERSION,
+    async parse(bytes: Uint8Array) {
+      return parseSyntheticOAuthCapture(bytes);
+    },
+  };
+  const compiledSource = {
+    kind: CANDIDATE_BUNDLE_CAPABILITY,
+    async compile({ bytes }: { bytes: Uint8Array }) {
+      const capture = parseSyntheticOAuthCapture(bytes);
+      const elementBytes = new TextEncoder().encode(capture.title);
+      return candidateBundle(
+        [
+          {
+            type: "synthetic.oauth.item",
+            keys: { synthetic_oauth_id: capture.id },
+            sourceProperties: { title: capture.title },
+            retrievedAt: "2026-08-30T12:00:00.000Z",
+            elements: [
+              {
+                role: "title" as const,
+                kind: "text" as const,
+                mime: "text/plain",
+                bytes: elementBytes,
+                byteSize: elementBytes.byteLength,
+                contentHash: sha256(elementBytes),
+              },
+            ],
+            semanticIdentity: {
+              type: "synthetic.oauth.item",
+              synthetic_oauth_id: capture.id,
+            },
+          },
+        ],
+        {
+          ok: true,
+          checks: [
+            {
+              name: "synthetic_capture",
+              ok: true,
+              detail: "Synthetic OAuth capture is valid",
+            },
+          ],
+        },
+      );
+    },
+  };
+  return {
+    skillId: SYNTHETIC_OAUTH_SKILL_ID,
+    displayName: "Synthetic OAuth",
+    manifest: {
+      skill_id: SYNTHETIC_OAUTH_SKILL_ID,
+      label: "Synthetic OAuth",
+      description: "Exercises the generic OAuth credential lifecycle in store tests.",
+      source_kind: "credentialed_remote",
+      connector_version: SYNTHETIC_OAUTH_CONNECTOR_VERSION,
+      parser: { name: parser.name, version: parser.version },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024 * 1_024,
+        maxElementBytes: 256 * 1_024,
+        maxTotalElementBytes: 512 * 1_024,
+      },
+      connection: { mode: "oauth2_pkce", button_label: "Connect synthetic source" },
+      input_fields: [],
+      review_actions: ["review_import", "refresh_source"],
+    },
+    connection: {
+      mode: "oauth2_pkce",
+      authorizationUrl({ callbackUrl, codeChallenge, state }) {
+        const url = new URL("https://oauth.synthetic.test/authorize");
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("redirect_uri", callbackUrl);
+        url.searchParams.set("state", state);
+        url.searchParams.set("code_challenge", codeChallenge);
+        url.searchParams.set("code_challenge_method", "S256");
+        return url.href;
+      },
+      async exchange() {
+        return { secret: "oauth-token-0", publicMetadata: { account_label: "Synthetic account" } };
+      },
+      async refresh(secret, { signal }) {
+        syntheticOAuthRefreshSecrets.push(secret);
+        return syntheticOAuthRefresh(secret, signal);
+      },
+      async revoke(secret, { signal }) {
+        syntheticOAuthRevokeSecrets.push(secret);
+        await syntheticOAuthRevoke(secret, signal);
+      },
+    },
+    parser,
+    sourceRequestSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    fetchPolicy: { attempts: 100, windowHours: 1 },
+    capture: {
+      mime: "application/json",
+      label(fetchUuid) {
+        return `synthetic-oauth-${fetchUuid}.json`;
+      },
+    },
+    parseConfig(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error("Synthetic OAuth config must be an object");
+      }
+      if (Object.keys(value).length !== 0) {
+        throw new Error("Synthetic OAuth config accepts no fields");
+      }
+      return {};
+    },
+    async prepareFetch() {
+      return {
+        async retrieve(secret) {
+          syntheticOAuthRetrieveSecrets.push(secret);
+          return syntheticOAuthRetrieve(secret);
+        },
+        compiledSource,
+      };
+    },
+  };
+}
+
+function parseSyntheticOAuthCapture(bytes: Uint8Array): { id: string; title: string } {
+  if (!Buffer.from(bytes).equals(Buffer.from(syntheticOAuthCaptureBytes))) {
+    throw new Error("Synthetic OAuth capture changed");
+  }
+  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as {
+    id: string;
+    title: string;
+  };
+}
+
+function resetSyntheticOAuthRuntime(): void {
+  syntheticOAuthRefreshSecrets.length = 0;
+  syntheticOAuthRetrieveSecrets.length = 0;
+  syntheticOAuthRevokeSecrets.length = 0;
+  syntheticOAuthRefresh = async () => undefined;
+  syntheticOAuthRetrieve = async () => syntheticOAuthCaptureBytes.slice();
+  syntheticOAuthRevoke = async () => {};
+}
+
 function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
   const capture: SyntheticPublicCapture = {
     version: "synthetic-public-capture@1",
@@ -2997,6 +3455,35 @@ async function createStoredSimpleFinCredential(sourceCount: number): Promise<{
     sources.push((await response.json()) as IngestionSourceDocument);
   }
   return { credentialUuid, sources };
+}
+
+async function createStoredSyntheticOAuthCredential(): Promise<{
+  credentialUuid: string;
+  source: IngestionSourceDocument;
+}> {
+  const credentialUuid = uuidv7();
+  await db.insert(sourceCredentials).values({
+    uuid: credentialUuid,
+    userUuid: DEV_USER_UUID,
+    skillId: SYNTHETIC_OAUTH_SKILL_ID,
+    connectorVersion: SYNTHETIC_OAUTH_CONNECTOR_VERSION,
+    secret: await sealCredentialSecret(
+      "oauth-token-0",
+      credentialEncryptionKeys,
+      credentialAssociatedData(credentialUuid, DEV_USER_UUID, SYNTHETIC_OAUTH_SKILL_ID),
+    ),
+    metadata: { account_label: "Synthetic account" },
+  });
+  const response = await request("/rnet/v0/ingestion-sources", {
+    method: "POST",
+    headers: owner,
+    json: { credential: `credential:${credentialUuid}`, config: {} },
+  });
+  expect(response.status).toBe(201);
+  return {
+    credentialUuid,
+    source: (await response.json()) as IngestionSourceDocument,
+  };
 }
 
 async function mediaObjectCount(): Promise<number> {

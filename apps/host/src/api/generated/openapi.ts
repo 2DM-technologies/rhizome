@@ -13,6 +13,9 @@ import type {
   ProblemDocument as StoreProblemDocument,
   OperationDocument as StoreOperationDocument,
   SourceCredentialDocument as StoreSourceCredentialDocument,
+  SourceConnectionAttemptDocument as StoreSourceConnectionAttemptDocument,
+  StartSourceConnectionRequest as StoreStartSourceConnectionRequest,
+  StartSourceConnectionResponse as StoreStartSourceConnectionResponse,
   SourceSkillManifestsResponse as StoreSourceSkillManifestsResponse,
   SourceActionRequired as StoreSourceActionRequired,
   ReviewImportContinuationRequest as StoreReviewImportContinuationRequest,
@@ -186,6 +189,54 @@ export interface paths {
     get?: never;
     put?: never;
     post: operations["createIngestionSource"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rnet/v0/source-connections/{skill_id}/oauth": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations["startSourceOAuthConnection"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rnet/v0/source-connections/oauth/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["completeSourceOAuthConnection"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rnet/v0/source-connections/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getSourceConnectionAttempt"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -484,6 +535,9 @@ export interface components {
     Problem: StoreProblemDocument;
     Operation: StoreOperationDocument;
     SourceCredential: StoreSourceCredentialDocument;
+    SourceConnectionAttempt: StoreSourceConnectionAttemptDocument;
+    StartSourceConnectionRequest: StoreStartSourceConnectionRequest;
+    StartSourceConnectionResponse: StoreStartSourceConnectionResponse;
     SourceSkillManifestsResponse: StoreSourceSkillManifestsResponse;
     SourceActionRequired: StoreSourceActionRequired;
     ReviewImportContinuationRequest: StoreReviewImportContinuationRequest;
@@ -1691,6 +1745,266 @@ export interface operations {
       };
     };
   };
+  startSourceOAuthConnection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        skill_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartSourceConnectionRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful response */
+      201: {
+        headers: {
+          /** @description Prevents OAuth request and response material from being cached. */
+          "Cache-Control"?: "no-store";
+          /** @description Sets or clears the HttpOnly browser binding for this OAuth attempt. */
+          "Set-Cookie"?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StartSourceConnectionResponse"];
+        };
+      };
+      /** @description Problem response */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
+  completeSourceOAuthConnection: {
+    parameters: {
+      query: {
+        state: string;
+        code?: string;
+        error?: string;
+        error_description?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Redirect response */
+      303: {
+        headers: {
+          /** @description Prevents OAuth request and response material from being cached. */
+          "Cache-Control"?: "no-store";
+          /** @description A server-approved host URL containing only the opaque connection attempt id. */
+          Location?: string;
+          /** @description Prevents callback query values from being sent as a referrer. */
+          "Referrer-Policy"?: "no-referrer";
+          /** @description Sets or clears the HttpOnly browser binding for this OAuth attempt. */
+          "Set-Cookie"?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Problem response */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      422: {
+        headers: {
+          /** @description Prevents OAuth request and response material from being cached. */
+          "Cache-Control"?: "no-store";
+          /** @description Prevents callback query values from being sent as a referrer. */
+          "Referrer-Policy"?: "no-referrer";
+          /** @description Sets or clears the HttpOnly browser binding for this OAuth attempt. */
+          "Set-Cookie"?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
+  getSourceConnectionAttempt: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SourceConnectionAttempt"];
+        };
+      };
+      /** @description Problem response */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
   connectSourceCredential: {
     parameters: {
       query?: never;
@@ -1923,6 +2237,15 @@ export interface operations {
       };
       /** @description Problem response */
       422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      429: {
         headers: {
           [name: string]: unknown;
         };

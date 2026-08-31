@@ -4,8 +4,10 @@ import { v7 as uuidv7 } from "uuid";
 
 import {
   CredentialConnectionError,
+  type CredentialedSourceCatalog,
   type CredentialClaimPolicy,
   type CredentialSourceConnector,
+  type PreparedCredentialConnection,
   type SourceJsonObject,
 } from "../../../ingest/connected-sources/types.ts";
 import type { Database } from "../db/index.ts";
@@ -30,9 +32,13 @@ import {
   type PreparedCredentialSecretSeal,
   type SourceCredentialCrypto,
 } from "./source-credential-crypto.ts";
+import { CREDENTIAL_FETCH_LOCK_SEED } from "./credential-lease.ts";
+import { withProviderRequestDeadline } from "./provider-request-deadline.ts";
 import type { ServiceContext } from "./types.ts";
 
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1_000;
+const CLAIM_ATTEMPT_LIMIT = 10;
+const CLAIM_ATTEMPT_WINDOW_HOURS = 1;
 const MAX_PUBLIC_METADATA_BYTES = 16 * 1_024;
 const MAX_PUBLIC_METADATA_DEPTH = 8;
 
@@ -41,6 +47,7 @@ interface SourceCredentialServiceContext extends ServiceContext {
   credentialEncryptionKey?: Uint8Array;
   credentialEncryptionKeys?: CredentialEncryptionKeys;
   claimStore?: SourceCredentialClaimStore;
+  credentialedSources?: CredentialedSourceCatalog;
 }
 
 type ClaimReservation =
@@ -81,6 +88,7 @@ export class SourceCredentialsService {
   private readonly actor: ServiceContext["actor"];
   private readonly credentialCrypto: SourceCredentialCrypto;
   private readonly claimStore: SourceCredentialClaimStore;
+  private readonly credentialedSources?: CredentialedSourceCatalog;
 
   constructor(context: SourceCredentialServiceContext) {
     this.db = context.db;
@@ -93,15 +101,24 @@ export class SourceCredentialsService {
     this.credentialCrypto =
       context.credentialCrypto ?? createLocalSourceCredentialCrypto(credentialEncryptionKeys!);
     this.claimStore = context.claimStore ?? new DatabaseSourceCredentialClaimStore(context.db);
+    this.credentialedSources = context.credentialedSources;
   }
 
   async connect(skill: CredentialSourceConnector, input: unknown): Promise<DbSourceCredential> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
+    if (skill.connection.mode !== "claim_exchange") {
+      throw new Problem(
+        422,
+        "schema_violation",
+        "Connection mode mismatch",
+        "This source must be connected through its advertised OAuth flow",
+      );
+    }
 
     const skillId = skill.skillId;
     const connectorVersion = skill.manifest.connector_version;
     const claimPolicy = supportedClaimPolicy(skill.connection.claimPolicy);
-    let preparedConnection: ReturnType<CredentialSourceConnector["connection"]["prepare"]>;
+    let preparedConnection: PreparedCredentialConnection;
     try {
       preparedConnection = skill.connection.prepare(input);
     } catch (error) {
@@ -111,10 +128,10 @@ export class SourceCredentialsService {
       );
     }
     await this.claimStore.assertCanAttempt({
-      attemptLimit: claimPolicy.attempts,
+      attemptLimit: CLAIM_ATTEMPT_LIMIT,
       ownerUuid: this.actor.uuid,
       skillId,
-      windowHours: claimPolicy.windowHours,
+      windowHours: CLAIM_ATTEMPT_WINDOW_HOURS,
     });
     const fingerprints = await this.credentialCrypto.fingerprintConnectionClaim(
       skillId,
@@ -122,11 +139,11 @@ export class SourceCredentialsService {
       preparedConnection.fingerprintCompatibility,
     );
     const reservation = await this.claimStore.reserve({
-      attemptLimit: claimPolicy.attempts,
+      attemptLimit: CLAIM_ATTEMPT_LIMIT,
       fingerprints,
       ownerUuid: this.actor.uuid,
       skillId,
-      windowHours: claimPolicy.windowHours,
+      windowHours: CLAIM_ATTEMPT_WINDOW_HOURS,
     });
     if (reservation.kind === "existing") return reservation.credential;
 
@@ -207,6 +224,116 @@ export class SourceCredentialsService {
   }
 
   async revoke(credentialUuid: string): Promise<void> {
+    if (this.actor.kind !== "user") throw grantMissing("owner");
+    const credential = await this.getOwned(credentialUuid);
+    if (credential.revokedAt) return;
+    const skill = this.credentialedSources?.forSkillId(credential.skillId);
+    if (
+      skill?.manifest.connector_version === credential.connectorVersion &&
+      skill.connection.mode === "oauth2_pkce"
+    ) {
+      await this.revokeOAuthCredential(credential, skill.connection.revoke);
+      return;
+    }
+    await this.revokeLocally(credentialUuid);
+  }
+
+  private async revokeOAuthCredential(
+    credential: DbSourceCredential,
+    revokeProvider: ((secret: string, input: { signal: AbortSignal }) => Promise<void>) | undefined,
+  ): Promise<void> {
+    const connection = await this.db.$client.reserve();
+    let leaseHeld = false;
+    let currentSecret: Uint8Array | undefined;
+    try {
+      await connection`begin`;
+      try {
+        const [locked] = await connection<Array<{ revoked_at: Date | null; secret: Uint8Array }>>`
+          select revoked_at, secret
+          from source_credentials
+          where uuid = ${credential.uuid}
+            and user_uuid = ${credential.userUuid}
+            and skill_id = ${credential.skillId}
+            and connector_version = ${credential.connectorVersion}
+          for update
+        `;
+        if (!locked) throw notFound("Source credential");
+        if (locked.revoked_at) {
+          await connection`commit`;
+          return;
+        }
+        currentSecret = locked.secret;
+        const [lease] = await connection<[{ acquired: boolean }]>`
+          select pg_try_advisory_lock(
+            hashtextextended(${credential.uuid}::text, ${CREDENTIAL_FETCH_LOCK_SEED}::bigint)
+          ) as acquired
+        `;
+        if (!lease?.acquired) {
+          throw new Problem(
+            429,
+            "rate_limited",
+            "Source credential is busy",
+            "Wait for the active source request to finish before disconnecting",
+          );
+        }
+        leaseHeld = true;
+        await connection`commit`;
+      } catch (error) {
+        await connection`rollback`;
+        throw error;
+      }
+      let providerFailure: unknown;
+      if (revokeProvider) {
+        try {
+          if (!currentSecret) throw notFound("Source credential");
+          const secret = await this.credentialCrypto.open(
+            currentSecret,
+            credentialAssociatedData(credential.uuid, credential.userUuid, credential.skillId),
+          );
+          await withProviderRequestDeadline((signal) => revokeProvider(secret, { signal }));
+        } catch (error) {
+          providerFailure = error;
+        }
+      }
+      await connection`begin`;
+      try {
+        const [revoked] = await connection<Array<{ uuid: string }>>`
+          update source_credentials
+          set revoked_at = now()
+          where uuid = ${credential.uuid}
+            and user_uuid = ${credential.userUuid}
+            and revoked_at is null
+          returning uuid
+        `;
+        if (!revoked) throw notFound("Source credential");
+        await connection`
+          update ingestion_sources
+          set revoked_at = now()
+          where credential_uuid = ${credential.uuid}
+            and owner_uuid = ${credential.userUuid}
+            and revoked_at is null
+        `;
+        await connection`commit`;
+      } catch (error) {
+        await connection`rollback`;
+        throw error;
+      }
+      if (providerFailure) {
+        throw connectionProblem(
+          providerFailure,
+          "The source provider could not complete the disconnect",
+        );
+      }
+    } finally {
+      try {
+        if (leaseHeld) await connection`select pg_advisory_unlock_all()`;
+      } finally {
+        connection.release();
+      }
+    }
+  }
+
+  private async revokeLocally(credentialUuid: string): Promise<void> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const ownerUuid = this.actor.uuid;
     await this.db.transaction(async (transaction) => {
@@ -469,21 +596,10 @@ function assertClaimAttemptAllowance(recentAttemptCount: number, attemptLimit: n
 
 function supportedClaimPolicy(value: unknown): CredentialClaimPolicy {
   const kind = (value as { kind?: unknown } | undefined)?.kind;
-  const attempts = (value as { attempts?: unknown } | undefined)?.attempts;
-  const windowHours = (value as { windowHours?: unknown } | undefined)?.windowHours;
-  if (
-    !value ||
-    typeof value !== "object" ||
-    Array.isArray(value) ||
-    kind !== "single_use_global" ||
-    !boundedInteger(attempts, 1, 1_000) ||
-    !boundedInteger(windowHours, 1, 720)
-  ) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || kind !== "single_use_global") {
     throw new Error("Credential source has an unsupported claim policy");
   }
-  // Snapshot the installed values so an async connection attempt cannot observe two
-  // different policies at the early rejection and transactional reservation boundaries.
-  return Object.freeze({ kind, attempts, windowHours });
+  return Object.freeze({ kind });
 }
 
 function claimWindowStart(windowHours: number): Date {
@@ -493,7 +609,7 @@ function claimWindowStart(windowHours: number): Date {
   return new Date(Date.now() - windowHours * MILLISECONDS_PER_HOUR);
 }
 
-function publicMetadataForStorage(value: unknown): SourceJsonObject | undefined {
+export function publicMetadataForStorage(value: unknown): SourceJsonObject | undefined {
   if (value === undefined) return undefined;
   if (!isPlainRecord(value)) {
     throw new Error("Credential public metadata must be a JSON object");
@@ -542,6 +658,7 @@ function assertPublicMetadataValue(value: unknown, depth: number, ancestors: Set
       if (typeof key !== "string") {
         throw new Error("Credential public metadata keys must be strings");
       }
+      assertPublicMetadataKey(key);
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       if (!descriptor?.enumerable || !("value" in descriptor)) {
         throw new Error("Credential public metadata must contain plain JSON properties");
@@ -550,6 +667,17 @@ function assertPublicMetadataValue(value: unknown, depth: number, ancestors: Set
     }
   } finally {
     ancestors.delete(value);
+  }
+}
+
+function assertPublicMetadataKey(key: string): void {
+  const normalized = key.toLowerCase().replace(/[^a-z0-9]/gu, "");
+  if (
+    ["token", "secret", "password", "credential", "authorizationcode", "codeverifier"].some(
+      (sensitive) => normalized.includes(sensitive),
+    )
+  ) {
+    throw new Error("Credential public metadata must not contain sensitive fields");
   }
 }
 
@@ -574,17 +702,19 @@ function consumedClaimProblem(): Problem {
   );
 }
 
-function connectionFailureStatus(
+export function connectionFailureStatus(
   error: unknown,
 ): Extract<SourceCredentialClaimStatus, "ambiguous" | "rejected"> {
   return error instanceof CredentialConnectionError ? error.disposition : "ambiguous";
 }
 
-function connectionErrorCode(error: unknown): string {
-  return error instanceof CredentialConnectionError ? error.code : "connection_acquire_failed";
+export function connectionErrorCode(error: unknown): string {
+  return error instanceof CredentialConnectionError && /^[a-z][a-z0-9_]{0,63}$/u.test(error.code)
+    ? error.code
+    : "connection_acquire_failed";
 }
 
-function connectionProblem(error: unknown, fallbackDetail: string): Problem {
+export function connectionProblem(error: unknown, fallbackDetail: string): Problem {
   return new Problem(
     422,
     "source_connection_failed",

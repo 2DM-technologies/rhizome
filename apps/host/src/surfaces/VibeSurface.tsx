@@ -29,6 +29,7 @@ import {
 import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
+import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 
 const OBJECT_URI = new RegExp(rnetUriPattern("object"));
 const MEDIA_ELEMENT_PATH = "/rnet/v0/elements/{id}";
@@ -331,6 +332,10 @@ function MediaObjectEntry({
 }
 
 export function VibeSurface({ uuid }: { uuid: string }) {
+  const sourceConnectionReturn = useSourceConnectionReturn({
+    kind: "existing_vibe",
+    vibeUuid: uuid,
+  });
   const vibe = useVibe(uuid);
   const objects = useVibeObjects(uuid);
   const update = useUpdateVibe();
@@ -464,6 +469,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           <ImportPanel
             vibeUuid={uuid}
             configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
+            sourceConnectionReturn={sourceConnectionReturn}
           />
         </div>
       ) : null}

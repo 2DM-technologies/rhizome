@@ -27,7 +27,8 @@ describe("SimpleFIN connected-source skill", () => {
         connector_version: "simplefin-connector@1.0.0",
         parser: { name: "simplefin", version: "simplefin@2.0.0" },
         connection: {
-          claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
+          mode: "claim_exchange",
+          claim_policy: { kind: "single_use_global" },
         },
         review_actions: ["review_import", "refresh_source"],
       },
@@ -36,6 +37,7 @@ describe("SimpleFIN connected-source skill", () => {
       capture: { mime: "application/json" },
     });
     expect(skill.capture.label("fetch-1")).toBe("simplefin-fetch-1.json");
+    if (skill.connection.mode !== "claim_exchange") throw new Error("Expected claim exchange");
 
     const claimUrl = `https://${allowedHost}/simplefin/claim/once`;
     const prepared = skill.connection.prepare({

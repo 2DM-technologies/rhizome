@@ -116,15 +116,40 @@ export interface PreparedCredentialConnection {
 
 export interface CredentialClaimPolicy {
   readonly kind: "single_use_global";
-  readonly attempts: number;
-  readonly windowHours: number;
 }
 
-export interface CredentialConnectionDefinition {
+export interface ClaimExchangeConnectionDefinition {
+  readonly mode: "claim_exchange";
   readonly claimPolicy: CredentialClaimPolicy;
   readonly requestSchema: Readonly<Record<string, unknown>>;
   prepare(input: unknown): PreparedCredentialConnection;
 }
+
+export interface OAuth2PkceCredentialResult {
+  readonly secret: string;
+  readonly publicMetadata?: SourceJsonObject;
+}
+
+/** Provider adapter for the server-owned OAuth 2.0 authorization-code + PKCE lifecycle. */
+export interface OAuth2PkceConnectionDefinition {
+  readonly mode: "oauth2_pkce";
+  authorizationUrl(input: { callbackUrl: string; codeChallenge: string; state: string }): string;
+  exchange(input: {
+    callbackUrl: string;
+    code: string;
+    codeVerifier: string;
+    signal: AbortSignal;
+  }): Promise<OAuth2PkceCredentialResult>;
+  callbackError?(input: { error: string; errorDescription?: string }): CredentialConnectionError;
+  refresh?(
+    secret: string,
+    input: { signal: AbortSignal },
+  ): Promise<OAuth2PkceCredentialResult | undefined>;
+  revoke?(secret: string, input: { signal: AbortSignal }): Promise<void>;
+}
+
+export type CredentialConnectionDefinition =
+  ClaimExchangeConnectionDefinition | OAuth2PkceConnectionDefinition;
 
 export interface PreparedConnectedSourceFetch {
   retrieve(secret: string): Promise<Uint8Array>;
@@ -246,19 +271,25 @@ export class CredentialedSourceCatalog {
 }
 
 function assertConnectionManifestCoverage(skill: CredentialedSourceSkill): void {
-  if (
-    skill.connection.claimPolicy.kind !== "single_use_global" ||
-    !boundedInteger(skill.connection.claimPolicy.attempts, 1, 1_000) ||
-    !boundedInteger(skill.connection.claimPolicy.windowHours, 1, 720)
-  ) {
-    throw new Error(`Credentialed-source ${skill.skillId} has an invalid claim policy`);
+  const manifestConnection = skill.manifest.connection;
+  if (!manifestConnection || manifestConnection.mode !== skill.connection.mode) {
+    throw new Error(
+      `Credentialed-source ${skill.skillId} manifest has inconsistent connection mode`,
+    );
   }
-  const manifestPolicy = skill.manifest.connection?.claim_policy;
+  if (skill.connection.mode === "oauth2_pkce") {
+    if (
+      manifestConnection.mode !== "oauth2_pkce" ||
+      skill.manifest.input_fields.some(({ target }) => target === "connection")
+    ) {
+      throw new Error(`Credentialed-source ${skill.skillId} has an invalid OAuth connection`);
+    }
+    return;
+  }
   if (
-    !manifestPolicy ||
-    manifestPolicy.kind !== skill.connection.claimPolicy.kind ||
-    manifestPolicy.attempts !== skill.connection.claimPolicy.attempts ||
-    manifestPolicy.window_hours !== skill.connection.claimPolicy.windowHours
+    manifestConnection.mode !== "claim_exchange" ||
+    skill.connection.claimPolicy.kind !== "single_use_global" ||
+    manifestConnection.claim_policy.kind !== skill.connection.claimPolicy.kind
   ) {
     throw new Error(`Credentialed-source ${skill.skillId} manifest has inconsistent claim policy`);
   }

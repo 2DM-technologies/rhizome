@@ -14,6 +14,7 @@ export const SOURCE_SKILL_INPUT_CONTROLS = ["text", "url", "file", "checkbox", "
 /** Platform review workflows that a skill may opt into. */
 export const SOURCE_SKILL_REVIEW_ACTIONS = ["review_import", "refresh_source"] as const;
 export const SOURCE_CREDENTIAL_CLAIM_POLICIES = ["single_use_global"] as const;
+export const SOURCE_CONNECTION_MODES = ["claim_exchange", "oauth2_pkce"] as const;
 export const FILE_CAPTURE_PREPROCESSOR_CAPABILITY = "file_capture_preprocessor@1" as const;
 
 export const sourceExecutionLimitsSchema = {
@@ -43,20 +44,35 @@ export const fileCapturePreprocessorManifestSchema = {
 
 export const sourceCredentialClaimPolicySchema = {
   type: "object",
-  required: ["kind", "attempts", "window_hours"],
+  required: ["kind"],
   properties: {
     kind: { enum: SOURCE_CREDENTIAL_CLAIM_POLICIES },
-    attempts: { type: "integer", minimum: 1, maximum: 1_000 },
-    window_hours: { type: "integer", minimum: 1, maximum: 720 },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const claimExchangeConnectionManifestSchema = {
+  type: "object",
+  required: ["mode", "claim_policy"],
+  properties: {
+    mode: { const: "claim_exchange" },
+    claim_policy: sourceCredentialClaimPolicySchema,
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const oauth2PkceConnectionManifestSchema = {
+  type: "object",
+  required: ["mode", "button_label"],
+  properties: {
+    mode: { const: "oauth2_pkce" },
+    button_label: { type: "string", minLength: 1, maxLength: 256 },
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
 export const sourceSkillConnectionManifestSchema = {
-  type: "object",
-  required: ["claim_policy"],
-  properties: { claim_policy: sourceCredentialClaimPolicySchema },
-  additionalProperties: false,
+  oneOf: [claimExchangeConnectionManifestSchema, oauth2PkceConnectionManifestSchema],
 } as const satisfies JSONSchema;
 
 export const sourceSkillInputOptionSchema = {

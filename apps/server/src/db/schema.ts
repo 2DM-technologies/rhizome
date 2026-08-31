@@ -12,6 +12,7 @@ export * from "./models/meter-entry.ts";
 export * from "./models/operation.ts";
 export * from "./models/origin-artifact.ts";
 export * from "./models/source-credential.ts";
+export * from "./models/source-connection-attempt.ts";
 export * from "./models/source-credential-claim-attempt.ts";
 export * from "./models/source-credential-claim-fingerprint.ts";
 export * from "./models/user.ts";

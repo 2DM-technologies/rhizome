@@ -23,6 +23,7 @@ import {
 export {
   SOURCE_ACTION_KINDS,
   SOURCE_CREDENTIAL_CLAIM_POLICIES,
+  SOURCE_CONNECTION_MODES,
   SOURCE_CREDENTIAL_ID_PATTERN,
   FILE_CAPTURE_PREPROCESSOR_CAPABILITY,
   SOURCE_ID_PATTERN,
@@ -35,6 +36,8 @@ export {
   fileCapturePreprocessorManifestSchema,
   sourceExecutionLimitsSchema,
   sourceCredentialClaimPolicySchema,
+  claimExchangeConnectionManifestSchema,
+  oauth2PkceConnectionManifestSchema,
   sourceActionRequiredSchema,
   sourceSkillInputFieldSchema,
   sourceSkillInputOptionSchema,
@@ -109,6 +112,138 @@ export const operationDocumentSchema = {
 } as const satisfies JSONSchema;
 
 export type OperationDocument = FromSchema<typeof operationDocumentSchema>;
+
+export const SOURCE_CONNECTION_STATUSES = [
+  "pending",
+  "exchanging",
+  "succeeded",
+  "rejected",
+  "failed",
+  "expired",
+] as const;
+
+export const sourceConnectionIntentSchema = {
+  type: "object",
+  required: ["kind", "destination"],
+  properties: {
+    kind: { const: "review_import" },
+    destination: {
+      oneOf: [
+        {
+          type: "object",
+          required: ["kind"],
+          properties: { kind: { const: "new_vibe" } },
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          required: ["kind", "id"],
+          properties: {
+            kind: { const: "existing_vibe" },
+            id: vibeSchema.properties.uri,
+          },
+          additionalProperties: false,
+        },
+      ],
+    },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const startSourceConnectionRequestSchema = {
+  type: "object",
+  required: ["return_to", "intent"],
+  properties: {
+    return_to: { type: "string", format: "uri" },
+    intent: sourceConnectionIntentSchema,
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+const sourceConnectionAttemptCommonProperties = {
+  attempt_id: { type: "string", format: "uuid" },
+  skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
+  status: { enum: SOURCE_CONNECTION_STATUSES },
+  intent: sourceConnectionIntentSchema,
+  credential: { type: "string", pattern: SOURCE_CREDENTIAL_ID_PATTERN },
+  error_code: { type: "string", minLength: 1, maxLength: 128 },
+  expires_at: { type: "string", format: "date-time" },
+  created_at: { type: "string", format: "date-time" },
+  completed_at: { type: "string", format: "date-time" },
+} as const;
+
+const sourceConnectionAttemptCommonRequired = [
+  "attempt_id",
+  "skill_id",
+  "status",
+  "intent",
+  "expires_at",
+  "created_at",
+] as const;
+
+const sourceConnectionAttemptTerminalStateSchema = {
+  oneOf: [
+    {
+      required: ["status"],
+      properties: {
+        status: { enum: ["pending", "exchanging"] },
+        credential: false,
+        error_code: false,
+        completed_at: false,
+      },
+    },
+    {
+      required: ["status", "credential", "completed_at"],
+      properties: {
+        status: { const: "succeeded" },
+        credential: sourceConnectionAttemptCommonProperties.credential,
+        error_code: false,
+        completed_at: sourceConnectionAttemptCommonProperties.completed_at,
+      },
+    },
+    {
+      required: ["status", "error_code", "completed_at"],
+      properties: {
+        status: { enum: ["rejected", "failed", "expired"] },
+        credential: false,
+        error_code: sourceConnectionAttemptCommonProperties.error_code,
+        completed_at: sourceConnectionAttemptCommonProperties.completed_at,
+      },
+    },
+  ],
+} as const;
+
+export const sourceConnectionAttemptDocumentSchema = {
+  type: "object",
+  required: sourceConnectionAttemptCommonRequired,
+  properties: sourceConnectionAttemptCommonProperties,
+  ...sourceConnectionAttemptTerminalStateSchema,
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const startSourceConnectionResponseSchema = {
+  type: "object",
+  required: [...sourceConnectionAttemptCommonRequired, "authorization_url"],
+  properties: {
+    attempt_id: sourceConnectionAttemptCommonProperties.attempt_id,
+    skill_id: sourceConnectionAttemptCommonProperties.skill_id,
+    status: { const: "pending" },
+    intent: sourceConnectionAttemptCommonProperties.intent,
+    authorization_url: { type: "string", format: "uri", pattern: "^https://" },
+    expires_at: sourceConnectionAttemptCommonProperties.expires_at,
+    created_at: sourceConnectionAttemptCommonProperties.created_at,
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export type SourceConnectionIntent = ContractValue<typeof sourceConnectionIntentSchema>;
+export type StartSourceConnectionRequest = ContractValue<typeof startSourceConnectionRequestSchema>;
+export type StartSourceConnectionResponse = ContractValue<
+  typeof startSourceConnectionResponseSchema
+>;
+export type SourceConnectionAttemptDocument = ContractValue<
+  typeof sourceConnectionAttemptDocumentSchema
+>;
 
 export const sourceCredentialDocumentSchema = {
   type: "object",
@@ -550,6 +685,9 @@ export const STORE_SCHEMA_COMPONENTS = {
   Problem: problemDocumentSchema,
   Operation: operationDocumentSchema,
   SourceCredential: sourceCredentialDocumentSchema,
+  SourceConnectionAttempt: sourceConnectionAttemptDocumentSchema,
+  StartSourceConnectionRequest: startSourceConnectionRequestSchema,
+  StartSourceConnectionResponse: startSourceConnectionResponseSchema,
   SourceSkillManifestsResponse: sourceSkillManifestsResponseSchema,
   SourceActionRequired: sourceActionRequiredSchema,
   ReviewImportContinuationRequest: reviewImportContinuationRequestSchema,

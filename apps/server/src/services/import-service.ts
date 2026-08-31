@@ -31,6 +31,7 @@ import {
 import {
   ConnectedSourceActionRequired,
   ConnectedSourceError,
+  CredentialConnectionError,
   CredentialedSourceCatalog,
   connectedSourceOperationResult,
   delegatedConnectedSourceError,
@@ -64,6 +65,8 @@ import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { VibeAggregate } from "../serializers/vibe-serializer.ts";
 import { AccessService } from "./access-service.ts";
+import { CREDENTIAL_FETCH_LOCK_SEED } from "./credential-lease.ts";
+import { withProviderRequestDeadline } from "./provider-request-deadline.ts";
 import { storeOwnedOriginArtifact } from "./origin-artifact-service.ts";
 import {
   createLocalSourceCredentialCrypto,
@@ -71,6 +74,7 @@ import {
   type CredentialEncryptionKeys,
   type SourceCredentialCrypto,
 } from "./source-credential-crypto.ts";
+import { publicMetadataForStorage } from "./source-credential-service.ts";
 import {
   SourceContinuationCodec,
   type ConnectedSourceContinuation,
@@ -185,6 +189,10 @@ interface CredentialFetchReservation {
   fetchUuid: string;
   release: () => Promise<void>;
   resolved: ResolvedCredentialSource;
+  updateCredential(input: {
+    secret: Uint8Array;
+    publicMetadata?: SourceJsonObject;
+  }): Promise<boolean>;
 }
 
 interface PublicRemoteFetchReservation {
@@ -193,8 +201,6 @@ interface PublicRemoteFetchReservation {
   resolved: ResolvedRemoteSource;
 }
 
-// This seed is also pinned in the credential-revocation database trigger.
-const CREDENTIAL_FETCH_LOCK_SEED = 0x53464e;
 // Stable namespace for owner-and-skill public-remote fetch leases.
 const PUBLIC_REMOTE_FETCH_LOCK_SEED = 0x505542;
 
@@ -1004,7 +1010,7 @@ export class ImportService {
         continuation?.resume,
         endDateEpoch,
       );
-      const secret = await this.credentialCrypto.open(
+      let secret = await this.credentialCrypto.open(
         reservedSource.credential.secret,
         credentialAssociatedData(
           reservedSource.credential.uuid,
@@ -1012,12 +1018,33 @@ export class ImportService {
           reservedSource.credential.skillId,
         ),
       );
+      secret = await this.refreshCredential(reservation, ownerUuid, secret, () => {
+        providerRequestStarted = true;
+      });
       providerRequestStarted = true;
-      const bytes = await prepared.fetch.retrieve(secret);
+      let bytes: Uint8Array;
+      try {
+        bytes = await prepared.fetch.retrieve(secret);
+      } catch (error) {
+        if (
+          error instanceof ConnectedSourceError &&
+          error.skillId === reservedSource.skill.skillId
+        ) {
+          throw error;
+        }
+        throw new ConnectedSourceError(reservedSource.skill.skillId, {
+          status: 422,
+          code: "source_connection_failed",
+          title: `${reservedSource.skill.displayName} request failed`,
+          detail: "The connected source could not retrieve data from its provider",
+        });
+      }
       assertCaptureLimit(bytes.byteLength, reservedSource.source.executionLimits);
-      // Persist the exact successful provider response before lease cleanup. If unlocking the
-      // dedicated connection fails, the rate-counted response remains retained as an immutable
-      // OriginArtifact instead of disappearing before the fetch ledger can record its failure.
+      // The credential is no longer in use once the exact provider response is in memory. Release
+      // the dedicated pool connection before origin persistence so distinct concurrent
+      // credentials cannot reserve the entire pool and then wait for an unreserved connection.
+      // The already-durable fetch row still counts a provider request if later persistence fails.
+      await reservation.release();
       const origin = await storeOwnedOriginArtifact(
         { db: this.db, blobs: this.blobs },
         {
@@ -1027,9 +1054,6 @@ export class ImportService {
           label: reservedSource.skill.capture.label(fetchUuid),
         },
       );
-      // Revocation may proceed once the exact response is durable. Parsing does not use the
-      // credential and therefore does not need the lease.
-      await reservation.release();
       const retrievedAt = new Date();
       const [fetched] = await this.db
         .update(ingestionSourceFetches)
@@ -1121,6 +1145,51 @@ export class ImportService {
           );
       }
       throw error;
+    }
+  }
+
+  /** Refreshes OAuth token sets while the caller holds the credential's advisory fetch lease. */
+  private async refreshCredential(
+    reservation: CredentialFetchReservation,
+    ownerUuid: string,
+    secret: string,
+    onProviderRequestStart: () => void,
+  ): Promise<string> {
+    const resolved = reservation.resolved;
+    const connection = resolved.skill.connection;
+    if (connection.mode !== "oauth2_pkce") return secret;
+    const refresh = connection.refresh;
+    if (!refresh) return secret;
+    const preparedSeal = await this.credentialCrypto.prepareSeal(
+      credentialAssociatedData(resolved.credential.uuid, ownerUuid, resolved.credential.skillId),
+    );
+    try {
+      let refreshed: Awaited<ReturnType<NonNullable<typeof connection.refresh>>>;
+      try {
+        onProviderRequestStart();
+        refreshed = await withProviderRequestDeadline((signal) => refresh(secret, { signal }));
+      } catch (error) {
+        throw new ConnectedSourceError(resolved.skill.skillId, {
+          status: 422,
+          code: "source_connection_failed",
+          title: `${resolved.skill.displayName} connection needs attention`,
+          detail:
+            error instanceof CredentialConnectionError
+              ? error.message
+              : "The connected source could not refresh its authorization",
+        });
+      }
+      if (!refreshed) return secret;
+      const sealed = await preparedSeal.seal(refreshed.secret);
+      const metadata = publicMetadataForStorage(refreshed.publicMetadata);
+      const updated = await reservation.updateCredential({
+        secret: sealed,
+        ...(metadata === undefined ? {} : { publicMetadata: metadata }),
+      });
+      if (!updated) throw notFound("Source credential");
+      return refreshed.secret;
+    } finally {
+      preparedSeal.destroy();
     }
   }
 
@@ -1266,6 +1335,37 @@ export class ImportService {
       }
     };
 
+    const updateCredential: CredentialFetchReservation["updateCredential"] = async (input) => {
+      if (connectionReleased || !leaseHeld) {
+        throw new Error("Credential fetch lease is not active");
+      }
+      const rows =
+        input.publicMetadata === undefined
+          ? await connection<Array<{ uuid: string }>>`
+              update source_credentials
+              set secret = ${input.secret}
+              where uuid = ${expected.credential.uuid}
+                and user_uuid = ${ownerUuid}
+                and skill_id = ${expected.credential.skillId}
+                and connector_version = ${expected.credential.connectorVersion}
+                and revoked_at is null
+              returning uuid
+            `
+          : await connection<Array<{ uuid: string }>>`
+              update source_credentials
+              set
+                secret = ${input.secret},
+                metadata = ${JSON.stringify(input.publicMetadata)}::jsonb
+              where uuid = ${expected.credential.uuid}
+                and user_uuid = ${ownerUuid}
+                and skill_id = ${expected.credential.skillId}
+                and connector_version = ${expected.credential.connectorVersion}
+                and revoked_at is null
+              returning uuid
+            `;
+      return Boolean(rows[0]);
+    };
+
     try {
       await connection`begin`;
       let reserved: ResolvedCredentialSource;
@@ -1274,6 +1374,7 @@ export class ImportService {
           Array<{
             credential_connector_version: string;
             credential_skill_id: string;
+            credential_secret: Uint8Array;
             credential_uuid: string;
             owner_uuid: string;
             source_config: unknown;
@@ -1291,6 +1392,7 @@ export class ImportService {
             credential.user_uuid as owner_uuid,
             credential.skill_id as credential_skill_id,
             credential.connector_version as credential_connector_version,
+            credential.secret as credential_secret,
             source.uuid as source_uuid,
             source.kind as source_kind,
             source.skill_id as source_skill_id,
@@ -1367,7 +1469,10 @@ export class ImportService {
         ) {
           throw new Error("The connected source changed before its fetch could start");
         }
-        const candidate = expected;
+        const candidate: ResolvedCredentialSource = {
+          ...expected,
+          credential: { ...expected.credential, secret: locked.credential_secret },
+        };
 
         // Credential/source row locks are acquired before this session lock, matching the
         // revocation transaction's row-lock-then-advisory-lock order and avoiding deadlocks.
@@ -1423,7 +1528,7 @@ export class ImportService {
         await connection`rollback`;
         throw error;
       }
-      return { fetchUuid, release, resolved: reserved };
+      return { fetchUuid, release, resolved: reserved, updateCredential };
     } catch (error) {
       await release();
       throw error;

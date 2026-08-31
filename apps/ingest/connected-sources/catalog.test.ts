@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
 import { CANDIDATE_BUNDLE_CAPABILITY, candidateBundle } from "../source-skills/candidate-bundle.ts";
-import { CredentialedSourceCatalog, type CredentialedSourceSkill } from "./types.ts";
+import {
+  CredentialedSourceCatalog,
+  type ClaimExchangeConnectionDefinition,
+  type CredentialedSourceSkill,
+} from "./types.ts";
 
 type ParserName = CredentialedSourceSkill["parser"]["name"];
+type ClaimExchangeSkill = CredentialedSourceSkill & {
+  connection: ClaimExchangeConnectionDefinition;
+};
 
-function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceSkill {
+function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill {
   return {
     skillId,
     displayName: skillId,
@@ -23,7 +30,8 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
         maxTotalElementBytes: 1_024,
       },
       connection: {
-        claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
+        mode: "claim_exchange",
+        claim_policy: { kind: "single_use_global" },
       },
       input_fields: [],
       review_actions: ["review_import"],
@@ -37,7 +45,8 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
     },
     sourceRequestSchema: { type: "object", properties: {}, additionalProperties: false },
     connection: {
-      claimPolicy: { kind: "single_use_global", attempts: 10, windowHours: 1 },
+      mode: "claim_exchange",
+      claimPolicy: { kind: "single_use_global" },
       requestSchema: { type: "object", properties: {}, additionalProperties: false },
       prepare() {
         return {

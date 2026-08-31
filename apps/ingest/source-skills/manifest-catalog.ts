@@ -130,21 +130,24 @@ function assertConnectionPolicy(manifest: Record<string, unknown>): void {
     }
     return;
   }
-  if (!isRecord(manifest.connection) || !isRecord(manifest.connection.claim_policy)) {
+  if (!isRecord(manifest.connection) || manifest.source_kind !== "credentialed_remote") {
     throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
   }
-  if (
-    manifest.source_kind !== "credentialed_remote" ||
-    !onlyKeys(manifest.connection, ["claim_policy"]) ||
-    !onlyKeys(manifest.connection.claim_policy, ["kind", "attempts", "window_hours"])
-  ) {
-    throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
+  if (manifest.connection.mode === "oauth2_pkce") {
+    if (
+      !onlyKeys(manifest.connection, ["mode", "button_label"]) ||
+      !boundedString(manifest.connection.button_label, 1, 256)
+    ) {
+      throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
+    }
+    return;
   }
-  const policy = manifest.connection.claim_policy;
   if (
-    !includes(SOURCE_CREDENTIAL_CLAIM_POLICIES, policy.kind) ||
-    !boundedInteger(policy.attempts, 1, 1_000) ||
-    !boundedInteger(policy.window_hours, 1, 720)
+    manifest.connection.mode !== "claim_exchange" ||
+    !onlyKeys(manifest.connection, ["mode", "claim_policy"]) ||
+    !isRecord(manifest.connection.claim_policy) ||
+    !onlyKeys(manifest.connection.claim_policy, ["kind"]) ||
+    !includes(SOURCE_CREDENTIAL_CLAIM_POLICIES, manifest.connection.claim_policy.kind)
   ) {
     throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
   }

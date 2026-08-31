@@ -35,8 +35,6 @@ export interface SimpleFinHistoryPlan {
 
 export function createSimpleFinSkill(options: SimpleFinClientOptions): CredentialedSourceSkill {
   const client = new SimpleFinClient(options);
-  const claimPolicy = simpleFinSourceSkillManifest.connection.claim_policy;
-
   return {
     skillId: SIMPLEFIN_SKILL_ID,
     displayName: simpleFinSourceSkillManifest.label,
@@ -44,11 +42,8 @@ export function createSimpleFinSkill(options: SimpleFinClientOptions): Credentia
     parser: simpleFinParser,
     sourceRequestSchema: simpleFinSourceConfigSchema,
     connection: {
-      claimPolicy: {
-        kind: claimPolicy.kind,
-        attempts: claimPolicy.attempts,
-        windowHours: claimPolicy.window_hours,
-      },
+      mode: "claim_exchange",
+      claimPolicy: simpleFinSourceSkillManifest.connection.claim_policy,
       requestSchema: connectSimpleFinRequestSchema,
       prepare(value) {
         const input = connectRequest(value);
