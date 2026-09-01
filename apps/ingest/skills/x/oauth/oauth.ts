@@ -3,7 +3,7 @@ import {
   type OAuth2PkceConnectionDefinition,
   type OAuth2PkceCredentialResult,
 } from "../../../connected-sources/types.ts";
-import type { XAccountIdentity } from "../contracts.ts";
+import { isXAccountName, isXHandle, type XAccountIdentity } from "../contracts.ts";
 import {
   XApiClient,
   XApiClientError,
@@ -24,7 +24,6 @@ const REFRESH_EARLY_SECONDS = 5 * 60;
 const ORPHAN_REVOKE_TIMEOUT_MS = 3_000;
 const TOKEN = /^[\x21-\x7e]{1,16384}$/u;
 const DECIMAL_ID = /^[0-9]{1,19}$/u;
-const X_HANDLE = /^[A-Za-z0-9_]{1,15}$/u;
 
 export interface XOAuthCredential {
   readonly accessToken: string;
@@ -165,12 +164,8 @@ export function parseXOAuthSecret(secret: string): XOAuthCredential {
     value.scope.some((scope) => typeof scope !== "string") ||
     !exactScopes(value.scope as string[]) ||
     !DECIMAL_ID.test(String(value.account.id ?? "")) ||
-    (value.account.handle !== undefined &&
-      (typeof value.account.handle !== "string" || !X_HANDLE.test(value.account.handle))) ||
-    (value.account.name !== undefined &&
-      (typeof value.account.name !== "string" ||
-        Buffer.byteLength(value.account.name) > 256 ||
-        /[\u0000-\u001f\u007f]/u.test(value.account.name))) ||
+    (value.account.handle !== undefined && !isXHandle(value.account.handle)) ||
+    (value.account.name !== undefined && !isXAccountName(value.account.name)) ||
     (value.expires_at_epoch !== undefined &&
       (!Number.isSafeInteger(value.expires_at_epoch) || Number(value.expires_at_epoch) <= 0))
   ) {

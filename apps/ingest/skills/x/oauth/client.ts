@@ -1,3 +1,4 @@
+import { isXAccountName, isXHandle } from "../contracts.ts";
 import { parseXTimelinePage, XTimelinePayloadError, type XApiTimelinePage } from "./timeline.ts";
 
 const DEFAULT_MAX_JSON_BYTES = 8 * 1_024 * 1_024;
@@ -5,7 +6,6 @@ const DEFAULT_MAX_TOKEN_BYTES = 64 * 1_024;
 const MAX_REDIRECTS = 3;
 const DECIMAL_ID = /^[0-9]{1,19}$/;
 const HEADER_TOKEN = /^[\x21-\x7e]{1,16384}$/u;
-const X_HANDLE = /^[A-Za-z0-9_]{1,15}$/u;
 
 export const X_PROVIDER_ENDPOINTS = Object.freeze({
   authorization: "https://x.com/i/oauth2/authorize",
@@ -520,13 +520,7 @@ function parseUser(value: Record<string, unknown>): XApiUser {
   if (!DECIMAL_ID.test(String(value.id ?? ""))) throw invalidResponse("X identity is invalid");
   const username = typeof value.username === "string" ? value.username : undefined;
   const name = typeof value.name === "string" ? value.name : undefined;
-  if (
-    !username ||
-    !X_HANDLE.test(username) ||
-    name === undefined ||
-    Buffer.byteLength(name) > 256 ||
-    /[\u0000-\u001f\u007f]/u.test(name)
-  ) {
+  if (!username || !isXHandle(username) || name === undefined || !isXAccountName(name)) {
     throw invalidResponse("X identity is invalid");
   }
   return { id: String(value.id), username, name };

@@ -19,6 +19,7 @@ import {
   parseRawArchiveNoteTweets,
   parseRawArchiveTweets,
   type RawXArchiveTweetEnvelope,
+  type ParsedRawArchiveNoteTweet,
   type XArchiveIncludedMedia,
   type XArchiveMediaOmission,
   type XArchiveSelectionManifest,
@@ -80,7 +81,7 @@ export async function prepareXArchiveCapture(
         ),
       );
     }
-    const noteTweets: Readonly<Record<string, unknown>>[] = [];
+    const noteTweets: ParsedRawArchiveNoteTweet[] = [];
     for (const noteTweetFile of noteTweetFiles) {
       const entry = archive.byPath.get(noteTweetFile.path);
       if (!entry) {

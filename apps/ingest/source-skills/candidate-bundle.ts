@@ -110,7 +110,12 @@ function convertSourceJsonValue(
     const result: SourceJsonObject = {};
     for (const [key, entry] of Object.entries(value)) {
       if (entry === undefined) throw new Error(`${label}.${key} is undefined`);
-      result[key] = convertSourceJsonValue(entry, ancestors, `${label}.${key}`);
+      Object.defineProperty(result, key, {
+        value: convertSourceJsonValue(entry, ancestors, `${label}.${key}`),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     return result;
   } finally {

@@ -50,6 +50,13 @@ describe("candidate_bundle@1 compiled-source contract", () => {
     expect(() => sourceJsonValue(Number.POSITIVE_INFINITY, "Synthetic facts")).toThrow(
       "not JSON-safe",
     );
+
+    const specialKey = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const specialKeyCopy = sourceJsonObject(specialKey, "Synthetic facts");
+    expect(Object.hasOwn(specialKeyCopy, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(specialKeyCopy)).toBe(Object.prototype);
+    expect((specialKeyCopy as { polluted?: boolean }).polluted).toBeUndefined();
+    expect(JSON.stringify(specialKeyCopy)).toBe('{"__proto__":{"polluted":true}}');
   });
 
   test("compiles canonical transaction IR without provider or server behavior", async () => {

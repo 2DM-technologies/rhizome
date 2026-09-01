@@ -8,17 +8,19 @@ import {
   type SourceElementDraft,
   type SourceJsonObject,
 } from "../../source-skills/candidate-bundle.ts";
-import type {
-  NormalizedXAttachment,
-  NormalizedXPost,
-  SelectedXPosts,
-  XAccountIdentity,
-  XEligiblePostKind,
-  XMediaOmission,
-  XPostExclusionReason,
-  XVerifyReport,
+import {
+  isXAccountName,
+  isXHandle,
+  sha256,
+  type NormalizedXAttachment,
+  type NormalizedXPost,
+  type SelectedXPosts,
+  type XAccountIdentity,
+  type XEligiblePostKind,
+  type XMediaOmission,
+  type XPostExclusionReason,
+  type XVerifyReport,
 } from "./contracts.ts";
-import { sha256 } from "./contracts.ts";
 import { normalizeXEntities } from "./entities.ts";
 import { verifyXPostCandidates } from "./verify.ts";
 
@@ -319,9 +321,8 @@ export function assertNormalizedXPost(post: NormalizedXPost): void {
     throw new Error(`X post ${post.id} has no exact text payload`);
   }
   if (
-    (post.authorHandle !== undefined &&
-      (!post.authorHandle.trim() || post.authorHandle.length > 64)) ||
-    (post.authorName !== undefined && post.authorName.length > 256) ||
+    (post.authorHandle !== undefined && !isXHandle(post.authorHandle)) ||
+    (post.authorName !== undefined && !isXAccountName(post.authorName)) ||
     (post.language !== undefined && (!post.language || post.language.length > 35))
   ) {
     throw new Error(`X post ${post.id} has invalid author or language facts`);

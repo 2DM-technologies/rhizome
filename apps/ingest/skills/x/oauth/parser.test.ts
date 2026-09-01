@@ -214,6 +214,202 @@ describe("X OAuth parser", () => {
     });
   });
 
+  test("recovers a long-form quote URL from top-level entities when Note Tweet entities are absent", () => {
+    const quoteUrl = "https://t.co/quote";
+    const noteText = `Long-form authored commentary ${quoteUrl}`;
+    const topLevelText = `Long-form authored commentary… ${quoteUrl}`;
+    const normalized = normalizeXOAuthTimeline({
+      account,
+      timeline: page([
+        post({
+          id: "104",
+          text: topLevelText,
+          note_tweet: { text: noteText },
+          referenced_tweets: [{ type: "quoted", id: "70" }],
+          entities: {
+            urls: [
+              {
+                start: topLevelText.indexOf(quoteUrl),
+                end: topLevelText.indexOf(quoteUrl) + quoteUrl.length,
+                url: quoteUrl,
+                expanded_url: "https://x.com/quoted/status/70",
+              },
+            ],
+          },
+        }),
+      ]),
+      limits: X_SOURCE_LIMITS,
+      retrievedAt,
+    });
+
+    const imported = normalized.selection.posts[0]!;
+    const start = noteText.indexOf(quoteUrl);
+    expect(imported.text).toBe(noteText);
+    expect(imported.references).toEqual([
+      {
+        kind: "quoted",
+        postId: "70",
+        url: "https://x.com/quoted/status/70",
+        textUrl: quoteUrl,
+        textSpan: { start, end: start + quoteUrl.length },
+      },
+    ]);
+    expect(imported.entities?.urls).toEqual([
+      {
+        start,
+        end: start + quoteUrl.length,
+        url: quoteUrl,
+        expanded_url: "https://x.com/quoted/status/70",
+      },
+    ]);
+  });
+
+  test("enriches a long-form quote entity whose expanded URL exists only at the top level", () => {
+    const quoteUrl = "https://t.co/quote";
+    const noteText = `Long-form authored commentary ${quoteUrl}`;
+    const topLevelText = `Long-form authored commentary… ${quoteUrl}`;
+    const start = noteText.indexOf(quoteUrl);
+    const normalized = normalizeXOAuthTimeline({
+      account,
+      timeline: page([
+        post({
+          id: "105",
+          text: topLevelText,
+          note_tweet: {
+            text: noteText,
+            entities: {
+              urls: [{ start, end: start + quoteUrl.length, url: quoteUrl }],
+            },
+          },
+          referenced_tweets: [{ type: "quoted", id: "70" }],
+          entities: {
+            urls: [
+              {
+                start: topLevelText.indexOf(quoteUrl),
+                end: topLevelText.indexOf(quoteUrl) + quoteUrl.length,
+                url: quoteUrl,
+                expanded_url: "https://x.com/quoted/status/70",
+              },
+            ],
+          },
+        }),
+      ]),
+      limits: X_SOURCE_LIMITS,
+      retrievedAt,
+    });
+
+    const imported = normalized.selection.posts[0]!;
+    expect(imported.references).toEqual([
+      {
+        kind: "quoted",
+        postId: "70",
+        url: "https://x.com/quoted/status/70",
+        textUrl: quoteUrl,
+        textSpan: { start, end: start + quoteUrl.length },
+      },
+    ]);
+    expect(imported.entities?.urls).toEqual([
+      {
+        start,
+        end: start + quoteUrl.length,
+        url: quoteUrl,
+        expanded_url: "https://x.com/quoted/status/70",
+      },
+    ]);
+  });
+
+  test("enriches and deduplicates equivalent partial Note Tweet quote entities", () => {
+    const quoteUrl = "https://t.co/quote";
+    const noteText = `${"a".repeat(250_000)} ${quoteUrl}`;
+    const topLevelText = `Long-form authored commentary… ${quoteUrl}`;
+    const start = noteText.indexOf(quoteUrl);
+    const partial = { url: quoteUrl };
+    const normalized = normalizeXOAuthTimeline({
+      account,
+      timeline: page([
+        post({
+          id: "107",
+          text: topLevelText,
+          note_tweet: {
+            text: noteText,
+            entities: { urls: Array.from({ length: 1_024 }, () => partial) },
+          },
+          referenced_tweets: [{ type: "quoted", id: "70" }],
+          entities: {
+            urls: [
+              {
+                start: topLevelText.indexOf(quoteUrl),
+                end: topLevelText.indexOf(quoteUrl) + quoteUrl.length,
+                url: quoteUrl,
+                expanded_url: "https://x.com/quoted/status/70",
+              },
+            ],
+          },
+        }),
+      ]),
+      limits: X_SOURCE_LIMITS,
+      retrievedAt,
+    });
+
+    expect(normalized.selection.posts[0]!.entities?.urls).toEqual([
+      {
+        start,
+        end: start + quoteUrl.length,
+        url: quoteUrl,
+        expanded_url: "https://x.com/quoted/status/70",
+      },
+    ]);
+  });
+
+  test("rejects invalid top-level quote evidence before deriving a Note Tweet entity", () => {
+    const quoteUrl = "https://t.co/quote";
+    const noteText = `Long-form authored commentary ${quoteUrl}`;
+    const quoteEntity = {
+      start: 0,
+      end: 3,
+      url: quoteUrl,
+      expanded_url: "https://x.com/quoted/status/70",
+    };
+    const timeline = (
+      text: string,
+      entity: {
+        readonly url: string;
+        readonly expanded_url?: string;
+        readonly start?: number;
+        readonly end?: number;
+      },
+    ) =>
+      page([
+        post({
+          id: "106",
+          text,
+          note_tweet: { text: noteText },
+          referenced_tweets: [{ type: "quoted", id: "70" }],
+          entities: { urls: [entity] },
+        }),
+      ]);
+
+    expect(() =>
+      normalizeXOAuthTimeline({
+        account,
+        timeline: timeline(`Truncated… ${quoteUrl}`, quoteEntity),
+        limits: X_SOURCE_LIMITS,
+        retrievedAt,
+      }),
+    ).toThrow("offsets do not match");
+    expect(() =>
+      normalizeXOAuthTimeline({
+        account,
+        timeline: timeline("Truncated without its URL", {
+          url: quoteUrl,
+          expanded_url: quoteEntity.expanded_url,
+        }),
+        limits: X_SOURCE_LIMITS,
+        retrievedAt,
+      }),
+    ).toThrow("no unambiguous exact-text span");
+  });
+
   test("compiles an equivalent provider and archive record to identical candidates", async () => {
     const mention = "@Friend";
     const hashtag = "#Topic";

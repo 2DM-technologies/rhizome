@@ -89,4 +89,50 @@ describe("X structured entities", () => {
       }),
     ).toThrow("X structured entities contain overlapping exact-text spans");
   });
+
+  test("reuses one scalar offset map at the maximum text and entity bounds", () => {
+    const emojiCount = 495_000;
+    const tokens = Array.from({ length: 1_024 }, (_, index) => `#tag${index}`);
+    const suffix = ` ${tokens.join(" ")}`;
+    const text = `${"🔥".repeat(emojiCount)}${suffix}`;
+    let suffixOffset = 1;
+    const hashtags = tokens.map((token) => {
+      const start = emojiCount + suffixOffset;
+      suffixOffset += token.length + 1;
+      return { tag: token.slice(1), start, end: start + token.length };
+    });
+
+    expect(text.length).toBeLessThanOrEqual(1_000_000);
+    expect(normalizeXEntities(text, { hashtags })?.hashtags).toHaveLength(1_024);
+  });
+
+  test("bounds hostile offset-less matching work", () => {
+    const text = "a".repeat(1_000_000);
+    const urls = Array.from({ length: 1_024 }, (_, index) => ({ url: `a${index}` }));
+    expect(() => normalizeXEntities(text, { urls })).toThrow("matching exceeds its work limit");
+  });
+
+  test("does not match shorter offset-less handles or tags inside longer tokens", () => {
+    const text = "@foobar @foo #tagged #tag $CASHFLOW $CASH";
+    expect(
+      normalizeXEntities(text, {
+        mentions: [{ username: "foobar" }, { username: "foo" }],
+        hashtags: [{ tag: "tagged" }, { tag: "tag" }],
+        cashtags: [{ tag: "CASHFLOW" }, { tag: "CASH" }],
+      }),
+    ).toEqual({
+      mentions: [
+        { start: 0, end: 7, username: "foobar" },
+        { start: 8, end: 12, username: "foo" },
+      ],
+      hashtags: [
+        { start: 13, end: 20, tag: "tagged" },
+        { start: 21, end: 25, tag: "tag" },
+      ],
+      cashtags: [
+        { start: 26, end: 35, tag: "CASHFLOW" },
+        { start: 36, end: 41, tag: "CASH" },
+      ],
+    });
+  });
 });

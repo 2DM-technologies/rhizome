@@ -1,13 +1,15 @@
-import type {
-  NormalizedXAttachment,
-  NormalizedXEntities,
-  NormalizedXPost,
-  NormalizedXPostReference,
-  NormalizedXUrlEntity,
-  XAccountIdentity,
-  XDeclaredMediaOmissionReason,
-  XMediaOmissionReason,
-  XSelectionCounts,
+import {
+  isXAccountName,
+  isXHandle,
+  type NormalizedXAttachment,
+  type NormalizedXEntities,
+  type NormalizedXPost,
+  type NormalizedXPostReference,
+  type NormalizedXUrlEntity,
+  type XAccountIdentity,
+  type XDeclaredMediaOmissionReason,
+  type XMediaOmissionReason,
+  type XSelectionCounts,
 } from "../contracts.ts";
 import { isXStatusUrl, normalizeXEntities, type XEntitiesInput } from "../entities.ts";
 
@@ -59,6 +61,11 @@ export interface RawXArchiveTweetEnvelope {
   readonly tweet: Readonly<Record<string, unknown>>;
   /** Current downloadable archives store long-form text separately from the tweet row. */
   readonly noteTweet?: Readonly<Record<string, unknown>>;
+}
+
+export interface ParsedRawArchiveNoteTweet {
+  readonly raw: Readonly<Record<string, unknown>>;
+  readonly parsed: ParsedCurrentNoteTweet;
 }
 
 export interface XArchiveSourceManifest {
@@ -198,8 +205,14 @@ export function parseRawArchiveAccount(value: unknown): XAccountIdentity & {
   if (!record(account) || !decimal(account.accountId)) {
     throw new Error("X archive account identity is invalid");
   }
-  const handle = optionalString(account.username, 64);
+  const handle = optionalString(account.username, 15);
   const name = optionalString(account.accountDisplayName, 256, true);
+  if (
+    (handle !== undefined && !isXHandle(handle)) ||
+    (name !== undefined && !isXAccountName(name))
+  ) {
+    throw new Error("X archive account metadata is invalid");
+  }
   const archiveGeneratedAt = optionalDateTime(account.archiveGeneratedAt);
   return {
     id: account.accountId,
@@ -226,24 +239,27 @@ export function parseRawArchiveTweets(value: unknown): RawXArchiveTweetEnvelope[
   });
 }
 
-export function parseRawArchiveNoteTweets(value: unknown): Readonly<Record<string, unknown>>[] {
+export function parseRawArchiveNoteTweets(value: unknown): ParsedRawArchiveNoteTweet[] {
   if (!Array.isArray(value)) throw new Error("X archive Note Tweet payload must be an array");
   return value.map((entry, index) => {
     if (!record(entry) || !record(entry.noteTweet)) {
       throw new Error(`X archive Note Tweet record ${index} is invalid`);
     }
-    parseCurrentNoteTweet(entry.noteTweet, index);
-    return entry.noteTweet;
+    return {
+      raw: entry.noteTweet,
+      parsed: parseCurrentNoteTweet(entry.noteTweet, `Note Tweet record ${index}`),
+    };
   });
 }
 
 /**
  * Current archives do not expose a tweet ID on Note Tweet rows. Associate by the exact creation
- * instant and the provider's truncated tweet-text prefix, rejecting missing or ambiguous matches.
+ * instant and truncated tweet-text prefix. Orphan/ineligible rows are irrelevant to the selected
+ * source, while ambiguity around a potentially eligible post still fails closed.
  */
 export function associateArchiveNoteTweets(
   tweets: readonly RawXArchiveTweetEnvelope[],
-  noteTweets: readonly Readonly<Record<string, unknown>>[],
+  noteTweets: readonly ParsedRawArchiveNoteTweet[],
 ): RawXArchiveTweetEnvelope[] {
   const result: RawXArchiveTweetEnvelope[] = tweets.map(({ tweet }) => ({ tweet }));
   const claimedTweets = new Set<number>();
@@ -254,31 +270,46 @@ export function associateArchiveNoteTweets(
       readonly index: number;
       readonly id: string;
       readonly raw: Readonly<Record<string, unknown>>;
+      readonly definitelyIneligible: boolean;
     }>
   >();
   for (const [index, { tweet: raw }] of tweets.entries()) {
     const id = requiredDecimal(raw.id_str, "tweet id");
     const publishedAt = twitterDateTime(raw.created_at, id);
+    const rawText = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
+    const definitelyIneligible = Boolean(
+      decimal(raw.in_reply_to_status_id_str) ||
+      decimal(raw.retweeted_status_id_str) ||
+      isBareArchiveRepost(raw, rawText, id),
+    );
     const sameInstant = tweetsByCreatedAt.get(publishedAt) ?? [];
-    sameInstant.push({ index, id, raw });
+    sameInstant.push({ index, id, raw, definitelyIneligible });
     tweetsByCreatedAt.set(publishedAt, sameInstant);
   }
-  for (const [noteIndex, rawNote] of noteTweets.entries()) {
-    const note = parseCurrentNoteTweet(rawNote, noteIndex);
+  for (const { raw: rawNote, parsed: note } of noteTweets) {
     if (noteIds.has(note.id)) throw new Error(`X archive repeats Note Tweet ${note.id}`);
     noteIds.add(note.id);
-    const matches: number[] = [];
-    for (const { index, id, raw } of tweetsByCreatedAt.get(note.createdAt) ?? []) {
+    const candidates = tweetsByCreatedAt.get(note.createdAt) ?? [];
+    const matches: (typeof candidates)[number][] = [];
+    for (const candidate of candidates) {
+      const { id, raw } = candidate;
       const rawText = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
       const text = resolvedNoteTweetText(raw, rawText, note.text, id);
-      if (text !== undefined) matches.push(index);
+      if (text !== undefined) matches.push(candidate);
     }
-    if (matches.length !== 1) {
+    if (
+      (matches.length === 0 &&
+        candidates.every(({ definitelyIneligible }) => definitelyIneligible)) ||
+      (matches.length > 0 && matches.every(({ definitelyIneligible }) => definitelyIneligible))
+    ) {
+      continue;
+    }
+    if (matches.length !== 1 || matches[0]!.definitelyIneligible) {
       throw new Error(
         `X archive Note Tweet ${note.id} has ${matches.length === 0 ? "no" : "an ambiguous"} tweet association`,
       );
     }
-    const index = matches[0]!;
+    const { index } = matches[0]!;
     if (claimedTweets.has(index)) {
       throw new Error(
         `X archive tweet ${String(tweets[index]!.tweet.id_str)} repeats Note Tweet data`,
@@ -300,7 +331,13 @@ export function normalizeRawArchiveTweet(
   const publishedAt = twitterDateTime(raw.created_at, id);
   const rawText = requiredString(raw.full_text, `tweet ${id} text`, 1_000_000);
   const associatedNote = envelope.noteTweet
-    ? resolvedAssociatedNoteTweet(raw, rawText, publishedAt, envelope.noteTweet, id)
+    ? resolvedAssociatedNoteTweet(
+        raw,
+        rawText,
+        publishedAt,
+        parseCurrentNoteTweet(envelope.noteTweet, `tweet ${id} Note Tweet`),
+        id,
+      )
     : undefined;
   const text = associatedNote?.text ?? rawText;
   const archiveEntities = normalizeArchiveEntities(
@@ -381,7 +418,7 @@ export function normalizeRawArchiveTweet(
   };
 }
 
-interface ParsedCurrentNoteTweet {
+export interface ParsedCurrentNoteTweet {
   readonly id: string;
   readonly createdAt: string;
   readonly text: string;
@@ -390,9 +427,9 @@ interface ParsedCurrentNoteTweet {
 
 function parseCurrentNoteTweet(
   value: Readonly<Record<string, unknown>>,
-  index: number,
+  context: string,
 ): ParsedCurrentNoteTweet {
-  const id = requiredDecimal(value.noteTweetId, `Note Tweet ${index} id`);
+  const id = requiredDecimal(value.noteTweetId, `${context} id`);
   const createdAt = optionalDateTime(value.createdAt);
   const updatedAt = optionalDateTime(value.updatedAt);
   if (!createdAt || !updatedAt || !record(value.lifecycle) || !record(value.core)) {
@@ -472,10 +509,9 @@ function resolvedAssociatedNoteTweet(
   raw: Readonly<Record<string, unknown>>,
   rawText: string,
   publishedAt: string,
-  rawNote: Readonly<Record<string, unknown>>,
+  note: ParsedCurrentNoteTweet,
   postId: string,
 ): { readonly text: string; readonly prefix: string; readonly note: ParsedCurrentNoteTweet } {
-  const note = parseCurrentNoteTweet(rawNote, 0);
   const resolved =
     note.createdAt === publishedAt
       ? resolvedNoteTweetText(raw, rawText, note.text, postId)
@@ -625,9 +661,8 @@ export function assertSelectionManifest(
   }
   if (
     (value.archiveGeneratedAt !== undefined && !dateTime(value.archiveGeneratedAt)) ||
-    (value.account.handle !== undefined &&
-      (typeof value.account.handle !== "string" || !value.account.handle)) ||
-    (value.account.name !== undefined && typeof value.account.name !== "string")
+    (value.account.handle !== undefined && !isXHandle(value.account.handle)) ||
+    (value.account.name !== undefined && !isXAccountName(value.account.name))
   ) {
     throw new Error("X archive selection manifest account metadata is invalid");
   }

@@ -92,6 +92,22 @@ export interface XAccountIdentity {
   readonly name?: string;
 }
 
+const X_HANDLE = /^[A-Za-z0-9_]{1,15}$/u;
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+export function isXHandle(value: unknown): value is string {
+  return typeof value === "string" && X_HANDLE.test(value);
+}
+
+export function isXAccountName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= 256 &&
+    !CONTROL_CHARACTER.test(value) &&
+    new TextEncoder().encode(value).byteLength <= 256
+  );
+}
+
 export interface XSelectionCounts {
   readonly sourceRecordCount: number;
   readonly repliesExcluded: number;

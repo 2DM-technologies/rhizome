@@ -13,9 +13,12 @@ import { sha256 } from "../contracts.ts";
 import { compileXPostCandidates } from "../tweet-candidates.ts";
 import { prepareXArchiveCapture } from "./browser-capture.ts";
 import {
+  X_ARCHIVE_CAPTURE_FORMAT,
   X_ARCHIVE_CAPTURE_MIME,
+  assertSelectionManifest,
   associateArchiveNoteTweets,
   normalizeRawArchiveTweet,
+  parseRawArchiveNoteTweets,
   type RawXArchiveTweetEnvelope,
 } from "./contracts.ts";
 import { xArchiveParser } from "./parser.ts";
@@ -306,9 +309,148 @@ describe("X archive selective capture", () => {
     expect(() =>
       associateArchiveNoteTweets(
         [currentShapes.truncatedNoteTweet, duplicate],
-        [currentShapes.currentNoteTweet.noteTweet],
+        parseRawArchiveNoteTweets([currentShapes.currentNoteTweet]),
       ),
     ).toThrow("ambiguous");
+  });
+
+  test("ignores orphan and structurally ineligible Note Tweets but protects eligible exact text", () => {
+    const orphan = structuredClone(currentShapes.currentNoteTweet) as {
+      noteTweet: Record<string, unknown>;
+    };
+    orphan.noteTweet.createdAt = "2025-12-03T04:52:54.000Z";
+    expect(
+      associateArchiveNoteTweets(
+        [currentShapes.truncatedNoteTweet],
+        parseRawArchiveNoteTweets([orphan]),
+      ),
+    ).toEqual([{ tweet: currentShapes.truncatedNoteTweet.tweet }]);
+
+    const reply = structuredClone(currentShapes.truncatedNoteTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    reply.tweet.in_reply_to_status_id_str = "99";
+    expect(
+      associateArchiveNoteTweets(
+        [reply],
+        parseRawArchiveNoteTweets([currentShapes.currentNoteTweet]),
+      ),
+    ).toEqual([{ tweet: reply.tweet }]);
+
+    const excludedMatch = structuredClone(currentShapes.truncatedNoteTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    excludedMatch.tweet.retweeted_status_id_str = "98";
+
+    const differentEligible = structuredClone(currentShapes.truncatedNoteTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    differentEligible.tweet.id_str = "2000000000000000005";
+    differentEligible.tweet.conversation_id_str = "2000000000000000005";
+    differentEligible.tweet.full_text = "A different eligible post";
+    expect(
+      associateArchiveNoteTweets(
+        [differentEligible, excludedMatch],
+        parseRawArchiveNoteTweets([currentShapes.currentNoteTweet]),
+      ),
+    ).toEqual([{ tweet: differentEligible.tweet }, { tweet: excludedMatch.tweet }]);
+
+    const matchingEligible = structuredClone(currentShapes.truncatedNoteTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    matchingEligible.tweet.id_str = "2000000000000000006";
+    matchingEligible.tweet.conversation_id_str = "2000000000000000006";
+    expect(() =>
+      associateArchiveNoteTweets(
+        [matchingEligible, excludedMatch],
+        parseRawArchiveNoteTweets([currentShapes.currentNoteTweet]),
+      ),
+    ).toThrow("ambiguous");
+
+    const contradiction = structuredClone(currentShapes.currentNoteTweet) as {
+      noteTweet: { core: Record<string, unknown> };
+    };
+    contradiction.noteTweet.core.text = "A different long-form post";
+    contradiction.noteTweet.core.urls = [];
+    expect(() =>
+      associateArchiveNoteTweets(
+        [currentShapes.truncatedNoteTweet],
+        parseRawArchiveNoteTweets([contradiction]),
+      ),
+    ).toThrow("no tweet association");
+  });
+
+  test("preserves repeated Note Tweet hashtags and cashtags by provider order", () => {
+    const tweet = structuredClone(currentShapes.truncatedNoteTweet) as {
+      tweet: Record<string, unknown>;
+    };
+    const truncated = "Long #tag then #tag and $CASH then $CASH…";
+    const full = `${truncated.slice(0, -1)} with more exact text`;
+    tweet.tweet.full_text = truncated;
+    const note = structuredClone(currentShapes.currentNoteTweet) as {
+      noteTweet: { core: Record<string, unknown> };
+    };
+    note.noteTweet.core.text = full;
+    note.noteTweet.core.urls = [];
+    note.noteTweet.core.mentions = [];
+    note.noteTweet.core.hashtags = ["tag", "tag"];
+    note.noteTweet.core.cashtags = ["CASH", "CASH"];
+
+    const [associated] = associateArchiveNoteTweets([tweet], parseRawArchiveNoteTweets([note]));
+    const normalized = normalizeRawArchiveTweet(associated!, {
+      id: "42",
+      handle: "example_user",
+    });
+    const repeatedSpans = (token: string) => {
+      const first = full.indexOf(token);
+      const second = full.indexOf(token, first + token.length);
+      return [
+        { start: first, end: first + token.length, tag: token.slice(1) },
+        { start: second, end: second + token.length, tag: token.slice(1) },
+      ];
+    };
+    expect(normalized.post.entities?.hashtags).toEqual(repeatedSpans("#tag"));
+    expect(normalized.post.entities?.cashtags).toEqual(repeatedSpans("$CASH"));
+  });
+
+  test("bounds compact-capture account metadata before replay", () => {
+    const manifest = {
+      format: X_ARCHIVE_CAPTURE_FORMAT,
+      selectedAt: "2026-08-21T12:00:00.000Z",
+      account: { id: "42", handle: "example_user", name: "Example User" },
+      archiveLayout: { tweetGlobal: "tweets", mediaDirectory: "data/tweets_media" },
+      counts: {
+        sourceRecordCount: 0,
+        repliesExcluded: 0,
+        repostsExcluded: 0,
+        quotesWithoutCommentaryExcluded: 0,
+        authorMismatchesExcluded: 0,
+        eligibleCount: 0,
+        importedCount: 0,
+        cap: 100,
+      },
+      includedMedia: [],
+      mediaOmissions: [],
+    };
+    expect(() => assertSelectionManifest(manifest)).not.toThrow();
+    expect(() =>
+      assertSelectionManifest({
+        ...manifest,
+        account: { ...manifest.account, handle: "a".repeat(16) },
+      }),
+    ).toThrow("account metadata");
+    expect(() =>
+      assertSelectionManifest({
+        ...manifest,
+        account: { ...manifest.account, name: "🔥".repeat(65) },
+      }),
+    ).toThrow("account metadata");
+    expect(() =>
+      assertSelectionManifest({
+        ...manifest,
+        account: { ...manifest.account, name: "unsafe\u0000name" },
+      }),
+    ).toThrow("account metadata");
   });
 
   test("normalizes homogeneous decimal-string entity pairs and rejects mixed pairs", () => {

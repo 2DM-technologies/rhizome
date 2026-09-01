@@ -2,18 +2,20 @@ import type { SourceExecutionLimits } from "../../../../../packages/store-contra
 
 import type { SourceParser } from "../../../source-skills/candidate-bundle.ts";
 import { openValidatedZip, readZipBytes, readZipText } from "../archive/zip.ts";
-import type {
-  NormalizedXAttachment,
-  NormalizedXEntities,
-  NormalizedXPost,
-  NormalizedXPostReference,
-  SelectedXPosts,
-  XAccountIdentity,
-  XMediaOmissionReason,
+import {
+  isXAccountName,
+  isXHandle,
+  sha256,
+  type NormalizedXAttachment,
+  type NormalizedXEntities,
+  type NormalizedXPost,
+  type NormalizedXPostReference,
+  type SelectedXPosts,
+  type XAccountIdentity,
+  type XMediaOmissionReason,
 } from "../contracts.ts";
-import { sha256 } from "../contracts.ts";
 import { X_POST_PARSER_NAME, X_POST_PARSER_VERSION, X_SOURCE_LIMITS } from "../definition.ts";
-import { isXStatusUrl, normalizeXEntities } from "../entities.ts";
+import { isXStatusUrl, normalizeXEntities, normalizeXTextSpan } from "../entities.ts";
 import { compareXPostsNewestFirst, selectXPosts } from "../tweet-candidates.ts";
 import { parseXTimelinePage, type XApiMedia, type XApiPost } from "./timeline.ts";
 
@@ -305,12 +307,7 @@ function normalizePost(
 ): { post: NormalizedXPost; media: readonly XOAuthMediaDescriptor[] } {
   const content = post.note_tweet ?? post;
   const entities = normalizeXEntities(content.text, {
-    urls: (content.entities?.urls ?? []).map((entity) => ({
-      url: entity.url,
-      ...(entity.expanded_url !== undefined ? { expandedUrl: entity.expanded_url } : {}),
-      ...(entity.start !== undefined ? { start: entity.start } : {}),
-      ...(entity.end !== undefined ? { end: entity.end } : {}),
-    })),
+    urls: oauthUrlEntities(post),
     mentions: (content.entities?.mentions ?? []).map((entity) => ({ ...entity })),
     hashtags: (content.entities?.hashtags ?? []).map((entity) => ({ ...entity })),
     cashtags: (content.entities?.cashtags ?? []).map((entity) => ({ ...entity })),
@@ -360,6 +357,73 @@ function normalizePost(
     },
     media,
   };
+}
+
+/** X may omit some Note Tweet URL facts while retaining them on the top-level post. */
+function oauthUrlEntities(post: XApiPost) {
+  const noteTweet = post.note_tweet;
+  const content = noteTweet ?? post;
+  const urls = (content.entities?.urls ?? []).map((entity) => ({
+    url: entity.url,
+    ...(entity.expanded_url !== undefined ? { expandedUrl: entity.expanded_url } : {}),
+    ...(entity.start !== undefined ? { start: entity.start } : {}),
+    ...(entity.end !== undefined ? { end: entity.end } : {}),
+  }));
+  if (!noteTweet) return urls;
+
+  for (const reference of post.referenced_tweets ?? []) {
+    if (
+      reference.type !== "quoted" ||
+      urls.some(
+        ({ expandedUrl }) => expandedUrl !== undefined && isXStatusUrl(expandedUrl, reference.id),
+      )
+    ) {
+      continue;
+    }
+    const matches = (post.entities?.urls ?? []).filter(
+      ({ expanded_url: expandedUrl }) =>
+        expandedUrl !== undefined && isXStatusUrl(expandedUrl, reference.id),
+    );
+    if (matches.length !== 1) continue;
+    const match = matches[0]!;
+    const expandedUrl = match.expanded_url;
+    if (!expandedUrl) continue;
+    normalizeXTextSpan(post.text, match.url, match.start, match.end);
+
+    const matchingNoteUrls = urls
+      .map((entity, index) => ({ entity, index }))
+      .filter(({ entity }) => entity.url === match.url);
+    if (matchingNoteUrls.length === 1) {
+      const { entity, index } = matchingNoteUrls[0]!;
+      if (entity.expandedUrl === undefined) urls[index] = { ...entity, expandedUrl };
+      continue;
+    }
+    if (matchingNoteUrls.length > 1) {
+      const firstEntity = matchingNoteUrls[0]!.entity;
+      if (
+        matchingNoteUrls.every(({ entity }) => entity.expandedUrl === undefined) &&
+        matchingNoteUrls.every(
+          ({ entity }) => entity.start === firstEntity.start && entity.end === firstEntity.end,
+        )
+      ) {
+        for (const { entity, index } of matchingNoteUrls) {
+          urls[index] = { ...entity, expandedUrl };
+        }
+      }
+      continue;
+    }
+
+    const start = noteTweet.text.indexOf(match.url);
+    if (
+      start < 0 ||
+      noteTweet.text.indexOf(match.url, start + match.url.length) >= 0 ||
+      urls.some(({ url, expandedUrl: candidate }) => url === match.url && candidate === expandedUrl)
+    ) {
+      continue;
+    }
+    urls.push({ url: match.url, expandedUrl });
+  }
+  return urls;
 }
 
 function normalizeReferences(
@@ -607,9 +671,8 @@ function assertAccount(value: unknown): XAccountIdentity {
   if (
     !record(value) ||
     !decimal(value.id) ||
-    (value.handle !== undefined &&
-      (typeof value.handle !== "string" || !value.handle || value.handle.length > 64)) ||
-    (value.name !== undefined && (typeof value.name !== "string" || value.name.length > 256))
+    (value.handle !== undefined && !isXHandle(value.handle)) ||
+    (value.name !== undefined && !isXAccountName(value.name))
   ) {
     throw new Error("X OAuth account identity is invalid");
   }
