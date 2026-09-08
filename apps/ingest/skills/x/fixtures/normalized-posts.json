@@ -22,6 +22,8 @@
       "entities": {
         "urls": [
           {
+            "start": 21,
+            "end": 43,
             "url": "https://t.co/unchanged",
             "expanded_url": "https://example.test/article"
           }
@@ -78,6 +80,16 @@
           "textUrl": "https://x.com/quoted/status/72"
         }
       ],
+      "entities": {
+        "urls": [
+          {
+            "start": 2,
+            "end": 32,
+            "url": "https://x.com/quoted/status/72",
+            "expanded_url": "https://x.com/quoted/status/72"
+          }
+        ]
+      },
       "attachments": []
     },
     {
@@ -94,6 +106,16 @@
           "textUrl": "https://x.com/quoted/status/73"
         }
       ],
+      "entities": {
+        "urls": [
+          {
+            "start": 17,
+            "end": 47,
+            "url": "https://x.com/quoted/status/73",
+            "expanded_url": "https://x.com/quoted/status/73"
+          }
+        ]
+      },
       "attachments": [
         {
           "status": "available",

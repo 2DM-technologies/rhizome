@@ -13,7 +13,7 @@ export const X_OAUTH_SKILL_ID = "x_oauth" as const;
 export const X_ARCHIVE_CONNECTOR_VERSION = "x-archive-selection@1" as const;
 export const X_OAUTH_CONNECTOR_VERSION = "x-oauth@1" as const;
 export const X_POST_PARSER_NAME = "x-posts" as const;
-export const X_POST_PARSER_VERSION = "x-posts@1" as const;
+export const X_POST_PARSER_VERSION = "x-posts@1.0.0" as const;
 
 export const X_SOURCE_LIMITS = Object.freeze({
   maxCandidates: 100,

@@ -6,6 +6,8 @@ import { compileTransactionCandidates } from "../skills/transactions/transaction
 import {
   CANDIDATE_BUNDLE_CAPABILITY,
   candidateBundle,
+  sourceJsonObject,
+  sourceJsonValue,
   type SourceCandidateDraft,
 } from "./candidate-bundle.ts";
 
@@ -31,6 +33,30 @@ describe("candidate_bundle@1 compiled-source contract", () => {
 
     expect(bundle.kind).toBe(CANDIDATE_BUNDLE_CAPABILITY);
     expect(bundle.candidates).toEqual(candidates);
+  });
+
+  test("centralizes defensive JSON-safe copies for source-owned facts", () => {
+    const input = { nested: { count: 2 }, values: [true, null, "stable"] };
+    const copied = sourceJsonObject(input, "Synthetic facts");
+    expect(copied).toEqual(input);
+    expect(copied).not.toBe(input);
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => sourceJsonValue(cyclic, "Synthetic facts")).toThrow("contains a cycle");
+    expect(() => sourceJsonObject({ missing: undefined }, "Synthetic facts")).toThrow(
+      "Synthetic facts.missing is undefined",
+    );
+    expect(() => sourceJsonValue(Number.POSITIVE_INFINITY, "Synthetic facts")).toThrow(
+      "not JSON-safe",
+    );
+
+    const specialKey = JSON.parse('{"__proto__":{"polluted":true}}') as Record<string, unknown>;
+    const specialKeyCopy = sourceJsonObject(specialKey, "Synthetic facts");
+    expect(Object.hasOwn(specialKeyCopy, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(specialKeyCopy)).toBe(Object.prototype);
+    expect((specialKeyCopy as { polluted?: boolean }).polluted).toBeUndefined();
+    expect(JSON.stringify(specialKeyCopy)).toBe('{"__proto__":{"polluted":true}}');
   });
 
   test("compiles canonical transaction IR without provider or server behavior", async () => {
@@ -92,10 +118,12 @@ describe("candidate_bundle@1 compiled-source contract", () => {
       },
     ]);
     expect(
-      installedCredentialedSourceSkillDefinitions.map(({ skillId, parser }) => ({
-        skillId,
-        parser: { name: parser.name, version: parser.version },
-      })),
+      installedCredentialedSourceSkillDefinitions
+        .filter(({ skillId }) => skillId === "simplefin")
+        .map(({ skillId, parser }) => ({
+          skillId,
+          parser: { name: parser.name, version: parser.version },
+        })),
     ).toEqual([
       {
         skillId: "simplefin",

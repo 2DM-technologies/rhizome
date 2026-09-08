@@ -85,6 +85,17 @@ test("renders browser-native element previews through the shared media component
   expect(markup).toContain('alt="Preview"');
 });
 
+test("renders text payloads as inert UTF-8 text instead of iframe documents", () => {
+  const markup = renderToStaticMarkup(
+    <ElementPreview title="Post" kind="text" mime="text/plain" src="blob:post" />,
+  );
+
+  expect(markup).toContain("<pre");
+  expect(markup).toContain('data-element-presentation="text"');
+  expect(markup).toContain('title="Text content for Post"');
+  expect(markup).not.toContain("<iframe");
+});
+
 test("frames every detailed native element preview with the shared hairline", () => {
   for (const [kind, mime] of [
     ["image", "image/png"],

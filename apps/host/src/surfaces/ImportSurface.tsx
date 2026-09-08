@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { uuidOf } from "../api/uris.ts";
 import { useVibe, useVibes } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
-import { Button, EntityRow } from "../ui/index.ts";
+import { Button, EntityRow, InlineError } from "../ui/index.ts";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
+import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 
 /**
  * Host-owned entry point for reviewed sources that do not start inside a Vibe.
@@ -18,13 +19,31 @@ export function ImportSurface() {
   const session = useSession();
   const vibes = useVibes();
   const [targetUuid, setTargetUuid] = useState<string | "pending">();
+  const [connectionReturnError, setConnectionReturnError] = useState<string>();
   const target = useVibe(targetUuid === "pending" ? undefined : targetUuid);
+  const sourceConnectionReturn = useSourceConnectionReturn({ kind: "new_vibe" });
 
   const ownedVibes = useMemo(
     () => (vibes.data ?? []).filter((vibe) => vibe.owner === session.data?.user.id),
     [session.data?.user.id, vibes.data],
   );
   const targetIsOwned = target.data?.owner === session.data?.user.id;
+
+  useEffect(() => {
+    if (
+      sourceConnectionReturn.attempt &&
+      !sourceConnectionReturn.failureMessage &&
+      sourceConnectionReturn.attempt.intent.destination.kind === "new_vibe"
+    ) {
+      setTargetUuid("pending");
+    }
+  }, [sourceConnectionReturn.attempt, sourceConnectionReturn.failureMessage]);
+
+  useEffect(() => {
+    if (!sourceConnectionReturn.failureMessage) return;
+    setConnectionReturnError(sourceConnectionReturn.failureMessage);
+    sourceConnectionReturn.consume();
+  }, [sourceConnectionReturn.consume, sourceConnectionReturn.failureMessage]);
 
   function chooseAnotherTarget() {
     setTargetUuid(undefined);
@@ -60,6 +79,7 @@ export function ImportSurface() {
           {targetUuid === "pending" ? (
             <ImportPanel
               configuredSources={[]}
+              sourceConnectionReturn={sourceConnectionReturn}
               onPendingVibeConfirmed={(vibeUuid) => setTargetUuid(vibeUuid)}
             />
           ) : target.data && targetIsOwned ? (
@@ -69,8 +89,11 @@ export function ImportSurface() {
             />
           ) : null}
         </div>
+      ) : sourceConnectionReturn.isPending ? (
+        <Pending label="source connection" />
       ) : (
         <div className="flex max-w-[52rem] flex-col gap-7">
+          {connectionReturnError ? <InlineError>{connectionReturnError}</InlineError> : null}
           <section aria-labelledby="import-existing-vibe" className="flex flex-col gap-3">
             <div>
               <h2 id="import-existing-vibe" className="text-label text-primary">

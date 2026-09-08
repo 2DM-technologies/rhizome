@@ -1,8 +1,11 @@
 import { UUIDV7_PATTERN } from "@rnet/types/patterns";
+import { ingestRecordSchema } from "@rnet/types/schemas";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
 /** Stable package/catalog identity. This is intentionally not a database enum. */
 export const SOURCE_SKILL_ID_PATTERN = "^[a-z][a-z0-9_-]{0,63}$";
+/** A parser pin is persisted as rNet `source.ingest.skill`, so it must satisfy that schema. */
+export const SOURCE_PARSER_VERSION_PATTERN = ingestRecordSchema.properties.skill.pattern;
 export const SOURCE_ID_PATTERN = `^source:${UUIDV7_PATTERN.slice(1, -1)}$`;
 export const SOURCE_CREDENTIAL_ID_PATTERN = `^credential:${UUIDV7_PATTERN.slice(1, -1)}$`;
 
@@ -43,20 +46,35 @@ export const fileCapturePreprocessorManifestSchema = {
 
 export const sourceCredentialClaimPolicySchema = {
   type: "object",
-  required: ["kind", "attempts", "window_hours"],
+  required: ["kind"],
   properties: {
     kind: { enum: SOURCE_CREDENTIAL_CLAIM_POLICIES },
-    attempts: { type: "integer", minimum: 1, maximum: 1_000 },
-    window_hours: { type: "integer", minimum: 1, maximum: 720 },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const claimExchangeConnectionManifestSchema = {
+  type: "object",
+  required: ["mode", "claim_policy"],
+  properties: {
+    mode: { const: "claim_exchange" },
+    claim_policy: sourceCredentialClaimPolicySchema,
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const oauth2PkceConnectionManifestSchema = {
+  type: "object",
+  required: ["mode", "button_label"],
+  properties: {
+    mode: { const: "oauth2_pkce" },
+    button_label: { type: "string", minLength: 1, maxLength: 256 },
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
 export const sourceSkillConnectionManifestSchema = {
-  type: "object",
-  required: ["claim_policy"],
-  properties: { claim_policy: sourceCredentialClaimPolicySchema },
-  additionalProperties: false,
+  oneOf: [claimExchangeConnectionManifestSchema, oauth2PkceConnectionManifestSchema],
 } as const satisfies JSONSchema;
 
 export const sourceSkillInputOptionSchema = {
@@ -120,7 +138,12 @@ export const sourceSkillManifestSchema = {
       required: ["name", "version"],
       properties: {
         name: { type: "string", minLength: 1, maxLength: 256 },
-        version: { type: "string", minLength: 1, maxLength: 256 },
+        version: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          pattern: SOURCE_PARSER_VERSION_PATTERN,
+        },
       },
       additionalProperties: false,
     },

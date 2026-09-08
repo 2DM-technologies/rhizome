@@ -21,7 +21,7 @@ import {
 import { devAuth } from "./auth.ts";
 import type { BlobStore } from "./blobs/index.ts";
 import type { ServerConfig } from "./config.ts";
-import type { Database } from "./db/index.ts";
+import type { Database, ProviderLeasePool } from "./db/index.ts";
 import { notFound, Problem, problemResponse } from "./errors.ts";
 import { createOpenApiDocument } from "./openapi.ts";
 import { createSafePublicAssetFetcher, SafePublicFetcher } from "./public-fetch/index.ts";
@@ -32,6 +32,7 @@ import { createMediaObjectRoutes } from "./routes/media-objects.ts";
 import { createOperationRoutes } from "./routes/operations.ts";
 import { createOriginRoutes } from "./routes/origins.ts";
 import { createSourceCredentialRoutes } from "./routes/source-credentials.ts";
+import { createSourceConnectionRoutes } from "./routes/source-connections.ts";
 import { createSourceSkillRoutes } from "./routes/source-skills.ts";
 import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 import type { AppEnvironment } from "./routes/types.ts";
@@ -43,6 +44,7 @@ export interface AppDependencies {
   config: ServerConfig;
   db: Database;
   blobs: BlobStore;
+  providerLeasePool: ProviderLeasePool;
   credentialedSources?: CredentialedSourceCatalog;
   fileSources?: FileSourceCatalog;
   publicAssetFetcher?: PublicAssetFetcher;
@@ -54,6 +56,7 @@ export function createApp({
   config,
   db,
   blobs,
+  providerLeasePool,
   credentialedSources,
   fileSources,
   publicAssetFetcher,
@@ -77,13 +80,23 @@ export function createApp({
   const credentialCrypto =
     sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
 
-  app.use(logger());
+  const requestLogger = logger();
+  app.use("*", async (context, next) => {
+    // OAuth providers deliver authorization codes in the callback query. Do not allow the
+    // ordinary request logger to serialize that URL, even transiently.
+    if (context.req.path === "/rnet/v0/source-connections/oauth/callback") {
+      await next();
+      return;
+    }
+    await requestLogger(context, next);
+  });
   app.use(
     "*",
     createMiddleware(async (context, next) => {
       const origin = context.req.header("Origin");
       if (origin && config.allowedOrigins.includes(origin)) {
         context.header("Access-Control-Allow-Origin", origin);
+        context.header("Access-Control-Allow-Credentials", "true");
       }
       context.header(
         "Access-Control-Allow-Headers",
@@ -143,6 +156,7 @@ export function createApp({
         credentialCrypto,
         credentialedSources: resolvedCredentialedSources,
         fileSources: resolvedFileSources,
+        providerLeasePool,
         publicRemoteSources: resolvedPublicRemoteSources,
       }),
     },
@@ -153,6 +167,7 @@ export function createApp({
         credentialCrypto,
         credentialedSources: resolvedCredentialedSources,
         fileSources: resolvedFileSources,
+        providerLeasePool,
         publicRemoteSources: resolvedPublicRemoteSources,
       }),
     },
@@ -166,8 +181,20 @@ export function createApp({
       ),
     },
     {
+      basePath: "/rnet/v0/source-connections",
+      router: createSourceConnectionRoutes(db, resolvedCredentialedSources, credentialCrypto, {
+        baseUrl: config.baseUrl,
+        allowedReturnOrigins: config.allowedOrigins,
+      }),
+    },
+    {
       basePath: "/rnet/v0/source-credentials",
-      router: createSourceCredentialRoutes(db, resolvedCredentialedSources, credentialCrypto),
+      router: createSourceCredentialRoutes(
+        db,
+        resolvedCredentialedSources,
+        credentialCrypto,
+        providerLeasePool,
+      ),
     },
     {
       basePath: "/rnet/v0/source-skills",

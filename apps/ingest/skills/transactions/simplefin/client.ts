@@ -134,6 +134,7 @@ export class SimpleFinClient {
   async fetchAccounts(
     accessUrlText: string,
     request: SimpleFinAccountsRequest = {},
+    callerSignal?: AbortSignal,
   ): Promise<Uint8Array> {
     const accessUrl = this.#safeUrl(accessUrlText, "invalid_access_url");
     if (!accessUrl.username || !accessUrl.password) {
@@ -184,13 +185,8 @@ export class SimpleFinClient {
               headers: { Accept: "application/json", Authorization: authorization },
               signal,
             });
-          } catch {
-            if (signal.aborted) {
-              throw new SimpleFinClientError(
-                "request_timeout",
-                "SimpleFIN accounts request timed out",
-              );
-            }
+          } catch (error) {
+            if (signal.aborted) throw error;
             throw new SimpleFinClientError(
               "provider_rejected",
               "SimpleFIN accounts request could not reach the provider",
@@ -237,6 +233,7 @@ export class SimpleFinClient {
           signal,
         );
       },
+      callerSignal,
     );
   }
 
@@ -300,8 +297,12 @@ async function readBoundedResponse(
   response: Response,
   maximumBytes: number,
   message: string,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<Uint8Array> {
+  if (signal.aborted) {
+    await response.body?.cancel();
+    throw signal.reason;
+  }
   const contentLength = response.headers.get("Content-Length");
   if (contentLength !== null) {
     const declaredSize = Number(contentLength);
@@ -315,7 +316,7 @@ async function readBoundedResponse(
   const chunks: Uint8Array[] = [];
   const reader = response.body.getReader();
   const cancelOnAbort = () => void reader.cancel();
-  signal?.addEventListener("abort", cancelOnAbort, { once: true });
+  signal.addEventListener("abort", cancelOnAbort, { once: true });
   let byteLength = 0;
   try {
     while (true) {
@@ -328,8 +329,9 @@ async function readBoundedResponse(
       }
       chunks.push(value);
     }
+    if (signal.aborted) throw signal.reason;
   } finally {
-    signal?.removeEventListener("abort", cancelOnAbort);
+    signal.removeEventListener("abort", cancelOnAbort);
     reader.releaseLock();
   }
 
@@ -342,22 +344,48 @@ async function readBoundedResponse(
   return bytes;
 }
 
+/** Aborts provider I/O at the first deadline, then waits for that operation to settle. */
 async function withRequestDeadline<T>(
   timeoutMs: number,
   timeoutMessage: string,
   run: (signal: AbortSignal) => Promise<T>,
+  callerSignal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
+  const timeoutError = new SimpleFinClientError("request_timeout", timeoutMessage);
+  let abortedBy: "caller" | "timeout" | undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
+
+  const abortFromCaller = (): void => {
+    if (controller.signal.aborted) return;
+    abortedBy = "caller";
+    if (timeout) clearTimeout(timeout);
+    controller.abort(callerSignal?.reason);
+  };
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  if (!controller.signal.aborted) {
     timeout = setTimeout(() => {
-      controller.abort();
-      reject(new SimpleFinClientError("request_timeout", timeoutMessage));
+      if (controller.signal.aborted) return;
+      abortedBy = "timeout";
+      controller.abort(timeoutError);
     }, timeoutMs);
-  });
+  }
+
   try {
-    return await Promise.race([run(controller.signal), expired]);
+    const result = await run(controller.signal);
+    if (abortedBy === "timeout") throw timeoutError;
+    if (abortedBy === "caller") throw controller.signal.reason;
+    return result;
+  } catch (error) {
+    if (abortedBy === "timeout") throw timeoutError;
+    if (abortedBy === "caller") throw controller.signal.reason;
+    throw error;
   } finally {
     if (timeout) clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", abortFromCaller);
   }
 }

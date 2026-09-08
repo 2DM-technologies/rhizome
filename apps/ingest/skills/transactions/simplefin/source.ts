@@ -35,8 +35,6 @@ export interface SimpleFinHistoryPlan {
 
 export function createSimpleFinSkill(options: SimpleFinClientOptions): CredentialedSourceSkill {
   const client = new SimpleFinClient(options);
-  const claimPolicy = simpleFinSourceSkillManifest.connection.claim_policy;
-
   return {
     skillId: SIMPLEFIN_SKILL_ID,
     displayName: simpleFinSourceSkillManifest.label,
@@ -44,11 +42,8 @@ export function createSimpleFinSkill(options: SimpleFinClientOptions): Credentia
     parser: simpleFinParser,
     sourceRequestSchema: simpleFinSourceConfigSchema,
     connection: {
-      claimPolicy: {
-        kind: claimPolicy.kind,
-        attempts: claimPolicy.attempts,
-        windowHours: claimPolicy.window_hours,
-      },
+      mode: "claim_exchange",
+      claimPolicy: simpleFinSourceSkillManifest.connection.claim_policy,
       requestSchema: connectSimpleFinRequestSchema,
       prepare(value) {
         const input = connectRequest(value);
@@ -105,15 +100,19 @@ export function createSimpleFinSkill(options: SimpleFinClientOptions): Credentia
         ...(history.historyRecovery ? { historyRecovery: history.historyRecovery } : {}),
       };
       return {
-        retrieve(secret) {
-          return client.fetchAccounts(secret, {
-            ...(normalizedConfig.accounts
-              ? { accountIds: normalizedConfig.accounts.map(({ account_id }) => account_id) }
-              : {}),
-            startDateEpoch: history.startDateEpoch,
-            endDateEpoch,
-            includePending: normalizedConfig.include_pending === true,
-          });
+        retrieve(secret, { signal }) {
+          return client.fetchAccounts(
+            secret,
+            {
+              ...(normalizedConfig.accounts
+                ? { accountIds: normalizedConfig.accounts.map(({ account_id }) => account_id) }
+                : {}),
+              startDateEpoch: history.startDateEpoch,
+              endDateEpoch,
+              includePending: normalizedConfig.include_pending === true,
+            },
+            signal,
+          );
         },
         compiledSource: {
           kind: CANDIDATE_BUNDLE_CAPABILITY,

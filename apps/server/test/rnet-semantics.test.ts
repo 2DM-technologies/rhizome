@@ -26,12 +26,13 @@ import S3rver from "s3rver";
 import { createApp } from "../src/app.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
-import { createDatabase } from "../src/db/index.ts";
+import { createDatabase, createProviderLeasePool } from "../src/db/index.ts";
 import { seedDb } from "../src/db/seedDb.ts";
 import { createCredentialKeyring } from "../src/services/source-credential-crypto.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 1 });
+const providerLeasePool = createProviderLeasePool(databaseUrl, { max: 1 });
 const buckets = {
   elements: "elements",
   origins: "origins",
@@ -58,7 +59,7 @@ let otherOrigin: OriginArtifact;
 let otherElement: { uri: string };
 let otherObject: MediaObject;
 let authoredElementBytesUrl = "";
-const authoredPayload = "atomic client payload";
+const authoredPayload = "“atomic” client payload 🤔";
 
 beforeAll(async () => {
   await client.unsafe(`
@@ -101,7 +102,7 @@ beforeAll(async () => {
       buckets,
     },
   };
-  app = createApp({ config, db, blobs: createBlobStore(config) }).app;
+  app = createApp({ config, db, blobs: createBlobStore(config), providerLeasePool }).app;
   await seedDb(db);
 });
 
@@ -114,6 +115,7 @@ afterAll(async () => {
       await request(`/rnet/v0/vibes/${id}`, { method: "DELETE", headers }).catch(() => undefined);
   }
   await s3?.close();
+  await providerLeasePool.end();
   await client.end();
   if (scratch) await rm(scratch, { recursive: true, force: true });
 });
@@ -285,7 +287,7 @@ describe("rNet semantics", () => {
     const payload = await app.request(authoredElementBytesUrl, { headers: dmachine });
     expect(payload.ok).toBe(true);
     expect(payload.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(payload.headers.get("Content-Type")).toBe("text/plain");
+    expect(payload.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
     expect(await payload.text()).toBe(authoredPayload);
     expect(element.content_hash).toBe(await sha256(new TextEncoder().encode(authoredPayload)));
   });
