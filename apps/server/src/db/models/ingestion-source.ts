@@ -1,3 +1,4 @@
+import type { SourceExecutionLimits } from "@rhizome/store-contract";
 import { sql } from "drizzle-orm";
 import {
   check,
@@ -32,6 +33,7 @@ export const ingestionSources = pgTable(
     connectorVersion: text("connector_version").notNull(),
     parser: text("parser").notNull(),
     parserVersion: text("parser_version").notNull(),
+    executionLimits: jsonb("execution_limits").$type<SourceExecutionLimits>().notNull(),
     originUuid: uuid("origin_uuid"),
     credentialUuid: uuid("credential_uuid"),
     config: jsonb("config").$type<JsonObject>(),

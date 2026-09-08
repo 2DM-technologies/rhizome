@@ -167,12 +167,21 @@ describe("SimpleFIN HTTP client", () => {
 
   test("enforces one deadline across provider fetches and streaming bodies", async () => {
     let fetchSignal: AbortSignal | null = null;
+    let providerSettled = false;
     const stalledFetch = new SimpleFinClient({
       allowedHosts,
       requestTimeoutMs: 10,
       fetch: async (_input, init) => {
         fetchSignal = init?.signal ?? null;
-        return new Promise<Response>(() => undefined);
+        if (!fetchSignal) throw new Error("Expected a provider abort signal");
+        return new Promise<Response>((_resolve, reject) => {
+          const rejectOnAbort = () => {
+            providerSettled = true;
+            reject(fetchSignal?.reason);
+          };
+          if (fetchSignal?.aborted) rejectOnAbort();
+          else fetchSignal?.addEventListener("abort", rejectOnAbort, { once: true });
+        });
       },
     });
     await expect(stalledFetch.claimSetupToken(setupToken)).rejects.toMatchObject({
@@ -180,7 +189,9 @@ describe("SimpleFIN HTTP client", () => {
       message: expect.stringContaining("outcome is unknown"),
     });
     expect((fetchSignal as AbortSignal | null)?.aborted).toBe(true);
+    expect(providerSettled).toBe(true);
 
+    let bodyCancelled = false;
     const stalledBody = new SimpleFinClient({
       allowedHosts,
       requestTimeoutMs: 10,
@@ -190,12 +201,46 @@ describe("SimpleFIN HTTP client", () => {
             start(controller) {
               controller.enqueue(new TextEncoder().encode("partial"));
             },
+            cancel() {
+              bodyCancelled = true;
+            },
           }),
         ),
     });
     await expect(stalledBody.fetchAccounts(accessUrl)).rejects.toMatchObject({
       kind: "request_timeout",
     });
+    expect(bodyCancelled).toBe(true);
+  });
+
+  test("combines caller cancellation with the request deadline", async () => {
+    let fetchSignal: AbortSignal | undefined;
+    let providerSettled = false;
+    const client = new SimpleFinClient({
+      allowedHosts,
+      requestTimeoutMs: 60_000,
+      fetch: async (_input, init) => {
+        fetchSignal = init?.signal ?? undefined;
+        if (!fetchSignal) throw new Error("Expected a provider abort signal");
+        return new Promise<Response>((_resolve, reject) => {
+          const rejectOnAbort = () => {
+            providerSettled = true;
+            reject(fetchSignal?.reason);
+          };
+          if (fetchSignal?.aborted) rejectOnAbort();
+          else fetchSignal?.addEventListener("abort", rejectOnAbort, { once: true });
+        });
+      },
+    });
+    const caller = new AbortController();
+    const reason = new Error("caller cancelled");
+
+    const retrieval = client.fetchAccounts(accessUrl, {}, caller.signal);
+    caller.abort(reason);
+
+    await expect(retrieval).rejects.toBe(reason);
+    expect(fetchSignal?.aborted).toBe(true);
+    expect(providerSettled).toBe(true);
   });
 });
 

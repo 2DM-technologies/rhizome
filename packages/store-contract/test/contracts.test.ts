@@ -1,13 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { mediaObjectSchema, vibeSchema } from "@rnet/types/schemas";
+import { ingestRecordSchema, mediaObjectSchema, vibeSchema } from "@rnet/types/schemas";
 
 import {
   STORE_SCHEMA_COMPONENTS,
+  SOURCE_PARSER_VERSION_PATTERN,
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
   createCredentialIngestionSourceRequestSchema,
   createFileIngestionSourceRequestSchema,
   createImportPreviewRequestSchema,
+  createPendingVibeImportRequestSchema,
   createIngestionSourceRequestSchema,
   createMediaObjectsRequestSchema,
   createPublicRemoteIngestionSourceRequestSchema,
@@ -22,7 +24,9 @@ import {
   publicRemoteIngestionSourceDocumentSchema,
   setMediaObjectUserRequestSchema,
   reviewImportContinuationRequestSchema,
+  confirmPendingVibeImportRequestSchema,
   sourceActionRequiredSchema,
+  sourceExecutionLimitsSchema,
   sourceSkillManifestSchema,
   sourceSkillManifestsResponseSchema,
   sourceCredentialDocumentSchema,
@@ -86,6 +90,12 @@ describe("shared store schemas", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateImportPreviewRequest).toBe(
       createImportPreviewRequestSchema,
     );
+    expect(STORE_SCHEMA_COMPONENTS.CreatePendingVibeImportRequest).toBe(
+      createPendingVibeImportRequestSchema,
+    );
+    expect(STORE_SCHEMA_COMPONENTS.ConfirmPendingVibeImportRequest).toBe(
+      confirmPendingVibeImportRequestSchema,
+    );
     expect(createImportPreviewRequestSchema.properties.continuation_token).toBe(
       reviewImportContinuationRequestSchema.properties.continuation_token,
     );
@@ -110,9 +120,26 @@ describe("shared store schemas", () => {
       connector_version: { type: "string", minLength: 1 },
       parser: { type: "string", minLength: 1 },
       parser_version: { type: "string", minLength: 1 },
+      limits: sourceExecutionLimitsSchema,
     });
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("credential");
     expect(fileIngestionSourceDocumentSchema.properties).not.toHaveProperty("provider");
+  });
+
+  test("publishes one closed execution-limit contract for manifests and persisted sources", () => {
+    expect(sourceSkillManifestSchema.required).toContain("limits");
+    expect(sourceSkillManifestSchema.properties.limits).toBe(sourceExecutionLimitsSchema);
+    expect(fileIngestionSourceDocumentSchema.properties.limits).toBe(sourceExecutionLimitsSchema);
+    expect(credentialIngestionSourceDocumentSchema.properties.limits).toBe(
+      sourceExecutionLimitsSchema,
+    );
+    expect(publicRemoteIngestionSourceDocumentSchema.properties.limits).toBe(
+      sourceExecutionLimitsSchema,
+    );
+    expect(sourceExecutionLimitsSchema).toMatchObject({
+      required: ["maxCandidates", "maxCaptureBytes", "maxElementBytes", "maxTotalElementBytes"],
+      additionalProperties: false,
+    });
   });
 
   test("keeps provider secrets out of generic credential and source documents", () => {
@@ -166,16 +193,39 @@ describe("shared store schemas", () => {
       source_kind: { enum: ["file", "public_remote", "credentialed_remote"] },
       connector_version: { type: "string" },
       parser: { type: "object" },
-      connection: { type: "object" },
       input_fields: { type: "array" },
       review_actions: { type: "array" },
     });
+    expect(SOURCE_PARSER_VERSION_PATTERN).toBe(ingestRecordSchema.properties.skill.pattern);
+    expect(sourceSkillManifestSchema.properties.parser.properties.version.pattern).toBe(
+      ingestRecordSchema.properties.skill.pattern,
+    );
+    expect(sourceSkillManifestSchema.properties.connection.oneOf).toEqual([
+      expect.objectContaining({
+        required: ["mode", "claim_policy"],
+        properties: expect.objectContaining({ mode: { const: "claim_exchange" } }),
+      }),
+      expect.objectContaining({
+        required: ["mode", "button_label"],
+        properties: expect.objectContaining({ mode: { const: "oauth2_pkce" } }),
+      }),
+    ]);
+    expect(
+      sourceSkillManifestSchema.properties.connection.oneOf[0].properties.claim_policy.properties,
+    ).not.toHaveProperty("attempts");
     expect(sourceActionRequiredSchema.properties).toMatchObject({
       kind: { const: "source_action_required" },
       action: { enum: ["review_import"] },
       continuation_token: { type: "string" },
     });
     expect(sourceActionRequiredSchema.properties).not.toHaveProperty("rebaseline");
+    expect(sourceActionRequiredSchema.properties.destination).toMatchObject({
+      type: "object",
+      required: ["kind", "id"],
+      additionalProperties: false,
+    });
+    expect(createPendingVibeImportRequestSchema.required).toEqual(["source"]);
+    expect(confirmPendingVibeImportRequestSchema.required).toEqual(["title"]);
     expect(sourceCredentialDocumentSchema.properties).not.toHaveProperty("secret");
   });
 });

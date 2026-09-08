@@ -100,6 +100,7 @@ function operation(contract: OpenApiRouteContract): JsonObject {
   const parameters = [
     ...parametersFor(contract.request?.param, "path"),
     ...parametersFor(contract.request?.header, "header"),
+    ...parametersFor(contract.request?.query, "query"),
   ];
   const requestBody = contract.request ? requestBodyFor(contract.request) : undefined;
   const responses: Record<string, unknown> = {};
@@ -141,7 +142,7 @@ function problemResponseFor(status: number): JsonObject {
 
 function parametersFor(
   schema: ContractSchema<object> | undefined,
-  location: "header" | "path",
+  location: "header" | "path" | "query",
 ): JsonObject[] {
   if (!schema || typeof schema.document !== "object") return [];
   const document = schema.document as JsonObject;
@@ -287,6 +288,7 @@ function componentForId(id: string): string | undefined {
 
 function statusDescription(status: number): string {
   if (status === 204) return "No content";
+  if (status >= 300 && status < 400) return "Redirect response";
   if (status >= 200 && status < 300) return "Successful response";
   return "Problem response";
 }

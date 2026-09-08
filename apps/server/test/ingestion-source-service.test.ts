@@ -27,6 +27,12 @@ const ownerUuid = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 const originUuid = "0198f2a1-a001-7a01-8001-000000000001";
 const sourceUuid = "0198f2a1-a002-7a02-8002-000000000002";
 const credentialUuid = "0198f2a1-a003-7a03-8003-000000000003";
+const sourceExecutionLimits = {
+  maxCandidates: 100_000,
+  maxCaptureBytes: 50 * 1_024 * 1_024,
+  maxElementBytes: 50 * 1_024 * 1_024,
+  maxTotalElementBytes: 50 * 1_024 * 1_024,
+} as const;
 const noCredentialedSources = new CredentialedSourceCatalog([]);
 const noPublicRemoteSources = new PublicRemoteSourceCatalog({ current: [] });
 const syntheticPublicSources = new PublicRemoteSourceCatalog({
@@ -81,6 +87,7 @@ describe("ingestion sources", () => {
       connector_version: "origin-upload@1.0.0",
       parser: "csv",
       parser_version: "csv@1.1.0",
+      limits: sourceExecutionLimits,
       origin: `rnet://origin/${originUuid}`,
       created_at: "2026-08-29T12:00:00.000Z",
     });
@@ -107,6 +114,7 @@ describe("ingestion sources", () => {
       connector_version: "simplefin-connector@1.0.0",
       parser: "simplefin",
       parser_version: "simplefin@1.0.0",
+      limits: sourceExecutionLimits,
       config: { include_pending: false },
       created_at: "2026-08-29T12:00:00.000Z",
     });
@@ -120,7 +128,7 @@ describe("ingestion sources", () => {
           skillId: "synthetic_public",
           connectorVersion: "synthetic-public-connector@1",
           parser: "synthetic-public",
-          parserVersion: "synthetic-public@1",
+          parserVersion: "synthetic-public@1.0.0",
           originUuid: null,
           config: { locator: "https://public.example.test/feed" },
         }),
@@ -131,7 +139,8 @@ describe("ingestion sources", () => {
       skill_id: "synthetic_public",
       connector_version: "synthetic-public-connector@1",
       parser: "synthetic-public",
-      parser_version: "synthetic-public@1",
+      parser_version: "synthetic-public@1.0.0",
+      limits: sourceExecutionLimits,
       config: { locator: "https://public.example.test/feed" },
       created_at: "2026-08-29T12:00:00.000Z",
     });
@@ -157,7 +166,7 @@ describe("ingestion sources", () => {
       skillId: "synthetic_public",
       connectorVersion: "synthetic-public-connector@1",
       parser: "synthetic-public",
-      parserVersion: "synthetic-public@1",
+      parserVersion: "synthetic-public@1.0.0",
       config: { locator: "https://public.example.test/feed" },
     });
   });
@@ -315,10 +324,26 @@ describe("ingestion sources", () => {
       connectorVersion: "origin-upload@1.0.0",
       parser: "ofx",
       parserVersion: "ofx@1.1.0",
+      executionLimits: sourceExecutionLimits,
       originUuid,
     });
     expect(inserted?.uuid).toMatch(/^[0-9a-f-]{36}$/);
     expect(created).toMatchObject(inserted!);
+  });
+
+  test("rejects a file capture that exceeds the installed source limit", async () => {
+    let inserted = false;
+    const service = ownedService(
+      databaseWithOrigin(origin({ byteSize: sourceExecutionLimits.maxCaptureBytes + 1 }), () => {
+        inserted = true;
+      }),
+    );
+
+    const problem = await capturedProblem(
+      service.create({ origin: `rnet://origin/${originUuid}`, skill_id: "csv" }),
+    );
+    expect(problem).toMatchObject({ status: 422, code: "payload_too_large" });
+    expect(inserted).toBe(false);
   });
 });
 
@@ -339,7 +364,7 @@ function ownedService(
 function syntheticPublicSkill(): PublicRemoteSourceSkill {
   const parser = {
     name: "synthetic-public",
-    version: "synthetic-public@1",
+    version: "synthetic-public@1.0.0",
     async parse() {
       return {};
     },
@@ -354,6 +379,12 @@ function syntheticPublicSkill(): PublicRemoteSourceSkill {
       source_kind: "public_remote",
       connector_version: "synthetic-public-connector@1",
       parser: { name: parser.name, version: parser.version },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024,
+        maxElementBytes: 512,
+        maxTotalElementBytes: 1_024,
+      },
       input_fields: [
         {
           name: "url",
@@ -486,6 +517,7 @@ function source(overrides: Partial<DbIngestionSource> = {}): DbIngestionSource {
     connectorVersion: "origin-upload@1.0.0",
     parser: "csv",
     parserVersion: "csv@1.1.0",
+    executionLimits: sourceExecutionLimits,
     originUuid,
     credentialUuid: null,
     config: null,
@@ -505,6 +537,7 @@ function credential(overrides: Partial<DbSourceCredential> = {}): DbSourceCreden
     metadata: null,
     connectedAt: new Date("2026-08-29T11:00:00.000Z"),
     revokedAt: null,
+    providerRevokedAt: null,
     ...overrides,
   };
 }

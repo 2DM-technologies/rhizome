@@ -16,12 +16,12 @@ export const ARENA_API_ORIGIN = "https://api.are.na" as const;
 
 const CONTENTS_PER_PAGE = 100;
 const DEFAULT_MAX_API_RESPONSE_BYTES = 5 * 1024 * 1024;
-const DEFAULT_MAX_ASSET_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_ASSET_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 40 * 1024 * 1024;
 const DEFAULT_MAX_PAGES = 25;
 const DEFAULT_MAX_BLOCKS = 200;
 const DEFAULT_MAX_REDIRECTS = 3;
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const BLOCK_TYPES = new Set(["Attachment", "Embed", "Image", "Link", "Text"]);
 const MIME = /^[a-z]+\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
 

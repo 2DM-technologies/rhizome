@@ -5,8 +5,11 @@ import type {
   IngestionSourceDocument,
   OperationDocument,
   SourceActionRequired,
+  SourceConnectionAttemptDocument,
+  SourceConnectionIntent,
   SourceCredentialDocument,
   SourceSkillManifest,
+  StartSourceConnectionRequest,
 } from "@rhizome/store-contract";
 
 export const OWNER_ID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
@@ -20,7 +23,7 @@ export const SOURCE_ID = "0198f2a1-f5d0-7bee-aacd-4ba0aa096e07";
 export const VIBE_URI = `rnet://vibe/${VIBE_ID}` as const;
 export const OBJECT_URI = `rnet://object/${OBJECT_ID}` as const;
 export const ELEMENT_URI = `rnet://element/${ELEMENT_ID}` as const;
-export const PAYLOAD_TEXT = "A seeded payload for browser tests.\n";
+export const PAYLOAD_TEXT = "A “seeded” payload 🤔 for browser tests.\n";
 
 const fixtureVibe = {
   rnet_schema: "0.1",
@@ -60,7 +63,7 @@ const fixtureElement = {
   content_hash: "sha256:ddc08041941729fa9a0bdc8703756e531b8b187e3af3bc7455a424c7691d62db",
   mime: "text/plain",
   bytes: `http://127.0.0.1/rnet/v0/elements/${ELEMENT_ID}/bytes`,
-  byte_size: PAYLOAD_TEXT.length,
+  byte_size: Buffer.byteLength(PAYLOAD_TEXT),
   created_at: "2026-08-27T12:00:00.000Z",
 } satisfies MediaElement;
 
@@ -77,6 +80,8 @@ interface MockImportOperation {
   polls: number;
   source: string;
   verify: MockImportVerification;
+  destination?: { title: string };
+  pendingVibe?: boolean;
 }
 
 export interface MockImportVerification {
@@ -101,6 +106,7 @@ export interface MockStagedImport {
   candidates: MediaObject[];
   elements?: MockStagedElement[];
   verification: MockImportVerification;
+  destination?: { title: string };
 }
 
 export interface MockSourceActionDefinition {
@@ -128,6 +134,10 @@ export interface MockSourceSkillAdapter {
     readonly contentHash: string;
     readonly id: string;
     accepts(input: { label: string; mime: string }): boolean;
+  };
+  readonly oauth?: {
+    readonly authorizationEndpoint: string;
+    readonly authorizationCode: string;
   };
   readonly sourceAction?: MockSourceActionDefinition;
   readonly sourceId: string;
@@ -245,12 +255,26 @@ export interface MockStore {
   readonly origins: Map<string, MockOriginUpload>;
   readonly ingestionSources: Map<string, IngestionSourceDocument>;
   readonly sourceCredentials: Map<string, SourceCredentialDocument>;
+  readonly sourceConnectionAttempts: Map<string, SourceConnectionAttemptDocument>;
   /** Hold exactly the next ingestion-source creation until the returned release is called. */
   holdNextIngestionSourceCreation: () => () => void;
   /** Hold exactly the next user-property write until the returned release function is called. */
   holdNextUserWrite: () => () => void;
   /** Make exactly the next refresh require a registered skill's owner review action. */
   requireNextSourceAction: (request: MockSourceActionRequest) => void;
+  /** Make exactly the next generic OAuth provider visit return a provider denial. */
+  rejectNextOAuthConnection: (errorCode?: string) => void;
+}
+
+interface MockOAuthAttempt {
+  readonly adapter: MockSourceSkillAdapter;
+  readonly bindingCookie: string;
+  readonly bindingCookieName: string;
+  readonly callbackUrl: string;
+  readonly returnUrl: string;
+  readonly state: string;
+  readonly intent: SourceConnectionIntent;
+  document: SourceConnectionAttemptDocument;
 }
 
 function json(route: Route, body: unknown, status = 200) {
@@ -327,14 +351,43 @@ export async function installMockStore(
   if (installedSourceSkillsById.size !== installedSourceSkillAdapters.length) {
     throw new Error("Mock source-skill registrations must have unique skill IDs");
   }
+  const oauthAdapters = installedSourceSkillAdapters.filter(
+    (adapter) => adapter.manifest.connection?.mode === "oauth2_pkce",
+  );
+  for (const adapter of installedSourceSkillAdapters) {
+    const declaresOAuth = adapter.manifest.connection?.mode === "oauth2_pkce";
+    if (declaresOAuth !== Boolean(adapter.oauth)) {
+      throw new Error(
+        `Mock source skill ${adapter.manifest.skill_id} must keep its OAuth manifest and provider adapter in sync`,
+      );
+    }
+    if (adapter.oauth && !adapter.credentialId) {
+      throw new Error(`Mock OAuth source skill ${adapter.manifest.skill_id} needs a credential ID`);
+    }
+    if (adapter.oauth && new URL(adapter.oauth.authorizationEndpoint).protocol !== "https:") {
+      throw new Error(
+        `Mock OAuth source skill ${adapter.manifest.skill_id} needs an HTTPS provider`,
+      );
+    }
+  }
+  if (
+    new Set(oauthAdapters.map((adapter) => adapter.oauth?.authorizationEndpoint)).size !==
+    oauthAdapters.length
+  ) {
+    throw new Error("Mock OAuth providers must use unique authorization endpoints");
+  }
   let pendingIngestionSourceCreation: Promise<void> | null = null;
   let pendingUserWrite: Promise<void> | null = null;
   let pullOperation: Record<string, unknown> | undefined;
   let nextSourceAction: MockSourceActionRequest | undefined;
   let pendingPullFailureResult: Record<string, unknown> | undefined;
   let pendingPullFailureError: string | undefined;
+  let nextOAuthRejection: string | undefined;
+  let sourceConnectionSequence = 0;
   let continuationSequence = 0;
   const importOperations = new Map<string, MockImportOperation>();
+  const oauthAttemptsByState = new Map<string, MockOAuthAttempt>();
+  const oauthAttemptsById = new Map<string, MockOAuthAttempt>();
   const sourceCredentialBindings = new Map<string, string>();
   const captureSequences = new Map<string, number>();
   const continuations = new Map<
@@ -353,6 +406,7 @@ export async function installMockStore(
     origins: new Map(),
     ingestionSources: new Map(),
     sourceCredentials: new Map(),
+    sourceConnectionAttempts: new Map(),
     holdNextIngestionSourceCreation: () => {
       if (pendingIngestionSourceCreation) {
         throw new Error("An ingestion-source creation is already held");
@@ -378,6 +432,10 @@ export async function installMockStore(
       }
       if (nextSourceAction) throw new Error("A mock source action is already queued");
       nextSourceAction = request;
+    },
+    rejectNextOAuthConnection: (errorCode = "access_denied") => {
+      if (nextOAuthRejection) throw new Error("A mock OAuth rejection is already queued");
+      nextOAuthRejection = errorCode;
     },
   };
 
@@ -427,6 +485,45 @@ export async function installMockStore(
     return { required_action: requiredAction };
   }
 
+  for (const adapter of oauthAdapters) {
+    const oauth = adapter.oauth!;
+    await page.route(`${oauth.authorizationEndpoint}**`, async (route) => {
+      const request = route.request();
+      store.requests.push(request);
+      const authorization = new URL(request.url());
+      const state = authorization.searchParams.get("state") ?? "";
+      const attempt = oauthAttemptsByState.get(state);
+      if (
+        !attempt ||
+        attempt.adapter !== adapter ||
+        authorization.searchParams.get("response_type") !== "code" ||
+        authorization.searchParams.get("code_challenge_method") !== "S256" ||
+        !authorization.searchParams.get("code_challenge") ||
+        authorization.searchParams.get("redirect_uri") !== attempt.callbackUrl
+      ) {
+        return problem(route, 422, "invalid_authorization_request", "Invalid mock OAuth request");
+      }
+
+      const callback = new URL(attempt.callbackUrl);
+      callback.searchParams.set("state", state);
+      if (nextOAuthRejection) {
+        callback.searchParams.set("error", nextOAuthRejection);
+        callback.searchParams.set("error_description", "The owner declined the provider request");
+        nextOAuthRejection = undefined;
+      } else {
+        callback.searchParams.set("code", oauth.authorizationCode);
+      }
+      // Start a fresh browser navigation so Playwright applies the Store callback route too. A
+      // redirect fulfilled from an intercepted provider request otherwise bypasses interception
+      // for the redirect chain and falls through to Vite's SPA fallback.
+      return route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: `<!doctype html><title>Mock OAuth provider</title><script>window.location.replace(${JSON.stringify(callback.href)})</script>`,
+      });
+    });
+  }
+
   await page.route("**/rnet/v0/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -458,6 +555,169 @@ export async function installMockStore(
       return json(route, {
         skills: installedSourceSkillAdapters.map((adapter) => adapter.manifest),
       });
+    }
+
+    const oauthStartPath = path.match(/^\/rnet\/v0\/source-connections\/([^/]+)\/oauth$/);
+    if (method === "POST" && oauthStartPath) {
+      const skillId = decodeURIComponent(oauthStartPath[1] ?? "");
+      const adapter = installedSourceSkillsById.get(skillId);
+      if (
+        !adapter?.oauth ||
+        !adapter.credentialId ||
+        adapter.manifest.connection?.mode !== "oauth2_pkce"
+      ) {
+        return problem(route, 404, "not_found", "The OAuth source skill does not exist");
+      }
+      const rawInput: unknown = request.postDataJSON();
+      if (!isRecord(rawInput) || typeof rawInput.return_to !== "string") {
+        return problem(route, 422, "schema_violation", "The connection request is invalid");
+      }
+      const input = rawInput as StartSourceConnectionRequest;
+      const returnUrl = new URL(input.return_to);
+      const destination = input.intent?.destination;
+      const existingVibeId =
+        destination?.kind === "existing_vibe" ? destination.id.split("/").at(-1) : undefined;
+      const expectedPath =
+        destination?.kind === "new_vibe"
+          ? "/imports"
+          : existingVibeId
+            ? `/vibes/${existingVibeId}`
+            : undefined;
+      if (
+        input.intent?.kind !== "review_import" ||
+        !expectedPath ||
+        returnUrl.origin !== url.origin ||
+        returnUrl.pathname.replace(/\/$/u, "") !== expectedPath ||
+        returnUrl.search ||
+        returnUrl.hash
+      ) {
+        return problem(route, 422, "schema_violation", "The connection return target is invalid");
+      }
+
+      sourceConnectionSequence += 1;
+      const attemptId = `0198f2a1-1401-7501-8501-${String(sourceConnectionSequence).padStart(12, "0")}`;
+      const state = `mock-oauth-state-${String(sourceConnectionSequence).padStart(8, "0")}-${"s".repeat(32)}`;
+      const callbackUrl = `${url.origin}/rnet/v0/source-connections/oauth/callback`;
+      const bindingCookieName = `rhizome_oauth_${attemptId}`;
+      const bindingCookie = `${"b".repeat(41)}${String(sourceConnectionSequence).padStart(2, "0")}`;
+      const authorization = new URL(adapter.oauth.authorizationEndpoint);
+      authorization.searchParams.set("response_type", "code");
+      authorization.searchParams.set("client_id", adapter.manifest.skill_id);
+      authorization.searchParams.set("redirect_uri", callbackUrl);
+      authorization.searchParams.set("state", state);
+      authorization.searchParams.set(
+        "code_challenge",
+        `${"c".repeat(42)}${String(sourceConnectionSequence).padStart(2, "0")}`,
+      );
+      authorization.searchParams.set("code_challenge_method", "S256");
+      const document = {
+        attempt_id: attemptId,
+        skill_id: adapter.manifest.skill_id,
+        status: "pending",
+        intent: input.intent,
+        expires_at: "2026-08-28T12:10:00.000Z",
+        created_at: "2026-08-28T12:00:00.000Z",
+      } satisfies SourceConnectionAttemptDocument;
+      const attempt: MockOAuthAttempt = {
+        adapter,
+        bindingCookie,
+        bindingCookieName,
+        callbackUrl,
+        returnUrl: returnUrl.href,
+        state,
+        intent: input.intent,
+        document,
+      };
+      oauthAttemptsByState.set(state, attempt);
+      oauthAttemptsById.set(attemptId, attempt);
+      store.sourceConnectionAttempts.set(attemptId, document);
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        headers: {
+          "cache-control": "no-store",
+          "set-cookie": `${bindingCookieName}=${bindingCookie}; Path=/rnet/v0/source-connections/oauth/callback; HttpOnly; SameSite=Lax; Max-Age=600`,
+        },
+        body: JSON.stringify({ ...document, authorization_url: authorization.href }),
+      });
+    }
+
+    if (method === "GET" && path === "/rnet/v0/source-connections/oauth/callback") {
+      const state = url.searchParams.get("state") ?? "";
+      const attempt = oauthAttemptsByState.get(state);
+      const callbackCookies = request.headers()["cookie"] ?? "";
+      if (
+        !attempt ||
+        attempt.document.status !== "pending" ||
+        !callbackCookies
+          .split(";")
+          .map((part) => part.trim())
+          .includes(`${attempt.bindingCookieName}=${attempt.bindingCookie}`)
+      ) {
+        return problem(route, 422, "source_connection_invalid", "The connection is invalid");
+      }
+      const code = url.searchParams.get("code");
+      const providerError = url.searchParams.get("error");
+      if ((code ? 1 : 0) + (providerError ? 1 : 0) !== 1) {
+        return problem(route, 422, "source_connection_invalid", "The callback is invalid");
+      }
+
+      const completedAt = "2026-08-28T12:00:02.000Z";
+      if (providerError) {
+        attempt.document = {
+          attempt_id: attempt.document.attempt_id,
+          skill_id: attempt.document.skill_id,
+          status: "rejected",
+          intent: attempt.intent,
+          error_code: "provider_denied",
+          expires_at: attempt.document.expires_at,
+          created_at: attempt.document.created_at,
+          completed_at: completedAt,
+        };
+      } else {
+        if (code !== attempt.adapter.oauth?.authorizationCode || !attempt.adapter.credentialId) {
+          return problem(route, 422, "source_connection_invalid", "The callback is invalid");
+        }
+        const credential = `credential:${attempt.adapter.credentialId}` as const;
+        const credentialDocument = {
+          credential,
+          skill_id: attempt.adapter.manifest.skill_id,
+          connector_version: attempt.adapter.manifest.connector_version,
+          status: "active",
+          connected_at: completedAt,
+        } satisfies SourceCredentialDocument;
+        store.sourceCredentials.set(credential, credentialDocument);
+        attempt.document = {
+          attempt_id: attempt.document.attempt_id,
+          skill_id: attempt.document.skill_id,
+          status: "succeeded",
+          intent: attempt.intent,
+          credential,
+          expires_at: attempt.document.expires_at,
+          created_at: attempt.document.created_at,
+          completed_at: completedAt,
+        };
+      }
+      store.sourceConnectionAttempts.set(attempt.document.attempt_id, attempt.document);
+      oauthAttemptsByState.delete(state);
+      const returnUrl = new URL(attempt.returnUrl);
+      returnUrl.searchParams.set("source_connection", attempt.document.attempt_id);
+      return route.fulfill({
+        status: 303,
+        headers: {
+          location: returnUrl.href,
+          "cache-control": "no-store",
+          "set-cookie": `${attempt.bindingCookieName}=; Path=/rnet/v0/source-connections/oauth/callback; HttpOnly; SameSite=Lax; Max-Age=0`,
+        },
+      });
+    }
+
+    const sourceConnectionPath = path.match(/^\/rnet\/v0\/source-connections\/([^/]+)$/);
+    if (method === "GET" && sourceConnectionPath) {
+      const attempt = oauthAttemptsById.get(sourceConnectionPath[1] ?? "");
+      return attempt
+        ? json(route, attempt.document)
+        : problem(route, 404, "not_found", "The source connection does not exist");
     }
 
     if (method === "POST" && path === "/rnet/v0/origins") {
@@ -544,6 +804,7 @@ export async function installMockStore(
         connector_version: manifest.connector_version,
         parser: manifest.parser.name,
         parser_version: manifest.parser.version,
+        limits: manifest.limits,
         created_at: "2026-08-28T12:00:01.000Z",
       } as const;
 
@@ -593,6 +854,45 @@ export async function installMockStore(
       }
     }
 
+    const pendingImportConfirm = path.match(/^\/rnet\/v0\/imports\/([^/]+)\/confirm$/);
+    if (method === "POST" && pendingImportConfirm) {
+      const staged = importOperations.get(pendingImportConfirm[1] ?? "");
+      if (
+        !staged?.pendingVibe ||
+        staged.document.status !== "done" ||
+        staged.document.committed_at
+      ) {
+        return problem(route, 422, "import_review_invalid", "The staged import cannot be consumed");
+      }
+      const input = request.postDataJSON() as { title: string };
+      const vibe = {
+        rnet_schema: "0.1",
+        uri: `rnet://vibe/${NEW_VIBE_ID}`,
+        owner: `rnet://id/${OWNER_ID}`,
+        title: input.title,
+        objects: staged.candidates.map(({ uri }) => uri),
+        created_at: "2026-08-28T12:00:04.000Z",
+        grants: [],
+        inferred: {},
+        pull: {
+          enabled: true,
+          policy: "append_new",
+          sources: [staged.source],
+        },
+      } satisfies Vibe;
+      store.vibes.push(vibe);
+      for (const candidate of staged.candidates) {
+        store.objects.set(candidate.uri.split("/").at(-1) ?? "", candidate);
+      }
+      for (const element of staged.elements) {
+        const id = element.document.uri.split("/").at(-1) ?? "";
+        store.elements.set(id, element.document);
+        elementPayloads.set(id, element.payload);
+      }
+      staged.document.committed_at = "2026-08-28T12:00:04.000Z";
+      return json(route, vibe);
+    }
+
     const importConfirm = path.match(/^\/rnet\/v0\/vibes\/([^/]+)\/imports\/([^/]+)\/confirm$/);
     if (method === "POST" && importConfirm) {
       const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${importConfirm[1]}`));
@@ -626,8 +926,12 @@ export async function installMockStore(
     }
 
     const vibeImports = path.match(/^\/rnet\/v0\/vibes\/([^/]+)\/imports$/);
-    if (method === "POST" && vibeImports) {
-      const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${vibeImports[1]}`));
+    const pendingVibeImport = path === "/rnet/v0/imports";
+    if (method === "POST" && (vibeImports || pendingVibeImport)) {
+      const targetVibeId = pendingVibeImport ? NEW_VIBE_ID : vibeImports?.[1];
+      const vibe = pendingVibeImport
+        ? true
+        : store.vibes.find((candidate) => candidate.uri.endsWith(`/${targetVibeId}`));
       if (!vibe) return problem(route, 404, "not_found", "The Vibe does not exist");
       const input: CreateImportPreviewRequest = request.postDataJSON();
       const source = store.ingestionSources.get(input.source);
@@ -650,7 +954,7 @@ export async function installMockStore(
           !continuation ||
           continuation.source !== source.source ||
           continuation.skillId !== adapter.manifest.skill_id ||
-          continuation.vibeId !== vibeImports[1]
+          continuation.vibeId !== targetVibeId
         ) {
           return problem(route, 422, "schema_violation", "The continuation is invalid or expired");
         }
@@ -680,6 +984,7 @@ export async function installMockStore(
         request: {
           mode: "import_preview",
           source: source.source,
+          ...(pendingVibeImport ? { pending_destination: { vibe_uuid: NEW_VIBE_ID } } : {}),
           ...(actionResumed ? { action: "review_import" } : {}),
         },
         result: null,
@@ -688,11 +993,13 @@ export async function installMockStore(
       } satisfies OperationDocument;
       importOperations.set(operationId, {
         candidates,
+        ...(staged.destination ? { destination: staged.destination } : {}),
         document,
         elements,
         polls: 0,
         source: source.source,
         verify,
+        ...(pendingVibeImport ? { pendingVibe: true } : {}),
       });
       return json(route, document, 202);
     }
@@ -770,6 +1077,7 @@ export async function installMockStore(
           staged.document.status = "done";
           staged.document.result = {
             candidates: staged.candidates,
+            ...(staged.destination ? { destination: staged.destination } : {}),
             elements: staged.elements.map((element) => ({
               uri: element.document.uri,
               kind: element.document.kind,
@@ -817,7 +1125,10 @@ export async function installMockStore(
       }
       return route.fulfill({
         status: 200,
-        contentType: element.document.mime,
+        contentType:
+          element.document.kind === "text"
+            ? `${element.document.mime}; charset=utf-8`
+            : element.document.mime,
         body: element.payload,
       });
     }
@@ -848,7 +1159,7 @@ export async function installMockStore(
       if (!element) return problem(route, 404, "not_found", "The element does not exist");
       return route.fulfill({
         status: 200,
-        contentType: element.mime,
+        contentType: element.kind === "text" ? `${element.mime}; charset=utf-8` : element.mime,
         body: elementPayloads.get(elementBytes[1] ?? "") ?? Buffer.from(PAYLOAD_TEXT),
       });
     }

@@ -1,7 +1,7 @@
 import {
   candidateBundle,
+  sourceJsonObject,
   type CandidateBundle,
-  type SourceJsonObject,
   type SourceJsonValue,
 } from "../../source-skills/candidate-bundle.ts";
 
@@ -24,15 +24,18 @@ export async function compileTransactionCandidates(
   const candidates = await Promise.all(
     parsed.transactions.map(async (transaction) => {
       const accountHash = await sha256(transaction.accountIdentity ?? "default");
-      const sourceProperties = sourceJsonObject({
-        amount: transaction.amount,
-        currency: transaction.currency,
-        ...(transaction.postedAt ? { posted_at: transaction.postedAt } : {}),
-        ...(transaction.rawDescription
-          ? { raw_description: transaction.rawDescription.slice(0, 1_024) }
-          : {}),
-        ...transaction.sourceProperties,
-      });
+      const sourceProperties = sourceJsonObject(
+        {
+          amount: transaction.amount,
+          currency: transaction.currency,
+          ...(transaction.postedAt ? { posted_at: transaction.postedAt } : {}),
+          ...(transaction.rawDescription
+            ? { raw_description: transaction.rawDescription.slice(0, 1_024) }
+            : {}),
+          ...transaction.sourceProperties,
+        },
+        "Transaction source properties",
+      );
       const keys = {
         ...transaction.keys,
         ...(transaction.fitid ? { fitid: transaction.fitid } : {}),
@@ -40,6 +43,7 @@ export async function compileTransactionCandidates(
       };
       const identityProperties = sourceJsonObject(
         options.identitySourceProperties?.(sourceProperties) ?? sourceProperties,
+        "Transaction identity source properties",
       );
       const semanticIdentity: SourceJsonValue = transaction.fitid
         ? { type: "transaction", account_hash: accountHash, fitid: transaction.fitid }
@@ -55,35 +59,6 @@ export async function compileTransactionCandidates(
     }),
   );
   return candidateBundle(candidates, verify);
-}
-
-function sourceJsonObject(value: Readonly<Record<string, unknown>>): SourceJsonObject {
-  const converted = sourceJsonValue(value, new Set(), "Transaction source properties");
-  if (!converted || typeof converted !== "object" || Array.isArray(converted)) {
-    throw new Error("Transaction source properties must be a JSON object");
-  }
-  return converted as SourceJsonObject;
-}
-
-function sourceJsonValue(value: unknown, ancestors: Set<object>, label: string): SourceJsonValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (!value || typeof value !== "object") throw new Error(`${label} is not JSON-safe`);
-  if (ancestors.has(value)) throw new Error(`${label} contains a cycle`);
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry) => sourceJsonValue(entry, ancestors, label));
-    }
-    const result: SourceJsonObject = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (entry === undefined) throw new Error(`${label}.${key} is undefined`);
-      result[key] = sourceJsonValue(entry, ancestors, `${label}.${key}`);
-    }
-    return result;
-  } finally {
-    ancestors.delete(value);
-  }
 }
 
 async function sha256(value: string): Promise<`sha256:${string}`> {

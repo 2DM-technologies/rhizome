@@ -420,6 +420,7 @@ CREATE TABLE ingestion_sources (
   connector_version TEXT NOT NULL,       -- retrieval/config implementation pin
   parser        TEXT NOT NULL,           -- parser implementation name
   parser_version TEXT NOT NULL,          -- code/config digest pinned for review
+  execution_limits JSONB NOT NULL,       -- immutable effective candidate/capture/element budgets
   origin_uuid   UUID,
   credential_uuid UUID,
   config        JSONB,                   -- non-secret account/channel/parser configuration

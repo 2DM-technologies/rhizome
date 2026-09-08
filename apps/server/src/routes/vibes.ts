@@ -14,7 +14,7 @@ import type { CredentialedSourceCatalog } from "../../../ingest/connected-source
 import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
-import type { Database } from "../db/index.ts";
+import type { Database, ProviderLeasePool } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
@@ -64,6 +64,7 @@ export function createVibeRoutes(
     credentialedSources: CredentialedSourceCatalog;
     credentialCrypto: SourceCredentialCrypto;
     fileSources: FileSourceCatalog;
+    providerLeasePool: ProviderLeasePool;
     publicRemoteSources: PublicRemoteSourceCatalog;
   },
 ) {

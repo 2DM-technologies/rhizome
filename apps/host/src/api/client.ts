@@ -21,6 +21,7 @@ const defaultStoreBaseUrl =
 const fetchClient = createFetchClient<paths>({
   baseUrl: import.meta.env.VITE_RHIZOME_API_URL ?? defaultStoreBaseUrl,
   bodySerializer: serializeRequestBody,
+  credentials: "include",
   Request: StoreRequest,
 });
 

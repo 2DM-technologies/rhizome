@@ -8,6 +8,7 @@ import { v7 as uuidv7 } from "uuid";
 import { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
 import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
+import { assertCaptureLimit } from "../../../ingest/source-skills/execution-limits.ts";
 import type { Database } from "../db/index.ts";
 import {
   ingestionSources,
@@ -60,6 +61,16 @@ export class IngestionSourcesService {
       ),
     });
     if (!origin) throw notFound("Origin");
+    try {
+      assertCaptureLimit(origin.byteSize, skill.manifest.limits);
+    } catch (error) {
+      throw new Problem(
+        422,
+        "payload_too_large",
+        "Source capture exceeds its limit",
+        error instanceof Error ? error.message : "The source capture is too large",
+      );
+    }
 
     const candidate: NewDbIngestionSource = {
       uuid: uuidv7(),
@@ -69,6 +80,7 @@ export class IngestionSourcesService {
       connectorVersion: skill.manifest.connector_version,
       parser: skill.parser.name,
       parserVersion: skill.parser.version,
+      executionLimits: skill.manifest.limits,
       originUuid,
     };
     const [source] = await this.db.insert(ingestionSources).values(candidate).returning();
@@ -106,6 +118,7 @@ export class IngestionSourcesService {
       connectorVersion: skill.manifest.connector_version,
       parser: skill.parser.name,
       parserVersion: skill.parser.version,
+      executionLimits: skill.manifest.limits,
       config,
     };
     const [source] = await this.db.insert(ingestionSources).values(candidate).returning();
@@ -172,6 +185,7 @@ export class IngestionSourcesService {
         connectorVersion: credential.connectorVersion,
         parser: skill.parser.name,
         parserVersion: skill.parser.version,
+        executionLimits: skill.manifest.limits,
         credentialUuid,
         config,
       };
@@ -214,6 +228,7 @@ export function serializeIngestionSource(source: DbIngestionSource): IngestionSo
       connector_version: source.connectorVersion,
       parser: source.parser,
       parser_version: source.parserVersion,
+      limits: source.executionLimits,
       config: source.config,
       created_at: source.createdAt.toISOString(),
     };
@@ -235,6 +250,7 @@ export function serializeIngestionSource(source: DbIngestionSource): IngestionSo
       connector_version: source.connectorVersion,
       parser: source.parser,
       parser_version: source.parserVersion,
+      limits: source.executionLimits,
       config: source.config ?? {},
       created_at: source.createdAt.toISOString(),
     };
@@ -256,6 +272,7 @@ export function serializeIngestionSource(source: DbIngestionSource): IngestionSo
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     origin: `rnet://origin/${source.originUuid}`,
     created_at: source.createdAt.toISOString(),
   };
