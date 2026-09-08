@@ -23,7 +23,7 @@ const manifest = {
   description: "Synthetic worker preprocessing coverage.",
   source_kind: "file",
   connector_version: "origin-upload@test",
-  parser: { name: "synthetic", version: "synthetic@test" },
+  parser: { name: "synthetic", version: "synthetic@0.0.0-test" },
   limits,
   file_capture: {
     kind: "file_capture_preprocessor@1",

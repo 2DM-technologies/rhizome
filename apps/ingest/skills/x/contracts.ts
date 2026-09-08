@@ -1,5 +1,3 @@
-import type { SourceJsonObject, SourceJsonValue } from "../../source-skills/candidate-bundle.ts";
-
 export type XPostReferenceKind = "replied_to" | "quoted" | "reposted";
 export type XEligiblePostKind = "original" | "quote";
 export type XPostExclusionReason =
@@ -9,6 +7,27 @@ export type XPostExclusionReason =
 export interface XTextSpan {
   readonly start: number;
   readonly end: number;
+}
+
+/** Canonical source-fact shape shared by archive v1 and API v2 URL entities. */
+export interface NormalizedXUrlEntity extends XTextSpan {
+  readonly url: string;
+  readonly expanded_url?: string;
+}
+
+export interface NormalizedXMentionEntity extends XTextSpan {
+  readonly username: string;
+}
+
+export interface NormalizedXTagEntity extends XTextSpan {
+  readonly tag: string;
+}
+
+export interface NormalizedXEntities {
+  readonly urls?: readonly NormalizedXUrlEntity[];
+  readonly mentions?: readonly NormalizedXMentionEntity[];
+  readonly hashtags?: readonly NormalizedXTagEntity[];
+  readonly cashtags?: readonly NormalizedXTagEntity[];
 }
 
 export interface NormalizedXPostReference {
@@ -40,7 +59,7 @@ export type NormalizedXAttachment =
     })
   | (NormalizedXAttachmentBase & {
       readonly status: "omitted";
-      readonly reason: XDeclaredMediaOmissionReason;
+      readonly reason: XMediaOmissionReason;
       readonly kind?: "image" | "video";
       readonly mime?: string;
       readonly byteSize?: number;
@@ -56,11 +75,14 @@ export interface NormalizedXPost {
   readonly authorHandle?: string;
   readonly authorName?: string;
   readonly conversationId?: string;
+  /** Provider-native entity dialects are adapter input; stable link facts normalize here. */
   readonly references: readonly NormalizedXPostReference[];
+  /** Provider-explicit repost classification when the provider omits the target post ID. */
+  readonly isRepost?: true;
   readonly language?: string;
   readonly possiblySensitive?: boolean;
   readonly editHistoryIds?: readonly string[];
-  readonly entities?: SourceJsonObject;
+  readonly entities?: NormalizedXEntities;
   readonly attachments: readonly NormalizedXAttachment[];
 }
 
@@ -68,6 +90,22 @@ export interface XAccountIdentity {
   readonly id: string;
   readonly handle?: string;
   readonly name?: string;
+}
+
+const X_HANDLE = /^[A-Za-z0-9_]{1,15}$/u;
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/u;
+
+export function isXHandle(value: unknown): value is string {
+  return typeof value === "string" && X_HANDLE.test(value);
+}
+
+export function isXAccountName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= 256 &&
+    !CONTROL_CHARACTER.test(value) &&
+    new TextEncoder().encode(value).byteLength <= 256
+  );
 }
 
 export interface XSelectionCounts {
@@ -128,14 +166,6 @@ export interface XVerifyReport {
   }[];
 }
 
-export function sourceJsonObject(value: Readonly<Record<string, unknown>>): SourceJsonObject {
-  const converted = sourceJsonValue(value, new Set(), "X source properties");
-  if (!converted || typeof converted !== "object" || Array.isArray(converted)) {
-    throw new Error("X source properties must be a JSON object");
-  }
-  return converted as SourceJsonObject;
-}
-
 export async function sha256(bytes: Uint8Array): Promise<`sha256:${string}`> {
   const owned = new Uint8Array(bytes.byteLength);
   owned.set(bytes);
@@ -144,25 +174,4 @@ export async function sha256(bytes: Uint8Array): Promise<`sha256:${string}`> {
     "",
   );
   return `sha256:${hex}`;
-}
-
-function sourceJsonValue(value: unknown, ancestors: Set<object>, label: string): SourceJsonValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (!value || typeof value !== "object") throw new Error(`${label} is not JSON-safe`);
-  if (ancestors.has(value)) throw new Error(`${label} contains a cycle`);
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry) => sourceJsonValue(entry, ancestors, label));
-    }
-    const result: SourceJsonObject = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (entry === undefined) throw new Error(`${label}.${key} is undefined`);
-      result[key] = sourceJsonValue(entry, ancestors, `${label}.${key}`);
-    }
-    return result;
-  } finally {
-    ancestors.delete(value);
-  }
 }

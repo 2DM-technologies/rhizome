@@ -72,7 +72,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
         new URL(request.url()).pathname,
       ),
   );
-  expect(previewRequests).toHaveLength(2);
+  expect(previewRequests).toHaveLength(5);
   expect(
     previewRequests.every((request) => request.headers()["authorization"]?.startsWith("Bearer ")),
   ).toBe(true);

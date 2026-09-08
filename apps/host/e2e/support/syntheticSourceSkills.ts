@@ -19,6 +19,9 @@ export const SYNTHETIC_PUBLIC_OPERATION_ID = "0198f2a1-1102-7202-8202-0000000000
 export const SYNTHETIC_CREDENTIAL_SOURCE_ID = "0198f2a1-1201-7301-8301-000000000001";
 export const SYNTHETIC_CREDENTIAL_OPERATION_ID = "0198f2a1-1202-7302-8302-000000000001";
 export const SYNTHETIC_CREDENTIAL_ID = "0198f2a1-1203-7303-8303-000000000001";
+export const SYNTHETIC_OAUTH_SOURCE_ID = "0198f2a1-1301-7401-8401-000000000001";
+export const SYNTHETIC_OAUTH_OPERATION_ID = "0198f2a1-1302-7402-8402-000000000001";
+export const SYNTHETIC_OAUTH_CREDENTIAL_ID = "0198f2a1-1303-7403-8403-000000000001";
 
 export const SYNTHETIC_FILE_SKILL_LABEL = "Synthetic file source";
 export const SYNTHETIC_FILE_INPUT_LABEL = "Synthetic source document";
@@ -26,6 +29,10 @@ export const SYNTHETIC_PUBLIC_SKILL_LABEL = "Synthetic public source";
 export const SYNTHETIC_PUBLIC_INPUT_LABEL = "Synthetic public URL";
 export const SYNTHETIC_PUBLIC_URL = "https://source.invalid/synthetic-records";
 export const SYNTHETIC_CREDENTIAL_SKILL_LABEL = "Synthetic credentialed source";
+export const SYNTHETIC_OAUTH_SKILL_LABEL = "Synthetic OAuth source";
+export const SYNTHETIC_OAUTH_BUTTON_LABEL = "Connect synthetic account";
+export const SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT = "https://oauth.synthetic.invalid/authorize";
+export const SYNTHETIC_OAUTH_AUTHORIZATION_CODE = "synthetic-authorization-code-browser-only";
 export const SYNTHETIC_CREDENTIAL_INPUT_LABEL = "Synthetic access token";
 export const SYNTHETIC_COLLECTION_INPUT_LABEL = "Synthetic collection";
 export const SYNTHETIC_COLLECTION = "browser-conformance";
@@ -108,7 +115,8 @@ export const syntheticCredentialedSourceSkillManifest = {
   parser: { name: "synthetic-records", version: "1.0.0" },
   limits: SYNTHETIC_SOURCE_LIMITS,
   connection: {
-    claim_policy: { kind: "single_use_global", attempts: 3, window_hours: 1 },
+    mode: "claim_exchange",
+    claim_policy: { kind: "single_use_global" },
   },
   input_fields: [
     {
@@ -130,6 +138,26 @@ export const syntheticCredentialedSourceSkillManifest = {
       placeholder: SYNTHETIC_COLLECTION,
     },
   ],
+  review_actions: ["review_import", "refresh_source"],
+} as const satisfies SourceSkillManifest;
+
+/**
+ * A provider-neutral Host fixture for the generic OAuth capability. Provider endpoint behavior
+ * lives on the mock adapter below and is never named by Host production code.
+ */
+export const syntheticOAuthSourceSkillManifest = {
+  skill_id: "synthetic-oauth",
+  label: SYNTHETIC_OAUTH_SKILL_LABEL,
+  description: "Connect a synthetic OAuth account and review its generic records before import.",
+  source_kind: "credentialed_remote",
+  connector_version: "synthetic-oauth@1.0.0",
+  parser: { name: "synthetic-records", version: "1.0.0" },
+  limits: SYNTHETIC_SOURCE_LIMITS,
+  connection: {
+    mode: "oauth2_pkce",
+    button_label: SYNTHETIC_OAUTH_BUTTON_LABEL,
+  },
+  input_fields: [],
   review_actions: ["review_import", "refresh_source"],
 } as const satisfies SourceSkillManifest;
 
@@ -223,20 +251,54 @@ export const mockSyntheticCredentialedSourceSkill = {
     }),
 } satisfies MockSourceSkillAdapter;
 
+export const mockSyntheticOAuthSourceSkill = {
+  credentialId: SYNTHETIC_OAUTH_CREDENTIAL_ID,
+  manifest: syntheticOAuthSourceSkillManifest,
+  operationId: SYNTHETIC_OAUTH_OPERATION_ID,
+  sourceId: SYNTHETIC_OAUTH_SOURCE_ID,
+  oauth: {
+    authorizationEndpoint: SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT,
+    authorizationCode: SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
+  },
+  capture: (context) => captureSyntheticFixture(context, "oauth"),
+  normalizeConfig(input) {
+    return input === undefined
+      ? { ok: true, value: {} }
+      : { ok: false, detail: "Synthetic OAuth source configuration must be omitted" };
+  },
+  stage: ({ actionResumed, origin }) =>
+    stageSyntheticRecords({
+      actionResumed,
+      operationId: SYNTHETIC_OAUTH_OPERATION_ID,
+      origin,
+      skillId: syntheticOAuthSourceSkillManifest.skill_id,
+    }),
+} satisfies MockSourceSkillAdapter;
+
 function captureSyntheticFixture(
   context: MockSourceCaptureContext,
-  kind: "public" | "credentialed",
+  kind: "public" | "credentialed" | "oauth",
 ) {
   const skillId =
     kind === "public"
       ? syntheticPublicSourceSkillManifest.skill_id
-      : syntheticCredentialedSourceSkillManifest.skill_id;
+      : kind === "credentialed"
+        ? syntheticCredentialedSourceSkillManifest.skill_id
+        : syntheticOAuthSourceSkillManifest.skill_id;
   const sequence = context.nextSequence(skillId);
-  const namespace = kind === "public" ? "0198f2a1-1103-7203-8203" : "0198f2a1-1204-7304-8304";
+  const namespace =
+    kind === "public"
+      ? "0198f2a1-1103-7203-8203"
+      : kind === "credentialed"
+        ? "0198f2a1-1204-7304-8304"
+        : "0198f2a1-1304-7404-8404";
   return context.save({
     id: `${namespace}-${String(sequence).padStart(12, "0")}`,
     payload: JSON.stringify(syntheticSourceFixture),
-    contentHash: `sha256:${String(sequence).padStart(64, kind === "public" ? "2" : "3")}`,
+    contentHash: `sha256:${String(sequence).padStart(
+      64,
+      kind === "public" ? "2" : kind === "credentialed" ? "3" : "4",
+    )}`,
     label: `${kind}-synthetic-records-${sequence}.json`,
     mime: "application/json",
   });
@@ -262,7 +324,7 @@ function stageSyntheticRecords({
     elements: [],
     keys: { synthetic_id: record.id },
     source: {
-      ingest: { method: "parser", reproducible: true, skill: `${skillId}@test` },
+      ingest: { method: "parser", reproducible: true, skill: `${skillId}@0.0.0-test` },
       origins: [origin.document.uri],
       properties: {
         title: record.title,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { validateMediaObjectProperties } from "@rnet/types";
+import { validateMediaObject, validateMediaObjectProperties, type MediaObject } from "@rnet/types";
 
 import { SourceSkillManifestCatalog } from "../../source-skills/manifest-catalog.ts";
 import { xArchiveSourceSkillManifest } from "./archive/manifest.ts";
@@ -91,6 +91,7 @@ describe("X shared post candidates", () => {
     const bundle = await compileXPostCandidates(selection, X_SOURCE_LIMITS);
 
     expect(bundle.kind).toBe("candidate_bundle@1");
+    expect(bundle.destination).toEqual({ title: "@example_user Tweets" });
     expect(bundle.verify.ok).toBe(true);
     const [original, quote] = bundle.candidates;
     expect(new TextDecoder().decode(original?.elements[0]?.bytes)).toBe(
@@ -100,6 +101,16 @@ describe("X shared post candidates", () => {
     expect(original?.elements[1]?.alt).toBe("A synthetic landscape");
     expect(original?.sourceProperties.text).toBeUndefined();
     expect(original?.sourceProperties.full_text).toBeUndefined();
+    expect(original?.sourceProperties.entities).toEqual({
+      urls: [
+        {
+          start: 21,
+          end: 43,
+          url: "https://t.co/unchanged",
+          expanded_url: "https://example.test/article",
+        },
+      ],
+    });
     expect(original?.sourceProperties.media_omissions).toEqual([
       {
         attachment_index: 1,
@@ -111,6 +122,34 @@ describe("X shared post candidates", () => {
       },
     ]);
     expect(validateMediaObjectProperties("tweet", original?.sourceProperties).ok).toBe(true);
+    const elementUuids = [
+      "0198f2a1-a005-7a05-8005-000000000005",
+      "0198f2a1-a006-7a06-8006-000000000006",
+    ];
+    const stagedCandidate: MediaObject = {
+      rnet_schema: "0.1",
+      uri: "rnet://object/0198f2a1-a001-7a01-8001-000000000001",
+      owner: "rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
+      type: original!.type,
+      elements: original!.elements.map(({ role, alt }, index) => ({
+        uri: `rnet://element/${elementUuids[index]}`,
+        role,
+        ...(alt === undefined ? {} : { alt }),
+      })),
+      keys: { ...original!.keys },
+      source: {
+        ingest: {
+          method: "parser",
+          reproducible: true,
+          skill: xOAuthSourceManifest.parser.version,
+        },
+        origins: ["rnet://origin/0198f2a1-a002-7a02-8002-000000000002"],
+        retrieved_at: original!.retrievedAt,
+        properties: { ...original!.sourceProperties },
+      },
+    };
+    expect(stagedCandidate.source.ingest.skill).toBe("x-posts@1.0.0");
+    expect(validateMediaObject(stagedCandidate).ok).toBe(true);
     expect(quote?.keys).toMatchObject({
       x_tweet_id: "101",
       x_quoted_tweet_id: "73",
@@ -124,7 +163,6 @@ describe("X shared post candidates", () => {
       x_tweet_id: "101",
       x_author_id: "42",
     });
-    expect(quote?.semanticSourceProperties).toBe(quote?.sourceProperties);
     expect(bundle.verify).toMatchObject({
       source_record_count: 7,
       replies_excluded: 1,
@@ -172,6 +210,7 @@ describe("X shared post candidates", () => {
 
   test("fails closed on duplicate IDs, invalid spans, and required text that cannot fit", async () => {
     const post = normalizedPosts().find(({ id }) => id === "100")!;
+    const quote = normalizedPosts().find(({ id }) => id === "101")!;
     expect(() => selectXPosts({ account: fixture.account, posts: [post, post], cap: 2 })).toThrow(
       "Duplicate X post id",
     );
@@ -184,6 +223,21 @@ describe("X shared post candidates", () => {
         fixture.account.id,
       ),
     ).toThrow("invalid quote URL span");
+    expect(() => classifyXPost({ ...quote, entities: undefined }, fixture.account.id)).toThrow(
+      "matching structured entity",
+    );
+    expect(() =>
+      selectXPosts({
+        account: fixture.account,
+        posts: [
+          {
+            ...post,
+            entities: { urls: [{ start: 0, end: 1, url: "not-the-text" }] },
+          },
+        ],
+        cap: 1,
+      }),
+    ).toThrow("offsets do not match");
     const selection = selectXPosts({ account: fixture.account, posts: [post], cap: 1 });
     await expect(
       compileXPostCandidates(selection, {

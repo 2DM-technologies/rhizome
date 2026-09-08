@@ -3,11 +3,12 @@ import { UUIDV7_PATTERN } from "@rnet/types/patterns";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
+import { MediaElementKindEnum, type MediaElementKind } from "../db/models/media-element.ts";
 import { notFound } from "../errors.ts";
 import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { OperationsService } from "../services/operation-service.ts";
 import { ProblemSchema, RecordIdParamsSchema, binaryResponse, jsonSchema } from "./contracts.ts";
-import { blobResponse } from "./http.ts";
+import { blobResponse, mediaElementContentType } from "./http.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const OperationDocumentSchema = jsonSchema(operationDocumentSchema);
@@ -25,6 +26,7 @@ const OperationElementParamsSchema = jsonSchema({
 interface PreviewElementManifest {
   uri: string;
   content_hash: string;
+  kind: MediaElementKind;
   mime: string;
 }
 
@@ -79,7 +81,7 @@ export function createOperationRoutes(db: Database, blobs: BlobStore) {
         `rnet://element/${parameters.element_id}`,
       );
       const blob = await blobs.get("elements", manifest.content_hash);
-      return blobResponse(context, blob, manifest.mime);
+      return blobResponse(context, blob, mediaElementContentType(manifest.kind, manifest.mime));
     },
   );
 
@@ -96,6 +98,7 @@ function previewElementManifest(result: unknown, uri: string): PreviewElementMan
       typeof value === "object" &&
       (value as { uri?: unknown }).uri === uri &&
       typeof (value as { content_hash?: unknown }).content_hash === "string" &&
+      MediaElementKindEnum.some((kind) => kind === (value as { kind?: unknown }).kind) &&
       typeof (value as { mime?: unknown }).mime === "string",
   );
   if (!manifest) throw notFound("Element preview");
