@@ -10,7 +10,7 @@ import {
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
-import type { Database } from "../src/db/index.ts";
+import type { Database, ProviderLeasePool } from "../src/db/index.ts";
 import { createCredentialKeyring } from "../src/services/source-credential-crypto.ts";
 
 const config: ServerConfig = {
@@ -41,12 +41,14 @@ const config: ServerConfig = {
     },
   },
 };
+const providerLeasePool = {} as ProviderLeasePool;
 
 describe("OpenAPI", () => {
   const { app, openApiDocument } = createApp({
     config,
     db: {} as Database,
     blobs: {} as BlobStore,
+    providerLeasePool,
   });
 
   test("discovers each route contract without external schema references", () => {
@@ -148,7 +150,7 @@ describe("OpenAPI", () => {
   test("uses one injected file catalog for manifests and source creation", async () => {
     const parser = {
       name: "custom-file-parser",
-      version: "custom-file-parser@test",
+      version: "custom-file-parser@0.0.0-test",
       async parse() {
         return { transactions: [], sourceRecordCount: 0 };
       },
@@ -193,6 +195,7 @@ describe("OpenAPI", () => {
       config,
       db: {} as Database,
       blobs: {} as BlobStore,
+      providerLeasePool,
       fileSources,
     }).app;
 

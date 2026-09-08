@@ -5,6 +5,7 @@ import {
   SOURCE_SKILL_INPUT_TARGETS,
   SOURCE_SKILL_KINDS,
   SOURCE_SKILL_ID_PATTERN,
+  SOURCE_PARSER_VERSION_PATTERN,
   SOURCE_SKILL_REVIEW_ACTIONS,
   type SourceSkillManifest,
 } from "../../../packages/store-contract/src/index.ts";
@@ -76,6 +77,11 @@ export function assertSourceSkillManifest(value: unknown): asserts value is Sour
   ) {
     throw new Error(`Source-skill ${value.skill_id} must declare parser metadata`);
   }
+  if (!new RegExp(SOURCE_PARSER_VERSION_PATTERN).test(value.parser.version)) {
+    throw new Error(
+      `Source-skill ${value.skill_id} parser version cannot be persisted as rNet ingest provenance`,
+    );
+  }
   assertExecutionLimits(value);
   assertFileCapturePreprocessor(value);
   if (!Array.isArray(value.input_fields)) {
@@ -130,21 +136,24 @@ function assertConnectionPolicy(manifest: Record<string, unknown>): void {
     }
     return;
   }
-  if (!isRecord(manifest.connection) || !isRecord(manifest.connection.claim_policy)) {
+  if (!isRecord(manifest.connection) || manifest.source_kind !== "credentialed_remote") {
     throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
   }
-  if (
-    manifest.source_kind !== "credentialed_remote" ||
-    !onlyKeys(manifest.connection, ["claim_policy"]) ||
-    !onlyKeys(manifest.connection.claim_policy, ["kind", "attempts", "window_hours"])
-  ) {
-    throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
+  if (manifest.connection.mode === "oauth2_pkce") {
+    if (
+      !onlyKeys(manifest.connection, ["mode", "button_label"]) ||
+      !boundedString(manifest.connection.button_label, 1, 256)
+    ) {
+      throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
+    }
+    return;
   }
-  const policy = manifest.connection.claim_policy;
   if (
-    !includes(SOURCE_CREDENTIAL_CLAIM_POLICIES, policy.kind) ||
-    !boundedInteger(policy.attempts, 1, 1_000) ||
-    !boundedInteger(policy.window_hours, 1, 720)
+    manifest.connection.mode !== "claim_exchange" ||
+    !onlyKeys(manifest.connection, ["mode", "claim_policy"]) ||
+    !isRecord(manifest.connection.claim_policy) ||
+    !onlyKeys(manifest.connection.claim_policy, ["kind"]) ||
+    !includes(SOURCE_CREDENTIAL_CLAIM_POLICIES, manifest.connection.claim_policy.kind)
   ) {
     throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
   }

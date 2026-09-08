@@ -27,7 +27,8 @@ describe("SimpleFIN connected-source skill", () => {
         connector_version: "simplefin-connector@1.0.0",
         parser: { name: "simplefin", version: "simplefin@2.0.0" },
         connection: {
-          claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
+          mode: "claim_exchange",
+          claim_policy: { kind: "single_use_global" },
         },
         review_actions: ["review_import", "refresh_source"],
       },
@@ -36,6 +37,7 @@ describe("SimpleFIN connected-source skill", () => {
       capture: { mime: "application/json" },
     });
     expect(skill.capture.label("fetch-1")).toBe("simplefin-fetch-1.json");
+    if (skill.connection.mode !== "claim_exchange") throw new Error("Expected claim exchange");
 
     const claimUrl = `https://${allowedHost}/simplefin/claim/once`;
     const prepared = skill.connection.prepare({
@@ -72,9 +74,12 @@ describe("SimpleFIN connected-source skill", () => {
     const fetch = await skill.prepareFetch({
       config,
       endDateEpoch: 1_800_000_000,
+      limits: simpleFinSourceSkillManifest.limits,
     });
 
-    await fetch.retrieve(`https://user:secret@${allowedHost}/simplefin`);
+    await fetch.retrieve(`https://user:secret@${allowedHost}/simplefin`, {
+      signal: new AbortController().signal,
+    });
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.searchParams.get("start-date")).toBe(String(1_800_000_000 - 45 * 86_400));
@@ -85,6 +90,42 @@ describe("SimpleFIN connected-source skill", () => {
     expect(() => skill.parseConfig({ include_pending: "yes" })).toThrow(
       "Stored SimpleFIN source configuration is invalid",
     );
+  });
+
+  test("cooperatively cancels an in-flight provider request", async () => {
+    let providerSignal: AbortSignal | undefined;
+    let providerSettled = false;
+    const skill = createSimpleFinSkill({
+      allowedHosts: [allowedHost],
+      fetch: async (_input, init) => {
+        providerSignal = init?.signal ?? undefined;
+        if (!providerSignal) throw new Error("Expected a provider abort signal");
+        return new Promise<Response>((_resolve, reject) => {
+          const rejectOnAbort = () => {
+            providerSettled = true;
+            reject(providerSignal?.reason);
+          };
+          if (providerSignal?.aborted) rejectOnAbort();
+          else providerSignal?.addEventListener("abort", rejectOnAbort, { once: true });
+        });
+      },
+    });
+    const prepared = await skill.prepareFetch({
+      config: {},
+      endDateEpoch: 1_800_000_000,
+      limits: simpleFinSourceSkillManifest.limits,
+    });
+    const caller = new AbortController();
+    const reason = new Error("retrieval cancelled");
+
+    const retrieval = prepared.retrieve(`https://user:secret@${allowedHost}/simplefin`, {
+      signal: caller.signal,
+    });
+    caller.abort(reason);
+
+    await expect(retrieval).rejects.toBe(reason);
+    expect(providerSignal?.aborted).toBe(true);
+    expect(providerSettled).toBe(true);
   });
 
   test("extends one request beyond 45 days and requires reviewed recovery past 90 days", async () => {
@@ -153,6 +194,7 @@ describe("SimpleFIN connected-source skill", () => {
     const resumed = await skill.prepareFetch({
       config: {},
       endDateEpoch: 1_800_000_000,
+      limits: simpleFinSourceSkillManifest.limits,
       previousCapture,
       resume: { mode: "rebaseline" },
     });
@@ -166,6 +208,7 @@ describe("SimpleFIN connected-source skill", () => {
       skill.prepareFetch({
         config: {},
         endDateEpoch: 1_800_000_000,
+        limits: simpleFinSourceSkillManifest.limits,
         previousCapture,
         resume: { mode: "unsupported" },
       }),
@@ -226,6 +269,7 @@ describe("SimpleFIN connected-source skill", () => {
     const prepared = await skill.prepareFetch({
       config: {},
       endDateEpoch: 1_786_752_000,
+      limits: simpleFinSourceSkillManifest.limits,
       previousCapture,
     });
     const bundle = await prepared.compiledSource.compile({

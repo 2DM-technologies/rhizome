@@ -9,7 +9,7 @@ function credentialedManifest() {
     description: "A source manifest used by catalog tests.",
     source_kind: "credentialed_remote",
     connector_version: "first-connector@test",
-    parser: { name: "csv", version: "csv@test" },
+    parser: { name: "csv", version: "csv@0.0.0-test" },
     limits: {
       maxCandidates: 10,
       maxCaptureBytes: 1_024,
@@ -17,7 +17,8 @@ function credentialedManifest() {
       maxTotalElementBytes: 1_024,
     },
     connection: {
-      claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
+      mode: "claim_exchange",
+      claim_policy: { kind: "single_use_global" },
     },
     input_fields: [],
     review_actions: ["review_import"],
@@ -25,6 +26,16 @@ function credentialedManifest() {
 }
 
 describe("SourceSkillManifestCatalog", () => {
+  test("rejects parser pins that cannot be persisted as rNet ingest provenance", () => {
+    const manifest = credentialedManifest();
+    expect(
+      () =>
+        new SourceSkillManifestCatalog([
+          { ...manifest, parser: { ...manifest.parser, version: "csv@1" } },
+        ]),
+    ).toThrow("parser version cannot be persisted as rNet ingest provenance");
+  });
+
   test("rejects duplicate ids, unknown fields, and unsafe help links", () => {
     const manifest = credentialedManifest();
     expect(() => new SourceSkillManifestCatalog([manifest, manifest])).toThrow(

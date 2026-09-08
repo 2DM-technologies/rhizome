@@ -1,3 +1,5 @@
+import type { SourceSkillManifest } from "../../../../../packages/store-contract/src/source-skills.ts";
+
 import {
   X_OAUTH_CONNECTOR_VERSION,
   X_OAUTH_SKILL_ID,
@@ -21,4 +23,4 @@ export const xOAuthSourceManifest = {
   connection: { mode: "oauth2_pkce", button_label: "Sign in with X" },
   input_fields: [],
   review_actions: ["review_import", "refresh_source"],
-} as const;
+} as const satisfies SourceSkillManifest;

@@ -2,22 +2,26 @@ import type { SourceExecutionLimits } from "../../../../packages/store-contract/
 
 import {
   candidateBundle,
+  sourceJsonObject,
   type CandidateBundle,
   type SourceCandidateDraft,
   type SourceElementDraft,
   type SourceJsonObject,
 } from "../../source-skills/candidate-bundle.ts";
-import type {
-  NormalizedXAttachment,
-  NormalizedXPost,
-  SelectedXPosts,
-  XAccountIdentity,
-  XEligiblePostKind,
-  XMediaOmission,
-  XPostExclusionReason,
-  XVerifyReport,
+import {
+  isXAccountName,
+  isXHandle,
+  sha256,
+  type NormalizedXAttachment,
+  type NormalizedXPost,
+  type SelectedXPosts,
+  type XAccountIdentity,
+  type XEligiblePostKind,
+  type XMediaOmission,
+  type XPostExclusionReason,
+  type XVerifyReport,
 } from "./contracts.ts";
-import { sha256, sourceJsonObject } from "./contracts.ts";
+import { normalizeXEntities } from "./entities.ts";
 import { verifyXPostCandidates } from "./verify.ts";
 
 export type XPostDisposition =
@@ -37,7 +41,7 @@ export function classifyXPost(post: NormalizedXPost, ownerId: string): XPostDisp
   if (post.references.some(({ kind }) => kind === "replied_to")) {
     return { eligible: false, reason: "reply" };
   }
-  if (post.references.some(({ kind }) => kind === "reposted")) {
+  if (post.isRepost || post.references.some(({ kind }) => kind === "reposted")) {
     return { eligible: false, reason: "repost" };
   }
   const quote = post.references.find(({ kind }) => kind === "quoted");
@@ -214,14 +218,16 @@ export async function compileXPostCandidates(
       ...(selection.retrievedAt ? { retrievedAt: selection.retrievedAt } : {}),
       elements,
       semanticIdentity: { type: "tweet", x_tweet_id: post.id, x_author_id: post.authorId },
-      // Adapters never admit volatile engagement metrics, so every normalized source fact is
-      // intentionally semantic, including declared media omissions.
-      semanticSourceProperties: sourceProperties,
     });
   }
 
   const verify = await verifyXPostCandidates(selection, candidates, omissions);
-  return candidateBundle(candidates, verify);
+  return {
+    ...candidateBundle(candidates, verify),
+    destination: {
+      title: selection.account.handle ? `@${selection.account.handle} Tweets` : "Tweets",
+    },
+  };
 }
 
 function postSourceProperties(
@@ -229,30 +235,35 @@ function postSourceProperties(
   postKind: XEligiblePostKind,
   omissions: readonly XMediaOmission[],
 ): SourceJsonObject {
-  return sourceJsonObject({
-    published_at: post.publishedAt,
-    ...(post.authorHandle ? { author_handle: post.authorHandle } : {}),
-    ...(post.authorName ? { author_name: post.authorName } : {}),
-    post_kind: postKind,
-    ...(post.conversationId ? { conversation_id: post.conversationId } : {}),
-    referenced_post_ids: post.references.map(({ postId }) => postId),
-    ...(post.language ? { language: post.language } : {}),
-    ...(post.possiblySensitive !== undefined ? { possibly_sensitive: post.possiblySensitive } : {}),
-    ...(post.editHistoryIds ? { edit_history_ids: post.editHistoryIds } : {}),
-    ...(post.entities ? { entities: post.entities } : {}),
-    ...(omissions.length
-      ? {
-          media_omissions: omissions.map((omission) => ({
-            attachment_index: omission.attachmentIndex,
-            source_ref: omission.sourceRef,
-            reason: omission.reason,
-            ...(omission.kind ? { kind: omission.kind } : {}),
-            ...(omission.mime ? { mime: omission.mime } : {}),
-            ...(omission.byteSize !== undefined ? { byte_size: omission.byteSize } : {}),
-          })),
-        }
-      : {}),
-  });
+  return sourceJsonObject(
+    {
+      published_at: post.publishedAt,
+      ...(post.authorHandle ? { author_handle: post.authorHandle } : {}),
+      ...(post.authorName ? { author_name: post.authorName } : {}),
+      post_kind: postKind,
+      ...(post.conversationId ? { conversation_id: post.conversationId } : {}),
+      referenced_post_ids: post.references.map(({ postId }) => postId),
+      ...(post.language ? { language: post.language } : {}),
+      ...(post.possiblySensitive !== undefined
+        ? { possibly_sensitive: post.possiblySensitive }
+        : {}),
+      ...(post.editHistoryIds ? { edit_history_ids: post.editHistoryIds } : {}),
+      ...(post.entities ? { entities: canonicalEntityFacts(post.entities) } : {}),
+      ...(omissions.length
+        ? {
+            media_omissions: omissions.map((omission) => ({
+              attachment_index: omission.attachmentIndex,
+              source_ref: omission.sourceRef,
+              reason: omission.reason,
+              ...(omission.kind ? { kind: omission.kind } : {}),
+              ...(omission.mime ? { mime: omission.mime } : {}),
+              ...(omission.byteSize !== undefined ? { byte_size: omission.byteSize } : {}),
+            })),
+          }
+        : {}),
+    },
+    "X source properties",
+  );
 }
 
 function mediaOmission(
@@ -310,9 +321,8 @@ export function assertNormalizedXPost(post: NormalizedXPost): void {
     throw new Error(`X post ${post.id} has no exact text payload`);
   }
   if (
-    (post.authorHandle !== undefined &&
-      (!post.authorHandle.trim() || post.authorHandle.length > 64)) ||
-    (post.authorName !== undefined && post.authorName.length > 256) ||
+    (post.authorHandle !== undefined && !isXHandle(post.authorHandle)) ||
+    (post.authorName !== undefined && !isXAccountName(post.authorName)) ||
     (post.language !== undefined && (!post.language || post.language.length > 35))
   ) {
     throw new Error(`X post ${post.id} has invalid author or language facts`);
@@ -364,6 +374,39 @@ export function assertNormalizedXPost(post: NormalizedXPost): void {
       editIds.add(id);
     }
   }
+  if (post.entities) {
+    const allowedKeys = ["cashtags", "hashtags", "mentions", "urls"];
+    if (Object.keys(post.entities).some((key) => !allowedKeys.includes(key))) {
+      throw new Error(`X post ${post.id} has invalid structured entities`);
+    }
+    const normalized = normalizeXEntities(post.text, {
+      urls: post.entities.urls?.map((entity) => ({
+        url: entity.url,
+        ...(entity.expanded_url ? { expandedUrl: entity.expanded_url } : {}),
+        start: entity.start,
+        end: entity.end,
+      })),
+      mentions: post.entities.mentions?.map((entity) => ({ ...entity })),
+      hashtags: post.entities.hashtags?.map((entity) => ({ ...entity })),
+      cashtags: post.entities.cashtags?.map((entity) => ({ ...entity })),
+    });
+    if (!normalized || !sameJson(normalized, canonicalEntityFacts(post.entities))) {
+      throw new Error(`X post ${post.id} has invalid or noncanonical structured entities`);
+    }
+  }
+  for (const reference of post.references) {
+    if (reference.kind !== "quoted" || !reference.textSpan || !reference.textUrl) continue;
+    const matchingEntities = (post.entities?.urls ?? []).filter(
+      (entity) =>
+        entity.start === reference.textSpan!.start &&
+        entity.end === reference.textSpan!.end &&
+        entity.url === reference.textUrl &&
+        (reference.url === undefined || entity.expanded_url === reference.url),
+    );
+    if (matchingEntities.length !== 1) {
+      throw new Error(`X post ${post.id} quote span lacks one matching structured entity`);
+    }
+  }
   const attachmentRefs = new Set<string>();
   for (const attachment of post.attachments) {
     if (!attachment.sourceRef || attachmentRefs.has(attachment.sourceRef)) {
@@ -381,6 +424,52 @@ export function assertNormalizedXPost(post: NormalizedXPost): void {
       throw new Error(`X post ${post.id} has an invalid omitted media size`);
     }
   }
+}
+
+function canonicalEntityFacts(entities: NonNullable<NormalizedXPost["entities"]>) {
+  return {
+    ...(entities.urls?.length
+      ? {
+          urls: entities.urls.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            url: entity.url,
+            ...(entity.expanded_url ? { expanded_url: entity.expanded_url } : {}),
+          })),
+        }
+      : {}),
+    ...(entities.mentions?.length
+      ? {
+          mentions: entities.mentions.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            username: entity.username,
+          })),
+        }
+      : {}),
+    ...(entities.hashtags?.length
+      ? {
+          hashtags: entities.hashtags.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            tag: entity.tag,
+          })),
+        }
+      : {}),
+    ...(entities.cashtags?.length
+      ? {
+          cashtags: entities.cashtags.map((entity) => ({
+            start: entity.start,
+            end: entity.end,
+            tag: entity.tag,
+          })),
+        }
+      : {}),
+  };
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function assertXId(value: string, label: string): void {

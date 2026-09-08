@@ -1,9 +1,11 @@
+import type { SourceExecutionLimits } from "../../../../../packages/store-contract/src/source-skills.ts";
 import type { SourceParser } from "../../../source-skills/candidate-bundle.ts";
 import { sha256 } from "../contracts.ts";
 import type { NormalizedXAttachment, NormalizedXPost, SelectedXPosts } from "../contracts.ts";
+import { X_POST_PARSER_NAME, X_POST_PARSER_VERSION, X_SOURCE_LIMITS } from "../definition.ts";
 import {
-  X_ARCHIVE_ACCOUNT_PATH,
   X_ARCHIVE_MANIFEST_PATH,
+  X_ARCHIVE_MAX_POST_ATTACHMENTS,
   X_ARCHIVE_POSTS_PATH,
   assertSelectionManifest,
   normalizeRawArchiveTweet,
@@ -15,27 +17,30 @@ import { openValidatedZip, readZipBytes, readZipText } from "./zip.ts";
 
 const MAX_MANIFEST_BYTES = 2 * 1_024 * 1_024;
 const MAX_POSTS_BYTES = 32 * 1_024 * 1_024;
+const MAX_COMPACT_CAPTURE_ENTRIES = 10_000;
 
-export const xArchiveParser: SourceParser<SelectedXPosts> = {
-  name: "x-posts",
-  version: "x-posts@1",
-  async parse(bytes) {
+export const xArchiveParser = {
+  name: X_POST_PARSER_NAME,
+  version: X_POST_PARSER_VERSION,
+  async parse(bytes: Uint8Array, limits: SourceExecutionLimits = X_SOURCE_LIMITS) {
+    if (bytes.byteLength === 0 || bytes.byteLength > limits.maxCaptureBytes) {
+      throw new Error("X selection capture exceeds its capture limit");
+    }
     const ownedBytes = new Uint8Array(bytes.byteLength);
     ownedBytes.set(bytes);
-    const capture = await openValidatedZip(new Blob([ownedBytes.buffer]));
+    const capture = await openValidatedZip(
+      new Blob([ownedBytes.buffer]),
+      compactCaptureEntryLimit(limits.maxCandidates),
+    );
     try {
       const manifestEntry = capture.byPath.get(X_ARCHIVE_MANIFEST_PATH);
-      const accountEntry = capture.byPath.get(X_ARCHIVE_ACCOUNT_PATH);
       const postsEntry = capture.byPath.get(X_ARCHIVE_POSTS_PATH);
-      if (!manifestEntry || !accountEntry || !postsEntry) {
+      if (!manifestEntry || !postsEntry) {
         throw new Error("X selection capture is missing required entries");
       }
       const manifest = JSON.parse(await readZipText(manifestEntry, MAX_MANIFEST_BYTES)) as unknown;
       assertSelectionManifest(manifest);
-      const account = JSON.parse(await readZipText(accountEntry, 64 * 1_024)) as unknown;
-      if (!sameAccount(account, manifest.account)) {
-        throw new Error("X selection capture account contradicts its manifest");
-      }
+      assertManifestWithinLimits(manifest, limits);
       const rawTweets = parseRawArchiveTweets(
         JSON.parse(await readZipText(postsEntry, MAX_POSTS_BYTES)) as unknown,
       );
@@ -44,28 +49,36 @@ export const xArchiveParser: SourceParser<SelectedXPosts> = {
       }
       const declaredPaths = new Set([
         X_ARCHIVE_MANIFEST_PATH,
-        X_ARCHIVE_ACCOUNT_PATH,
         X_ARCHIVE_POSTS_PATH,
         ...manifest.includedMedia.map(({ capturePath }) => capturePath),
       ]);
       for (const entry of capture.entries) {
-        if (!entry.directory && !declaredPaths.has(entry.filename)) {
+        if (entry.directory || !declaredPaths.has(entry.filename)) {
           throw new Error(`X selection capture has an undeclared entry: ${entry.filename}`);
         }
       }
-      if (declaredPaths.size !== 3 + manifest.includedMedia.length) {
+      if (declaredPaths.size !== 2 + manifest.includedMedia.length) {
         throw new Error("X selection capture repeats a media path");
       }
 
       const included = indexedEvidence(manifest.includedMedia, "included");
       const omitted = indexedEvidence(manifest.mediaOmissions, "omitted");
       const posts: NormalizedXPost[] = [];
+      let totalElementBytes = 0;
       for (const envelope of rawTweets) {
         const normalized = normalizeRawArchiveTweet(
           envelope,
           manifest.account,
           manifest.archiveLayout.mediaDirectory,
         );
+        const textByteSize = new TextEncoder().encode(normalized.post.text).byteLength;
+        if (textByteSize === 0 || textByteSize > limits.maxElementBytes) {
+          throw new Error(`X selection post ${normalized.post.id} text exceeds its element limit`);
+        }
+        if (totalElementBytes + textByteSize > limits.maxTotalElementBytes) {
+          throw new Error("X selection post text exceeds the aggregate element budget");
+        }
+        totalElementBytes += textByteSize;
         const attachments: NormalizedXAttachment[] = [];
         for (const [attachmentIndex, descriptor] of normalized.media.entries()) {
           const key = mediaKey(normalized.post.id, attachmentIndex);
@@ -87,7 +100,18 @@ export const xArchiveParser: SourceParser<SelectedXPosts> = {
             const entry = capture.byPath.get(media.capturePath);
             if (!entry)
               throw new Error(`X selection media payload is missing: ${media.capturePath}`);
-            const payload = await readZipBytes(entry, media.byteSize);
+            if (entry.uncompressedSize !== media.byteSize) {
+              throw new Error(
+                `X selection media size contradicts its ZIP entry: ${media.capturePath}`,
+              );
+            }
+            if (media.byteSize > limits.maxElementBytes) {
+              throw new Error(`X selection media exceeds its element limit: ${media.capturePath}`);
+            }
+            if (totalElementBytes + media.byteSize > limits.maxTotalElementBytes) {
+              throw new Error("X selection media exceeds the aggregate element budget");
+            }
+            const payload = await readZipBytes(entry, limits.maxElementBytes);
             if (
               payload.byteLength !== media.byteSize ||
               (await sha256(payload)) !== media.contentHash
@@ -102,6 +126,7 @@ export const xArchiveParser: SourceParser<SelectedXPosts> = {
               ...(media.alt ? { alt: media.alt } : {}),
               bytes: payload,
             });
+            totalElementBytes += payload.byteLength;
           } else {
             if (
               omission!.sourcePath !== descriptor.sourcePath ||
@@ -137,7 +162,40 @@ export const xArchiveParser: SourceParser<SelectedXPosts> = {
       await capture.close();
     }
   },
-};
+} satisfies SourceParser<SelectedXPosts>;
+
+function compactCaptureEntryLimit(maxCandidates: number): number {
+  const candidateBound = Math.min(
+    MAX_COMPACT_CAPTURE_ENTRIES,
+    Math.max(0, maxCandidates) * X_ARCHIVE_MAX_POST_ATTACHMENTS + 2,
+  );
+  return Math.max(2, candidateBound);
+}
+
+function assertManifestWithinLimits(
+  manifest: {
+    readonly counts: { readonly cap: number; readonly importedCount: number };
+    readonly includedMedia: readonly XArchiveIncludedMedia[];
+    readonly mediaOmissions: readonly XArchiveMediaOmission[];
+  },
+  limits: SourceExecutionLimits,
+): void {
+  if (
+    manifest.counts.cap !== limits.maxCandidates ||
+    manifest.counts.importedCount > limits.maxCandidates
+  ) {
+    throw new Error("X selection capture candidate counts exceed the effective source limit");
+  }
+  const maximumAttachments = manifest.counts.importedCount * X_ARCHIVE_MAX_POST_ATTACHMENTS;
+  if (
+    manifest.includedMedia.length + manifest.mediaOmissions.length > maximumAttachments ||
+    [...manifest.includedMedia, ...manifest.mediaOmissions].some(
+      ({ attachmentIndex }) => attachmentIndex >= X_ARCHIVE_MAX_POST_ATTACHMENTS,
+    )
+  ) {
+    throw new Error("X selection capture has too many attachment records");
+  }
+}
 
 function indexedEvidence<T extends XArchiveIncludedMedia | XArchiveMediaOmission>(
   values: readonly T[],
@@ -154,18 +212,4 @@ function indexedEvidence<T extends XArchiveIncludedMedia | XArchiveMediaOmission
 
 function mediaKey(postId: string, attachmentIndex: number): string {
   return `${postId}:${attachmentIndex}`;
-}
-
-function sameAccount(
-  value: unknown,
-  expected: { id: string; handle?: string; name?: string },
-): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const account = value as Record<string, unknown>;
-  return (
-    account.id === expected.id &&
-    account.handle === expected.handle &&
-    account.name === expected.name &&
-    Object.keys(account).every((key) => ["id", "handle", "name"].includes(key))
-  );
 }
