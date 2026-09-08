@@ -2,7 +2,7 @@
 
 **Status:** Finalized M2 implementation plan. No implementation is included in this document.
 
-**Companion docs:** [M2 implementation plan](../IMPLEMENTATION.md), [sandboxing](./sandboxing.md), and [design tiers](./design-tiers.md).
+**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [sandboxing](./sandboxing.md), and [design tiers](./design-tiers.md).
 
 ## 1. Purpose
 
@@ -56,27 +56,38 @@ apps/ingest/skills/transactions/
   contracts.ts
   transaction-candidates.ts
   verify.ts
-  fixtures/
+  verify.test.ts
   csv/
+    SKILL.md, BOUNDARIES.md, VERIFY.md
     manifest.ts
     parser.ts
     source.ts
     csv.test.ts
+    fixtures/
+    e2e/
   ofx/
+    SKILL.md, BOUNDARIES.md, VERIFY.md
     manifest.ts
     parser.ts
     source.ts
     ofx.test.ts
+    fixtures/
+    e2e/
   simplefin/
+    SKILL.md, BOUNDARIES.md, VERIFY.md
     manifest.ts
+    definition.ts
     config.ts
-    connector.ts
+    contracts.ts
     client.ts
-    capture.ts
     parser.ts
     source.ts
     simplefin.test.ts
+    fixtures/
+    e2e/
 ```
+
+Each child owns its own boundary docs, fixtures, and E2E suite; the family root holds only the shared representation, VERIFY, and compiler.
 
 `transactions` is a code-owning domain package, not a user-selectable source. CSV, OFX, and SimpleFIN remain independently registered source definitions with their own source IDs, labels, source kinds, manifests, capture mechanisms, and parser versions.
 
@@ -100,13 +111,20 @@ apps/ingest/skills/x/
   definition.ts
   contracts.ts
   tweet-candidates.ts
+  tweet-candidates.test.ts
+  entities.ts
+  entities.test.ts
+  verify.ts
+  quarantine.test.ts
   fixtures/
   archive/
     manifest.ts
+    contracts.ts
     browser-capture.ts
+    worker.ts
+    zip.ts
     parser.ts
     source.ts
-    verify.ts
     archive.test.ts
     e2e/
   oauth/
@@ -117,10 +135,14 @@ apps/ingest/skills/x/
     capture.ts
     parser.ts
     source.ts
-    verify.ts
-    oauth.test.ts
+    parser.test.ts
+    protocol.test.ts
+    registration.test.ts
+    source.test.ts
     e2e/
 ```
+
+Post eligibility, normalization, entity handling, and VERIFY are shared at the package root rather than duplicated per source, so `verify.ts` is a single family-level module rather than one file per source definition.
 
 The package registers two independent source definitions:
 
