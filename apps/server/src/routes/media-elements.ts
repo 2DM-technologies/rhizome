@@ -14,7 +14,7 @@ import {
   jsonSchemaValue,
   rnetDocument,
 } from "./contracts.ts";
-import { blobResponse, requestMime } from "./http.ts";
+import { blobResponse, mediaElementContentType, requestMime } from "./http.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const MediaElementDocumentSchema = rnetDocument("media-element");
@@ -94,7 +94,11 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore, baseUrl
         context.req.valid("param").id,
       );
       const blob = await blobs.get("elements", mediaElement.contentHash);
-      return blobResponse(context, blob, mediaElement.mime);
+      return blobResponse(
+        context,
+        blob,
+        mediaElementContentType(mediaElement.kind, mediaElement.mime),
+      );
     },
   );
   router.delete(

@@ -6,6 +6,7 @@ import type {
   FileCaptureWorkerResponse,
   PreparedSourceCapture,
 } from "../../../ingest/file-sources/preprocessing.ts";
+import { installedFileCapturePreprocessorRegistrations } from "../../../ingest/src/file-capture-preprocessor-catalog.ts";
 
 interface CaptureWorker {
   onerror: ((event: ErrorEvent) => void) | null;
@@ -56,7 +57,9 @@ export class FileCapturePreprocessorCatalog {
 }
 
 /** Generated source-package registration will populate this bootstrap seam. */
-export const installedFileCapturePreprocessors = new FileCapturePreprocessorCatalog([]);
+export const installedFileCapturePreprocessors = new FileCapturePreprocessorCatalog(
+  installedFileCapturePreprocessorRegistrations,
+);
 
 export async function prepareSourceCapture(
   manifest: SourceSkillManifest,

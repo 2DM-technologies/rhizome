@@ -16,6 +16,9 @@ bun run dev:s3   # in its own terminal; leave it running
 bun run dev
 ```
 
+Open `http://127.0.0.1:5173`. The explicit IPv4 loopback origin keeps local OAuth return URLs on
+the same address that the development host actually binds.
+
 The store requires object storage at startup, so `bun run dev:s3` runs a local S3 emulator with the four buckets already created, keeping its data in `.rhizome/s3`. The defaults in `.env.example` point at it. To run against real R2 instead, replace the endpoint and credentials and skip that step; `R2_FORCE_PATH_STYLE=true` is for emulators only.
 
 `.env` lives at the repository root and is read from there by both apps, even though `bun --filter` runs each with its own working directory — the server passes `--env-file` and Vite sets `envDir`.

@@ -116,18 +116,43 @@ export interface PreparedCredentialConnection {
 
 export interface CredentialClaimPolicy {
   readonly kind: "single_use_global";
-  readonly attempts: number;
-  readonly windowHours: number;
 }
 
-export interface CredentialConnectionDefinition {
+export interface ClaimExchangeConnectionDefinition {
+  readonly mode: "claim_exchange";
   readonly claimPolicy: CredentialClaimPolicy;
   readonly requestSchema: Readonly<Record<string, unknown>>;
   prepare(input: unknown): PreparedCredentialConnection;
 }
 
+export interface OAuth2PkceCredentialResult {
+  readonly secret: string;
+  readonly publicMetadata?: SourceJsonObject;
+}
+
+/** Provider adapter for the server-owned OAuth 2.0 authorization-code + PKCE lifecycle. */
+export interface OAuth2PkceConnectionDefinition {
+  readonly mode: "oauth2_pkce";
+  authorizationUrl(input: { callbackUrl: string; codeChallenge: string; state: string }): string;
+  exchange(input: {
+    callbackUrl: string;
+    code: string;
+    codeVerifier: string;
+    signal: AbortSignal;
+  }): Promise<OAuth2PkceCredentialResult>;
+  callbackError?(input: { error: string; errorDescription?: string }): CredentialConnectionError;
+  refresh?(
+    secret: string,
+    input: { signal: AbortSignal },
+  ): Promise<OAuth2PkceCredentialResult | undefined>;
+  revoke?(secret: string, input: { signal: AbortSignal }): Promise<void>;
+}
+
+export type CredentialConnectionDefinition =
+  ClaimExchangeConnectionDefinition | OAuth2PkceConnectionDefinition;
+
 export interface PreparedConnectedSourceFetch {
-  retrieve(secret: string): Promise<Uint8Array>;
+  retrieve(secret: string, input: { signal: AbortSignal }): Promise<Uint8Array>;
   readonly compiledSource: CandidateBundleCapability<{
     readonly bytes: Uint8Array;
     readonly limits: SourceExecutionLimits;
@@ -144,6 +169,8 @@ export interface CredentialSourceConnector {
 
 /** Credentialed capture capability layered on the generic connector and compiled-source boundary. */
 export interface CredentialedSourceSkill extends CredentialSourceConnector {
+  /** Lifecycle-only adapters stay installed for token revocation but are not offered or fetched. */
+  readonly availability?: "active" | "lifecycle_only";
   readonly parser: SourceParser;
   /** Closed schema for caller-supplied, non-secret source configuration. */
   readonly sourceRequestSchema: Readonly<Record<string, unknown>>;
@@ -160,6 +187,8 @@ export interface CredentialedSourceSkill extends CredentialSourceConnector {
   prepareFetch(input: {
     config: unknown;
     endDateEpoch: number;
+    /** Persisted effective limits for this source, which may outlive newer manifest defaults. */
+    limits: SourceExecutionLimits;
     previousCapture?: Uint8Array;
     resume?: SourceJsonValue;
   }): PreparedConnectedSourceFetch | Promise<PreparedConnectedSourceFetch>;
@@ -169,23 +198,27 @@ export interface SourceSkillDefinition<Settings> {
   readonly skillId: string;
   readonly parser: SourceParser;
   loadSettings(environment: Record<string, string | undefined>): Settings;
+  /** Optional installations can remain absent until their operator-owned configuration is ready. */
+  isConfigured?(settings: Settings): boolean;
   create(settings: Settings): CredentialedSourceSkill;
 }
 
 /** Immutable registry today; this is the seam that can become generated/package discovery later. */
 export class CredentialedSourceCatalog {
-  readonly #bySkillId: ReadonlyMap<string, CredentialedSourceSkill>;
+  readonly #installedBySkillId: ReadonlyMap<string, CredentialedSourceSkill>;
+  readonly #activeBySkillId: ReadonlyMap<string, CredentialedSourceSkill>;
   readonly #manifests: readonly SourceSkillManifest[];
 
   constructor(skills: readonly CredentialedSourceSkill[]) {
-    const bySkillId = new Map<string, CredentialedSourceSkill>();
+    const installedBySkillId = new Map<string, CredentialedSourceSkill>();
+    const activeBySkillId = new Map<string, CredentialedSourceSkill>();
     const manifests: SourceSkillManifest[] = [];
     const skillIdPattern = new RegExp(SOURCE_SKILL_ID_PATTERN);
     for (const skill of skills) {
       if (!skillIdPattern.test(skill.skillId)) {
         throw new Error(`Invalid credentialed-source skill id: ${skill.skillId}`);
       }
-      if (bySkillId.has(skill.skillId)) {
+      if (installedBySkillId.has(skill.skillId)) {
         throw new Error(`Duplicate credentialed-source skill id: ${skill.skillId}`);
       }
       if (skill.manifest.skill_id !== skill.skillId) {
@@ -220,15 +253,25 @@ export class CredentialedSourceCatalog {
         requireEveryProperty: false,
         label: "source request",
       });
-      bySkillId.set(skill.skillId, skill);
-      manifests.push(immutableJson(skill.manifest));
+      if (
+        skill.availability !== undefined &&
+        !["active", "lifecycle_only"].includes(skill.availability)
+      ) {
+        throw new Error(`Credentialed-source ${skill.skillId} has invalid availability`);
+      }
+      installedBySkillId.set(skill.skillId, skill);
+      if (skill.availability !== "lifecycle_only") {
+        activeBySkillId.set(skill.skillId, skill);
+        manifests.push(immutableJson(skill.manifest));
+      }
     }
-    this.#bySkillId = bySkillId;
+    this.#installedBySkillId = installedBySkillId;
+    this.#activeBySkillId = activeBySkillId;
     this.#manifests = Object.freeze(manifests);
   }
 
   all(): readonly CredentialedSourceSkill[] {
-    return [...this.#bySkillId.values()];
+    return [...this.#activeBySkillId.values()];
   }
 
   manifests(): readonly SourceSkillManifest[] {
@@ -236,7 +279,12 @@ export class CredentialedSourceCatalog {
   }
 
   forSkillId(skillId: string): CredentialedSourceSkill | undefined {
-    return this.#bySkillId.get(skillId);
+    return this.#activeBySkillId.get(skillId);
+  }
+
+  /** Lifecycle lookup for disconnect/cleanup only; never use this to offer or capture a source. */
+  forInstalledSkillId(skillId: string): CredentialedSourceSkill | undefined {
+    return this.#installedBySkillId.get(skillId);
   }
 
   forSource(skillId: string, parser: string): CredentialedSourceSkill | undefined {
@@ -246,19 +294,25 @@ export class CredentialedSourceCatalog {
 }
 
 function assertConnectionManifestCoverage(skill: CredentialedSourceSkill): void {
-  if (
-    skill.connection.claimPolicy.kind !== "single_use_global" ||
-    !boundedInteger(skill.connection.claimPolicy.attempts, 1, 1_000) ||
-    !boundedInteger(skill.connection.claimPolicy.windowHours, 1, 720)
-  ) {
-    throw new Error(`Credentialed-source ${skill.skillId} has an invalid claim policy`);
+  const manifestConnection = skill.manifest.connection;
+  if (!manifestConnection || manifestConnection.mode !== skill.connection.mode) {
+    throw new Error(
+      `Credentialed-source ${skill.skillId} manifest has inconsistent connection mode`,
+    );
   }
-  const manifestPolicy = skill.manifest.connection?.claim_policy;
+  if (skill.connection.mode === "oauth2_pkce") {
+    if (
+      manifestConnection.mode !== "oauth2_pkce" ||
+      skill.manifest.input_fields.some(({ target }) => target === "connection")
+    ) {
+      throw new Error(`Credentialed-source ${skill.skillId} has an invalid OAuth connection`);
+    }
+    return;
+  }
   if (
-    !manifestPolicy ||
-    manifestPolicy.kind !== skill.connection.claimPolicy.kind ||
-    manifestPolicy.attempts !== skill.connection.claimPolicy.attempts ||
-    manifestPolicy.window_hours !== skill.connection.claimPolicy.windowHours
+    manifestConnection.mode !== "claim_exchange" ||
+    skill.connection.claimPolicy.kind !== "single_use_global" ||
+    manifestConnection.claim_policy.kind !== skill.connection.claimPolicy.kind
   ) {
     throw new Error(`Credentialed-source ${skill.skillId} manifest has inconsistent claim policy`);
   }
@@ -270,10 +324,6 @@ function assertConnectionManifestCoverage(skill: CredentialedSourceSkill): void 
     requireEveryProperty: true,
     label: "connection",
   });
-}
-
-function boundedInteger(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 }
 
 export function delegatedConnectedSourceError(error: unknown): unknown {

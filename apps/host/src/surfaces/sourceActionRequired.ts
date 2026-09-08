@@ -9,6 +9,7 @@ const requiredActionKeys = new Set([
   "action",
   "continuation_token",
   "detail",
+  "destination",
   "kind",
   "source",
   "title",
@@ -23,10 +24,16 @@ export function sourceActionRequired(
   synchronousError: unknown,
   failedOperationResult: unknown,
   configuredSources: readonly string[],
+  allowPendingVibe = false,
 ): SourceActionRequired | undefined {
   const action =
     actionFromProblem(synchronousError) ?? actionFromOperationResult(failedOperationResult);
-  if (!action || !configuredSources.includes(action.source)) return undefined;
+  if (
+    !action ||
+    (!configuredSources.includes(action.source) &&
+      !(allowPendingVibe && action.destination?.kind === "pending_vibe"))
+  )
+    return undefined;
   return action;
 }
 
@@ -43,7 +50,7 @@ function actionFromOperationResult(value: unknown): SourceActionRequired | undef
 function parseRequiredAction(value: unknown): SourceActionRequired | undefined {
   if (
     !isRecord(value) ||
-    Object.keys(value).length !== requiredActionKeys.size ||
+    ![requiredActionKeys.size - 1, requiredActionKeys.size].includes(Object.keys(value).length) ||
     Object.keys(value).some((key) => !requiredActionKeys.has(key)) ||
     value.kind !== "source_action_required" ||
     value.action !== "review_import" ||
@@ -52,7 +59,14 @@ function parseRequiredAction(value: unknown): SourceActionRequired | undefined {
     typeof value.source !== "string" ||
     !sourceIdPattern.test(value.source) ||
     !boundedString(value.continuation_token, 32, 8_192) ||
-    /\s/u.test(value.continuation_token)
+    /\s/u.test(value.continuation_token) ||
+    (value.destination !== undefined &&
+      (!isRecord(value.destination) ||
+        value.destination.kind !== "pending_vibe" ||
+        typeof value.destination.id !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          value.destination.id,
+        )))
   ) {
     return undefined;
   }
@@ -64,6 +78,14 @@ function parseRequiredAction(value: unknown): SourceActionRequired | undefined {
     detail: value.detail,
     source: value.source,
     continuation_token: value.continuation_token,
+    ...(value.destination
+      ? {
+          destination: {
+            kind: "pending_vibe" as const,
+            id: (value.destination as { id: string }).id,
+          },
+        }
+      : {}),
   };
 }
 

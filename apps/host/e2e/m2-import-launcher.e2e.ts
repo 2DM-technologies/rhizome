@@ -31,7 +31,7 @@ test("the start-something-new launcher opens a retained import surface", async (
   await expect(page.getByRole("heading", { name: "Import", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("list", { name: "Owned Vibes" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Import into Spending" })).toBeVisible();
-  await expect(page.getByLabel("New import Vibe title")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import into a new Vibe" })).toBeVisible();
 });
 
 test("an existing owner Vibe hands off to the shared review and survives surface history", async ({
@@ -65,17 +65,15 @@ test("an existing owner Vibe hands off to the shared review and survives surface
   ).toBe(true);
 });
 
-test("creating a target Vibe continues directly into the shared import review", async ({
+test("a new destination is created only when its reviewed import is confirmed", async ({
   page,
 }) => {
   await page.goto("/imports");
-  await page.getByLabel("New import Vibe title").fill("Quarterly taxes");
-  await page.getByRole("button", { name: "Create and continue" }).click();
+  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
 
   await expect(page).toHaveURL(/\/imports$/);
-  await expect(page.getByText("Target Vibe: Quarterly taxes", { exact: true })).toBeVisible();
   await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
-  expect(mockStore.vibes.some((vibe) => vibe.title === "Quarterly taxes")).toBe(true);
+  expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
 
   await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
   await page
@@ -84,11 +82,46 @@ test("creating a target Vibe continues directly into the shared import review", 
   await expect(page.getByLabel("VERIFY reconciliation")).toContainText(
     "2 source records → 2 candidates",
   );
+  await expect(page.getByLabel("New Vibe title")).toHaveValue("Imported objects");
+  await page.getByLabel("New Vibe title").fill("Quarterly taxes");
+  expect(
+    mockStore.requests.some(
+      (request) =>
+        request.method() === "POST" && new URL(request.url()).pathname === "/rnet/v0/imports",
+    ),
+  ).toBe(true);
+  expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
+
+  await page.getByRole("button", { name: "Confirm import" }).click();
+  await expect(page.getByText("Target Vibe: Quarterly taxes", { exact: true })).toBeVisible();
+  expect(mockStore.vibes.some((vibe) => vibe.title === "Quarterly taxes")).toBe(true);
   expect(
     mockStore.requests.some(
       (request) =>
         request.method() === "POST" &&
-        new URL(request.url()).pathname === `/rnet/v0/vibes/${NEW_VIBE_ID}/imports`,
+        new URL(request.url()).pathname ===
+          `/rnet/v0/imports/${mockSyntheticFileSourceSkill.operationId}/confirm`,
     ),
   ).toBe(true);
+});
+
+test("canceling a pending destination leaves no Vibe or committed import", async ({ page }) => {
+  await page.goto("/imports");
+  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
+  await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
+  await page
+    .getByRole("button", { name: `Review ${syntheticFileSourceSkillManifest.label}` })
+    .click();
+  await expect(page.getByLabel("New Vibe title")).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  await expect(page.getByRole("status")).toContainText("Nothing was imported");
+  expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
+  expect(
+    mockStore.requests.some(
+      (request) =>
+        request.method() === "POST" && new URL(request.url()).pathname.endsWith("/confirm"),
+    ),
+  ).toBe(false);
 });

@@ -6,7 +6,7 @@ import { FileSourceCatalog, type FileSourceSkill } from "./types.ts";
 function fakeFileSkill(skillId: string, parserName: string): FileSourceSkill {
   const parser = {
     name: parserName,
-    version: `${parserName}@test`,
+    version: `${parserName}@0.0.0-test`,
     async parse() {
       return { transactions: [], sourceRecordCount: 0 };
     },

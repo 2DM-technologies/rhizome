@@ -13,7 +13,7 @@ interface SyntheticSkillOptions {
 
 function syntheticSkill(options: SyntheticSkillOptions = {}): PublicRemoteSourceSkill {
   const skillId = options.skillId ?? "synthetic_public";
-  const parserVersion = options.parserVersion ?? "synthetic-public@2";
+  const parserVersion = options.parserVersion ?? "synthetic-public@2.0.0";
   const connectorVersion = options.connectorVersion ?? "synthetic-public-connector@2";
   const parser = {
     name: "synthetic-public",
@@ -82,7 +82,7 @@ describe("public-remote source catalog", () => {
     const current = syntheticSkill();
     const historical = syntheticSkill({
       connectorVersion: "synthetic-public-connector@1",
-      parserVersion: "synthetic-public@1",
+      parserVersion: "synthetic-public@1.0.0",
     });
     const catalog = new PublicRemoteSourceCatalog({ current: [current], historical: [historical] });
 
@@ -92,7 +92,7 @@ describe("public-remote source catalog", () => {
         skillId: "synthetic_public",
         connectorVersion: "synthetic-public-connector@1",
         parserName: "synthetic-public",
-        parserVersion: "synthetic-public@1",
+        parserVersion: "synthetic-public@1.0.0",
       }),
     ).toBe(historical);
     expect(
@@ -100,7 +100,7 @@ describe("public-remote source catalog", () => {
         skillId: "synthetic_public",
         connectorVersion: "synthetic-public-connector@2",
         parserName: "synthetic-public",
-        parserVersion: "synthetic-public@2",
+        parserVersion: "synthetic-public@2.0.0",
       }),
     ).toBe(current);
     expect(
@@ -108,7 +108,7 @@ describe("public-remote source catalog", () => {
         skillId: "synthetic_public",
         connectorVersion: "synthetic-public-connector@1",
         parserName: "synthetic-public",
-        parserVersion: "synthetic-public@2",
+        parserVersion: "synthetic-public@2.0.0",
       }),
     ).toBeUndefined();
     expect(catalog.currentImplementations()).toEqual([current]);
