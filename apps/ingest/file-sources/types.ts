@@ -1,4 +1,7 @@
-import type { SourceSkillManifest } from "../../../packages/store-contract/src/source-skills.ts";
+import type {
+  SourceExecutionLimits,
+  SourceSkillManifest,
+} from "../../../packages/store-contract/src/source-skills.ts";
 
 import type { CandidateBundleCapability, SourceParser } from "../source-skills/candidate-bundle.ts";
 import { SourceSkillManifestCatalog } from "../source-skills/manifest-catalog.ts";
@@ -6,7 +9,10 @@ import { SourceSkillManifestCatalog } from "../source-skills/manifest-catalog.ts
 export interface FileSourceSkill {
   readonly manifest: SourceSkillManifest & { readonly source_kind: "file" };
   readonly parser: SourceParser;
-  readonly compiledSource: CandidateBundleCapability<{ readonly bytes: Uint8Array }>;
+  readonly compiledSource: CandidateBundleCapability<{
+    readonly bytes: Uint8Array;
+    readonly limits: SourceExecutionLimits;
+  }>;
 }
 
 /** Executable file-source capabilities, keyed by stable skill identity rather than parser name. */

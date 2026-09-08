@@ -10,6 +10,14 @@ export const arenaSourceSkillManifest = {
   source_kind: "public_remote",
   connector_version: ARENA_CONNECTOR_VERSION,
   parser: { name: ARENA_PARSER_NAME, version: ARENA_PARSER_VERSION },
+  limits: {
+    maxCandidates: 200,
+    // The source client counts decoded response bytes; the persisted JSON capture base64-encodes
+    // media, so its generic capture envelope needs the corresponding expansion headroom.
+    maxCaptureBytes: 64 * 1_024 * 1_024,
+    maxElementBytes: 16 * 1_024 * 1_024,
+    maxTotalElementBytes: 40 * 1_024 * 1_024,
+  },
   input_fields: [
     {
       name: "url",

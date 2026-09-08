@@ -13,6 +13,7 @@ import {
   useVibeObjects,
 } from "../queries/index.ts";
 import { api } from "../api/client.ts";
+import { mediaObjectDisplayName } from "../mediaObjectDisplayName.ts";
 import { useSession } from "../session/session.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
 import { uuidOf } from "../api/uris.ts";
@@ -29,6 +30,7 @@ import {
 import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
+import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 
 const OBJECT_URI = new RegExp(rnetUriPattern("object"));
 const MEDIA_ELEMENT_PATH = "/rnet/v0/elements/{id}";
@@ -36,6 +38,8 @@ const MEDIA_ELEMENT_PATH = "/rnet/v0/elements/{id}";
 interface ResolvedObjectElement {
   element: MediaElement;
   index: number;
+  reference: MediaObject["elements"][number];
+  role?: MediaObject["elements"][number]["role"];
   uuid: string;
 }
 
@@ -95,18 +99,6 @@ function firstNonemptyString(...values: unknown[]): string | undefined {
 function humanize(value: string): string {
   const words = value.replace(/[._-]+/g, " ").trim();
   return words ? `${words[0]?.toUpperCase()}${words.slice(1)}` : "Media object";
-}
-
-function sourceTitle(object: MediaObject): string {
-  const properties = sourceProperties(object);
-  return (
-    firstNonemptyString(
-      properties.title,
-      properties.name,
-      properties.raw_description,
-      properties.description,
-    ) ?? `Untitled ${humanize(object.type).toLowerCase()}`
-  );
 }
 
 function objectKindLabel(object: MediaObject): string {
@@ -210,13 +202,13 @@ function MediaObjectEntry({
   removeObject: () => void;
   removePending: boolean;
 }) {
-  const title = sourceTitle(object);
+  const title = mediaObjectDisplayName(object);
   const kindLabel = objectKindLabel(object);
   const destination = sourceDestination(object);
   const canRemoveFromCard = isOwner && object.source.ingest.method === "authored";
   const viewport = useNearViewport();
   const elementQueries = useQueries({
-    queries: object.elements.map((uri) => ({
+    queries: object.elements.map(({ uri }) => ({
       ...api.queryOptions("get", MEDIA_ELEMENT_PATH, {
         params: { path: { id: uuidOf(uri) } },
       }),
@@ -225,13 +217,15 @@ function MediaObjectEntry({
   });
   const elements = elementQueries.flatMap((query, index): ResolvedObjectElement[] => {
     const element = query.data;
-    const uri = object.elements[index];
-    if (!element || !uri) return [];
+    const reference = object.elements[index];
+    if (!element || !reference) return [];
     return [
       {
         element,
         index,
-        uuid: uuidOf(uri),
+        reference,
+        ...(reference.role ? { role: reference.role } : {}),
+        uuid: uuidOf(reference.uri),
       },
     ];
   });
@@ -288,7 +282,7 @@ function MediaObjectEntry({
             isPending={elementPending}
             kindLabel={kindLabel}
             payloadUrl={payload.data}
-            title={title}
+            title={primaryElement?.reference.alt ?? title}
           />
         </span>
         <span className="flex min-h-20 flex-col gap-1 px-4 py-3">
@@ -327,6 +321,10 @@ function MediaObjectEntry({
 }
 
 export function VibeSurface({ uuid }: { uuid: string }) {
+  const sourceConnectionReturn = useSourceConnectionReturn({
+    kind: "existing_vibe",
+    vibeUuid: uuid,
+  });
   const vibe = useVibe(uuid);
   const objects = useVibeObjects(uuid);
   const update = useUpdateVibe();
@@ -460,6 +458,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           <ImportPanel
             vibeUuid={uuid}
             configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
+            sourceConnectionReturn={sourceConnectionReturn}
           />
         </div>
       ) : null}

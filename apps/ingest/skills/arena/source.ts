@@ -2,9 +2,8 @@ import type { PublicRemoteSourceSkill } from "../../public-sources/types.ts";
 import {
   CANDIDATE_BUNDLE_CAPABILITY,
   candidateBundle,
+  sourceJsonObject,
   type SourceCandidateDraft,
-  type SourceJsonObject,
-  type SourceJsonValue,
 } from "../../source-skills/candidate-bundle.ts";
 
 import { ARENA_API_ORIGIN, ArenaClient, type ArenaClientOptions } from "./client.ts";
@@ -56,11 +55,12 @@ export function createArenaSourceSkill(
           keys: block.keys,
           sourceProperties: sourceJsonObject(
             block.sourceProperties,
-            `Are.na block ${block.blockId}`,
+            `Are.na block ${block.blockId} source properties`,
           ),
           retrievedAt: channel.retrievedAt,
           elements: block.elements.map((element) => ({
             role: element.role,
+            ...(element.alt ? { alt: element.alt } : {}),
             kind: element.kind,
             mime: element.mime,
             bytes: element.bytes,
@@ -120,33 +120,4 @@ function parsedChannel(value: unknown): ParsedArenaChannel {
     throw new Error("Are.na parser output is invalid");
   }
   return value as ParsedArenaChannel;
-}
-
-function sourceJsonObject(value: unknown, label: string): SourceJsonObject {
-  const converted = sourceJsonValue(value, new Set(), label);
-  if (!converted || typeof converted !== "object" || Array.isArray(converted)) {
-    throw new Error(`${label} source properties are not an object`);
-  }
-  return converted as SourceJsonObject;
-}
-
-function sourceJsonValue(value: unknown, ancestors: Set<object>, label: string): SourceJsonValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (!value || typeof value !== "object") throw new Error(`${label} is not JSON-safe`);
-  if (ancestors.has(value)) throw new Error(`${label} contains a cycle`);
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return value.map((entry) => sourceJsonValue(entry, ancestors, label));
-    }
-    const result: SourceJsonObject = {};
-    for (const [key, entry] of Object.entries(value)) {
-      if (entry === undefined) throw new Error(`${label}.${key} is undefined`);
-      result[key] = sourceJsonValue(entry, ancestors, `${label}.${key}`);
-    }
-    return result;
-  } finally {
-    ancestors.delete(value);
-  }
 }

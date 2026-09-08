@@ -9,6 +9,12 @@ export const ofxSourceSkillManifest = {
   source_kind: "file",
   connector_version: "origin-upload@1.0.0",
   parser: { name: ofxParser.name, version: ofxParser.version },
+  limits: {
+    maxCandidates: 100_000,
+    maxCaptureBytes: 50 * 1_024 * 1_024,
+    maxElementBytes: 50 * 1_024 * 1_024,
+    maxTotalElementBytes: 50 * 1_024 * 1_024,
+  },
   input_fields: [
     {
       name: "file",

@@ -1,11 +1,12 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { uuidOf } from "../api/uris.ts";
-import { useCreateVibe, useVibe, useVibes } from "../queries/index.ts";
+import { useVibe, useVibes } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
-import { Button, EntityRow, TextInput } from "../ui/index.ts";
+import { Button, EntityRow, InlineError } from "../ui/index.ts";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
+import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 
 /**
  * Host-owned entry point for reviewed sources that do not start inside a Vibe.
@@ -17,10 +18,10 @@ import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 export function ImportSurface() {
   const session = useSession();
   const vibes = useVibes();
-  const create = useCreateVibe();
-  const [targetUuid, setTargetUuid] = useState<string>();
-  const [title, setTitle] = useState("");
-  const target = useVibe(targetUuid);
+  const [targetUuid, setTargetUuid] = useState<string | "pending">();
+  const [connectionReturnError, setConnectionReturnError] = useState<string>();
+  const target = useVibe(targetUuid === "pending" ? undefined : targetUuid);
+  const sourceConnectionReturn = useSourceConnectionReturn({ kind: "new_vibe" });
 
   const ownedVibes = useMemo(
     () => (vibes.data ?? []).filter((vibe) => vibe.owner === session.data?.user.id),
@@ -28,33 +29,35 @@ export function ImportSurface() {
   );
   const targetIsOwned = target.data?.owner === session.data?.user.id;
 
-  function createTarget(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextTitle = title.trim();
-    if (!nextTitle) return;
-    create.mutate(
-      { body: { title: nextTitle } },
-      {
-        onSuccess: (vibe) => {
-          setTitle("");
-          setTargetUuid(uuidOf(vibe.uri));
-        },
-      },
-    );
-  }
+  useEffect(() => {
+    if (
+      sourceConnectionReturn.attempt &&
+      !sourceConnectionReturn.failureMessage &&
+      sourceConnectionReturn.attempt.intent.destination.kind === "new_vibe"
+    ) {
+      setTargetUuid("pending");
+    }
+  }, [sourceConnectionReturn.attempt, sourceConnectionReturn.failureMessage]);
+
+  useEffect(() => {
+    if (!sourceConnectionReturn.failureMessage) return;
+    setConnectionReturnError(sourceConnectionReturn.failureMessage);
+    sourceConnectionReturn.consume();
+  }, [sourceConnectionReturn.consume, sourceConnectionReturn.failureMessage]);
 
   function chooseAnotherTarget() {
     setTargetUuid(undefined);
-    create.reset();
   }
 
   return (
     <StoreSurface
       title="Import"
       detail={
-        target.data && targetIsOwned
-          ? `Target Vibe: ${target.data.title}`
-          : "Choose an owned Vibe before selecting a source."
+        targetUuid === "pending"
+          ? "The new Vibe will be created only when you confirm its reviewed import."
+          : target.data && targetIsOwned
+            ? `Target Vibe: ${target.data.title}`
+            : "Choose an owned Vibe before selecting a source."
       }
       actions={
         targetUuid ? (
@@ -66,22 +69,31 @@ export function ImportSurface() {
     >
       {targetUuid ? (
         <div className="flex flex-col gap-4">
-          {target.isPending ? <Pending label="target Vibe" /> : null}
+          {targetUuid !== "pending" && target.isPending ? <Pending label="target Vibe" /> : null}
           {target.isError ? <Failed error={target.error} /> : null}
           {target.data && !targetIsOwned ? (
             <span role="alert" className="text-body text-error">
               You must own the target Vibe to import into it.
             </span>
           ) : null}
-          {target.data && targetIsOwned ? (
+          {targetUuid === "pending" ? (
+            <ImportPanel
+              configuredSources={[]}
+              sourceConnectionReturn={sourceConnectionReturn}
+              onPendingVibeConfirmed={(vibeUuid) => setTargetUuid(vibeUuid)}
+            />
+          ) : target.data && targetIsOwned ? (
             <ImportPanel
               vibeUuid={targetUuid}
               configuredSources={target.data.pull?.enabled ? (target.data.pull.sources ?? []) : []}
             />
           ) : null}
         </div>
+      ) : sourceConnectionReturn.isPending ? (
+        <Pending label="source connection" />
       ) : (
         <div className="flex max-w-[52rem] flex-col gap-7">
+          {connectionReturnError ? <InlineError>{connectionReturnError}</InlineError> : null}
           <section aria-labelledby="import-existing-vibe" className="flex flex-col gap-3">
             <div>
               <h2 id="import-existing-vibe" className="text-label text-primary">
@@ -111,9 +123,8 @@ export function ImportSurface() {
             </ul>
           </section>
 
-          <form
+          <section
             aria-labelledby="create-import-vibe"
-            onSubmit={createTarget}
             className="flex flex-col gap-3 border-t border-hairline pt-6"
           >
             <div>
@@ -121,29 +132,13 @@ export function ImportSurface() {
                 Create a new Vibe
               </h2>
               <p className="mt-1 text-body text-secondary">
-                The new Vibe becomes the target for this import.
+                Review a source first. The Vibe is created atomically when you confirm.
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <label className="min-w-0 flex-1">
-                <span className="sr-only">New import Vibe title</span>
-                <TextInput
-                  aria-label="New import Vibe title"
-                  value={title}
-                  onChange={(event) => {
-                    setTitle(event.target.value);
-                    create.reset();
-                  }}
-                  placeholder="Name a new Vibe"
-                  maxLength={256}
-                />
-              </label>
-              <Button type="submit" disabled={!title.trim() || create.isPending}>
-                {create.isPending ? "Creating…" : "Create and continue"}
-              </Button>
-            </div>
-            {create.isError ? <Failed error={create.error} /> : null}
-          </form>
+            <Button className="self-start" onClick={() => setTargetUuid("pending")}>
+              Import into a new Vibe
+            </Button>
+          </section>
         </div>
       )}
     </StoreSurface>

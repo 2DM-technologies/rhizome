@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Badge } from "./Badge.tsx";
 import { cn } from "./cn.ts";
@@ -11,6 +11,7 @@ export interface PayloadCandidate {
     mime: string;
   };
   index: number;
+  role?: "title" | "content" | "preview";
 }
 
 /** Choose a browser-native payload renderer from the stored media type. */
@@ -39,14 +40,16 @@ function isNativePresentation(candidate: PayloadCandidate): boolean {
 function presentationPriority(candidate: PayloadCandidate): number {
   const presentation = payloadPresentation(candidate.element.mime);
   const mediaType = candidate.element.mime.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (!isNativePresentation(candidate)) return 4;
-  return presentation === "image" || presentation === "audio" || presentation === "video"
-    ? 0
-    : presentation === "document"
-      ? 1
-      : presentation === "text" && mediaType !== "text/plain"
-        ? 2
-        : 3;
+  const nativePriority = !isNativePresentation(candidate)
+    ? 4
+    : presentation === "image" || presentation === "audio" || presentation === "video"
+      ? 0
+      : presentation === "document"
+        ? 1
+        : presentation === "text" && mediaType !== "text/plain"
+          ? 2
+          : 3;
+  return nativePriority + (candidate.role === "title" ? 10 : 0);
 }
 
 /** Select one card preview without assigning provider-specific meaning to element positions. */
@@ -101,6 +104,68 @@ function fallback(
       <Badge>{label}</Badge>
       <span className="text-body text-primary">{detail}</span>
     </span>
+  );
+}
+
+function TextElementPreview({
+  className,
+  errorLabel,
+  frameBorder,
+  frameTitle,
+  loadingLabel,
+  src,
+  title,
+  variant,
+}: {
+  className?: string;
+  errorLabel: string;
+  frameBorder: string;
+  frameTitle?: string;
+  loadingLabel: string;
+  src: string;
+  title: string;
+  variant: NonNullable<ElementPreviewProps["variant"]>;
+}) {
+  const [current, setCurrent] = useState<
+    { src: string; status: "loaded"; text: string } | { src: string; status: "error" } | null
+  >(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(src, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Text payload returned ${response.status}`);
+        const bytes = await response.arrayBuffer();
+        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      })
+      .then(
+        (text) => {
+          if (!controller.signal.aborted) setCurrent({ src, status: "loaded", text });
+        },
+        () => {
+          if (!controller.signal.aborted) setCurrent({ src, status: "error" });
+        },
+      );
+    return () => controller.abort();
+  }, [src]);
+
+  const state = current?.src === src ? current : null;
+  return (
+    <pre
+      data-element-presentation="text"
+      data-media-object-presentation="text"
+      title={frameTitle ?? `Text content for ${title}`}
+      aria-busy={!state}
+      style={{ colorScheme: "light" }}
+      className={cn(
+        "m-0 overflow-auto whitespace-pre-wrap break-words bg-white text-left font-mono text-primary",
+        variant === "card" ? "size-full border-0 p-3" : "h-72 w-full rounded-sm border p-4",
+        variant !== "card" && frameBorder,
+        className,
+      )}
+    >
+      {!state ? loadingLabel : state.status === "error" ? errorLabel : state.text}
+    </pre>
   );
 }
 
@@ -201,21 +266,33 @@ export function ElementPreview({
     );
   }
 
-  const text = presentation === "text";
+  if (presentation === "text") {
+    return (
+      <TextElementPreview
+        className={className}
+        errorLabel={errorLabel}
+        frameBorder={frameBorder}
+        frameTitle={frameTitle}
+        loadingLabel={loadingLabel}
+        src={src}
+        title={title}
+        variant={variant}
+      />
+    );
+  }
+
   return (
     <iframe
       data-element-presentation={presentation}
       data-media-object-presentation={presentation}
       src={src}
-      title={frameTitle ?? `${text ? "Text content" : "Document preview"} for ${title}`}
+      title={frameTitle ?? `Document preview for ${title}`}
       sandbox=""
-      style={text ? { colorScheme: "light" } : undefined}
       className={cn(
         variant === "card"
           ? "size-full border-0 bg-white"
           : "h-72 w-full rounded-sm border bg-white",
         variant !== "card" && frameBorder,
-        text && variant === "card" && "p-3",
         className,
       )}
     />

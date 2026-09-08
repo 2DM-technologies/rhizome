@@ -42,7 +42,7 @@ export const mockArenaSourceSkill = {
     const elements: MockStagedElement[] = [];
     for (const [blockIndex, block] of parsed.blocks.entries()) {
       const objectId = indexedUuid("0198f2a1-0d01-7d01-8d01-000000000000", blockIndex);
-      const elementUris: `rnet://element/${string}`[] = [];
+      const elementReferences: MediaObject["elements"] = [];
       for (const [elementIndex, element] of block.elements.entries()) {
         const elementId = indexedUuid(
           "0198f2a1-0e01-7e01-8e01-000000000000",
@@ -60,12 +60,17 @@ export const mockArenaSourceSkill = {
           byte_size: element.byteSize,
           created_at: parsed.retrievedAt,
         } satisfies MediaElement;
-        elementUris.push(uri);
+        elementReferences.push({
+          uri,
+          role: element.role,
+          ...(element.alt ? { alt: element.alt } : {}),
+        });
         elements.push({
           document,
           object_uri: `rnet://object/${objectId}`,
           preview_url: `/rnet/v0/operations/${ARENA_IMPORT_OPERATION_ID}/elements/${elementId}/bytes`,
           role: element.role,
+          ...(element.alt ? { alt: element.alt } : {}),
           payload: Buffer.from(element.bytes),
         });
       }
@@ -74,10 +79,10 @@ export const mockArenaSourceSkill = {
         uri: `rnet://object/${objectId}`,
         owner: `rnet://id/${OWNER_ID}`,
         type: "arena.block",
-        elements: elementUris,
+        elements: elementReferences,
         keys: block.keys,
         source: {
-          ingest: { method: "parser", reproducible: true, skill: "arena@test" },
+          ingest: { method: "parser", reproducible: true, skill: "arena@0.0.0-test" },
           origins: [origin.document.uri],
           properties: block.sourceProperties,
         },

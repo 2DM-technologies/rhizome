@@ -839,13 +839,13 @@ test("an existing element payload is fetched and presented", async ({ page }) =>
     response.url().endsWith(`/elements/${ELEMENT_ID}/bytes`),
   );
   await page.goto(`/objects/${OBJECT_ID}`);
-  await payloadResponse;
+  const response = await payloadResponse;
+  expect(response.headers()["content-type"]).toBe("text/plain; charset=utf-8");
 
-  const label = `Payload for ${ELEMENT_URI}`;
-  const preview = page.getByTitle(label);
+  const preview = page.getByTitle("Monthly plan");
   await expect(preview).toBeVisible();
   await expect(preview).toHaveCSS("color-scheme", "light");
-  await expect(preview.contentFrame().locator("body")).toContainText(PAYLOAD_TEXT.trim());
+  await expect(preview).toContainText(PAYLOAD_TEXT.trim());
   const download = page.getByRole("link", { name: `Download payload ${ELEMENT_URI}` });
   await download.scrollIntoViewIfNeeded();
   await expect(download).toBeInViewport();
@@ -875,10 +875,11 @@ test("an image payload remains decodable when its previewing surface is replaced
 
   await page.getByRole("button", { name: `Open object ${OBJECT_URI}` }).click();
 
-  const image = page.getByRole("img", { name: `Payload for ${ELEMENT_URI}` });
+  const image = page.getByRole("img", { name: "Monthly plan" });
   await expect(image).toBeVisible();
   await expect(image).toHaveCSS("border-top-width", "1px");
-  await expect(image).toHaveCSS("border-top-color", "rgb(184, 68, 254)");
+  await expect(image).toHaveCSS("border-top-color", "oklab(0 0 0 / 0.1)");
+  await expect(image).toHaveCSS("border-top-left-radius", "0px");
   await expect
     .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0);

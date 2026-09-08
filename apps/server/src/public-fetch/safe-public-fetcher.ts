@@ -1,13 +1,13 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 
 import { isSafePublicIpAddress } from "./ip-address.ts";
 
-const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 const DEFAULT_MAX_REDIRECTS = 5;
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 2 * 60_000;
 const MAX_CONFIGURED_BYTES = 2_147_483_647;
 const MAX_CONFIGURED_CONCURRENCY = 128;
 const MAX_CONFIGURED_REDIRECTS = 20;
@@ -304,6 +304,21 @@ export const systemPublicDnsResolver: SafePublicDnsResolver = async (hostname, s
 };
 
 /**
+ * Node may request all-address results for connection-family selection. Both callback forms return
+ * only the address already vetted by the fetcher, preserving the transport's pinning guarantee.
+ * @internal Exposed for deterministic coverage of Node's two lookup callback contracts.
+ */
+export function createPinnedAddressLookup(address: ResolvedPublicAddress): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all === true) {
+      callback(null, [{ address: address.address, family: address.family }]);
+      return;
+    }
+    callback(null, address.address, address.family);
+  };
+}
+
+/**
  * Production transport: connect to the selected address with a one-shot agent while keeping the
  * original URL hostname for Host, TLS SNI, and certificate verification.
  */
@@ -316,9 +331,7 @@ export const pinnedNodeHttpsTransport: SafePublicTransport = (request) =>
         family: request.address.family,
         headers: { ...request.headers, host: request.hostHeader },
         hostname,
-        lookup: (_lookupHostname, _options, callback) => {
-          callback(null, request.address.address, request.address.family);
-        },
+        lookup: createPinnedAddressLookup(request.address),
         method: "GET",
         path: `${request.url.pathname}${request.url.search}`,
         port: request.url.port === "" ? 443 : Number(request.url.port),

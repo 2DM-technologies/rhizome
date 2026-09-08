@@ -1,8 +1,11 @@
 import { rnetUriPattern, validateMediaObject, type MediaObject, type Vibe } from "@rnet/types";
 import {
   SOURCE_ID_PATTERN,
+  type ConfirmPendingVibeImportRequest,
   type CreateImportPreviewRequest,
+  type CreatePendingVibeImportRequest,
   type PullVibeRequest,
+  type SourceExecutionLimits,
 } from "@rhizome/store-contract";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
@@ -22,8 +25,13 @@ import {
   type SourceVerifyReport,
 } from "../../../ingest/source-skills/candidate-bundle.ts";
 import {
+  assertCandidateBundleLimits,
+  assertCaptureLimit,
+} from "../../../ingest/source-skills/execution-limits.ts";
+import {
   ConnectedSourceActionRequired,
   ConnectedSourceError,
+  CredentialConnectionError,
   CredentialedSourceCatalog,
   connectedSourceOperationResult,
   delegatedConnectedSourceError,
@@ -34,7 +42,7 @@ import {
 } from "../../../ingest/connected-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { contentHash } from "../blobs/content.ts";
-import type { Database, DatabaseTransaction } from "../db/index.ts";
+import type { Database, DatabaseTransaction, ProviderLeasePool } from "../db/index.ts";
 import { grants } from "../db/models/grant.ts";
 import {
   ingestionSourceFetches,
@@ -43,7 +51,11 @@ import {
 import { ingestionSources, type DbIngestionSource } from "../db/models/ingestion-source.ts";
 import { ingestionSourceObjects } from "../db/models/ingestion-source-object.ts";
 import { mediaElements, type MediaElementKind } from "../db/models/media-element.ts";
-import { mediaObjectElements } from "../db/models/media-object-element.ts";
+import {
+  MediaObjectElementRoleEnum,
+  mediaObjectElements,
+  type MediaObjectElementRole,
+} from "../db/models/media-object-element.ts";
 import { mediaObjectOrigins } from "../db/models/media-object-origin.ts";
 import { mediaObjectRevisions } from "../db/models/media-object-revision.ts";
 import { mediaObjects } from "../db/models/media-object.ts";
@@ -57,6 +69,11 @@ import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { VibeAggregate } from "../serializers/vibe-serializer.ts";
 import { AccessService } from "./access-service.ts";
+import { CREDENTIAL_FETCH_LOCK_SEED } from "./credential-lease.ts";
+import {
+  sourceCaptureProviderTimeoutMilliseconds,
+  withProviderRequestDeadline,
+} from "./provider-request-deadline.ts";
 import { storeOwnedOriginArtifact } from "./origin-artifact-service.ts";
 import {
   createLocalSourceCredentialCrypto,
@@ -64,6 +81,7 @@ import {
   type CredentialEncryptionKeys,
   type SourceCredentialCrypto,
 } from "./source-credential-crypto.ts";
+import { publicMetadataForStorage } from "./source-credential-service.ts";
 import {
   SourceContinuationCodec,
   type ConnectedSourceContinuation,
@@ -79,6 +97,7 @@ interface ImportPreviewResult {
   source_digest: string;
   staged_origin: string;
   review_digest: string;
+  destination?: { title: string };
 }
 
 interface StagedCandidate {
@@ -143,8 +162,6 @@ interface ResolvedRemoteSource extends ResolvedSourceBase {
 
 type ResolvedSource = ResolvedOriginSource | ResolvedCredentialSource | ResolvedRemoteSource;
 
-type StagedElementRole = "title" | "content" | "preview";
-
 /**
  * A provider-neutral manifest for a payload captured during preview. Sources can emit zero or
  * more elements through this same reviewed and atomically committed path.
@@ -152,7 +169,8 @@ type StagedElementRole = "title" | "content" | "preview";
 export interface StagedElement {
   uri: string;
   object_uri: string;
-  role: StagedElementRole;
+  role: MediaObjectElementRole;
+  alt?: string;
   kind: MediaElementKind;
   mime: string;
   byte_size: number;
@@ -169,12 +187,17 @@ interface StagedSourceCapture {
   source: DbIngestionSource;
   sourceStateDigest: string;
   verify: SourceVerifyReport;
+  destination?: { title: string };
 }
 
 interface CredentialFetchReservation {
   fetchUuid: string;
   release: () => Promise<void>;
   resolved: ResolvedCredentialSource;
+  updateCredential(input: {
+    secret: Uint8Array;
+    publicMetadata?: SourceJsonObject;
+  }): Promise<boolean>;
 }
 
 interface PublicRemoteFetchReservation {
@@ -183,8 +206,6 @@ interface PublicRemoteFetchReservation {
   resolved: ResolvedRemoteSource;
 }
 
-// This seed is also pinned in the credential-revocation database trigger.
-const CREDENTIAL_FETCH_LOCK_SEED = 0x53464e;
 // Stable namespace for owner-and-skill public-remote fetch leases.
 const PUBLIC_REMOTE_FETCH_LOCK_SEED = 0x505542;
 
@@ -197,6 +218,7 @@ export class ImportService {
   private readonly credentialedSources: CredentialedSourceCatalog;
   private readonly fileSources: FileSourceCatalog;
   private readonly publicRemoteSources: PublicRemoteSourceCatalog;
+  private readonly providerLeasePool: ProviderLeasePool;
   private readonly baseUrl: string;
   private readonly sourceContinuations: SourceContinuationCodec;
 
@@ -206,6 +228,7 @@ export class ImportService {
       credentialedSources: CredentialedSourceCatalog;
       fileSources: FileSourceCatalog;
       publicRemoteSources: PublicRemoteSourceCatalog;
+      providerLeasePool: ProviderLeasePool;
       baseUrl: string;
       credentialCrypto?: SourceCredentialCrypto;
       credentialEncryptionKey?: CredentialEncryptionKeys;
@@ -225,6 +248,7 @@ export class ImportService {
     this.credentialedSources = context.credentialedSources;
     this.fileSources = context.fileSources;
     this.publicRemoteSources = context.publicRemoteSources;
+    this.providerLeasePool = context.providerLeasePool;
     this.baseUrl = context.baseUrl.replace(/\/$/, "");
   }
 
@@ -233,14 +257,57 @@ export class ImportService {
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const [vibe] = await this.db.select().from(vibes).where(eq(vibes.uuid, vibeUuid));
     if (!vibe) throw notFound("Vibe");
+    return this.startPreviewForVibe({
+      vibe,
+      operationVibeUuid: vibe.uuid,
+      invokedBy: this.actor.subject,
+      sourceReference: input.source,
+      continuationToken: input.continuation_token,
+      pendingDestination: false,
+    });
+  }
 
-    const sourceUuid = sourceUuidOf(input.source);
-    const source = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
-    const continuation = input.continuation_token
+  async startPendingVibePreview(input: CreatePendingVibeImportRequest): Promise<DbOperation> {
+    await this.access.assertAuthenticated();
+    if (this.actor.kind !== "user") throw grantMissing("owner");
+    const actor = this.actor;
+    const pendingVibeUuid = input.destination?.id ?? uuidv7();
+    const pendingVibe: DbVibe = {
+      uuid: pendingVibeUuid,
+      title: "Pending import",
+      ownerUuid: actor.uuid,
+      rnetSchema: RNET_SCHEMA_VERSION,
+      inferred: {},
+      pullConfig: null,
+      extensions: {},
+      createdAt: new Date(),
+      rev: 0,
+    };
+    return this.startPreviewForVibe({
+      vibe: pendingVibe,
+      operationVibeUuid: null,
+      invokedBy: actor.subject,
+      sourceReference: input.source,
+      continuationToken: input.continuation_token,
+      pendingDestination: true,
+    });
+  }
+
+  private async startPreviewForVibe(input: {
+    continuationToken: string | undefined;
+    invokedBy: string;
+    operationVibeUuid: string | null;
+    pendingDestination: boolean;
+    sourceReference: string;
+    vibe: DbVibe;
+  }): Promise<DbOperation> {
+    const sourceUuid = sourceUuidOf(input.sourceReference);
+    const source = await this.snapshotSource(sourceUuid, input.vibe.ownerUuid);
+    const continuation = input.continuationToken
       ? await this.openSourceContinuation(
-          input.continuation_token,
-          vibe.uuid,
-          vibe.ownerUuid,
+          input.continuationToken,
+          input.vibe.uuid,
+          input.vibe.ownerUuid,
           source,
         )
       : undefined;
@@ -250,7 +317,7 @@ export class ImportService {
       } catch (error) {
         if (!(error instanceof ConnectedSourceActionRequired)) throw error;
         if (continuation) throw invalidContinuation();
-        throw await this.sourceActionError(error, source, vibe);
+        throw await this.sourceActionError(error, source, input.vibe, input.pendingDestination);
       }
     } else if (continuation) {
       throw invalidContinuation();
@@ -262,11 +329,14 @@ export class ImportService {
         uuid: operationUuid,
         kind: "pull",
         status: "queued",
-        invokedBy: this.actor.subject,
-        vibeUuid,
+        invokedBy: input.invokedBy,
+        vibeUuid: input.operationVibeUuid,
         request: {
           mode: "import_preview",
-          source: input.source,
+          source: input.sourceReference,
+          ...(input.pendingDestination
+            ? { pending_destination: { vibe_uuid: input.vibe.uuid } }
+            : {}),
           ...(continuation ? { continuation_action: continuation.kind } : {}),
         },
       })
@@ -274,7 +344,7 @@ export class ImportService {
     if (!operation) throw new Error("Import preview operation insert did not return a row");
 
     queueMicrotask(() => {
-      void this.runPreview(operationUuid, sourceUuid, vibe, continuation).catch(
+      void this.runPreview(operationUuid, sourceUuid, input.vibe, continuation).catch(
         async (error: unknown) => {
           await this.db
             .update(operations)
@@ -360,28 +430,70 @@ export class ImportService {
     return operation;
   }
 
-  async confirm(vibeUuid: string, operationUuid: string): Promise<VibeAggregate> {
-    await this.access.assertVibeOwner(vibeUuid);
+  async confirm(
+    existingVibeUuid: string | undefined,
+    operationUuid: string,
+    pendingDestination?: ConfirmPendingVibeImportRequest,
+  ): Promise<VibeAggregate> {
+    if (existingVibeUuid) await this.access.assertVibeOwner(existingVibeUuid);
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const actor = this.actor;
+    let committedVibeUuid = existingVibeUuid;
 
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
-      const [lockedVibe] = await transaction
-        .select()
-        .from(vibes)
-        .where(and(eq(vibes.uuid, vibeUuid), eq(vibes.ownerUuid, actor.uuid)))
-        .for("update");
-      if (!lockedVibe) throw notFound("Vibe");
-      const [operation] = await transaction
-        .select()
-        .from(operations)
-        .where(eq(operations.uuid, operationUuid))
-        .for("update");
+      let operation: DbOperation | undefined;
+      let lockedVibe: DbVibe | undefined;
+      if (existingVibeUuid) {
+        [lockedVibe] = await transaction
+          .select()
+          .from(vibes)
+          .where(and(eq(vibes.uuid, existingVibeUuid), eq(vibes.ownerUuid, actor.uuid)))
+          .for("update");
+        if (!lockedVibe) throw notFound("Vibe");
+        [operation] = await transaction
+          .select()
+          .from(operations)
+          .where(eq(operations.uuid, operationUuid))
+          .for("update");
+      } else {
+        [operation] = await transaction
+          .select()
+          .from(operations)
+          .where(eq(operations.uuid, operationUuid))
+          .for("update");
+        if (!operation) throw notFound("Operation");
+        const pendingVibeUuid = pendingDestinationUuid(operation.request);
+        if (!pendingDestination || !pendingVibeUuid || operation.vibeUuid !== null) {
+          throw invalidReview("The preview does not target a pending Vibe");
+        }
+        const [existing] = await transaction
+          .select({ uuid: vibes.uuid })
+          .from(vibes)
+          .where(eq(vibes.uuid, pendingVibeUuid))
+          .for("update");
+        if (existing) throw invalidReview("The pending Vibe destination already exists");
+        [lockedVibe] = await transaction
+          .insert(vibes)
+          .values({
+            uuid: pendingVibeUuid,
+            title: pendingDestination.title,
+            ownerUuid: actor.uuid,
+            rnetSchema: RNET_SCHEMA_VERSION,
+            inferred: {},
+            pullConfig: null,
+            extensions: {},
+            rev: 0,
+          })
+          .returning();
+        committedVibeUuid = pendingVibeUuid;
+      }
       if (!operation) throw notFound("Operation");
+      if (!lockedVibe) throw new Error("Import destination was not resolved");
+      const vibeUuid = lockedVibe.uuid;
       if (
         operation.kind !== "pull" ||
         operation.status !== "done" ||
-        operation.vibeUuid !== vibeUuid ||
+        operation.vibeUuid !== (existingVibeUuid ? vibeUuid : null) ||
         operation.invokedBy !== actor.subject ||
         operation.request.mode !== "import_preview" ||
         operation.committedAt
@@ -436,6 +548,7 @@ export class ImportService {
       }
       const expectedReviewDigest = await digest({
         ...(result.action_evidence ? { action_evidence: result.action_evidence } : {}),
+        ...(result.destination ? { destination: result.destination } : {}),
         candidates: result.candidates,
         candidate_metadata: result.candidate_metadata,
         elements: result.elements,
@@ -569,11 +682,13 @@ export class ImportService {
       });
       await transaction
         .update(operations)
-        .set({ committedAt: new Date() })
+        .set({ committedAt: new Date(), vibeUuid })
         .where(eq(operations.uuid, operationUuid));
       if (stagedFetch) await this.commitFetch(transaction, stagedFetch.uuid);
     });
 
+    if (!committedVibeUuid) throw new Error("Import confirmation did not resolve a destination");
+    const vibeUuid = committedVibeUuid;
     const [vibe] = await this.db.select().from(vibes).where(eq(vibes.uuid, vibeUuid));
     if (!vibe) throw notFound("Vibe");
     const [activeGrants, memberships] = await Promise.all([
@@ -626,6 +741,7 @@ export class ImportService {
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
     const reviewDigest = await digest({
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
+      ...(staged.destination ? { destination: staged.destination } : {}),
       candidates,
       candidate_metadata: candidateMetadata,
       elements,
@@ -635,6 +751,7 @@ export class ImportService {
     });
     const result: ImportPreviewResult = {
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
+      ...(staged.destination ? { destination: staged.destination } : {}),
       candidates,
       candidate_metadata: candidateMetadata,
       elements,
@@ -732,6 +849,10 @@ export class ImportService {
     let phase: "fetch" | "parse" | "verify" | "candidate" = "fetch";
     try {
       const bytes = await reservedSource.skill.retrieve(config);
+      assertCaptureLimit(bytes.byteLength, reservedSource.source.executionLimits);
+      // Provider bytes are now immutable in memory; release the provider-pool session before
+      // ordinary database/blob persistence so the bounded provider pool gates only network I/O.
+      await reservation.release();
       // Public data is still staged immutably before any parser or verifier runs.
       const origin = await storeOwnedOriginArtifact(
         { db: this.db, blobs: this.blobs },
@@ -742,7 +863,6 @@ export class ImportService {
           label: reservedSource.skill.capture.label(config, fetchUuid),
         },
       );
-      await reservation.release();
       const [fetched] = await this.db
         .update(ingestionSourceFetches)
         .set({ originUuid: origin.uuid, status: "fetched", retrievedAt: new Date() })
@@ -756,10 +876,15 @@ export class ImportService {
       if (!fetched) throw new Error("Public-remote fetch state changed unexpectedly");
 
       phase = "parse";
-      const bundle = await compileCandidateBundle(reservedSource.skill.compiledSource, {
-        bytes,
-        config,
-      });
+      const bundle = await compileCandidateBundle(
+        reservedSource.skill.compiledSource,
+        {
+          bytes,
+          config,
+          limits: reservedSource.source.executionLimits,
+        },
+        reservedSource.source.executionLimits,
+      );
       phase = "verify";
       assertVerifiedCandidateBundle(bundle, reservedSource.skill.compiledSource);
       phase = "candidate";
@@ -786,6 +911,7 @@ export class ImportService {
       if (!verified) throw new Error("Public-remote fetch state changed unexpectedly");
       return {
         candidates,
+        ...(bundle.destination ? { destination: bundle.destination } : {}),
         fetchUuid,
         kind: "remote",
         origin,
@@ -820,7 +946,12 @@ export class ImportService {
     const skill = assertPinnedFileSkill(resolved.source, this.fileSources);
     const blob = await this.blobs.get("origins", resolved.origin.contentHash);
     if (!blob) throw new Error("Origin payload is unavailable");
-    const bundle = await compileCandidateBundle(skill.compiledSource, { bytes: blob.bytes });
+    assertCaptureLimit(blob.bytes.byteLength, resolved.source.executionLimits);
+    const bundle = await compileCandidateBundle(
+      skill.compiledSource,
+      { bytes: blob.bytes, limits: resolved.source.executionLimits },
+      resolved.source.executionLimits,
+    );
     assertVerifiedCandidateBundle(bundle, skill.compiledSource);
     return {
       candidates: await candidatesFromBundle(
@@ -833,6 +964,7 @@ export class ImportService {
         this.baseUrl,
         this.blobs,
       ),
+      ...(bundle.destination ? { destination: bundle.destination } : {}),
       kind: "origin",
       origin: resolved.origin,
       source: resolved.source,
@@ -860,7 +992,7 @@ export class ImportService {
         continuation?.resume,
         endDateEpoch,
       );
-      const secret = await this.credentialCrypto.open(
+      let secret = await this.credentialCrypto.open(
         reservedSource.credential.secret,
         credentialAssociatedData(
           reservedSource.credential.uuid,
@@ -868,11 +1000,36 @@ export class ImportService {
           reservedSource.credential.skillId,
         ),
       );
+      secret = await this.refreshCredential(reservation, ownerUuid, secret, () => {
+        providerRequestStarted = true;
+      });
       providerRequestStarted = true;
-      const bytes = await prepared.fetch.retrieve(secret);
-      // Persist the exact successful provider response before lease cleanup. If unlocking the
-      // dedicated connection fails, the rate-counted response remains retained as an immutable
-      // OriginArtifact instead of disappearing before the fetch ledger can record its failure.
+      let bytes: Uint8Array;
+      try {
+        bytes = await withProviderRequestDeadline(
+          (signal) => prepared.fetch.retrieve(secret, { signal }),
+          sourceCaptureProviderTimeoutMilliseconds(reservedSource.source.executionLimits),
+        );
+      } catch (error) {
+        if (
+          error instanceof ConnectedSourceError &&
+          error.skillId === reservedSource.skill.skillId
+        ) {
+          throw error;
+        }
+        throw new ConnectedSourceError(reservedSource.skill.skillId, {
+          status: 422,
+          code: "source_connection_failed",
+          title: `${reservedSource.skill.displayName} request failed`,
+          detail: "The connected source could not retrieve data from its provider",
+        });
+      }
+      assertCaptureLimit(bytes.byteLength, reservedSource.source.executionLimits);
+      // The credential is no longer in use once the exact provider response is in memory. Release
+      // the dedicated pool connection before origin persistence so distinct concurrent
+      // credentials cannot reserve the entire pool and then wait for an unreserved connection.
+      // The already-durable fetch row still counts a provider request if later persistence fails.
+      await reservation.release();
       const origin = await storeOwnedOriginArtifact(
         { db: this.db, blobs: this.blobs },
         {
@@ -882,9 +1039,6 @@ export class ImportService {
           label: reservedSource.skill.capture.label(fetchUuid),
         },
       );
-      // Revocation may proceed once the exact response is durable. Parsing does not use the
-      // credential and therefore does not need the lease.
-      await reservation.release();
       const retrievedAt = new Date();
       const [fetched] = await this.db
         .update(ingestionSourceFetches)
@@ -899,7 +1053,11 @@ export class ImportService {
       if (!fetched) throw new Error("Connected fetch state changed unexpectedly");
 
       phase = "parse";
-      const bundle = await compileCandidateBundle(prepared.fetch.compiledSource, { bytes });
+      const bundle = await compileCandidateBundle(
+        prepared.fetch.compiledSource,
+        { bytes, limits: reservedSource.source.executionLimits },
+        reservedSource.source.executionLimits,
+      );
 
       phase = "verify";
       assertVerifiedCandidateBundle(bundle, prepared.fetch.compiledSource);
@@ -933,6 +1091,7 @@ export class ImportService {
       return {
         ...(prepared.fetch.actionEvidence ? { actionEvidence: prepared.fetch.actionEvidence } : {}),
         candidates,
+        ...(bundle.destination ? { destination: bundle.destination } : {}),
         fetchUuid,
         kind: "credential",
         origin,
@@ -974,6 +1133,51 @@ export class ImportService {
     }
   }
 
+  /** Refreshes OAuth token sets while the caller holds the credential's advisory fetch lease. */
+  private async refreshCredential(
+    reservation: CredentialFetchReservation,
+    ownerUuid: string,
+    secret: string,
+    onProviderRequestStart: () => void,
+  ): Promise<string> {
+    const resolved = reservation.resolved;
+    const connection = resolved.skill.connection;
+    if (connection.mode !== "oauth2_pkce") return secret;
+    const refresh = connection.refresh;
+    if (!refresh) return secret;
+    const preparedSeal = await this.credentialCrypto.prepareSeal(
+      credentialAssociatedData(resolved.credential.uuid, ownerUuid, resolved.credential.skillId),
+    );
+    try {
+      let refreshed: Awaited<ReturnType<NonNullable<typeof connection.refresh>>>;
+      try {
+        onProviderRequestStart();
+        refreshed = await withProviderRequestDeadline((signal) => refresh(secret, { signal }));
+      } catch (error) {
+        throw new ConnectedSourceError(resolved.skill.skillId, {
+          status: 422,
+          code: "source_connection_failed",
+          title: `${resolved.skill.displayName} connection needs attention`,
+          detail:
+            error instanceof CredentialConnectionError
+              ? error.message
+              : "The connected source could not refresh its authorization",
+        });
+      }
+      if (!refreshed) return secret;
+      const sealed = await preparedSeal.seal(refreshed.secret);
+      const metadata = publicMetadataForStorage(refreshed.publicMetadata);
+      const updated = await reservation.updateCredential({
+        secret: sealed,
+        ...(metadata === undefined ? {} : { publicMetadata: metadata }),
+      });
+      if (!updated) throw notFound("Source credential");
+      return refreshed.secret;
+    } finally {
+      preparedSeal.destroy();
+    }
+  }
+
   /** Loads the exact committed capture and asks the owning skill to plan one bounded request. */
   private async prepareConnectedFetch(
     resolved: ResolvedCredentialSource,
@@ -992,6 +1196,7 @@ export class ImportService {
       fetch: await resolved.skill.prepareFetch({
         config,
         endDateEpoch,
+        limits: resolved.source.executionLimits,
         ...(previousCapture ? { previousCapture } : {}),
         ...(resume === undefined ? {} : { resume }),
       }),
@@ -1002,6 +1207,7 @@ export class ImportService {
     requirement: ConnectedSourceActionRequired,
     resolved: ResolvedCredentialSource,
     vibe: DbVibe,
+    pendingVibe = false,
   ): Promise<ConnectedSourceError> {
     if (requirement.skillId !== resolved.skill.skillId) {
       throw new Error("Connected-source action skill id does not match its registered skill");
@@ -1030,6 +1236,7 @@ export class ImportService {
       detail: requirement.detail,
       source,
       continuation_token: continuationToken,
+      ...(pendingVibe ? { destination: { kind: "pending_vibe", id: vibe.uuid } } : {}),
     };
     return new ConnectedSourceError(requirement.skillId, {
       status: 422,
@@ -1094,7 +1301,7 @@ export class ImportService {
     ownerUuid: string,
     operationUuid: string,
   ): Promise<CredentialFetchReservation> {
-    const connection = await this.db.$client.reserve();
+    const connection = await this.providerLeasePool.reserve();
     const fetchUuid = uuidv7();
     let leaseHeld = false;
     let connectionReleased = false;
@@ -1114,6 +1321,37 @@ export class ImportService {
       }
     };
 
+    const updateCredential: CredentialFetchReservation["updateCredential"] = async (input) => {
+      if (connectionReleased || !leaseHeld) {
+        throw new Error("Credential fetch lease is not active");
+      }
+      const rows =
+        input.publicMetadata === undefined
+          ? await connection<Array<{ uuid: string }>>`
+              update source_credentials
+              set secret = ${input.secret}
+              where uuid = ${expected.credential.uuid}
+                and user_uuid = ${ownerUuid}
+                and skill_id = ${expected.credential.skillId}
+                and connector_version = ${expected.credential.connectorVersion}
+                and revoked_at is null
+              returning uuid
+            `
+          : await connection<Array<{ uuid: string }>>`
+              update source_credentials
+              set
+                secret = ${input.secret},
+                metadata = ${JSON.stringify(input.publicMetadata)}::jsonb
+              where uuid = ${expected.credential.uuid}
+                and user_uuid = ${ownerUuid}
+                and skill_id = ${expected.credential.skillId}
+                and connector_version = ${expected.credential.connectorVersion}
+                and revoked_at is null
+              returning uuid
+            `;
+      return Boolean(rows[0]);
+    };
+
     try {
       await connection`begin`;
       let reserved: ResolvedCredentialSource;
@@ -1122,10 +1360,12 @@ export class ImportService {
           Array<{
             credential_connector_version: string;
             credential_skill_id: string;
+            credential_secret: Uint8Array;
             credential_uuid: string;
             owner_uuid: string;
             source_config: unknown;
             source_connector_version: string;
+            source_execution_limits: unknown;
             source_kind: string;
             source_parser: string;
             source_parser_version: string;
@@ -1138,12 +1378,14 @@ export class ImportService {
             credential.user_uuid as owner_uuid,
             credential.skill_id as credential_skill_id,
             credential.connector_version as credential_connector_version,
+            credential.secret as credential_secret,
             source.uuid as source_uuid,
             source.kind as source_kind,
             source.skill_id as source_skill_id,
             source.connector_version as source_connector_version,
             source.parser as source_parser,
             source.parser_version as source_parser_version,
+            source.execution_limits as source_execution_limits,
             source.config as source_config
           from source_credentials as credential
           join ingestion_sources as source
@@ -1199,6 +1441,8 @@ export class ImportService {
           locked.source_connector_version !== expected.source.connectorVersion ||
           locked.source_parser !== expected.source.parser ||
           locked.source_parser_version !== expected.source.parserVersion ||
+          canonicalJson(locked.source_execution_limits) !==
+            canonicalJson(expected.source.executionLimits) ||
           canonicalJson(locked.source_config ?? {}) !==
             canonicalJson(expected.source.config ?? {}) ||
           Boolean(baseline) !== Boolean(expectedBaseline) ||
@@ -1211,7 +1455,10 @@ export class ImportService {
         ) {
           throw new Error("The connected source changed before its fetch could start");
         }
-        const candidate = expected;
+        const candidate: ResolvedCredentialSource = {
+          ...expected,
+          credential: { ...expected.credential, secret: locked.credential_secret },
+        };
 
         // Credential/source row locks are acquired before this session lock, matching the
         // revocation transaction's row-lock-then-advisory-lock order and avoiding deadlocks.
@@ -1247,7 +1494,8 @@ export class ImportService {
             operation_uuid,
             connector_version,
             parser_version,
-            source_state_digest
+            source_state_digest,
+            execution_limits
           ) values (
             ${fetchUuid},
             ${candidate.source.uuid},
@@ -1256,7 +1504,8 @@ export class ImportService {
             ${operationUuid},
             ${candidate.source.connectorVersion},
             ${candidate.source.parserVersion},
-            ${candidate.sourceStateDigest}
+            ${candidate.sourceStateDigest},
+            ${JSON.stringify(candidate.source.executionLimits)}::jsonb
           )
         `;
         reserved = candidate;
@@ -1265,7 +1514,7 @@ export class ImportService {
         await connection`rollback`;
         throw error;
       }
-      return { fetchUuid, release, resolved: reserved };
+      return { fetchUuid, release, resolved: reserved, updateCredential };
     } catch (error) {
       await release();
       throw error;
@@ -1281,7 +1530,7 @@ export class ImportService {
     ownerUuid: string,
     operationUuid: string,
   ): Promise<PublicRemoteFetchReservation> {
-    const connection = await this.db.$client.reserve();
+    const connection = await this.providerLeasePool.reserve();
     const fetchUuid = uuidv7();
     let leaseHeld = false;
     let connectionReleased = false;
@@ -1305,6 +1554,7 @@ export class ImportService {
           Array<{
             source_config: unknown;
             source_connector_version: string;
+            source_execution_limits: unknown;
             source_kind: string;
             source_parser: string;
             source_parser_version: string;
@@ -1319,6 +1569,7 @@ export class ImportService {
             source.connector_version as source_connector_version,
             source.parser as source_parser,
             source.parser_version as source_parser_version,
+            source.execution_limits as source_execution_limits,
             source.config as source_config
           from ingestion_sources as source
           where source.uuid = ${expected.source.uuid}
@@ -1337,6 +1588,8 @@ export class ImportService {
           locked.source_connector_version !== expected.source.connectorVersion ||
           locked.source_parser !== expected.source.parser ||
           locked.source_parser_version !== expected.source.parserVersion ||
+          canonicalJson(locked.source_execution_limits) !==
+            canonicalJson(expected.source.executionLimits) ||
           canonicalJson(locked.source_config ?? {}) !== canonicalJson(expected.source.config ?? {})
         ) {
           throw new Error("The public-remote source changed before its fetch could start");
@@ -1378,7 +1631,8 @@ export class ImportService {
             operation_uuid,
             connector_version,
             parser_version,
-            source_state_digest
+            source_state_digest,
+            execution_limits
           ) values (
             ${fetchUuid},
             ${expected.source.uuid},
@@ -1387,7 +1641,8 @@ export class ImportService {
             ${operationUuid},
             ${expected.source.connectorVersion},
             ${expected.source.parserVersion},
-            ${expected.sourceStateDigest}
+            ${expected.sourceStateDigest},
+            ${JSON.stringify(expected.source.executionLimits)}::jsonb
           )
         `;
         await connection`commit`;
@@ -1695,6 +1950,8 @@ export class ImportService {
         mediaObjectUuid,
         mediaElementUuid,
         position,
+        role: element.role,
+        ...(element.alt !== undefined ? { alt: element.alt } : {}),
       });
     }
     await transaction.insert(mediaObjectRevisions).values({
@@ -1958,6 +2215,9 @@ export class ImportService {
       .where(and(...conditions))
       .for("update");
     if (!fetch) throw invalidReview("The fetched capture is stale or unavailable");
+    if (canonicalJson(fetch.executionLimits) !== canonicalJson(resolved.source.executionLimits)) {
+      throw invalidReview("The fetched capture limits no longer match its source");
+    }
     return fetch;
   }
 
@@ -1999,6 +2259,15 @@ function operationContinuationAction(
   if (action === undefined) return undefined;
   if (action === "review_import") return action;
   throw invalidReview("The preview continuation action is malformed");
+}
+
+function pendingDestinationUuid(request: DbOperation["request"]): string | undefined {
+  const destination = request.pending_destination;
+  if (!destination || typeof destination !== "object" || Array.isArray(destination)) {
+    return undefined;
+  }
+  const uuid = (destination as Record<string, unknown>).vibe_uuid;
+  return typeof uuid === "string" ? uuid : undefined;
 }
 
 function delegatedSourceActionError(skillId: string): ConnectedSourceError {
@@ -2067,6 +2336,7 @@ async function originSourceStateDigest(
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     config: source.config ?? {},
     origin: origin.uuid,
     content_hash: origin.contentHash,
@@ -2084,6 +2354,7 @@ async function credentialSourceStateDigest(
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     config: source.config ?? {},
     credential: credential.uuid,
     skill_id: source.skillId,
@@ -2113,6 +2384,7 @@ async function publicRemoteSourceStateDigest(
     connector_version: source.connectorVersion,
     parser: source.parser,
     parser_version: source.parserVersion,
+    limits: source.executionLimits,
     config: source.config ?? {},
     skill_state: skillState,
   });
@@ -2169,6 +2441,7 @@ function failedChecks(report: SourceVerifyReport): string {
 async function compileCandidateBundle<Input>(
   capability: CandidateBundleCapability<Input>,
   input: Input,
+  limits: SourceExecutionLimits,
 ): Promise<CandidateBundle> {
   if (capability.kind !== CANDIDATE_BUNDLE_CAPABILITY) {
     throw new Error(`Unsupported compiled-source capability: ${String(capability.kind)}`);
@@ -2178,6 +2451,15 @@ async function compileCandidateBundle<Input>(
     throw new Error("Compiled source returned a malformed candidate bundle");
   }
   assertSourceVerifyReport(bundle.verify);
+  if (
+    bundle.destination !== undefined &&
+    (typeof bundle.destination.title !== "string" ||
+      !bundle.destination.title.trim() ||
+      bundle.destination.title.length > 256)
+  ) {
+    throw new Error("Compiled source returned an invalid destination suggestion");
+  }
+  assertCandidateBundleLimits(bundle, limits);
   return bundle;
 }
 
@@ -2225,6 +2507,7 @@ async function candidatesFromBundle(
         uri: `rnet://element/${elementUuid}`,
         object_uri: objectUri,
         role: element.role,
+        ...(element.alt !== undefined ? { alt: element.alt } : {}),
         kind: element.kind,
         mime: element.mime,
         byte_size: element.byteSize,
@@ -2237,7 +2520,11 @@ async function candidatesFromBundle(
       uri: objectUri,
       owner: `rnet://id/${ownerUuid}`,
       type: draft.type,
-      elements: elements.map(({ uri }) => uri),
+      elements: elements.map(({ uri, role, alt }) => ({
+        uri,
+        role,
+        ...(alt !== undefined ? { alt } : {}),
+      })),
       keys: { ...draft.keys },
       source: {
         ingest: {
@@ -2357,8 +2644,9 @@ export function candidateSemanticDigest(
   const { origins: _origins, retrieved_at: _retrievedAt, properties, ...sourceIdentity } = source;
   const semanticProperties = identitySourceProperties(properties);
   const semanticSource = { ...sourceIdentity, properties: semanticProperties };
-  const semanticElements = elements.map(({ role, kind, mime, byte_size, content_hash }) => ({
+  const semanticElements = elements.map(({ role, alt, kind, mime, byte_size, content_hash }) => ({
     role,
+    ...(alt !== undefined ? { alt } : {}),
     kind,
     mime,
     byte_size,
@@ -2418,6 +2706,16 @@ function importPreviewResult(value: unknown): ImportPreviewResult {
   ) {
     throw invalidReview("The staged action evidence is malformed");
   }
+  if (
+    result.destination !== undefined &&
+    (!result.destination ||
+      typeof result.destination !== "object" ||
+      typeof result.destination.title !== "string" ||
+      !result.destination.title.trim() ||
+      result.destination.title.length > 256)
+  ) {
+    throw invalidReview("The staged destination suggestion is malformed");
+  }
   return result as ImportPreviewResult;
 }
 
@@ -2471,15 +2769,24 @@ function assertCandidate(
   }
   if (
     candidate.elements.length !== elements.length ||
-    candidate.elements.some((uri, index) => elements[index]?.uri !== uri) ||
-    new Set(candidate.elements).size !== candidate.elements.length
+    candidate.elements.some((reference, index) => {
+      const element = elements[index];
+      return (
+        !element ||
+        reference.uri !== element.uri ||
+        reference.role !== element.role ||
+        reference.alt !== element.alt
+      );
+    }) ||
+    new Set(candidate.elements.map(({ uri }) => uri)).size !== candidate.elements.length
   ) {
     throw invalidReview("Candidate element order mismatch");
   }
   for (const element of elements) {
     if (
       element.object_uri !== candidate.uri ||
-      !["title", "content", "preview"].includes(element.role) ||
+      !MediaObjectElementRoleEnum.includes(element.role) ||
+      (element.alt !== undefined && typeof element.alt !== "string") ||
       !ELEMENT_URI_PATTERN.test(element.uri) ||
       !/^sha256:[a-f0-9]{64}$/.test(element.content_hash) ||
       !Number.isSafeInteger(element.byte_size) ||

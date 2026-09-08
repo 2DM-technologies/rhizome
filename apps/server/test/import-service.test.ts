@@ -11,7 +11,7 @@ const firstCandidate: MediaObject = {
   elements: [],
   keys: { fitid: "transaction-1", account_hash: "sha256:account" },
   source: {
-    ingest: { method: "parser", reproducible: true, skill: "csv@1" },
+    ingest: { method: "parser", reproducible: true, skill: "csv@1.0.0" },
     origins: ["rnet://origin/0198f2a1-a002-7a02-8002-000000000002"],
     properties: { amount: "-12.34", currency: "USD", posted_at: "2026-08-29" },
   },
@@ -47,7 +47,13 @@ describe("pull candidate identity", () => {
     const first: MediaObject = {
       ...firstCandidate,
       type: "document",
-      elements: ["rnet://element/0198f2a1-a005-7a05-8005-000000000005"],
+      elements: [
+        {
+          uri: "rnet://element/0198f2a1-a005-7a05-8005-000000000005",
+          role: "content",
+          alt: "Synthetic image",
+        },
+      ],
       keys: { external_id: "42" },
       source: {
         ...firstCandidate.source,
@@ -57,7 +63,13 @@ describe("pull candidate identity", () => {
     const recaptured: MediaObject = {
       ...first,
       uri: "rnet://object/0198f2a1-a006-7a06-8006-000000000006",
-      elements: ["rnet://element/0198f2a1-a007-7a07-8007-000000000007"],
+      elements: [
+        {
+          uri: "rnet://element/0198f2a1-a007-7a07-8007-000000000007",
+          role: "content",
+          alt: "Synthetic image",
+        },
+      ],
       source: {
         ...first.source,
         origins: ["rnet://origin/0198f2a1-a008-7a08-8008-000000000008"],
@@ -65,9 +77,10 @@ describe("pull candidate identity", () => {
       },
     };
     const manifest = {
-      uri: first.elements[0]!,
+      uri: first.elements[0]!.uri,
       object_uri: first.uri,
       role: "content" as const,
+      alt: "Synthetic image",
       kind: "image" as const,
       mime: "image/png",
       byte_size: 4,
@@ -76,7 +89,7 @@ describe("pull candidate identity", () => {
     };
     const recapturedManifest = {
       ...manifest,
-      uri: recaptured.elements[0]!,
+      uri: recaptured.elements[0]!.uri,
       object_uri: recaptured.uri,
       preview_url: "http://rhizome.test/preview/second",
     };

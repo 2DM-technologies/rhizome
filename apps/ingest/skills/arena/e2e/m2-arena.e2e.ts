@@ -72,7 +72,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
         new URL(request.url()).pathname,
       ),
   );
-  expect(previewRequests).toHaveLength(2);
+  expect(previewRequests).toHaveLength(5);
   expect(
     previewRequests.every((request) => request.headers()["authorization"]?.startsWith("Bearer ")),
   ).toBe(true);
@@ -117,8 +117,8 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   const markdownPreview = page.getByTitle("Markdown content for A small manifesto");
   await expect(markdownPreview).toBeVisible();
   await expect(markdownPreview).toHaveCSS("color-scheme", "light");
-  await expect(page.getByRole("img", { name: "One synthetic pixel" })).toBeVisible();
-  await expect(page.getByRole("img", { name: "A safe example destination" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Synthetic primary" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Synthetic link-preview" })).toBeVisible();
   await expect(page.getByRole("link", { name: /^Open source for/ })).toHaveCount(0);
   await expect(page.getByTitle("PDF preview for Synthetic field notes")).toBeVisible();
   await expect(page.getByText("Loading image…")).toHaveCount(0);
@@ -129,7 +129,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
     (object) => object.type === "arena.block",
   );
   for (const object of importedObjects) {
-    const titleUri = object.elements[0];
+    const titleUri = object.elements[0]?.uri;
     const titleElementId = titleUri?.split("/").at(-1) ?? "";
     expect(mockStore.elements.get(titleElementId)).toMatchObject({
       kind: "text",

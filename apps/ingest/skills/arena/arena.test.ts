@@ -69,6 +69,7 @@ describe("M2 committed Are.na v3 parser", () => {
     });
     expect(image?.elements[1]).toMatchObject({
       role: "content",
+      alt: "Synthetic primary",
       kind: "image",
       mime: "image/png",
       byteSize: 68,
@@ -85,7 +86,11 @@ describe("M2 committed Are.na v3 parser", () => {
       original_asset_url: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
       imported_asset_url: "https://d2w9rnfcy7mm78.cloudfront.net/synthetic/primary/original.png",
     });
-    expect(link?.elements[1]).toMatchObject({ role: "preview", kind: "image" });
+    expect(link?.elements[1]).toMatchObject({
+      role: "preview",
+      alt: "Synthetic link-preview",
+      kind: "image",
+    });
     expect(link?.sourceProperties).toMatchObject({
       source_url: "https://example.test/article",
       connection_position: 3,
@@ -155,6 +160,21 @@ describe("M2 committed Are.na v3 parser", () => {
       ["1105", 5],
     ]);
     expect(verifyArena(parsed)).toMatchObject({ ok: true });
+  });
+
+  test("accepts underscores in provider-issued channel slugs", async () => {
+    const capture = await fixtureCapture();
+    const slug = "synthetic-media_study";
+    capture.channel_url = capture.channel_url.replace("synthetic-media-study", slug);
+    capture.channel.url = capture.channel.url.replace("synthetic-media-study", slug);
+    for (const page of capture.contents_pages) {
+      page.url = page.url.replace("synthetic-media-study", slug);
+    }
+    const channelEnvelope = decodedBody(capture.channel);
+    record(channelEnvelope.data ?? channelEnvelope, "channel").slug = slug;
+    encodeBody(capture.channel, channelEnvelope);
+
+    expect(parseArenaCapture(captureBytes(capture))).toMatchObject({ channelSlug: slug });
   });
 
   test("counts nested channels without traversing or emitting them", async () => {
@@ -316,6 +336,15 @@ describe("M2 committed Are.na v3 parser", () => {
     expect(() => parseArenaCapture(captureBytes(unsafeFinal))).toThrow(
       "must be an HTTPS URL without credentials",
     );
+  });
+
+  test("accepts large canonical base64 responses without regex subject-size limits", async () => {
+    const capture = await fixtureCapture();
+    const channelBody = Buffer.from(capture.channel.body_base64, "base64");
+    const paddedChannelBody = Buffer.concat([channelBody, Buffer.alloc(4_500_000, 0x20)]);
+    capture.channel.body_base64 = paddedChannelBody.toString("base64");
+
+    expect(parseArenaCapture(captureBytes(capture))).toMatchObject({ channelId: "7001" });
   });
 
   test("rejects incomplete framing, pagination, order, and unsupported block types", async () => {

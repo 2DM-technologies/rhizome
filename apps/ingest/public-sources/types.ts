@@ -1,4 +1,7 @@
-import type { SourceSkillManifest } from "../../../packages/store-contract/src/source-skills.ts";
+import type {
+  SourceExecutionLimits,
+  SourceSkillManifest,
+} from "../../../packages/store-contract/src/source-skills.ts";
 
 import {
   SourceSkillManifestCatalog,
@@ -58,6 +61,7 @@ export interface PublicRemoteSourceSkill {
   readonly compiledSource: CandidateBundleCapability<{
     readonly bytes: Uint8Array;
     readonly config: unknown;
+    readonly limits: SourceExecutionLimits;
   }>;
   /** Closed schema for caller-supplied source configuration. */
   readonly sourceRequestSchema: Readonly<Record<string, unknown>>;
