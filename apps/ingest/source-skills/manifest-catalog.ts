@@ -5,6 +5,7 @@ import {
   SOURCE_SKILL_INPUT_TARGETS,
   SOURCE_SKILL_KINDS,
   SOURCE_SKILL_ID_PATTERN,
+  SOURCE_PARSER_VERSION_PATTERN,
   SOURCE_SKILL_REVIEW_ACTIONS,
   type SourceSkillManifest,
 } from "../../../packages/store-contract/src/index.ts";
@@ -75,6 +76,11 @@ export function assertSourceSkillManifest(value: unknown): asserts value is Sour
     !boundedString(value.parser.version, 1, 256)
   ) {
     throw new Error(`Source-skill ${value.skill_id} must declare parser metadata`);
+  }
+  if (!new RegExp(SOURCE_PARSER_VERSION_PATTERN).test(value.parser.version)) {
+    throw new Error(
+      `Source-skill ${value.skill_id} parser version cannot be persisted as rNet ingest provenance`,
+    );
   }
   assertExecutionLimits(value);
   assertFileCapturePreprocessor(value);

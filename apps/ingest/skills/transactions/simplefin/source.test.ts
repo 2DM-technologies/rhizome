@@ -74,6 +74,7 @@ describe("SimpleFIN connected-source skill", () => {
     const fetch = await skill.prepareFetch({
       config,
       endDateEpoch: 1_800_000_000,
+      limits: simpleFinSourceSkillManifest.limits,
     });
 
     await fetch.retrieve(`https://user:secret@${allowedHost}/simplefin`, {
@@ -112,6 +113,7 @@ describe("SimpleFIN connected-source skill", () => {
     const prepared = await skill.prepareFetch({
       config: {},
       endDateEpoch: 1_800_000_000,
+      limits: simpleFinSourceSkillManifest.limits,
     });
     const caller = new AbortController();
     const reason = new Error("retrieval cancelled");
@@ -192,6 +194,7 @@ describe("SimpleFIN connected-source skill", () => {
     const resumed = await skill.prepareFetch({
       config: {},
       endDateEpoch: 1_800_000_000,
+      limits: simpleFinSourceSkillManifest.limits,
       previousCapture,
       resume: { mode: "rebaseline" },
     });
@@ -205,6 +208,7 @@ describe("SimpleFIN connected-source skill", () => {
       skill.prepareFetch({
         config: {},
         endDateEpoch: 1_800_000_000,
+        limits: simpleFinSourceSkillManifest.limits,
         previousCapture,
         resume: { mode: "unsupported" },
       }),
@@ -265,6 +269,7 @@ describe("SimpleFIN connected-source skill", () => {
     const prepared = await skill.prepareFetch({
       config: {},
       endDateEpoch: 1_786_752_000,
+      limits: simpleFinSourceSkillManifest.limits,
       previousCapture,
     });
     const bundle = await prepared.compiledSource.compile({

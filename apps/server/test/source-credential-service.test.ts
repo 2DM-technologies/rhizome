@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  CredentialedSourceCatalog,
   CredentialConnectionError,
   type CredentialClaimFingerprintCompatibility,
   type CredentialClaimPolicy,
@@ -33,6 +34,7 @@ const replayKey = "opaque-one-time-claim";
 const providerSecret = "opaque-provider-secret";
 const key = Uint8Array.from({ length: 32 }, (_, index) => index);
 const providerLeasePool = {} as ProviderLeasePool;
+const credentialedSources = new CredentialedSourceCatalog([]);
 
 describe("source credential service", () => {
   test("persists only owner-bound ciphertext and deduplicates a skill's canonical replay key", async () => {
@@ -47,6 +49,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore(inserted),
       credentialEncryptionKey: key,
@@ -103,6 +106,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore([]),
       credentialCrypto,
@@ -135,6 +139,7 @@ describe("source credential service", () => {
     const clientService = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: {
         kind: "client",
         uuid: "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48",
@@ -154,6 +159,7 @@ describe("source credential service", () => {
     const ownerService = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
@@ -183,6 +189,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore([], failures),
       credentialEncryptionKey: key,
@@ -239,6 +246,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialCrypto,
@@ -290,6 +298,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialCrypto,
@@ -322,6 +331,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
@@ -358,6 +368,7 @@ describe("source credential service", () => {
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore([]),
       credentialEncryptionKey: key,
@@ -390,6 +401,7 @@ describe("source credential service", () => {
       const service = new SourceCredentialsService({
         db: emptyDatabase(),
         providerLeasePool,
+        credentialedSources,
         actor: ownerActor(),
         claimStore: memoryClaimStore(inserted, failures),
         credentialEncryptionKey: key,
@@ -430,6 +442,7 @@ describe("source credential service", () => {
     const rotating = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKeys: createCredentialKeyring("current", {
@@ -440,6 +453,7 @@ describe("source credential service", () => {
     const legacy = new SourceCredentialsService({
       db: emptyDatabase(),
       providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
@@ -613,6 +627,7 @@ function storedCredential(candidate: NewDbSourceCredential): DbSourceCredential 
     metadata: candidate.metadata ?? null,
     connectedAt: candidate.connectedAt ?? new Date("2026-08-29T00:00:00.000Z"),
     revokedAt: candidate.revokedAt ?? null,
+    providerRevokedAt: candidate.providerRevokedAt ?? null,
   };
 }
 

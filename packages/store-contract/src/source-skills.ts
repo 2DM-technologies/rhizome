@@ -1,8 +1,11 @@
 import { UUIDV7_PATTERN } from "@rnet/types/patterns";
+import { ingestRecordSchema } from "@rnet/types/schemas";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
 /** Stable package/catalog identity. This is intentionally not a database enum. */
 export const SOURCE_SKILL_ID_PATTERN = "^[a-z][a-z0-9_-]{0,63}$";
+/** A parser pin is persisted as rNet `source.ingest.skill`, so it must satisfy that schema. */
+export const SOURCE_PARSER_VERSION_PATTERN = ingestRecordSchema.properties.skill.pattern;
 export const SOURCE_ID_PATTERN = `^source:${UUIDV7_PATTERN.slice(1, -1)}$`;
 export const SOURCE_CREDENTIAL_ID_PATTERN = `^credential:${UUIDV7_PATTERN.slice(1, -1)}$`;
 
@@ -14,7 +17,6 @@ export const SOURCE_SKILL_INPUT_CONTROLS = ["text", "url", "file", "checkbox", "
 /** Platform review workflows that a skill may opt into. */
 export const SOURCE_SKILL_REVIEW_ACTIONS = ["review_import", "refresh_source"] as const;
 export const SOURCE_CREDENTIAL_CLAIM_POLICIES = ["single_use_global"] as const;
-export const SOURCE_CONNECTION_MODES = ["claim_exchange", "oauth2_pkce"] as const;
 export const FILE_CAPTURE_PREPROCESSOR_CAPABILITY = "file_capture_preprocessor@1" as const;
 
 export const sourceExecutionLimitsSchema = {
@@ -136,7 +138,12 @@ export const sourceSkillManifestSchema = {
       required: ["name", "version"],
       properties: {
         name: { type: "string", minLength: 1, maxLength: 256 },
-        version: { type: "string", minLength: 1, maxLength: 256 },
+        version: {
+          type: "string",
+          minLength: 1,
+          maxLength: 256,
+          pattern: SOURCE_PARSER_VERSION_PATTERN,
+        },
       },
       additionalProperties: false,
     },

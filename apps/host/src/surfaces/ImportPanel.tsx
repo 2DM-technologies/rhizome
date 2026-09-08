@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type Ref } from "
 
 import { isStoreError } from "../api/client.ts";
 import { uriOf, uuidOf } from "../api/uris.ts";
+import { mediaObjectDisplayName } from "../mediaObjectDisplayName.ts";
 import {
   useConnectSourceCredential,
   useConfirmImportPreview,
@@ -42,12 +43,11 @@ type SourceSkillInputField = SourceSkillManifest["input_fields"][number];
 interface CandidateSummary {
   uri: string;
   type: string;
-  title: string;
+  source: Record<string, unknown>;
   elementCount: number;
   elements: PreviewElementSummary[];
   amount?: unknown;
   currency?: unknown;
-  description?: unknown;
   postedAt?: unknown;
 }
 
@@ -166,24 +166,9 @@ export function ImportPanel({
 
   useEffect(() => {
     if (!sourceConnectionReturn) return;
-    if (sourceConnectionReturn.callbackFailed) {
+    if (sourceConnectionReturn.failureMessage) {
       sourceConnectionReturn.consume();
-      setLocalError("The source connection could not be completed. Start the connection again.");
-      return;
-    }
-    if (sourceConnectionReturn.invalidParameter) {
-      sourceConnectionReturn.consume();
-      setLocalError("The source connection return was invalid. Start the connection again.");
-      return;
-    }
-    if (sourceConnectionReturn.destinationError) {
-      sourceConnectionReturn.consume();
-      setLocalError(sourceConnectionReturn.destinationError);
-      return;
-    }
-    if (sourceConnectionReturn.isError) {
-      sourceConnectionReturn.consume();
-      setLocalError("The source connection could not be loaded. Start the connection again.");
+      setLocalError(sourceConnectionReturn.failureMessage);
       return;
     }
     const attempt = sourceConnectionReturn.attempt;
@@ -239,11 +224,8 @@ export function ImportPanel({
     importSkills,
     sourceConnectionReturn?.attempt,
     sourceConnectionReturn?.attemptId,
-    sourceConnectionReturn?.callbackFailed,
     sourceConnectionReturn?.consume,
-    sourceConnectionReturn?.destinationError,
-    sourceConnectionReturn?.invalidParameter,
-    sourceConnectionReturn?.isError,
+    sourceConnectionReturn?.failureMessage,
     sourceSkills.isError,
     sourceSkills.isPending,
   ]);
@@ -937,6 +919,8 @@ function CandidateReview({
   candidate: CandidateSummary;
   operationId: string | undefined;
 }) {
+  const title = mediaObjectDisplayName(candidate);
+
   if (candidate.type === "transaction") {
     return (
       <EntityRow
@@ -952,7 +936,7 @@ function CandidateReview({
             <span className="text-caption text-tertiary">{String(candidate.currency ?? "")}</span>
           </span>
         }
-        title={String(candidate.description ?? candidate.title)}
+        title={title}
         titleClassName="text-body text-secondary"
         meta={candidate.postedAt ? String(candidate.postedAt) : undefined}
       />
@@ -972,7 +956,7 @@ function CandidateReview({
             <ImportPreviewPayload
               element={primaryElement}
               operationId={operationId}
-              title={candidate.title}
+              title={title}
             />
           ) : (
             <span aria-hidden className="text-mono-label text-tertiary">
@@ -981,7 +965,7 @@ function CandidateReview({
           )}
         </span>
       }
-      title={candidate.title}
+      title={title}
       titleClassName="text-body text-primary"
       subtitle={`${candidate.type} · ${candidate.elementCount} ${
         candidate.elementCount === 1 ? "element" : "elements"
@@ -1306,21 +1290,14 @@ function previewResult(value: unknown): ImportPreview | undefined {
         all.findIndex((candidate) => candidate.uri === element.uri) === index,
     );
     const type = typeof document.type === "string" ? document.type : "media-object";
-    const title = firstNonemptyString(
-      properties.title,
-      properties.name,
-      properties.raw_description,
-      properties.description,
-    );
     candidates.push({
       uri: document.uri,
       type,
-      title: title ?? (type === "transaction" ? "Transaction" : `Untitled ${type}`),
+      source: { properties },
       elementCount: Math.max(elementUris.length, elements.length),
       elements,
       amount: properties.amount,
       currency: properties.currency,
-      description: properties.raw_description,
       postedAt: properties.posted_at,
     });
   }
@@ -1370,11 +1347,4 @@ function parsePreviewElement(value: unknown): PreviewElementSummary[] {
       ...(typeof element.preview_url === "string" ? { previewUrl: element.preview_url } : {}),
     },
   ];
-}
-
-function firstNonemptyString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) return value;
-  }
-  return undefined;
 }

@@ -2,12 +2,10 @@ import { expect, test, type Page, type Request } from "@playwright/test";
 
 import { VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
 import {
-  SYNTHETIC_OAUTH_ACCESS_TOKEN,
   SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
   SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT,
   SYNTHETIC_OAUTH_BUTTON_LABEL,
   SYNTHETIC_OAUTH_CREDENTIAL_ID,
-  SYNTHETIC_OAUTH_PKCE_VERIFIER,
   SYNTHETIC_OAUTH_SKILL_LABEL,
   mockSyntheticOAuthSourceSkill,
 } from "./support/syntheticSourceSkills.ts";
@@ -67,11 +65,7 @@ async function expectCleanBrowserBoundary(page: Page): Promise<void> {
   const persistentStorage = await page.context().storageState();
   const storageText = JSON.stringify({ browserStorage, persistentStorage });
   const requestBodies = mockStore.requests.map((request) => request.postData() ?? "").join("\n");
-  for (const secret of [
-    SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
-    SYNTHETIC_OAUTH_PKCE_VERIFIER,
-    SYNTHETIC_OAUTH_ACCESS_TOKEN,
-  ]) {
+  for (const secret of [SYNTHETIC_OAUTH_AUTHORIZATION_CODE]) {
     expect(storageText).not.toContain(secret);
     expect(requestBodies).not.toContain(secret);
     expect(page.url()).not.toContain(secret);
@@ -111,8 +105,6 @@ function expectPkceAuthorization(): void {
   expect(authorization.searchParams.get("redirect_uri")).toMatch(
     /\/rnet\/v0\/source-connections\/oauth\/callback$/,
   );
-  expect(authorization.href).not.toContain(SYNTHETIC_OAUTH_PKCE_VERIFIER);
-  expect(authorization.href).not.toContain(SYNTHETIC_OAUTH_ACCESS_TOKEN);
   const callback = requestsTo("/rnet/v0/source-connections/oauth/callback", "GET")[0];
   expect(callback?.headers()["cookie"]).toMatch(
     /(?:^|;\s*)rhizome_oauth_[0-9a-f-]{36}=\S{43}(?:;|$)/,

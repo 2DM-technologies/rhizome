@@ -150,7 +150,7 @@ describe("OpenAPI", () => {
   test("uses one injected file catalog for manifests and source creation", async () => {
     const parser = {
       name: "custom-file-parser",
-      version: "custom-file-parser@test",
+      version: "custom-file-parser@0.0.0-test",
       async parse() {
         return { transactions: [], sourceRecordCount: 0 };
       },

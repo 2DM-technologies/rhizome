@@ -23,7 +23,7 @@ export const SOURCE_ID = "0198f2a1-f5d0-7bee-aacd-4ba0aa096e07";
 export const VIBE_URI = `rnet://vibe/${VIBE_ID}` as const;
 export const OBJECT_URI = `rnet://object/${OBJECT_ID}` as const;
 export const ELEMENT_URI = `rnet://element/${ELEMENT_ID}` as const;
-export const PAYLOAD_TEXT = "A seeded payload for browser tests.\n";
+export const PAYLOAD_TEXT = "A “seeded” payload 🤔 for browser tests.\n";
 
 const fixtureVibe = {
   rnet_schema: "0.1",
@@ -63,7 +63,7 @@ const fixtureElement = {
   content_hash: "sha256:ddc08041941729fa9a0bdc8703756e531b8b187e3af3bc7455a424c7691d62db",
   mime: "text/plain",
   bytes: `http://127.0.0.1/rnet/v0/elements/${ELEMENT_ID}/bytes`,
-  byte_size: PAYLOAD_TEXT.length,
+  byte_size: Buffer.byteLength(PAYLOAD_TEXT),
   created_at: "2026-08-27T12:00:00.000Z",
 } satisfies MediaElement;
 
@@ -138,9 +138,6 @@ export interface MockSourceSkillAdapter {
   readonly oauth?: {
     readonly authorizationEndpoint: string;
     readonly authorizationCode: string;
-    /** Server-only sentinels used to prove these values never cross the browser boundary. */
-    readonly pkceVerifier: string;
-    readonly accessToken: string;
   };
   readonly sourceAction?: MockSourceActionDefinition;
   readonly sourceId: string;
@@ -1128,7 +1125,10 @@ export async function installMockStore(
       }
       return route.fulfill({
         status: 200,
-        contentType: element.document.mime,
+        contentType:
+          element.document.kind === "text"
+            ? `${element.document.mime}; charset=utf-8`
+            : element.document.mime,
         body: element.payload,
       });
     }
@@ -1159,7 +1159,7 @@ export async function installMockStore(
       if (!element) return problem(route, 404, "not_found", "The element does not exist");
       return route.fulfill({
         status: 200,
-        contentType: element.mime,
+        contentType: element.kind === "text" ? `${element.mime}; charset=utf-8` : element.mime,
         body: elementPayloads.get(elementBytes[1] ?? "") ?? Buffer.from(PAYLOAD_TEXT),
       });
     }

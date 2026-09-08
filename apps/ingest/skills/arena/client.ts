@@ -21,7 +21,7 @@ const DEFAULT_MAX_TOTAL_BYTES = 40 * 1024 * 1024;
 const DEFAULT_MAX_PAGES = 25;
 const DEFAULT_MAX_BLOCKS = 200;
 const DEFAULT_MAX_REDIRECTS = 3;
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const BLOCK_TYPES = new Set(["Attachment", "Embed", "Image", "Link", "Text"]);
 const MIME = /^[a-z]+\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
 

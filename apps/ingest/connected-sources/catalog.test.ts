@@ -22,7 +22,7 @@ function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill 
       description: `${skillId} test source`,
       source_kind: "credentialed_remote",
       connector_version: `${skillId}-connector@test`,
-      parser: { name: parserName, version: `${parserName}@test` },
+      parser: { name: parserName, version: `${parserName}@0.0.0-test` },
       limits: {
         maxCandidates: 10,
         maxCaptureBytes: 1_024,
@@ -38,7 +38,7 @@ function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill 
     },
     parser: {
       name: parserName,
-      version: `${parserName}@test`,
+      version: `${parserName}@0.0.0-test`,
       async parse() {
         return { transactions: [], sourceRecordCount: 0 };
       },
@@ -89,6 +89,20 @@ describe("CredentialedSourceCatalog", () => {
     expect(catalog.forSkillId("first")).toBe(first);
     expect(catalog.forSkillId("second")).toBe(second);
     expect(catalog.forSkillId("missing")).toBeUndefined();
+  });
+
+  test("keeps lifecycle-only adapters installed without publishing or dispatching them", () => {
+    const lifecycleOnly = {
+      ...fakeSkill("disabled", "csv"),
+      availability: "lifecycle_only" as const,
+    };
+    const catalog = new CredentialedSourceCatalog([lifecycleOnly]);
+
+    expect(catalog.all()).toEqual([]);
+    expect(catalog.manifests()).toEqual([]);
+    expect(catalog.forSkillId("disabled")).toBeUndefined();
+    expect(catalog.forSource("disabled", "csv")).toBeUndefined();
+    expect(catalog.forInstalledSkillId("disabled")).toBe(lifecycleOnly);
   });
 
   test("requires the skill id and parser to identify the same skill", () => {

@@ -13,6 +13,7 @@ import {
   useVibeObjects,
 } from "../queries/index.ts";
 import { api } from "../api/client.ts";
+import { mediaObjectDisplayName } from "../mediaObjectDisplayName.ts";
 import { useSession } from "../session/session.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
 import { uuidOf } from "../api/uris.ts";
@@ -98,18 +99,6 @@ function firstNonemptyString(...values: unknown[]): string | undefined {
 function humanize(value: string): string {
   const words = value.replace(/[._-]+/g, " ").trim();
   return words ? `${words[0]?.toUpperCase()}${words.slice(1)}` : "Media object";
-}
-
-function sourceTitle(object: MediaObject): string {
-  const properties = sourceProperties(object);
-  return (
-    firstNonemptyString(
-      properties.title,
-      properties.name,
-      properties.raw_description,
-      properties.description,
-    ) ?? `Untitled ${humanize(object.type).toLowerCase()}`
-  );
 }
 
 function objectKindLabel(object: MediaObject): string {
@@ -213,7 +202,7 @@ function MediaObjectEntry({
   removeObject: () => void;
   removePending: boolean;
 }) {
-  const title = sourceTitle(object);
+  const title = mediaObjectDisplayName(object);
   const kindLabel = objectKindLabel(object);
   const destination = sourceDestination(object);
   const canRemoveFromCard = isOwner && object.source.ingest.method === "authored";

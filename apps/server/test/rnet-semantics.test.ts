@@ -59,7 +59,7 @@ let otherOrigin: OriginArtifact;
 let otherElement: { uri: string };
 let otherObject: MediaObject;
 let authoredElementBytesUrl = "";
-const authoredPayload = "atomic client payload";
+const authoredPayload = "“atomic” client payload 🤔";
 
 beforeAll(async () => {
   await client.unsafe(`
@@ -287,7 +287,7 @@ describe("rNet semantics", () => {
     const payload = await app.request(authoredElementBytesUrl, { headers: dmachine });
     expect(payload.ok).toBe(true);
     expect(payload.headers.get("Cache-Control")).toBe("private, no-store");
-    expect(payload.headers.get("Content-Type")).toBe("text/plain");
+    expect(payload.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
     expect(await payload.text()).toBe(authoredPayload);
     expect(element.content_hash).toBe(await sha256(new TextEncoder().encode(authoredPayload)));
   });

@@ -46,7 +46,7 @@ export async function stageMockTransactions({
       ingest: {
         method: "parser",
         reproducible: true,
-        skill: `${manifest.parser.name}@test`,
+        skill: `${manifest.parser.name}@0.0.0-test`,
       },
       origins: [origin.document.uri],
       properties: {

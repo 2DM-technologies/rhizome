@@ -169,6 +169,8 @@ export interface CredentialSourceConnector {
 
 /** Credentialed capture capability layered on the generic connector and compiled-source boundary. */
 export interface CredentialedSourceSkill extends CredentialSourceConnector {
+  /** Lifecycle-only adapters stay installed for token revocation but are not offered or fetched. */
+  readonly availability?: "active" | "lifecycle_only";
   readonly parser: SourceParser;
   /** Closed schema for caller-supplied, non-secret source configuration. */
   readonly sourceRequestSchema: Readonly<Record<string, unknown>>;
@@ -185,6 +187,8 @@ export interface CredentialedSourceSkill extends CredentialSourceConnector {
   prepareFetch(input: {
     config: unknown;
     endDateEpoch: number;
+    /** Persisted effective limits for this source, which may outlive newer manifest defaults. */
+    limits: SourceExecutionLimits;
     previousCapture?: Uint8Array;
     resume?: SourceJsonValue;
   }): PreparedConnectedSourceFetch | Promise<PreparedConnectedSourceFetch>;
@@ -194,23 +198,27 @@ export interface SourceSkillDefinition<Settings> {
   readonly skillId: string;
   readonly parser: SourceParser;
   loadSettings(environment: Record<string, string | undefined>): Settings;
+  /** Optional installations can remain absent until their operator-owned configuration is ready. */
+  isConfigured?(settings: Settings): boolean;
   create(settings: Settings): CredentialedSourceSkill;
 }
 
 /** Immutable registry today; this is the seam that can become generated/package discovery later. */
 export class CredentialedSourceCatalog {
-  readonly #bySkillId: ReadonlyMap<string, CredentialedSourceSkill>;
+  readonly #installedBySkillId: ReadonlyMap<string, CredentialedSourceSkill>;
+  readonly #activeBySkillId: ReadonlyMap<string, CredentialedSourceSkill>;
   readonly #manifests: readonly SourceSkillManifest[];
 
   constructor(skills: readonly CredentialedSourceSkill[]) {
-    const bySkillId = new Map<string, CredentialedSourceSkill>();
+    const installedBySkillId = new Map<string, CredentialedSourceSkill>();
+    const activeBySkillId = new Map<string, CredentialedSourceSkill>();
     const manifests: SourceSkillManifest[] = [];
     const skillIdPattern = new RegExp(SOURCE_SKILL_ID_PATTERN);
     for (const skill of skills) {
       if (!skillIdPattern.test(skill.skillId)) {
         throw new Error(`Invalid credentialed-source skill id: ${skill.skillId}`);
       }
-      if (bySkillId.has(skill.skillId)) {
+      if (installedBySkillId.has(skill.skillId)) {
         throw new Error(`Duplicate credentialed-source skill id: ${skill.skillId}`);
       }
       if (skill.manifest.skill_id !== skill.skillId) {
@@ -245,15 +253,25 @@ export class CredentialedSourceCatalog {
         requireEveryProperty: false,
         label: "source request",
       });
-      bySkillId.set(skill.skillId, skill);
-      manifests.push(immutableJson(skill.manifest));
+      if (
+        skill.availability !== undefined &&
+        !["active", "lifecycle_only"].includes(skill.availability)
+      ) {
+        throw new Error(`Credentialed-source ${skill.skillId} has invalid availability`);
+      }
+      installedBySkillId.set(skill.skillId, skill);
+      if (skill.availability !== "lifecycle_only") {
+        activeBySkillId.set(skill.skillId, skill);
+        manifests.push(immutableJson(skill.manifest));
+      }
     }
-    this.#bySkillId = bySkillId;
+    this.#installedBySkillId = installedBySkillId;
+    this.#activeBySkillId = activeBySkillId;
     this.#manifests = Object.freeze(manifests);
   }
 
   all(): readonly CredentialedSourceSkill[] {
-    return [...this.#bySkillId.values()];
+    return [...this.#activeBySkillId.values()];
   }
 
   manifests(): readonly SourceSkillManifest[] {
@@ -261,7 +279,12 @@ export class CredentialedSourceCatalog {
   }
 
   forSkillId(skillId: string): CredentialedSourceSkill | undefined {
-    return this.#bySkillId.get(skillId);
+    return this.#activeBySkillId.get(skillId);
+  }
+
+  /** Lifecycle lookup for disconnect/cleanup only; never use this to offer or capture a source. */
+  forInstalledSkillId(skillId: string): CredentialedSourceSkill | undefined {
+    return this.#installedBySkillId.get(skillId);
   }
 
   forSource(skillId: string, parser: string): CredentialedSourceSkill | undefined {
@@ -301,10 +324,6 @@ function assertConnectionManifestCoverage(skill: CredentialedSourceSkill): void 
     requireEveryProperty: true,
     label: "connection",
   });
-}
-
-function boundedInteger(value: unknown, minimum: number, maximum: number): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
 }
 
 export function delegatedConnectedSourceError(error: unknown): unknown {

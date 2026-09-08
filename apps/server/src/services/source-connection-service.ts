@@ -173,7 +173,6 @@ export class SourceConnectionService {
       intent: input.intent,
       expiresAt,
       createdAt: now,
-      updatedAt: now,
       attemptLimit: ATTEMPT_LIMIT,
       windowStart,
     });
@@ -441,7 +440,6 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
             status: "expired",
             errorCode: "oauth_attempt_expired",
             completedAt: input.now,
-            updatedAt: input.now,
           })
           .where(eq(sourceConnectionAttempts.uuid, attempt.uuid));
         return { kind: "consumed" };
@@ -449,7 +447,7 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
       if (attempt.status !== "pending") return { kind: "consumed" };
       const [claimed] = await transaction
         .update(sourceConnectionAttempts)
-        .set({ status: "exchanging", updatedAt: input.now })
+        .set({ status: "exchanging" })
         .where(
           and(
             eq(sourceConnectionAttempts.uuid, attempt.uuid),
@@ -473,7 +471,6 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
         status: input.status,
         errorCode: input.errorCode,
         completedAt: input.now,
-        updatedAt: input.now,
       })
       .where(
         and(
@@ -512,7 +509,6 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
             status: "expired",
             errorCode: "oauth_attempt_expired",
             completedAt: now,
-            updatedAt: now,
           })
           .where(eq(sourceConnectionAttempts.uuid, attempt.uuid))
           .returning();
@@ -547,7 +543,6 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
               status: "expired",
               errorCode: "oauth_attempt_expired",
               completedAt: input.now,
-              updatedAt: input.now,
             })
             .where(eq(sourceConnectionAttempts.uuid, input.attemptUuid));
           return undefined;
@@ -564,7 +559,6 @@ export class DatabaseSourceConnectionAttemptStore implements SourceConnectionAtt
             credentialUuid: credential.uuid,
             errorCode: null,
             completedAt: input.now,
-            updatedAt: input.now,
           })
           .where(
             and(

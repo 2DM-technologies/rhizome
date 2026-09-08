@@ -78,3 +78,47 @@ export function candidateBundle<Verify extends SourceVerifyReport>(
 ): CandidateBundle<Verify> {
   return { kind: CANDIDATE_BUNDLE_CAPABILITY, candidates, verify };
 }
+
+/** Copies an untrusted value into the JSON-safe data model used by generic source contracts. */
+export function sourceJsonValue(value: unknown, label: string): SourceJsonValue {
+  return convertSourceJsonValue(value, new Set(), label);
+}
+
+/** Copies an untrusted object into the JSON-safe data model used by candidate source facts. */
+export function sourceJsonObject(value: unknown, label: string): SourceJsonObject {
+  const converted = sourceJsonValue(value, label);
+  if (!converted || typeof converted !== "object" || Array.isArray(converted)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+  return converted;
+}
+
+function convertSourceJsonValue(
+  value: unknown,
+  ancestors: Set<object>,
+  label: string,
+): SourceJsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (!value || typeof value !== "object") throw new Error(`${label} is not JSON-safe`);
+  if (ancestors.has(value)) throw new Error(`${label} contains a cycle`);
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => convertSourceJsonValue(entry, ancestors, label));
+    }
+    const result: SourceJsonObject = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (entry === undefined) throw new Error(`${label}.${key} is undefined`);
+      Object.defineProperty(result, key, {
+        value: convertSourceJsonValue(entry, ancestors, `${label}.${key}`),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return result;
+  } finally {
+    ancestors.delete(value);
+  }
+}

@@ -520,7 +520,7 @@ function oauthSkill(
       description: "Synthetic OAuth source for generic platform conformance.",
       source_kind: "credentialed_remote",
       connector_version: "synthetic-oauth@1",
-      parser: { name: "synthetic-oauth", version: "synthetic-oauth@1" },
+      parser: { name: "synthetic-oauth", version: "synthetic-oauth@1.0.0" },
       limits: {
         maxCandidates: 10,
         maxCaptureBytes: 1_024,
@@ -544,7 +544,7 @@ function oauthSkill(
     },
     parser: {
       name: "synthetic-oauth",
-      version: "synthetic-oauth@1",
+      version: "synthetic-oauth@1.0.0",
       async parse() {
         return {};
       },
@@ -642,12 +642,10 @@ class MemoryAttemptStore implements SourceConnectionAttemptStore {
         status: "expired",
         errorCode: "oauth_attempt_expired",
         completedAt: input.now,
-        updatedAt: input.now,
       });
       return { kind: "consumed" as const };
     }
     attempt.status = "exchanging";
-    attempt.updatedAt = input.now;
     return { kind: "claimed" as const, attempt };
   }
 
@@ -663,7 +661,6 @@ class MemoryAttemptStore implements SourceConnectionAttemptStore {
       status: input.status,
       errorCode: input.errorCode,
       completedAt: input.now,
-      updatedAt: input.now,
     });
     return true;
   }
@@ -679,7 +676,6 @@ class MemoryAttemptStore implements SourceConnectionAttemptStore {
         status: "expired",
         errorCode: "oauth_attempt_expired",
         completedAt: now,
-        updatedAt: now,
       });
     }
     return attempt;
@@ -694,7 +690,6 @@ class MemoryAttemptStore implements SourceConnectionAttemptStore {
       credentialUuid: credential.uuid,
       errorCode: null,
       completedAt: input.now,
-      updatedAt: input.now,
     });
     return attempt;
   }
@@ -739,7 +734,6 @@ function storedAttempt(value: NewDbSourceConnectionAttempt): DbSourceConnectionA
     credentialUuid: value.credentialUuid ?? null,
     errorCode: value.errorCode ?? null,
     createdAt: value.createdAt ?? new Date(),
-    updatedAt: value.updatedAt ?? new Date(),
     completedAt: value.completedAt ?? null,
   } as DbSourceConnectionAttempt;
 }
@@ -750,6 +744,7 @@ function storedCredential(value: NewDbSourceCredential): DbSourceCredential {
     metadata: value.metadata ?? null,
     connectedAt: value.connectedAt ?? new Date(),
     revokedAt: value.revokedAt ?? null,
+    providerRevokedAt: value.providerRevokedAt ?? null,
   } as DbSourceCredential;
 }
 
