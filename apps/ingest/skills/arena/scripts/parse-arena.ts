@@ -45,6 +45,7 @@ export interface ArenaCaptureV1 {
 
 export interface ParsedArenaElement {
   role: ArenaElementRole;
+  alt?: string;
   kind: ArenaElementKind;
   mime: string;
   bytes: Uint8Array;
@@ -405,6 +406,7 @@ function parseBlock(
         {
           filename: image.filename ?? filenameFromMime(blockId, entry.asset.content_type),
           sourceUrl: entry.asset.url,
+          ...(image.altText ? { alt: image.altText } : {}),
         },
       ),
     );
@@ -466,6 +468,7 @@ function parseBlock(
           {
             filename: preview.filename ?? filenameFromMime(blockId, entry.asset.content_type),
             sourceUrl: entry.asset.url,
+            ...(preview.altText ? { alt: preview.altText } : {}),
           },
         ),
       );
@@ -506,6 +509,7 @@ function parseBlock(
           {
             filename: preview.filename ?? filenameFromMime(blockId, entry.asset.content_type),
             sourceUrl: entry.asset.url,
+            ...(preview.altText ? { alt: preview.altText } : {}),
           },
         ),
       );
@@ -795,7 +799,7 @@ function elementFromBytes(
   kind: ArenaElementKind,
   mimeValue: string,
   bytes: Uint8Array,
-  metadata: { filename: string; sourceUrl?: string },
+  metadata: { filename: string; sourceUrl?: string; alt?: string },
 ): ParsedArenaElement {
   const mime = normalizedMime(mimeValue, "Are.na element MIME");
   const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}` as const;
@@ -808,6 +812,7 @@ function elementFromBytes(
     contentHash,
     filename: metadata.filename,
     ...(metadata.sourceUrl ? { sourceUrl: metadata.sourceUrl } : {}),
+    ...(metadata.alt ? { alt: metadata.alt } : {}),
   };
 }
 

@@ -3,10 +3,14 @@ import openapiTS, { astToString, type OpenAPI3 } from "openapi-typescript";
 import ts from "typescript";
 
 import { FileSourceCatalog } from "../../ingest/file-sources/types.ts";
+import {
+  CANDIDATE_BUNDLE_CAPABILITY,
+  candidateBundle,
+} from "../../ingest/source-skills/candidate-bundle.ts";
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
-import type { Database } from "../src/db/index.ts";
+import type { Database, ProviderLeasePool } from "../src/db/index.ts";
 import { createCredentialKeyring } from "../src/services/source-credential-crypto.ts";
 
 const config: ServerConfig = {
@@ -37,12 +41,14 @@ const config: ServerConfig = {
     },
   },
 };
+const providerLeasePool = {} as ProviderLeasePool;
 
 describe("OpenAPI", () => {
   const { app, openApiDocument } = createApp({
     config,
     db: {} as Database,
     blobs: {} as BlobStore,
+    providerLeasePool,
   });
 
   test("discovers each route contract without external schema references", () => {
@@ -110,7 +116,7 @@ describe("OpenAPI", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      skills: [
+      skills: expect.arrayContaining([
         expect.objectContaining({
           skill_id: "csv",
           source_kind: "file",
@@ -137,14 +143,14 @@ describe("OpenAPI", () => {
           parser: { name: "arena", version: "arena@1.2.0" },
           review_actions: ["review_import", "refresh_source"],
         }),
-      ],
+      ]),
     });
   });
 
   test("uses one injected file catalog for manifests and source creation", async () => {
     const parser = {
       name: "custom-file-parser",
-      version: "custom-file-parser@test",
+      version: "custom-file-parser@0.0.0-test",
       async parse() {
         return { transactions: [], sourceRecordCount: 0 };
       },
@@ -158,6 +164,12 @@ describe("OpenAPI", () => {
           source_kind: "file",
           connector_version: "origin-upload@test",
           parser: { name: parser.name, version: parser.version },
+          limits: {
+            maxCandidates: 10,
+            maxCaptureBytes: 1_024,
+            maxElementBytes: 512,
+            maxTotalElementBytes: 1_024,
+          },
           input_fields: [
             {
               name: "file",
@@ -171,12 +183,19 @@ describe("OpenAPI", () => {
           review_actions: ["review_import"],
         },
         parser,
+        compiledSource: {
+          kind: CANDIDATE_BUNDLE_CAPABILITY,
+          async compile() {
+            return candidateBundle([], { ok: true, checks: [] });
+          },
+        },
       },
     ]);
     const injected = createApp({
       config,
       db: {} as Database,
       blobs: {} as BlobStore,
+      providerLeasePool,
       fileSources,
     }).app;
 

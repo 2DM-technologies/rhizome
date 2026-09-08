@@ -1,7 +1,7 @@
 import { SOURCE_SKILL_ID_PATTERN, sourceCredentialDocumentSchema } from "@rhizome/store-contract";
 
 import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
-import type { Database } from "../db/index.ts";
+import type { Database, ProviderLeasePool } from "../db/index.ts";
 import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
 import { Problem } from "../errors.ts";
 import { schemaProblem } from "../services/problems.ts";
@@ -28,14 +28,18 @@ export function createSourceCredentialRoutes(
   db: Database,
   catalog: CredentialedSourceCatalog,
   credentialCrypto: SourceCredentialCrypto,
+  providerLeasePool: ProviderLeasePool,
 ) {
   const router = createRhizomeRouter();
   const connectionSchemas = new Map(
     catalog
       .all()
+      .filter((skill) => skill.connection.mode === "claim_exchange")
       .map((skill) => [
         skill.skillId,
-        jsonSchemaValue<Record<string, unknown>>(skill.connection.requestSchema),
+        jsonSchemaValue<Record<string, unknown>>(
+          skill.connection.mode === "claim_exchange" ? skill.connection.requestSchema : {},
+        ),
       ]),
   );
 
@@ -64,6 +68,14 @@ export function createSourceCredentialRoutes(
           `Source skill ${skillId} is not installed`,
         );
       }
+      if (skill.connection.mode !== "claim_exchange") {
+        throw new Problem(
+          422,
+          "schema_violation",
+          "Connection mode mismatch",
+          "This source must be connected through its advertised OAuth flow",
+        );
+      }
       const validation = connectionSchemas
         .get(skillId)!
         .validate(context.req.valid("json"), context.get("actor"));
@@ -72,6 +84,8 @@ export function createSourceCredentialRoutes(
         db,
         actor: context.get("actor"),
         credentialCrypto,
+        credentialedSources: catalog,
+        providerLeasePool,
       });
       const credential = await service.connect(skill, validation.value);
       return context.json(serializeSourceCredential(credential), 201);
@@ -97,6 +111,8 @@ export function createSourceCredentialRoutes(
         db,
         actor: context.get("actor"),
         credentialCrypto,
+        credentialedSources: catalog,
+        providerLeasePool,
       });
       const credential = await service.getOwned(context.req.valid("param").id);
       return context.json(serializeSourceCredential(credential));
@@ -115,6 +131,7 @@ export function createSourceCredentialRoutes(
         403: ProblemSchema,
         404: ProblemSchema,
         422: ProblemSchema,
+        429: ProblemSchema,
       },
     },
     async (context) => {
@@ -122,6 +139,8 @@ export function createSourceCredentialRoutes(
         db,
         actor: context.get("actor"),
         credentialCrypto,
+        credentialedSources: catalog,
+        providerLeasePool,
       });
       await service.revoke(context.req.valid("param").id);
       return context.body(null, 204);

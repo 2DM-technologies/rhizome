@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  CredentialedSourceCatalog,
   CredentialConnectionError,
   type CredentialClaimFingerprintCompatibility,
   type CredentialClaimPolicy,
   type CredentialSourceConnector,
   type SourceJsonObject,
 } from "../../ingest/connected-sources/types.ts";
-import type { Database } from "../src/db/index.ts";
+import type { Database, ProviderLeasePool } from "../src/db/index.ts";
 import type {
   DbSourceCredential,
   NewDbSourceCredential,
@@ -32,6 +33,8 @@ const connectorVersion = "test-provider-connector@1.0.0";
 const replayKey = "opaque-one-time-claim";
 const providerSecret = "opaque-provider-secret";
 const key = Uint8Array.from({ length: 32 }, (_, index) => index);
+const providerLeasePool = {} as ProviderLeasePool;
+const credentialedSources = new CredentialedSourceCatalog([]);
 
 describe("source credential service", () => {
   test("persists only owner-bound ciphertext and deduplicates a skill's canonical replay key", async () => {
@@ -45,6 +48,8 @@ describe("source credential service", () => {
     });
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore(inserted),
       credentialEncryptionKey: key,
@@ -100,6 +105,8 @@ describe("source credential service", () => {
     };
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore([]),
       credentialCrypto,
@@ -131,6 +138,8 @@ describe("source credential service", () => {
     const claimStore = memoryClaimStore(inserted, failures);
     const clientService = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: {
         kind: "client",
         uuid: "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48",
@@ -149,6 +158,8 @@ describe("source credential service", () => {
 
     const ownerService = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
@@ -177,6 +188,8 @@ describe("source credential service", () => {
     const failures: RecordedClaimFailure[] = [];
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore([], failures),
       credentialEncryptionKey: key,
@@ -232,6 +245,8 @@ describe("source credential service", () => {
     });
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialCrypto,
@@ -282,6 +297,8 @@ describe("source credential service", () => {
     });
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialCrypto,
@@ -296,21 +313,14 @@ describe("source credential service", () => {
     expect(acquisitions).toBe(0);
   });
 
-  test("enforces the installed skill's connection-attempt policy in every claim-store check", async () => {
+  test("enforces one server-owned connection-attempt policy in every claim-store check", async () => {
     const inserted: NewDbSourceCredential[] = [];
     const underlying = memoryClaimStore(inserted);
     const observed: Array<{ attemptLimit: number; windowHours: number }> = [];
-    const claimPolicy = {
-      kind: "single_use_global" as const,
-      attempts: 3,
-      windowHours: 24,
-    };
     const claimStore: SourceCredentialClaimStore = {
       ...underlying,
       async assertCanAttempt(input) {
         observed.push({ attemptLimit: input.attemptLimit, windowHours: input.windowHours });
-        claimPolicy.attempts = 999;
-        claimPolicy.windowHours = 720;
         return underlying.assertCanAttempt(input);
       },
       reserve(input) {
@@ -320,16 +330,18 @@ describe("source credential service", () => {
     };
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
     });
 
-    await service.connect(fakeCredentialedSkill({ claimPolicy }), { claim: replayKey });
+    await service.connect(fakeCredentialedSkill(), { claim: replayKey });
 
     expect(observed).toEqual([
-      { attemptLimit: 3, windowHours: 24 },
-      { attemptLimit: 3, windowHours: 24 },
+      { attemptLimit: 10, windowHours: 1 },
+      { attemptLimit: 10, windowHours: 1 },
     ]);
     expect(inserted).toHaveLength(1);
   });
@@ -350,11 +362,13 @@ describe("source credential service", () => {
       ...skill,
       connection: {
         ...skill.connection,
-        claimPolicy: { kind: "owner_reusable", attempts: 10, windowHours: 1 },
+        claimPolicy: { kind: "owner_reusable" },
       },
     } as unknown as CredentialSourceConnector;
     const service = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore: memoryClaimStore([]),
       credentialEncryptionKey: key,
@@ -386,6 +400,8 @@ describe("source credential service", () => {
       const failures: RecordedClaimFailure[] = [];
       const service = new SourceCredentialsService({
         db: emptyDatabase(),
+        providerLeasePool,
+        credentialedSources,
         actor: ownerActor(),
         claimStore: memoryClaimStore(inserted, failures),
         credentialEncryptionKey: key,
@@ -425,6 +441,8 @@ describe("source credential service", () => {
     const currentKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
     const rotating = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKeys: createCredentialKeyring("current", {
@@ -434,6 +452,8 @@ describe("source credential service", () => {
     });
     const legacy = new SourceCredentialsService({
       db: emptyDatabase(),
+      providerLeasePool,
+      credentialedSources,
       actor: ownerActor(),
       claimStore,
       credentialEncryptionKey: key,
@@ -472,8 +492,6 @@ interface FakeSkillOptions {
 function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSourceConnector {
   const claimPolicy = options.claimPolicy ?? {
     kind: "single_use_global",
-    attempts: 10,
-    windowHours: 1,
   };
   return {
     skillId,
@@ -485,12 +503,15 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
       source_kind: "credentialed_remote",
       connector_version: connectorVersion,
       parser: { name: "csv", version: "test-provider@1.0.0" },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024,
+        maxElementBytes: 512,
+        maxTotalElementBytes: 1_024,
+      },
       connection: {
-        claim_policy: {
-          kind: claimPolicy.kind,
-          attempts: claimPolicy.attempts,
-          window_hours: claimPolicy.windowHours,
-        },
+        mode: "claim_exchange",
+        claim_policy: { kind: claimPolicy.kind },
       },
       input_fields: [
         {
@@ -505,6 +526,7 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
       review_actions: ["review_import", "refresh_source"],
     },
     connection: {
+      mode: "claim_exchange",
       claimPolicy,
       requestSchema: {
         type: "object",
@@ -605,6 +627,7 @@ function storedCredential(candidate: NewDbSourceCredential): DbSourceCredential 
     metadata: candidate.metadata ?? null,
     connectedAt: candidate.connectedAt ?? new Date("2026-08-29T00:00:00.000Z"),
     revokedAt: candidate.revokedAt ?? null,
+    providerRevokedAt: candidate.providerRevokedAt ?? null,
   };
 }
 

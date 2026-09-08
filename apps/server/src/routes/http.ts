@@ -1,4 +1,4 @@
-import { UUIDV7_PATTERN } from "@rnet/types";
+import { UUIDV7_PATTERN, type MediaElement } from "@rnet/types";
 import type { Context, Input } from "hono";
 
 import type { BlobStore } from "../blobs/index.ts";
@@ -17,6 +17,10 @@ export function normalizedUuid(value: string): string {
     throw notFound("Record");
   }
   return value;
+}
+
+export function mediaElementContentType(kind: MediaElement["kind"], mime: string): string {
+  return kind === "text" ? `${mime}; charset=utf-8` : mime;
 }
 
 export function blobResponse<

@@ -22,10 +22,14 @@ export { useCreateOriginArtifact, useDeleteOriginArtifact, useOriginArtifact } f
 export {
   useConnectSourceCredential,
   useConfirmImportPreview,
+  useConfirmPendingVibeImportPreview,
   useCreateImportPreview,
+  useCreatePendingVibeImportPreview,
   useCreateIngestionSource,
   useForgetOperation,
   useOperation,
   usePullVibe,
+  useSourceConnectionAttempt,
   useSourceSkills,
+  useStartSourceOAuthConnection,
 } from "./imports.ts";

@@ -90,6 +90,7 @@ test("the host renders every installed source kind from the generic catalog", as
   ]);
   await expect(sourceSelect).toHaveCSS("appearance", "none");
   await expect(sourceSelect).toHaveCSS("border-radius", "12px");
+  await expect(page.getByText("Up to 10 objects · capture limit 1.0 MB")).toBeVisible();
 
   const caret = sourceSelect.locator("xpath=..").locator("[data-select-input-caret]");
   const selectBox = await sourceSelect.boundingBox();
@@ -123,6 +124,7 @@ test("a synthetic public source normalizes config and commits only after review"
   expect(source).toMatchObject({
     kind: "remote",
     skill_id: mockSyntheticPublicSourceSkill.manifest.skill_id,
+    limits: mockSyntheticPublicSourceSkill.manifest.limits,
     connector_version: mockSyntheticPublicSourceSkill.manifest.connector_version,
     parser: mockSyntheticPublicSourceSkill.manifest.parser.name,
     config: { url: SYNTHETIC_PUBLIC_URL },

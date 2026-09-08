@@ -1,7 +1,9 @@
+import type { SourceExecutionLimits } from "@rhizome/store-contract";
 import {
   check,
   foreignKey,
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -49,6 +51,7 @@ export const ingestionSourceFetches = pgTable(
     connectorVersion: text("connector_version").notNull(),
     parserVersion: text("parser_version").notNull(),
     sourceStateDigest: text("source_state_digest").notNull(),
+    executionLimits: jsonb("execution_limits").$type<SourceExecutionLimits>().notNull(),
     status: text("status", { enum: INGESTION_SOURCE_FETCH_STATUSES }).notNull().default("fetching"),
     errorCode: text("error_code"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

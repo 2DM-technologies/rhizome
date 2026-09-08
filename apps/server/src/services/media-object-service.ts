@@ -25,12 +25,20 @@ import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { MediaObjectAggregate } from "../serializers/media-object-serializer.ts";
 import { AccessService } from "./access-service.ts";
-import { MediaElementsService, type PendingMediaElementUpload } from "./media-element-service.ts";
+import {
+  MediaElementsService,
+  type CreatedMediaObjectElementReference,
+  type PendingMediaElementUpload,
+} from "./media-element-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
 
-type MediaElementReferenceRow = { uuid: string };
+type MediaElementReferenceRow = {
+  uuid: string;
+  role: CreatedMediaObjectElementReference["role"] | null;
+  alt: string | null;
+};
 
 type MediaObjectBlockSnapshot =
   NonNullable<MediaObject["user"]> | NonNullable<MediaObject["inferred"]>;
@@ -113,7 +121,7 @@ export class MediaObjectsService {
         nextVibePosition = (maxPosition?.max ?? -1) + 1;
       }
       for (const [mediaObjectIndex, mediaObjectInput] of mediaObjectInputs.entries()) {
-        const mediaElementUuids = await this.mediaElementsService.createMediaElements({
+        const mediaElementReferences = await this.mediaElementsService.createMediaElements({
           ownerUuid,
           mediaElementReferences: mediaObjectInput.elements,
           mediaElementUploads,
@@ -147,9 +155,9 @@ export class MediaObjectsService {
         await this.setMediaObjectElements({
           transaction,
           mediaObjectUuid,
-          mediaElementUuids,
+          mediaElementReferences,
         });
-        createdMediaObjects.push({ mediaObject: mediaObjectRecord, mediaElementUuids });
+        createdMediaObjects.push({ mediaObject: mediaObjectRecord, mediaElementReferences });
       }
       this.mediaElementsService.assertAllUploadsUsed(mediaElementUploads);
       return createdMediaObjects;
@@ -269,13 +277,21 @@ export class MediaObjectsService {
     database: Database | DatabaseTransaction = this.db,
   ): Promise<MediaObjectAggregate> {
     const mediaElementReferences: MediaElementReferenceRow[] = await database
-      .select({ uuid: mediaObjectElements.mediaElementUuid })
+      .select({
+        uuid: mediaObjectElements.mediaElementUuid,
+        role: mediaObjectElements.role,
+        alt: mediaObjectElements.alt,
+      })
       .from(mediaObjectElements)
       .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectRecord.uuid))
       .orderBy(asc(mediaObjectElements.position));
     return {
       mediaObject: mediaObjectRecord,
-      mediaElementUuids: mediaElementReferences.map((reference) => reference.uuid),
+      mediaElementReferences: mediaElementReferences.map(({ uuid, role, alt }) => ({
+        uuid,
+        ...(role ? { role } : {}),
+        ...(alt !== null ? { alt } : {}),
+      })),
     };
   }
 
@@ -330,18 +346,20 @@ export class MediaObjectsService {
   private async setMediaObjectElements({
     transaction,
     mediaObjectUuid,
-    mediaElementUuids,
+    mediaElementReferences,
   }: {
     transaction: DatabaseTransaction;
     mediaObjectUuid: string;
-    mediaElementUuids: string[];
+    mediaElementReferences: CreatedMediaObjectElementReference[];
   }): Promise<void> {
-    if (!mediaElementUuids.length) return;
+    if (!mediaElementReferences.length) return;
     await transaction.insert(mediaObjectElements).values(
-      mediaElementUuids.map((mediaElementUuid, position) => ({
+      mediaElementReferences.map(({ uuid, role, alt }, position) => ({
         mediaObjectUuid,
-        mediaElementUuid,
+        mediaElementUuid: uuid,
         position,
+        ...(role ? { role } : {}),
+        ...(alt !== undefined ? { alt } : {}),
       })),
     );
   }

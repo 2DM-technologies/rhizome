@@ -2,7 +2,8 @@ import {
   CredentialedSourceCatalog,
   type SourceSkillDefinition,
 } from "../connected-sources/types.ts";
-import { simpleFinSourceSkillDefinition } from "../skills/simplefin/definition.ts";
+import { simpleFinSourceSkillDefinition } from "../skills/transactions/simplefin/definition.ts";
+import { xOAuthSourceSkillDefinition } from "../skills/x/oauth/source.ts";
 
 export type CredentialedSourceSettings = Readonly<Record<string, unknown>>;
 
@@ -15,6 +16,13 @@ function install<Settings>(
     skillId: definition.skillId,
     parser: definition.parser,
     loadSettings: definition.loadSettings,
+    ...(definition.isConfigured
+      ? {
+          isConfigured(settings) {
+            return definition.isConfigured!(settings as Settings);
+          },
+        }
+      : {}),
     create(settings) {
       const skill = definition.create(settings as Settings);
       if (skill.skillId !== definition.skillId) {
@@ -37,7 +45,7 @@ function install<Settings>(
 
 /** This installation list can become generated package discovery without changing bootstrap. */
 export const installedCredentialedSourceSkillDefinitions: readonly InstalledSourceSkillDefinition[] =
-  [install(simpleFinSourceSkillDefinition)];
+  [install(simpleFinSourceSkillDefinition), install(xOAuthSourceSkillDefinition)];
 
 export function loadCredentialedSourceSettings(
   environment: Record<string, string | undefined> = process.env,
@@ -56,11 +64,13 @@ export function createCredentialedSourceCatalog(
   settings: CredentialedSourceSettings,
 ): CredentialedSourceCatalog {
   return new CredentialedSourceCatalog(
-    installedCredentialedSourceSkillDefinitions.map((definition) => {
+    installedCredentialedSourceSkillDefinitions.flatMap((definition) => {
+      const configured = settings[definition.skillId];
+      if (definition.isConfigured && !definition.isConfigured(configured)) return [];
       if (!(definition.skillId in settings)) {
         throw new Error(`Missing settings for source skill ${definition.skillId}`);
       }
-      return definition.create(settings[definition.skillId]);
+      return [definition.create(configured)];
     }),
   );
 }

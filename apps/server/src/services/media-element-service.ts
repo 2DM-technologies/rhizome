@@ -1,4 +1,5 @@
 import type { CreateMediaObjectInput } from "@rhizome/store-contract";
+import type { MediaObjectElementRef } from "@rnet/types";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
@@ -36,6 +37,12 @@ interface CreatedMediaElementUpload {
   uuid: string;
   kind: MediaElementKind;
   mime: string;
+}
+
+export interface CreatedMediaObjectElementReference {
+  uuid: string;
+  role?: NonNullable<MediaObjectElementRef["role"]>;
+  alt?: string;
 }
 
 export interface MediaElementUploadContext {
@@ -91,12 +98,12 @@ export class MediaElementsService {
     mediaElementUploads: MediaElementUploadContext;
     transaction: DatabaseTransaction;
     validationPath: string;
-  }): Promise<string[]> {
-    const mediaElementUuids: string[] = [];
+  }): Promise<CreatedMediaObjectElementReference[]> {
+    const createdReferences: CreatedMediaObjectElementReference[] = [];
     const references = mediaElementReferences ?? [];
     const existingMediaElementUuids = references
-      .filter((reference): reference is string => typeof reference === "string")
-      .map(uriId);
+      .filter(isExistingMediaElementReference)
+      .map(({ uri }) => uriId(uri));
     const existingMediaElementRecords: Pick<DbMediaElement, "uuid" | "ownerUuid">[] =
       existingMediaElementUuids.length
         ? await transaction
@@ -116,19 +123,26 @@ export class MediaElementsService {
 
     for (const [index, mediaElementReference] of references.entries()) {
       const pointer = `${validationPath}/${index}`;
-      if (typeof mediaElementReference === "string") {
-        const mediaElementUuid = uriId(mediaElementReference);
+      if (isExistingMediaElementReference(mediaElementReference)) {
+        const mediaElementUuid = uriId(mediaElementReference.uri);
         const mediaElementRecord = existingMediaElementsByUuid.get(mediaElementUuid);
         if (!mediaElementRecord) {
           throw schemaProblem([
-            { instancePath: pointer, message: `unknown element ${mediaElementReference}` },
+            {
+              instancePath: `${pointer}/uri`,
+              message: `unknown element ${mediaElementReference.uri}`,
+            },
           ]);
         }
         if (mediaElementRecord.ownerUuid !== ownerUuid) throw grantMissing("owner");
         if (this.actor.kind !== "user" || this.actor.uuid !== ownerUuid) {
           throw grantMissing(GRANT_SCOPE.WRITE_OBJECTS);
         }
-        mediaElementUuids.push(mediaElementRecord.uuid);
+        createdReferences.push({
+          uuid: mediaElementRecord.uuid,
+          ...(mediaElementReference.role ? { role: mediaElementReference.role } : {}),
+          ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
+        });
         continue;
       }
 
@@ -170,7 +184,11 @@ export class MediaElementsService {
         ]);
       }
       if (createdMediaElementUpload) {
-        mediaElementUuids.push(createdMediaElementUpload.uuid);
+        createdReferences.push({
+          uuid: createdMediaElementUpload.uuid,
+          ...(mediaElementReference.role ? { role: mediaElementReference.role } : {}),
+          ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
+        });
         continue;
       }
 
@@ -188,10 +206,14 @@ export class MediaElementsService {
         kind: mediaElement.kind,
         mime: mediaElement.mime,
       });
-      mediaElementUuids.push(mediaElement.uuid);
+      createdReferences.push({
+        uuid: mediaElement.uuid,
+        ...(mediaElementReference.role ? { role: mediaElementReference.role } : {}),
+        ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
+      });
     }
 
-    return mediaElementUuids;
+    return createdReferences;
   }
 
   assertAllUploadsUsed(mediaElementUploads: MediaElementUploadContext): void {
@@ -259,4 +281,12 @@ export class MediaElementsService {
       .returning({ uuid: mediaElements.uuid });
     if (!tombstonedMediaElement) throw notFound("Element");
   }
+}
+
+type MediaElementReferenceInput = NonNullable<CreateMediaObjectInput["elements"]>[number];
+
+function isExistingMediaElementReference(
+  value: MediaElementReferenceInput,
+): value is MediaObjectElementRef {
+  return "uri" in value;
 }

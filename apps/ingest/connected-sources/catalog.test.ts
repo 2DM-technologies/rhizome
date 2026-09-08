@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
-import { CredentialedSourceCatalog, type CredentialedSourceSkill } from "./types.ts";
-import { installedCredentialedSourceSkillDefinitions } from "../src/credentialed-source-catalog.ts";
-import { TransactionParserCatalog, transactionParserFor } from "../src/parser-catalog.ts";
+import { CANDIDATE_BUNDLE_CAPABILITY, candidateBundle } from "../source-skills/candidate-bundle.ts";
+import {
+  CredentialedSourceCatalog,
+  type ClaimExchangeConnectionDefinition,
+  type CredentialedSourceSkill,
+} from "./types.ts";
 
 type ParserName = CredentialedSourceSkill["parser"]["name"];
+type ClaimExchangeSkill = CredentialedSourceSkill & {
+  connection: ClaimExchangeConnectionDefinition;
+};
 
-function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceSkill {
+function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill {
   return {
     skillId,
     displayName: skillId,
@@ -16,23 +22,31 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
       description: `${skillId} test source`,
       source_kind: "credentialed_remote",
       connector_version: `${skillId}-connector@test`,
-      parser: { name: parserName, version: `${parserName}@test` },
+      parser: { name: parserName, version: `${parserName}@0.0.0-test` },
+      limits: {
+        maxCandidates: 10,
+        maxCaptureBytes: 1_024,
+        maxElementBytes: 512,
+        maxTotalElementBytes: 1_024,
+      },
       connection: {
-        claim_policy: { kind: "single_use_global", attempts: 10, window_hours: 1 },
+        mode: "claim_exchange",
+        claim_policy: { kind: "single_use_global" },
       },
       input_fields: [],
       review_actions: ["review_import"],
     },
     parser: {
       name: parserName,
-      version: `${parserName}@test`,
+      version: `${parserName}@0.0.0-test`,
       async parse() {
         return { transactions: [], sourceRecordCount: 0 };
       },
     },
     sourceRequestSchema: { type: "object", properties: {}, additionalProperties: false },
     connection: {
-      claimPolicy: { kind: "single_use_global", attempts: 10, windowHours: 1 },
+      mode: "claim_exchange",
+      claimPolicy: { kind: "single_use_global" },
       requestSchema: { type: "object", properties: {}, additionalProperties: false },
       prepare() {
         return {
@@ -49,27 +63,23 @@ function fakeSkill(skillId: string, parserName: ParserName): CredentialedSourceS
       label: (fetchUuid) => `${fetchUuid}.json`,
     },
     parseConfig: (value) => value,
-    normalize: (parsed) => parsed,
-    identitySourceProperties: (properties) => properties,
     prepareFetch() {
       return {
         async retrieve() {
           return new Uint8Array();
         },
-        verifyOptions: {},
+        compiledSource: {
+          kind: CANDIDATE_BUNDLE_CAPABILITY,
+          async compile() {
+            return candidateBundle([], { ok: true, checks: [] });
+          },
+        },
       };
     },
-    verificationError: () => undefined,
   };
 }
 
 describe("CredentialedSourceCatalog", () => {
-  test("derives installed transaction parsers from the canonical skill definitions", () => {
-    for (const definition of installedCredentialedSourceSkillDefinitions) {
-      expect(transactionParserFor(definition.parser.name)).toBe(definition.parser);
-    }
-  });
-
   test("preserves registration order and looks skills up by skill id", () => {
     const first = fakeSkill("first", "csv");
     const second = fakeSkill("second", "ofx");
@@ -79,6 +89,20 @@ describe("CredentialedSourceCatalog", () => {
     expect(catalog.forSkillId("first")).toBe(first);
     expect(catalog.forSkillId("second")).toBe(second);
     expect(catalog.forSkillId("missing")).toBeUndefined();
+  });
+
+  test("keeps lifecycle-only adapters installed without publishing or dispatching them", () => {
+    const lifecycleOnly = {
+      ...fakeSkill("disabled", "csv"),
+      availability: "lifecycle_only" as const,
+    };
+    const catalog = new CredentialedSourceCatalog([lifecycleOnly]);
+
+    expect(catalog.all()).toEqual([]);
+    expect(catalog.manifests()).toEqual([]);
+    expect(catalog.forSkillId("disabled")).toBeUndefined();
+    expect(catalog.forSource("disabled", "csv")).toBeUndefined();
+    expect(catalog.forInstalledSkillId("disabled")).toBe(lifecycleOnly);
   });
 
   test("requires the skill id and parser to identify the same skill", () => {
@@ -188,17 +212,5 @@ describe("CredentialedSourceCatalog", () => {
     expect(() => new CredentialedSourceCatalog([wrongSourceControl])).toThrow(
       "field pending does not match its source request schema",
     );
-  });
-});
-
-describe("TransactionParserCatalog", () => {
-  test("allows an intentionally shared parser and rejects name collisions", () => {
-    const parser = fakeSkill("first", "csv").parser;
-    const catalog = new TransactionParserCatalog([parser, parser]);
-    expect(catalog.forName("csv")).toBe(parser);
-
-    expect(
-      () => new TransactionParserCatalog([parser, { ...parser, version: "csv@other" }]),
-    ).toThrow("Conflicting transaction parser registration: csv");
   });
 });

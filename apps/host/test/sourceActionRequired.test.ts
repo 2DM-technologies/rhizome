@@ -102,4 +102,36 @@ describe("source action requirements", () => {
       ),
     ).toBeUndefined();
   });
+
+  test("accepts a server-bound pending destination only for a pending Vibe review", () => {
+    const pendingAction = {
+      ...requiredAction,
+      source: otherSource,
+      destination: {
+        kind: "pending_vibe",
+        id: "0198f2a1-0901-7101-a001-000000000003",
+      },
+    } as const;
+    const result = {
+      code: "source_action_required",
+      required_action: pendingAction,
+    };
+
+    expect(sourceActionRequired(undefined, result, [], true)).toEqual(pendingAction);
+    expect(sourceActionRequired(undefined, result, [], false)).toBeUndefined();
+    expect(
+      sourceActionRequired(
+        undefined,
+        {
+          ...result,
+          required_action: {
+            ...pendingAction,
+            destination: { kind: "pending_vibe", id: "not-a-uuidv7" },
+          },
+        },
+        [],
+        true,
+      ),
+    ).toBeUndefined();
+  });
 });

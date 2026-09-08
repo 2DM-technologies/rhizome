@@ -1,11 +1,14 @@
 import type { MediaObject } from "@rnet/types";
 import type { SourceSkillManifest } from "@rhizome/store-contract";
 
-import type { ParsedTransactions, TransactionParser } from "../../../ingest/transactions/types.ts";
+import type {
+  ParsedTransactions,
+  TransactionParser,
+} from "../../../ingest/skills/transactions/contracts.ts";
 import {
   verifyTransactions,
   type VerifyTransactionsOptions,
-} from "../../../ingest/transactions/verify.ts";
+} from "../../../ingest/skills/transactions/verify.ts";
 import {
   OWNER_ID,
   type MockOriginUpload,
@@ -43,7 +46,7 @@ export async function stageMockTransactions({
       ingest: {
         method: "parser",
         reproducible: true,
-        skill: `${manifest.parser.name}@test`,
+        skill: `${manifest.parser.name}@0.0.0-test`,
       },
       origins: [origin.document.uri],
       properties: {
