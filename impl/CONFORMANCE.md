@@ -1,58 +1,84 @@
 # Rhizome conformance status
 
-M0 through M2 are complete. The store implements the rNet 0.1 CRUD surface, server-enforced
-grants, provenance validation, last-write-wins user edits, internal revision history, and the
-compiled ingestion/import milestone.
+This file tracks deliberate gaps between the current implementation and the finalized rNet and
+Rhizome architecture. Every open gap names the milestone that closes it; product detail and test
+evidence belong in the [implementation plan](./IMPLEMENTATION_PLAN.md), concept documents, and test
+suites.
 
-Implemented in M2:
+## Implemented through M2
 
-- Deterministic file-backed and connected SimpleFIN `POST /vibes/{id}/pull` are operational in
-  M2. SimpleFIN token exchange, encrypted owner-only credential storage, composite account
-  selection, reviewed preview/confirm, fresh private OriginArtifacts on every fetch, and an
-  immutable fetch history with commit-only VERIFY baselines are implemented. One-time claims are
-  replay-safe, production credentials use per-record AWS KMS envelope encryption and a dedicated
-  KMS HMAC keyring, local development keeps a private generated key file, and connected fetches
-  have bounded deadlines, credential-wide provider limits, and revocation-safe leases. The live
-  production KMS smoke test remains part of M8 productionizing.
-- Source skills publish serializable manifests and resolve through separate file, credentialed,
-  and public-remote executable catalogs. The host renders connection/source fields generically,
-  secret fields never enter React state, source rows use free-form catalog-validated skill ids with
-  connector/parser pins, and owner review recovery uses an opaque actor/Vibe/source/state-bound
-  continuation instead of provider-specific protocol fields. Registration rejects source-kind or
-  control/schema combinations the generic host cannot serialize; provider browser fixtures and
-  adapters live beside their skills while the host suite exercises synthetic capabilities.
-- Public Are.na v3 channel ingestion is operational. The supplied page URL is a validated channel
-  locator; exact fixed-origin API pages and referenced assets are captured before deterministic
-  parsing and VERIFY. Arbitrary public asset domains over HTTPS/443 cross the DNS-pinned,
-  redirect-revalidating, private-range-blocking SafePublicFetcher with credential stripping and
-  resource limits. Reviewed candidates carry previewable staged MediaElements; confirmation
-  atomically creates object-plus-element bundles and membership; cancellation creates no derived records;
-  each imported Block starts with its canonical title as a `text/plain` element, and unchanged
-  pulls deduplicate by block identity plus semantic fields, element roles, and element hashes. Vibe
-  cards choose previews from generic media metadata and defer element/payload fetches until they are
-  near the viewport.
+- The store implements the M1 store surface for origins, elements, MediaObjects, and Vibes, with
+  server-enforced grants, provenance validation, last-write-wins user edits, and internal revision
+  history.
+- Every installed ingestion source compiles to the generic `candidate_bundle@1` contract before it
+  reaches shared staging, review, and atomic confirmation. CSV, OFX, and SimpleFIN remain
+  independently registered sources under the transaction family, which owns their canonical
+  transaction representation, shared VERIFY, and candidate compiler. Are.na and both X sources
+  compile their own media candidates through the same boundary.
+- The host and server consume serializable source manifests and dispatch through generic capability
+  and implementation/version pins rather than provider-specific branches. Source- and family-owned
+  parsing and VERIFY, provider-specific capture and endpoint behavior, and browser workers remain
+  quarantined with their skills, while generic enforcement remains platform-owned. Persisted
+  execution limits are enforced independently by the browser and server where applicable.
+- X archive import uses an allowlisted, version-pinned browser preprocessor, while X account import
+  uses the generic OAuth 2.0 Authorization Code with PKCE lifecycle. Each normalizes its provider
+  input into the shared X post representation; both then use the shared eligibility, VERIFY,
+  ordering, identity, text, and media compiler. The rNet `tweet` vocabulary and object-form element
+  references (`{ uri, role?, alt? }`) are implemented across the schema, serializers, generated
+  contracts, and host consumers.
+- Reviewed imports create no MediaObject, MediaElement, object-element link, Vibe membership, or
+  pull-configuration entry before confirmation. Cancellation retains owner-only source and origin
+  audit records, while confirmation commits the reviewed object-and-element bundle atomically.
 
-Milestone-scheduled gaps:
+## M3
 
-- `POST /vibes/{id}/push` becomes operational in M3.
-- M3 push tasks must preserve an existing `durable: true` inferred entry instead of overwriting it.
-- Full ingest-record method conformance becomes reachable and enforced in M5; M1 accepts only the milestone's constant `parser` and `authored` stamps at creation.
-- M2 credentialed-remote execution is transaction-specific: `CredentialedSourceSkill` requires the transaction parser, intermediate representation, and VERIFY pipeline, and the server always builds transaction candidates. Before installing a credentialed media or other non-transaction skill, M5 must split the generic credential lifecycle from a capability-dispatched parse, verify, and candidate pipeline; dispatch must use a platform capability kind, never a skill or provider ID.
-- M2 installed credentialed skills execute inside the server process and load skill-owned settings from that process's environment, such as `RHIZOME_SIMPLEFIN_ALLOWED_HOSTS`. Before separately packaged skill discovery, M5 must introduce bounded deployment configuration keyed by skill ID and implementation pin and validated by each installed skill. Endpoint policy remains skill-owned and fail-closed.
-- M2 public asset fetches cross a DNS-pinned, redirect-revalidating `SafePublicFetcher`, but its
-  `PublicAssetFetcher` adapter still executes inside the API process, which also holds database and
-  provider credentials. Before production, M8 must put that capability behind a separately deployed,
-  least-privilege egress worker with no database/provider credentials and no route to database,
-  loopback, link-local, private, or special networks. Its production smoke test must prove bounded
-  public HTTPS/443 fetches succeed while denied destinations remain unreachable and the API has no
+- Make `POST /vibes/{id}/push` operational while preserving any existing `durable: true` inferred
+  entry instead of overwriting it.
+
+## M5
+
+- The schema conditionals already require `parser_hash` for `generated_parser` and prohibit
+  reproducible `agent` records, but current execution and object-creation paths make only
+  `parser`/reproducible and `authored`/non-reproducible stamps reachable. Add executable `agent` and
+  `generated_parser` paths and accept their conformant ingest records.
+
+## M7
+
+- Replace development bearer identities with Better Auth phone OTP and first-session passkey
+  enrollment. Live Twilio Verify provisioning remains part of M8.
+- Expose the retained object revision history through history and revert behavior.
+- Move import preview and pull work from in-process `queueMicrotask` jobs to durable execution. Add
+  a reaper that reconciles work interrupted while `queued` or `running`, and stop host polling when a
+  job can no longer make progress.
+- Add reference-aware garbage collection for unreferenced staged capture/origin and element bytes
+  left by failed, canceled, or abandoned previews. Preserve bytes referenced by live
+  OriginArtifacts, MediaElements, or retained preview manifests.
+
+### M7 conditional follow-ups
+
+These become required only when the associated source or product scope expands:
+
+- Source definitions are currently installed through compile-time lists, server-side skill code
+  runs in the API process, and settings load from that process's environment. Before independently
+  packaged skills are enabled, add stronger package/runtime isolation behind a generic, fail-closed
+  boundary. Provider endpoint policy must remain source-owned.
+- Before substantially increasing X archive limits, add the required resumable upload,
+  complete-archive retention, range-backed access, paginated review, and durable large-job support.
+- Define file refresh and reselection semantics for replacing a compact capture on the same logical
+  source.
+- X MediaObject identity deduplication is currently source-scoped. Define cross-source
+  reconciliation for the same stable X post imported through archive and OAuth.
+
+## M8
+
+- Provision Twilio Verify with live production credentials, Fraud Guard, send limits, launch
+  geo-fencing, and production smoke coverage for the M7 authentication path.
+- Move arbitrary public asset fetching out of the API process and behind a separately deployed,
+  least-privilege egress worker with no database or provider credentials and no route to database,
+  loopback, link-local, private, or special networks. Production smoke tests must prove allowed,
+  bounded HTTPS/443 fetches succeed while denied destinations remain unreachable and the API has no
   direct arbitrary-domain fetch path.
-- Production phone OTP and passkey authentication replace the development bearer identities in M7.
-- Content-addressed payloads staged by a failed preview/transaction, or retained by a successful
-  preview that is later canceled, expires, or is abandoned, are not yet garbage-collected. Operation
-  results retain their manifests, but no reference-aware collector removes payloads that have no live
-  MediaElement or unexpired preview reference; that collector ships with the M7 background job
-  infrastructure.
-- Import preview and pull jobs run in-process via `queueMicrotask` with no durable queue: a restart
-  mid-run strands its operation in `queued` or `running`, no reaper reconciles it, and the host polls
-  that state indefinitely. Durable background execution ships in M7 alongside the reference-aware
-  staged-payload collection above.
+- Provision and exercise the production KMS envelope-encryption and HMAC keyring path, including
+  live seal/open/fingerprint tests and credential-rotation drills. Run the deferred live X-provider
+  smoke tests and establish provider-budget operations without making paid-provider access a CI
+  dependency.
