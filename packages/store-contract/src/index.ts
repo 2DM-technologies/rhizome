@@ -37,7 +37,7 @@ export {
   sourceExecutionLimitsSchema,
   sourceCredentialClaimPolicySchema,
   claimExchangeConnectionManifestSchema,
-  oauth2ConnectionManifestSchema,
+  oauth2PkceConnectionManifestSchema,
   sourceActionRequiredSchema,
   sourceSkillInputFieldSchema,
   sourceSkillInputOptionSchema,

@@ -19,7 +19,7 @@ import {
   CredentialedSourceCatalog,
   CredentialConnectionError,
   type CredentialedSourceSkill,
-  type OAuth2CredentialResult,
+  type OAuth2PkceCredentialResult,
 } from "../../ingest/connected-sources/types.ts";
 import {
   PublicRemoteSourceCatalog,
@@ -90,73 +90,23 @@ const simpleFinAccountFetches: Array<() => Promise<Uint8Array>> = [];
 const SYNTHETIC_OAUTH_SKILL_ID = "synthetic-oauth";
 const SYNTHETIC_OAUTH_CONNECTOR_VERSION = "synthetic-oauth-connector@1.0.0";
 const SYNTHETIC_OAUTH_PARSER_VERSION = "synthetic-oauth@1.0.0";
-const SYNTHETIC_OAUTH_NONE_SKILL_ID = "synthetic-oauth-none";
-const SYNTHETIC_OAUTH_NONE_CONNECTOR_VERSION = "synthetic-oauth-none-connector@1.0.0";
-const SYNTHETIC_OAUTH_NONE_PARSER_VERSION = "synthetic-oauth-none@1.0.0";
 const syntheticOAuthCaptureBytes = new TextEncoder().encode(
   JSON.stringify({ id: "synthetic-oauth-item", title: "Synthetic OAuth capture" }),
 );
 const syntheticOAuthRefreshSecrets: string[] = [];
 const syntheticOAuthRetrieveSecrets: string[] = [];
 const syntheticOAuthRevokeSecrets: string[] = [];
-const syntheticOAuthNoneAuthorizationInputs: Array<Record<string, unknown>> = [];
-const syntheticOAuthNoneExchangeInputs: Array<Record<string, unknown>> = [];
-const syntheticOAuthNonePreparedConfigs: unknown[] = [];
-const syntheticOAuthNoneRefreshSecrets: string[] = [];
-const syntheticOAuthNoneRetrieveSecrets: string[] = [];
-const syntheticOAuthNoneRevokeSecrets: string[] = [];
 const SYNTHETIC_PUBLIC_TITLES = ["“Zeta” stays first 🤔", "Alpha stays second"] as const;
 let syntheticOAuthRefresh: (
   secret: string,
   signal: AbortSignal,
-) => Promise<OAuth2CredentialResult | undefined> = async () => undefined;
+) => Promise<OAuth2PkceCredentialResult | undefined> = async () => undefined;
 let syntheticOAuthRetrieve: (
   secret: string,
   signal: AbortSignal,
 ) => Promise<Uint8Array> = async () => syntheticOAuthCaptureBytes.slice();
 let syntheticOAuthRevoke: (secret: string, signal: AbortSignal) => Promise<void> = async () => {};
-let syntheticOAuthNoneRefresh: (
-  secret: string,
-  signal: AbortSignal,
-) => Promise<OAuth2CredentialResult | undefined> = async () => undefined;
-let syntheticOAuthNoneRetrieve: (
-  secret: string,
-  signal: AbortSignal,
-) => Promise<Uint8Array> = async () => syntheticOAuthCaptureBytes.slice();
-let syntheticOAuthNoneRevoke: (
-  secret: string,
-  signal: AbortSignal,
-) => Promise<void> = async () => {};
-const syntheticOAuthSourceSkill = createSyntheticOAuthSourceSkill({
-  skillId: SYNTHETIC_OAUTH_SKILL_ID,
-  connectorVersion: SYNTHETIC_OAUTH_CONNECTOR_VERSION,
-  parserVersion: SYNTHETIC_OAUTH_PARSER_VERSION,
-  pkce: "S256",
-  exchangeSecret: "oauth-token-0",
-  refreshSecrets: syntheticOAuthRefreshSecrets,
-  retrieveSecrets: syntheticOAuthRetrieveSecrets,
-  revokeSecrets: syntheticOAuthRevokeSecrets,
-  refresh: (secret, signal) => syntheticOAuthRefresh(secret, signal),
-  retrieve: (secret, signal) => syntheticOAuthRetrieve(secret, signal),
-  revoke: (secret, signal) => syntheticOAuthRevoke(secret, signal),
-});
-const syntheticOAuthNoneSourceSkill = createSyntheticOAuthSourceSkill({
-  skillId: SYNTHETIC_OAUTH_NONE_SKILL_ID,
-  connectorVersion: SYNTHETIC_OAUTH_NONE_CONNECTOR_VERSION,
-  parserVersion: SYNTHETIC_OAUTH_NONE_PARSER_VERSION,
-  pkce: "none",
-  exchangeSecret: "oauth-none-token-0",
-  authorizationInputs: syntheticOAuthNoneAuthorizationInputs,
-  exchangeInputs: syntheticOAuthNoneExchangeInputs,
-  requiredSourceCollection: true,
-  preparedConfigs: syntheticOAuthNonePreparedConfigs,
-  refreshSecrets: syntheticOAuthNoneRefreshSecrets,
-  retrieveSecrets: syntheticOAuthNoneRetrieveSecrets,
-  revokeSecrets: syntheticOAuthNoneRevokeSecrets,
-  refresh: (secret, signal) => syntheticOAuthNoneRefresh(secret, signal),
-  retrieve: (secret, signal) => syntheticOAuthNoneRetrieve(secret, signal),
-  revoke: (secret, signal) => syntheticOAuthNoneRevoke(secret, signal),
-});
+const syntheticOAuthSourceSkill = createSyntheticOAuthSourceSkill();
 const syntheticPublicSourceSkill = createSyntheticPublicSourceSkill();
 
 beforeAll(async () => {
@@ -227,7 +177,6 @@ beforeAll(async () => {
         },
       }),
       syntheticOAuthSourceSkill,
-      syntheticOAuthNoneSourceSkill,
     ]),
     publicRemoteSources: new PublicRemoteSourceCatalog({
       current: [syntheticPublicSourceSkill],
@@ -317,8 +266,6 @@ describe("rNet M1 store", () => {
       const attempt = (await response.json()) as StartSourceConnectionResponse;
       const binding = response.headers.get("Set-Cookie")!.split(";", 1)[0]!;
       const authorization = new URL(attempt.authorization_url);
-      expect(authorization.searchParams.get("code_challenge")).toHaveLength(43);
-      expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
       started.push({
         attempt,
         binding,
@@ -356,203 +303,6 @@ describe("rNet M1 store", () => {
         status: "succeeded",
       });
     }
-  });
-
-  test("connects, imports, serializes refresh, and disconnects OAuth without PKCE", async () => {
-    resetSyntheticOAuthNoneRuntime();
-    expect(syntheticOAuthNoneSourceSkill.manifest.input_fields).toEqual([
-      {
-        name: "collection",
-        label: "Collection",
-        target: "source",
-        control: "text",
-        required: true,
-        secret: false,
-      },
-    ]);
-    const startResponse = await request(
-      `/rnet/v0/source-connections/${SYNTHETIC_OAUTH_NONE_SKILL_ID}/oauth`,
-      {
-        method: "POST",
-        headers: owner,
-        json: {
-          return_to: "http://rhizome.test/imports",
-          intent: { kind: "review_import", destination: { kind: "new_vibe" } },
-        },
-      },
-    );
-    expect(startResponse.status).toBe(201);
-    expect(startResponse.headers.get("Cache-Control")).toBe("no-store");
-    const attempt = (await startResponse.json()) as StartSourceConnectionResponse;
-    const authorization = new URL(attempt.authorization_url);
-    expect(authorization.protocol).toBe("https:");
-    expect(authorization.searchParams.get("redirect_uri")).toBe(
-      "http://rhizome.test/rnet/v0/source-connections/oauth/callback",
-    );
-    expect(authorization.searchParams.has("code_challenge")).toBe(false);
-    expect(authorization.searchParams.has("code_challenge_method")).toBe(false);
-    expect(authorization.searchParams.has("code_verifier")).toBe(false);
-    expect(syntheticOAuthNoneAuthorizationInputs).toHaveLength(1);
-    expect(syntheticOAuthNoneAuthorizationInputs[0]).toMatchObject({
-      pkce: "none",
-      callbackUrl: "http://rhizome.test/rnet/v0/source-connections/oauth/callback",
-      state: authorization.searchParams.get("state"),
-    });
-    expect(syntheticOAuthNoneAuthorizationInputs[0]).not.toHaveProperty("codeChallenge");
-    expect(syntheticOAuthNoneAuthorizationInputs[0]).not.toHaveProperty("codeVerifier");
-
-    const binding = startResponse.headers.get("Set-Cookie")!.split(";", 1)[0]!;
-    const callback = new URL("http://rhizome.test/rnet/v0/source-connections/oauth/callback");
-    callback.searchParams.set("state", authorization.searchParams.get("state")!);
-    callback.searchParams.set("code", "authorization-code-without-pkce");
-    const callbackResponse = await app.request(callback, {
-      headers: { ...owner, Cookie: binding },
-      redirect: "manual",
-    });
-    expect(callbackResponse.status).toBe(303);
-    expect(callbackResponse.headers.get("Location")).toBe(
-      `http://rhizome.test/imports?source_connection=${attempt.attempt_id}`,
-    );
-    expect(syntheticOAuthNoneExchangeInputs).toHaveLength(1);
-    expect(syntheticOAuthNoneExchangeInputs[0]).toMatchObject({
-      pkce: "none",
-      callbackUrl: "http://rhizome.test/rnet/v0/source-connections/oauth/callback",
-      code: "authorization-code-without-pkce",
-    });
-    expect(syntheticOAuthNoneExchangeInputs[0]).not.toHaveProperty("codeVerifier");
-    expect(syntheticOAuthNoneExchangeInputs[0]).not.toHaveProperty("codeChallenge");
-
-    const statusResponse = await request(`/rnet/v0/source-connections/${attempt.attempt_id}`, {
-      headers: owner,
-    });
-    expect(statusResponse.status).toBe(200);
-    const completed = (await statusResponse.json()) as SourceConnectionAttemptDocument;
-    expect(completed).toMatchObject({
-      attempt_id: attempt.attempt_id,
-      skill_id: SYNTHETIC_OAUTH_NONE_SKILL_ID,
-      status: "succeeded",
-    });
-    if (completed.status !== "succeeded") {
-      throw new Error("Synthetic non-PKCE connection did not produce a credential");
-    }
-
-    const sourceConfig = { collection: "saved-ideas" };
-    const sourceResponse = await request("/rnet/v0/ingestion-sources", {
-      method: "POST",
-      headers: owner,
-      json: { credential: completed.credential, config: sourceConfig },
-    });
-    expect(sourceResponse.status).toBe(201);
-    const source = (await sourceResponse.json()) as IngestionSourceDocument;
-    expect(source.kind).toBe("credential");
-    if (source.kind !== "credential") {
-      throw new Error("Synthetic non-PKCE credential produced the wrong source kind");
-    }
-    expect(source.config).toEqual(sourceConfig);
-    const [storedConfiguredSource] = await db
-      .select()
-      .from(ingestionSources)
-      .where(eq(ingestionSources.uuid, sourceUuid(source.source)));
-    expect(storedConfiguredSource?.config).toEqual(sourceConfig);
-    const credentialUuid = completed.credential.slice("credential:".length);
-    const vibeResponse = await request("/rnet/v0/vibes", {
-      method: "POST",
-      headers: owner,
-      json: { title: "OAuth without PKCE credential lease" },
-    });
-    expect(vibeResponse.status).toBe(201);
-    const vibeUuid = ((await vibeResponse.json()) as { uri: string }).uri.split("/").at(-1)!;
-
-    let signalRefreshStarted!: () => void;
-    let releaseRefresh!: () => void;
-    const refreshStarted = new Promise<void>((resolve) => {
-      signalRefreshStarted = resolve;
-    });
-    const refreshRelease = new Promise<void>((resolve) => {
-      releaseRefresh = resolve;
-    });
-    syntheticOAuthNoneRefresh = async (secret, signal) => {
-      expect(signal.aborted).toBe(false);
-      if (syntheticOAuthNoneRefreshSecrets.length === 1) {
-        expect(secret).toBe("oauth-none-token-0");
-        signalRefreshStarted();
-        await refreshRelease;
-        return {
-          secret: "oauth-none-token-1",
-          publicMetadata: { account_label: "Synthetic non-PKCE account" },
-        };
-      }
-      expect(secret).toBe("oauth-none-token-1");
-      return undefined;
-    };
-
-    const activeResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
-      method: "POST",
-      headers: owner,
-      json: { source: source.source },
-    });
-    expect(activeResponse.status).toBe(202);
-    const active = (await activeResponse.json()) as OperationDocument;
-    await refreshStarted;
-    expect(syntheticOAuthNonePreparedConfigs.length).toBeGreaterThanOrEqual(2);
-    for (const preparedConfig of syntheticOAuthNonePreparedConfigs) {
-      expect(preparedConfig).toEqual(sourceConfig);
-    }
-
-    const concurrentResponse = await request(`/rnet/v0/vibes/${vibeUuid}/imports`, {
-      method: "POST",
-      headers: owner,
-      json: { source: source.source },
-    });
-    expect(concurrentResponse.status).toBe(202);
-    const concurrent = await waitForOperation(await concurrentResponse.json(), owner);
-    expect(concurrent.status).toBe("failed");
-    expect(concurrent.error).toContain("active credential fetch");
-    expect(syntheticOAuthNoneRefreshSecrets).toEqual(["oauth-none-token-0"]);
-    expect(syntheticOAuthNoneRetrieveSecrets).toEqual([]);
-
-    const busyDisconnect = await request(`/rnet/v0/source-credentials/${credentialUuid}`, {
-      method: "DELETE",
-      headers: owner,
-    });
-    expect(busyDisconnect.status).toBe(429);
-    expect(syntheticOAuthNoneRevokeSecrets).toEqual([]);
-
-    releaseRefresh();
-    expect((await waitForOperation(active, owner)).status).toBe("done");
-    expect(syntheticOAuthNoneRetrieveSecrets).toEqual(["oauth-none-token-1"]);
-    const [refreshedCredential] = await db
-      .select()
-      .from(sourceCredentials)
-      .where(eq(sourceCredentials.uuid, credentialUuid));
-    expect(refreshedCredential?.metadata).toEqual({
-      account_label: "Synthetic non-PKCE account",
-    });
-    expect(
-      await openCredentialSecret(
-        refreshedCredential!.secret,
-        credentialEncryptionKeys,
-        credentialAssociatedData(credentialUuid, DEV_USER_UUID, SYNTHETIC_OAUTH_NONE_SKILL_ID),
-      ),
-    ).toBe("oauth-none-token-1");
-
-    const disconnect = await request(`/rnet/v0/source-credentials/${credentialUuid}`, {
-      method: "DELETE",
-      headers: owner,
-    });
-    expect(disconnect.status).toBe(204);
-    expect(syntheticOAuthNoneRevokeSecrets).toEqual(["oauth-none-token-1"]);
-    const [revokedCredential] = await db
-      .select()
-      .from(sourceCredentials)
-      .where(eq(sourceCredentials.uuid, credentialUuid));
-    const [revokedSource] = await db
-      .select()
-      .from(ingestionSources)
-      .where(eq(ingestionSources.uuid, sourceUuid(source.source)));
-    expect(revokedCredential?.revokedAt).toBeInstanceOf(Date);
-    expect(revokedCredential?.providerRevokedAt).toBeInstanceOf(Date);
-    expect(revokedSource?.revokedAt).toBeInstanceOf(Date);
   });
 
   test("connects, owns, encrypts, uses, and revokes a SimpleFIN credential without leaking it", async () => {
@@ -3374,57 +3124,10 @@ interface SyntheticPublicCapture {
   }>;
 }
 
-interface SyntheticOAuthSourceOptions {
-  readonly skillId: string;
-  readonly connectorVersion: string;
-  readonly parserVersion: string;
-  readonly pkce: "S256" | "none";
-  readonly exchangeSecret: string;
-  readonly authorizationInputs?: Array<Record<string, unknown>>;
-  readonly exchangeInputs?: Array<Record<string, unknown>>;
-  readonly requiredSourceCollection?: boolean;
-  readonly preparedConfigs?: unknown[];
-  readonly refreshSecrets: string[];
-  readonly retrieveSecrets: string[];
-  readonly revokeSecrets: string[];
-  readonly refresh: (
-    secret: string,
-    signal: AbortSignal,
-  ) => Promise<OAuth2CredentialResult | undefined>;
-  readonly retrieve: (secret: string, signal: AbortSignal) => Promise<Uint8Array>;
-  readonly revoke: (secret: string, signal: AbortSignal) => Promise<void>;
-}
-
-function createSyntheticOAuthSourceSkill(
-  options: SyntheticOAuthSourceOptions,
-): CredentialedSourceSkill {
-  const inputFields = options.requiredSourceCollection
-    ? [
-        {
-          name: "collection" as const,
-          label: "Collection",
-          target: "source" as const,
-          control: "text" as const,
-          required: true,
-          secret: false,
-        },
-      ]
-    : [];
-  const sourceRequestSchema = options.requiredSourceCollection
-    ? {
-        type: "object" as const,
-        required: ["collection"],
-        properties: { collection: { type: "string" as const, minLength: 1 } },
-        additionalProperties: false,
-      }
-    : {
-        type: "object" as const,
-        properties: {},
-        additionalProperties: false,
-      };
+function createSyntheticOAuthSourceSkill(): CredentialedSourceSkill {
   const parser = {
-    name: options.skillId,
-    version: options.parserVersion,
+    name: SYNTHETIC_OAUTH_SKILL_ID,
+    version: SYNTHETIC_OAUTH_PARSER_VERSION,
     async parse(bytes: Uint8Array) {
       return parseSyntheticOAuthCapture(bytes);
     },
@@ -3470,85 +3173,15 @@ function createSyntheticOAuthSourceSkill(
       );
     },
   };
-  const refresh = async (secret: string, { signal }: { signal: AbortSignal }) => {
-    options.refreshSecrets.push(secret);
-    return options.refresh(secret, signal);
-  };
-  const revoke = async (secret: string, { signal }: { signal: AbortSignal }) => {
-    options.revokeSecrets.push(secret);
-    await options.revoke(secret, signal);
-  };
-  const connection =
-    options.pkce === "S256"
-      ? {
-          mode: "oauth2" as const,
-          pkce: "S256" as const,
-          authorizationUrl(input: {
-            pkce: "S256";
-            callbackUrl: string;
-            codeChallenge: string;
-            state: string;
-          }) {
-            options.authorizationInputs?.push({ ...input });
-            const url = new URL("https://oauth.synthetic.test/authorize");
-            url.searchParams.set("response_type", "code");
-            url.searchParams.set("redirect_uri", input.callbackUrl);
-            url.searchParams.set("state", input.state);
-            url.searchParams.set("code_challenge", input.codeChallenge);
-            url.searchParams.set("code_challenge_method", "S256");
-            return url.href;
-          },
-          async exchange(input: {
-            pkce: "S256";
-            callbackUrl: string;
-            code: string;
-            codeVerifier: string;
-            signal: AbortSignal;
-          }) {
-            options.exchangeInputs?.push({ ...input });
-            return {
-              secret: options.exchangeSecret,
-              publicMetadata: { account_label: "Synthetic account" },
-            };
-          },
-          refresh,
-          revoke,
-        }
-      : {
-          mode: "oauth2" as const,
-          pkce: "none" as const,
-          authorizationUrl(input: { pkce: "none"; callbackUrl: string; state: string }) {
-            options.authorizationInputs?.push({ ...input });
-            const url = new URL("https://oauth.synthetic.test/authorize");
-            url.searchParams.set("response_type", "code");
-            url.searchParams.set("redirect_uri", input.callbackUrl);
-            url.searchParams.set("state", input.state);
-            return url.href;
-          },
-          async exchange(input: {
-            pkce: "none";
-            callbackUrl: string;
-            code: string;
-            signal: AbortSignal;
-          }) {
-            options.exchangeInputs?.push({ ...input });
-            return {
-              secret: options.exchangeSecret,
-              publicMetadata: { account_label: "Synthetic account" },
-            };
-          },
-          refresh,
-          revoke,
-        };
   return {
-    skillId: options.skillId,
+    skillId: SYNTHETIC_OAUTH_SKILL_ID,
     displayName: "Synthetic OAuth",
     manifest: {
-      skill_id: options.skillId,
+      skill_id: SYNTHETIC_OAUTH_SKILL_ID,
       label: "Synthetic OAuth",
       description: "Exercises the generic OAuth credential lifecycle in store tests.",
       source_kind: "credentialed_remote",
-      connector_version: options.connectorVersion,
+      connector_version: SYNTHETIC_OAUTH_CONNECTOR_VERSION,
       parser: { name: parser.name, version: parser.version },
       limits: {
         maxCandidates: 10,
@@ -3556,46 +3189,60 @@ function createSyntheticOAuthSourceSkill(
         maxElementBytes: 256 * 1_024,
         maxTotalElementBytes: 512 * 1_024,
       },
-      connection: { mode: "oauth2", button_label: "Connect synthetic source" },
-      input_fields: inputFields,
+      connection: { mode: "oauth2_pkce", button_label: "Connect synthetic source" },
+      input_fields: [],
       review_actions: ["review_import", "refresh_source"],
     },
-    connection,
+    connection: {
+      mode: "oauth2_pkce",
+      authorizationUrl({ callbackUrl, codeChallenge, state }) {
+        const url = new URL("https://oauth.synthetic.test/authorize");
+        url.searchParams.set("response_type", "code");
+        url.searchParams.set("redirect_uri", callbackUrl);
+        url.searchParams.set("state", state);
+        url.searchParams.set("code_challenge", codeChallenge);
+        url.searchParams.set("code_challenge_method", "S256");
+        return url.href;
+      },
+      async exchange() {
+        return { secret: "oauth-token-0", publicMetadata: { account_label: "Synthetic account" } };
+      },
+      async refresh(secret, { signal }) {
+        syntheticOAuthRefreshSecrets.push(secret);
+        return syntheticOAuthRefresh(secret, signal);
+      },
+      async revoke(secret, { signal }) {
+        syntheticOAuthRevokeSecrets.push(secret);
+        await syntheticOAuthRevoke(secret, signal);
+      },
+    },
     parser,
-    sourceRequestSchema,
+    sourceRequestSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
     fetchPolicy: { attempts: 100, windowHours: 1 },
     capture: {
       mime: "application/json",
       label(fetchUuid) {
-        return `${options.skillId}-${fetchUuid}.json`;
+        return `synthetic-oauth-${fetchUuid}.json`;
       },
     },
     parseConfig(value) {
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Synthetic OAuth config must be an object");
       }
-      const record = value as Record<string, unknown>;
-      if (options.requiredSourceCollection) {
-        if (
-          Object.keys(record).length !== 1 ||
-          typeof record.collection !== "string" ||
-          record.collection.length === 0
-        ) {
-          throw new Error("Synthetic OAuth config requires exactly one collection");
-        }
-        return { collection: record.collection };
-      }
-      if (Object.keys(record).length !== 0) {
+      if (Object.keys(value).length !== 0) {
         throw new Error("Synthetic OAuth config accepts no fields");
       }
       return {};
     },
-    async prepareFetch({ config }) {
-      options.preparedConfigs?.push(config);
+    async prepareFetch() {
       return {
         async retrieve(secret, { signal }) {
-          options.retrieveSecrets.push(secret);
-          return options.retrieve(secret, signal);
+          syntheticOAuthRetrieveSecrets.push(secret);
+          return syntheticOAuthRetrieve(secret, signal);
         },
         compiledSource,
       };
@@ -3620,18 +3267,6 @@ function resetSyntheticOAuthRuntime(): void {
   syntheticOAuthRefresh = async () => undefined;
   syntheticOAuthRetrieve = async () => syntheticOAuthCaptureBytes.slice();
   syntheticOAuthRevoke = async () => {};
-}
-
-function resetSyntheticOAuthNoneRuntime(): void {
-  syntheticOAuthNoneAuthorizationInputs.length = 0;
-  syntheticOAuthNoneExchangeInputs.length = 0;
-  syntheticOAuthNonePreparedConfigs.length = 0;
-  syntheticOAuthNoneRefreshSecrets.length = 0;
-  syntheticOAuthNoneRetrieveSecrets.length = 0;
-  syntheticOAuthNoneRevokeSecrets.length = 0;
-  syntheticOAuthNoneRefresh = async () => undefined;
-  syntheticOAuthNoneRetrieve = async () => syntheticOAuthCaptureBytes.slice();
-  syntheticOAuthNoneRevoke = async () => {};
 }
 
 function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {

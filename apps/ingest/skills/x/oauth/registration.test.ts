@@ -22,7 +22,7 @@ describe("X OAuth registration", () => {
     expect(lifecycleOnly.manifests()).not.toContainEqual(xOAuthSourceManifest);
     expect(lifecycleOnly.forInstalledSkillId(xOAuthSourceManifest.skill_id)).toMatchObject({
       availability: "lifecycle_only",
-      connection: { mode: "oauth2", pkce: "S256", revoke: expect.any(Function) },
+      connection: { mode: "oauth2_pkce", revoke: expect.any(Function) },
     });
 
     const enabled = createCredentialedSourceCatalog(

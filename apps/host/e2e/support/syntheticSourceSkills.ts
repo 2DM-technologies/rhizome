@@ -154,7 +154,7 @@ export const syntheticOAuthSourceSkillManifest = {
   parser: { name: "synthetic-records", version: "1.0.0" },
   limits: SYNTHETIC_SOURCE_LIMITS,
   connection: {
-    mode: "oauth2",
+    mode: "oauth2_pkce",
     button_label: SYNTHETIC_OAUTH_BUTTON_LABEL,
   },
   input_fields: [],
@@ -259,7 +259,6 @@ export const mockSyntheticOAuthSourceSkill = {
   oauth: {
     authorizationEndpoint: SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT,
     authorizationCode: SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
-    pkce: "S256",
   },
   capture: (context) => captureSyntheticFixture(context, "oauth"),
   normalizeConfig(input) {

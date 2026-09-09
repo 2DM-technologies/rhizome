@@ -64,11 +64,11 @@ The tempting workaround is to send a `code_challenge` Pinterest will ignore. Rej
 
 - `validatedAuthorizationUrl` enforces `code_challenge` + `code_challenge_method=S256` **when and only when** the adapter declares `S256`, and **forbids** either parameter when the adapter declares `none`. A typo cannot silently degrade into security theater in either direction.
 - The verifier is still generated and sealed for every attempt. The `verifier` column stays `notNull` and **no migration is required**.
-- **Invariant to test:** neither the challenge nor the verifier is passed to an adapter declaring `pkce: "none"`. Model the connection definition as a union discriminated on `pkce`, specializing both `authorizationUrl()` and `exchange()`, so the compiler enforces the boundary rather than trusting an adapter to ignore PKCE material it was handed.
+- **Invariant to test:** the verifier is never passed to an adapter declaring `pkce: "none"`. Model `exchange()`'s input as a union discriminated on `pkce` so the compiler enforces it, rather than trusting an adapter to ignore a server-only secret it was handed.
 
-Rename cost was mechanical and known before generalization: **30 occurrences across 17 files** as of `db3357c`, concentrated in `ImportPanel.tsx` (6), `connected-sources/types.ts` (3), and `e2e/support/mockStore.ts` (3). At that revision, the mode string appeared as a `const` literal in `oauth2PkceConnectionManifestSchema` rather than a shared `SOURCE_CONNECTION_MODES` array, which `8d3b37b` removed.
+Rename cost is mechanical and known: **30 occurrences across 17 files** as of `db3357c`, concentrated in `ImportPanel.tsx` (6), `connected-sources/types.ts` (3), and `e2e/support/mockStore.ts` (3). The mode string now appears as a `const` literal in `oauth2PkceConnectionManifestSchema` rather than a shared `SOURCE_CONNECTION_MODES` array, which `8d3b37b` removed.
 
-Because `pkce: "none"` forgoes proof-of-possession, the generic compensating controls are HTTPS-only authorization URL, exact registered callback, one-time state consumption, browser-binding cookie, and a 10-minute attempt TTL. Client authentication is adapter-owned and cannot be proven by the generic platform contract, so every non-PKCE provider must additionally state its mandatory client-secret authentication in `BOUNDARIES.md` and demonstrate it in provider protocol tests.
+Because `pkce: "none"` forgoes proof-of-possession, the compensating controls must be stated in `BOUNDARIES.md` and covered by tests: HTTPS-only authorization URL, exact registered callback, one-time state consumption, browser-binding cookie, 10-minute attempt TTL, and a mandatory client secret at the token endpoint.
 
 ## 4. Provider facts
 
@@ -154,11 +154,11 @@ apps/ingest/skills/pinterest/
 
 One registered source definition: `pinterest_board`. The name states the scope honestly — this imports a board, not an account.
 
-## 9. The rNet `pinterest.pin` type
+## 9. The rNet `pin` type
 
-Add `schemas/0.1/types/pinterest-pin.json`, modeled on `tweet.json` and registered with the existing code generation, validators, fixtures, tests, and specification. `0.1` is still an unfinished draft, so no version bump is required. The provider namespace is deliberate: this vocabulary describes Pinterest's source-native Pin record rather than claiming a generic cross-provider `pin` concept.
+Add `schemas/0.1/types/pin.json`, modeled on `tweet.json` and registered with the existing code generation, validators, fixtures, tests, and specification. `0.1` is still an unfinished draft, so no version bump is required.
 
-- `type: "pinterest.pin"`.
+- `type: "pin"`.
 - Stable keys: `pinterest_pin_id`, `pinterest_board_id`, and the canonical pin URL.
 - Required source properties: `created_at`.
 - Optional: `board_name`, `pinner_username`, `link` (the pin's outbound destination), `link_domain`, `dominant_color`, `is_owner`, `note`, and declared omissions.
@@ -224,13 +224,13 @@ Two environment notes: the redirect URI must be registered exactly, and `RHIZOME
 
 ## 14. Tests and quarantine
 
-**Generic platform.** Add a synthetic OAuth conformance source declaring `pkce: "none"`. This is the load-bearing test of the contract change: it must cover state replay, expiry, actor and callback binding, open-redirect prevention, token non-leakage, refresh serialization, and disconnect, and must assert that `code_challenge` is absent from the authorization URL and that neither challenge nor verifier reaches the adapter. The existing S256 synthetic source stays unchanged, proving both paths coexist.
+**Generic platform.** Add a synthetic OAuth conformance source declaring `pkce: "none"`. This is the load-bearing test of the contract change: it must cover state replay, expiry, actor and callback binding, open-redirect prevention, token non-leakage, refresh serialization, and disconnect, and must assert both that `code_challenge` is absent from the authorization URL and that no verifier is passed to the adapter. The existing S256 synthetic source stays unchanged, proving both paths coexist.
 
 **New generic coverage this provider forces:** a synthetic OAuth source that also declares a `target: "source"` input field, proving connection and caller-supplied configuration compose. Nothing currently tests that pairing.
 
 **Quarantine.** Generalize the X quarantine test into a shared helper parameterized by allowed root and pattern list, then instantiate for X and Pinterest. Cheaply supporting a third provider is itself part of the generalization claim. Pinterest patterns: `pinterest_board`, `api.pinterest.com`, `pinterest.com/oauth`, `boards:read`, `pins:read`, `user_accounts:read`, `RHIZOME_PINTEREST_*`.
 
-**rNet.** `pinterest.pin` schema validation and generated-type tests.
+**rNet.** `pin` schema validation and generated-type tests.
 
 **Pinterest skill.** Mocked token, refresh, revoke, `/v5/user_account`, board resolution, board pins pagination, and image download. Plus: board URL parsing including trailing slashes and section URLs; a board id that does not belong to the connected user; the 200 cap across page boundaries; board-order preservation; `alt_text` association; title-and-description combination including both-empty; the empty-candidate exclusion; and omission accounting under both budgets.
 
@@ -239,7 +239,7 @@ No large generated snapshots; reuse fixture bytes.
 ## 15. Implementation sequence
 
 1. **Contract generalization.** The `oauth2` rename plus the `pkce` discriminant, with the non-PKCE synthetic conformance source. **No provider code.** This PR is independently valuable and answers whether the OAuth abstraction generalizes.
-2. **Shared quarantine harness** and the rNet `pinterest.pin` type. Parallel with step 1.
+2. **Shared quarantine harness** and the rNet `pin` type. Parallel with step 1.
 3. **Pinterest skill core:** boundaries, contracts, config loader with mandatory secret, manifest with the board URL field, normalized-pin representation, candidate compiler, VERIFY, fixtures.
 4. **Pinterest OAuth connection:** client with Basic auth, `authorizationUrl`, `exchange`, `/v5/user_account` identity, sealed token set, refresh, revoke, provider-error mapping.
 5. **Pinterest capture:** board resolution, pin pagination, image retrieval within limits, capture archive, untrusted server re-parse.

@@ -207,14 +207,9 @@ describe("shared store schemas", () => {
       }),
       expect.objectContaining({
         required: ["mode", "button_label"],
-        properties: expect.objectContaining({ mode: { const: "oauth2" } }),
+        properties: expect.objectContaining({ mode: { const: "oauth2_pkce" } }),
       }),
     ]);
-    expect(
-      sourceSkillManifestSchema.properties.connection.oneOf.some(
-        ({ properties }) => String(properties.mode.const) === "oauth2_pkce",
-      ),
-    ).toBe(false);
     expect(
       sourceSkillManifestSchema.properties.connection.oneOf[0].properties.claim_policy.properties,
     ).not.toHaveProperty("attempts");

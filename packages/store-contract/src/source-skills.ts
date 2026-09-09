@@ -63,18 +63,18 @@ export const claimExchangeConnectionManifestSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
-export const oauth2ConnectionManifestSchema = {
+export const oauth2PkceConnectionManifestSchema = {
   type: "object",
   required: ["mode", "button_label"],
   properties: {
-    mode: { const: "oauth2" },
+    mode: { const: "oauth2_pkce" },
     button_label: { type: "string", minLength: 1, maxLength: 256 },
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
 export const sourceSkillConnectionManifestSchema = {
-  oneOf: [claimExchangeConnectionManifestSchema, oauth2ConnectionManifestSchema],
+  oneOf: [claimExchangeConnectionManifestSchema, oauth2PkceConnectionManifestSchema],
 } as const satisfies JSONSchema;
 
 export const sourceSkillInputOptionSchema = {

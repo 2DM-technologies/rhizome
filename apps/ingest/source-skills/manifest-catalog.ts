@@ -139,7 +139,7 @@ function assertConnectionPolicy(manifest: Record<string, unknown>): void {
   if (!isRecord(manifest.connection) || manifest.source_kind !== "credentialed_remote") {
     throw new Error(`Source-skill ${manifest.skill_id} has an invalid connection policy`);
   }
-  if (manifest.connection.mode === "oauth2") {
+  if (manifest.connection.mode === "oauth2_pkce") {
     if (
       !onlyKeys(manifest.connection, ["mode", "button_label"]) ||
       !boundedString(manifest.connection.button_label, 1, 256)
