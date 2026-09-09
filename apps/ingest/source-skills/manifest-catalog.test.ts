@@ -88,6 +88,25 @@ describe("SourceSkillManifestCatalog", () => {
     ).toThrow("invalid file capture preprocessor");
   });
 
+  test("accepts the generic OAuth mode and rejects the legacy PKCE-specific mode", () => {
+    const manifest = credentialedManifest();
+    const oauth = {
+      ...manifest,
+      connection: { mode: "oauth2", button_label: "Sign in" },
+    } as const;
+
+    expect(() => new SourceSkillManifestCatalog([oauth])).not.toThrow();
+    expect(
+      () =>
+        new SourceSkillManifestCatalog([
+          {
+            ...oauth,
+            connection: { mode: "oauth2_pkce", button_label: "Sign in" },
+          },
+        ]),
+    ).toThrow("invalid connection policy");
+  });
+
   test("rejects source-kind forms that the generic host cannot serialize", () => {
     const base = credentialedManifest();
     const withoutConnection = Object.fromEntries(

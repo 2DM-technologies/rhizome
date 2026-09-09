@@ -1142,7 +1142,7 @@ export class ImportService {
   ): Promise<string> {
     const resolved = reservation.resolved;
     const connection = resolved.skill.connection;
-    if (connection.mode !== "oauth2_pkce") return secret;
+    if (connection.mode !== "oauth2") return secret;
     const refresh = connection.refresh;
     if (!refresh) return secret;
     const preparedSeal = await this.credentialCrypto.prepareSeal(
