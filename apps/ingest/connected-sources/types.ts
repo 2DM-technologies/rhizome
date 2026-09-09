@@ -125,57 +125,31 @@ export interface ClaimExchangeConnectionDefinition {
   prepare(input: unknown): PreparedCredentialConnection;
 }
 
-export interface OAuth2CredentialResult {
+export interface OAuth2PkceCredentialResult {
   readonly secret: string;
   readonly publicMetadata?: SourceJsonObject;
 }
 
-interface OAuth2ConnectionLifecycle {
-  callbackError?(input: { error: string; errorDescription?: string }): CredentialConnectionError;
-  refresh?(
-    secret: string,
-    input: { signal: AbortSignal },
-  ): Promise<OAuth2CredentialResult | undefined>;
-  revoke?(secret: string, input: { signal: AbortSignal }): Promise<void>;
-}
-
-/** OAuth 2.0 authorization-code adapter whose provider enforces an S256 PKCE challenge. */
-export interface OAuth2S256ConnectionDefinition extends OAuth2ConnectionLifecycle {
-  readonly mode: "oauth2";
-  readonly pkce: "S256";
-  authorizationUrl(input: {
-    pkce: "S256";
-    callbackUrl: string;
-    codeChallenge: string;
-    state: string;
-  }): string;
+/** Provider adapter for the server-owned OAuth 2.0 authorization-code + PKCE lifecycle. */
+export interface OAuth2PkceConnectionDefinition {
+  readonly mode: "oauth2_pkce";
+  authorizationUrl(input: { callbackUrl: string; codeChallenge: string; state: string }): string;
   exchange(input: {
-    pkce: "S256";
     callbackUrl: string;
     code: string;
     codeVerifier: string;
     signal: AbortSignal;
-  }): Promise<OAuth2CredentialResult>;
+  }): Promise<OAuth2PkceCredentialResult>;
+  callbackError?(input: { error: string; errorDescription?: string }): CredentialConnectionError;
+  refresh?(
+    secret: string,
+    input: { signal: AbortSignal },
+  ): Promise<OAuth2PkceCredentialResult | undefined>;
+  revoke?(secret: string, input: { signal: AbortSignal }): Promise<void>;
 }
-
-/** OAuth 2.0 authorization-code adapter for a provider that does not enforce PKCE. */
-export interface OAuth2NoneConnectionDefinition extends OAuth2ConnectionLifecycle {
-  readonly mode: "oauth2";
-  readonly pkce: "none";
-  authorizationUrl(input: { pkce: "none"; callbackUrl: string; state: string }): string;
-  exchange(input: {
-    pkce: "none";
-    callbackUrl: string;
-    code: string;
-    signal: AbortSignal;
-  }): Promise<OAuth2CredentialResult>;
-}
-
-export type OAuth2ConnectionDefinition =
-  OAuth2S256ConnectionDefinition | OAuth2NoneConnectionDefinition;
 
 export type CredentialConnectionDefinition =
-  ClaimExchangeConnectionDefinition | OAuth2ConnectionDefinition;
+  ClaimExchangeConnectionDefinition | OAuth2PkceConnectionDefinition;
 
 export interface PreparedConnectedSourceFetch {
   retrieve(secret: string, input: { signal: AbortSignal }): Promise<Uint8Array>;
@@ -326,20 +300,14 @@ function assertConnectionManifestCoverage(skill: CredentialedSourceSkill): void 
       `Credentialed-source ${skill.skillId} manifest has inconsistent connection mode`,
     );
   }
-  if (skill.connection.mode === "oauth2") {
+  if (skill.connection.mode === "oauth2_pkce") {
     if (
-      manifestConnection.mode !== "oauth2" ||
+      manifestConnection.mode !== "oauth2_pkce" ||
       skill.manifest.input_fields.some(({ target }) => target === "connection")
     ) {
       throw new Error(`Credentialed-source ${skill.skillId} has an invalid OAuth connection`);
     }
-    switch (skill.connection.pkce) {
-      case "S256":
-      case "none":
-        return;
-      default:
-        throw new Error(`Credentialed-source ${skill.skillId} has an invalid OAuth PKCE policy`);
-    }
+    return;
   }
   if (
     manifestConnection.mode !== "claim_exchange" ||

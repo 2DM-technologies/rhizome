@@ -29,7 +29,7 @@ export function useConnectSourceCredential() {
   return api.useMutation("post", sourceCredentialPath, { gcTime: 0 });
 }
 
-/** Starts any installed source's advertised OAuth 2.0 connection capability. */
+/** Starts any installed source's advertised OAuth 2.0 + PKCE connection capability. */
 export function useStartSourceOAuthConnection() {
   return api.useMutation("post", sourceOAuthConnectionPath, { gcTime: 0 });
 }
