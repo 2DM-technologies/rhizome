@@ -54,7 +54,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: 2DM-technologies/rnet
-          ref: e913807eb89035ce5629ef883661ad7f46adb2e6
+          ref: 1c76dcc96302cac432d79ffedabdb04ea66ac525
           path: rnet
           ssh-key: ${{ secrets.RNET_DEPLOY_KEY }}
           persist-credentials: false
@@ -98,7 +98,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: 2DM-technologies/rnet
-          ref: e913807eb89035ce5629ef883661ad7f46adb2e6
+          ref: 1c76dcc96302cac432d79ffedabdb04ea66ac525
           path: rnet
           ssh-key: ${{ secrets.RNET_DEPLOY_KEY }}
           persist-credentials: false

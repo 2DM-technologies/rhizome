@@ -152,7 +152,7 @@ export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
     "/:id/inferred",
     {
       operationId: "setMediaObjectInferred",
-      auth: "user_or_client",
+      auth: "client",
       request: { param: RecordIdParamsSchema, json: SetMediaObjectInferredRequestSchema },
       responses: {
         200: MediaObjectDocumentSchema,

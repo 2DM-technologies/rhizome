@@ -2523,16 +2523,14 @@ describe("rNet M1 store", () => {
   test("rejects malformed task names before persistence", async () => {
     const response = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
-      headers: owner,
+      headers: dmachine,
       json: { task: "bad task", entry: { model: "test/model", properties: {} } },
     });
     expect(response.status).toBe(422);
     const mediaObject = await (
       await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: owner })
     ).json();
-    expect(mediaObject.inferred?.["user/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47:bad task"]).toBe(
-      undefined,
-    );
+    expect(mediaObject.inferred?.["rbudget:bad task"]).toBe(undefined);
   });
 
   test("preserves batch insertion order with unique Vibe positions", async () => {
@@ -2844,29 +2842,27 @@ describe("rNet M1 store", () => {
     });
     expect(spoof.status).toBe(422);
 
-    const durableTask = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
+    const durableEntry = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
       headers: dmachine,
       json: {
-        task: "forecast",
+        task: "pattern",
         entry: { model: "test/model", durable: true, properties: {} },
       },
     });
-    expect(durableTask.status).toBe(422);
+    expect(durableEntry.status).toBe(200);
+    expect((await durableEntry.json()).inferred["rbudget:pattern"].durable).toBe(true);
 
     const userInference = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
       method: "PUT",
       headers: owner,
       json: {
         task: "correction",
-        entry: { model: "user/direct", durable: true, properties: { category: "coffee" } },
+        entry: { model: "user/direct", properties: { category: "coffee" } },
       },
     });
-    expect(userInference.status).toBe(200);
-    expect(
-      (await userInference.json()).inferred["user/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47:correction"]
-        .properties.category,
-    ).toBe("coffee");
+    expect(userInference.status).toBe(403);
+    expect((await userInference.json()).scope).toBe("client");
   });
 
   test("creates a shared upload once across batched media objects", async () => {
