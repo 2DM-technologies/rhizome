@@ -51,7 +51,6 @@ describe("pull candidate identity", () => {
         {
           uri: "rnet://element/0198f2a1-a005-7a05-8005-000000000005",
           role: "content",
-          alt: "Synthetic image",
         },
       ],
       keys: { external_id: "42" },
@@ -67,7 +66,6 @@ describe("pull candidate identity", () => {
         {
           uri: "rnet://element/0198f2a1-a007-7a07-8007-000000000007",
           role: "content",
-          alt: "Synthetic image",
         },
       ],
       source: {
@@ -105,6 +103,11 @@ describe("pull candidate identity", () => {
     expect(
       await candidateSemanticDigest(recaptured, [
         { ...recapturedManifest, role: "preview" as const },
+      ]),
+    ).not.toBe(await candidateSemanticDigest(first, [manifest]));
+    expect(
+      await candidateSemanticDigest(recaptured, [
+        { ...recapturedManifest, alt: "A different description" },
       ]),
     ).not.toBe(await candidateSemanticDigest(first, [manifest]));
   });

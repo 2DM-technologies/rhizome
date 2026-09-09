@@ -2817,7 +2817,7 @@ describe("rNet M1 store", () => {
     const mediaElementReference = document.elements[0];
     expect(mediaElementReference.uri).toMatch(/^rnet:\/\/element\/[0-9a-f-]{36}$/);
     expect(mediaElementReference.role).toBe("content");
-    expect(mediaElementReference.alt).toBe("Authored note body");
+    expect(mediaElementReference).not.toHaveProperty("alt");
     const mediaElementRead = await request(
       `/rnet/v0/elements/${mediaElementReference.uri.split("/").at(-1)}`,
       { headers: dmachine },
@@ -2825,6 +2825,8 @@ describe("rNet M1 store", () => {
     expect(mediaElementRead.status).toBe(200);
     const mediaElement = await mediaElementRead.json();
     expect(mediaElement.owner).toBe(document.owner);
+    expect(mediaElement.alt).toBe("Authored note body");
+    expect(mediaElement).not.toHaveProperty("inferred");
     expect(mediaElement.content_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
 
     const inferred = await request(`/rnet/v0/objects/${mediaObjectId}/inferred`, {
@@ -2990,7 +2992,6 @@ describe("rNet M1 store", () => {
               {
                 uri: disposableElement.uri,
                 role: "preview",
-                alt: "Disposable element",
               },
             ],
             source: {
@@ -3041,7 +3042,6 @@ describe("rNet M1 store", () => {
       {
         uri: disposableElement.uri,
         role: "preview",
-        alt: "Disposable element",
       },
     ]);
     expect(preservedDocument.source.origins).toEqual([disposableOrigin.uri]);

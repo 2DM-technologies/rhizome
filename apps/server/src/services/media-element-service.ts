@@ -29,6 +29,8 @@ export interface CreateMediaElementUpload {
   bytes: Uint8Array;
   mime: string;
   kind: MediaElementKind;
+  /** Human-authored description of the payload; immutable once the element is created. */
+  alt?: string;
   uuid?: string;
   contentHash?: string;
 }
@@ -37,12 +39,13 @@ interface CreatedMediaElementUpload {
   uuid: string;
   kind: MediaElementKind;
   mime: string;
+  alt?: string;
 }
 
+/** What an object records about an element association: identity plus role, never payload facts. */
 export interface CreatedMediaObjectElementReference {
   uuid: string;
   role?: NonNullable<MediaObjectElementRef["role"]>;
-  alt?: string;
 }
 
 export interface MediaElementUploadContext {
@@ -141,7 +144,6 @@ export class MediaElementsService {
         createdReferences.push({
           uuid: mediaElementRecord.uuid,
           ...(mediaElementReference.role ? { role: mediaElementReference.role } : {}),
-          ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
         });
         continue;
       }
@@ -184,10 +186,14 @@ export class MediaElementsService {
         ]);
       }
       if (createdMediaElementUpload) {
+        if (createdMediaElementUpload.alt !== mediaElementReference.alt) {
+          throw schemaProblem([
+            { instancePath: `${pointer}/alt`, message: "conflicts with another reference" },
+          ]);
+        }
         createdReferences.push({
           uuid: createdMediaElementUpload.uuid,
           ...(mediaElementReference.role ? { role: mediaElementReference.role } : {}),
-          ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
         });
         continue;
       }
@@ -198,6 +204,7 @@ export class MediaElementsService {
           ...upload,
           kind: mediaElementReference.kind,
           mime,
+          ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
         },
         transaction,
       });
@@ -205,11 +212,11 @@ export class MediaElementsService {
         uuid: mediaElement.uuid,
         kind: mediaElement.kind,
         mime: mediaElement.mime,
+        ...(mediaElement.alt !== null ? { alt: mediaElement.alt } : {}),
       });
       createdReferences.push({
         uuid: mediaElement.uuid,
         ...(mediaElementReference.role ? { role: mediaElementReference.role } : {}),
-        ...(mediaElementReference.alt !== undefined ? { alt: mediaElementReference.alt } : {}),
       });
     }
 
@@ -254,6 +261,7 @@ export class MediaElementsService {
       kind: mediaElementUpload.kind,
       mime: mediaElementUpload.mime,
       byteSize: mediaElementUpload.bytes.byteLength,
+      ...(mediaElementUpload.alt !== undefined ? { alt: mediaElementUpload.alt } : {}),
       rnetSchema: RNET_SCHEMA_VERSION,
       createdAt,
       createdBy: this.actor.subject,
