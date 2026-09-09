@@ -46,7 +46,7 @@ const fixtureObject = {
   uri: OBJECT_URI,
   owner: `rnet://id/${OWNER_ID}`,
   type: "note",
-  elements: [{ uri: ELEMENT_URI, role: "content", alt: "Monthly plan" }],
+  elements: [{ uri: ELEMENT_URI, role: "content" }],
   source: {
     ingest: { method: "authored", reproducible: false },
     origins: ["rnet://client/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b48"],
@@ -64,6 +64,7 @@ const fixtureElement = {
   mime: "text/plain",
   bytes: `http://127.0.0.1/rnet/v0/elements/${ELEMENT_ID}/bytes`,
   byte_size: Buffer.byteLength(PAYLOAD_TEXT),
+  alt: "Monthly plan",
   created_at: "2026-08-27T12:00:00.000Z",
 } satisfies MediaElement;
 

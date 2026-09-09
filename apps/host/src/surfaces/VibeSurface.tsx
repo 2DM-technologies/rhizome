@@ -282,7 +282,7 @@ function MediaObjectEntry({
             isPending={elementPending}
             kindLabel={kindLabel}
             payloadUrl={payload.data}
-            title={primaryElement?.reference.alt ?? title}
+            title={primaryElement?.element.alt ?? title}
           />
         </span>
         <span className="flex min-h-20 flex-col gap-1 px-4 py-3">
