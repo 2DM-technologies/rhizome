@@ -117,7 +117,7 @@ function MediaElementReference({
           <MetadataList
             items={[
               { term: "Role", value: reference.role ?? "—" },
-              { term: "Alt", value: reference.alt ?? "—" },
+              { term: "Alt", value: element.data.alt ?? "—" },
               { term: "Kind", value: element.data.kind },
               { term: "MIME", value: element.data.mime },
               { term: "Bytes", value: element.data.byte_size ?? "—" },
@@ -129,7 +129,7 @@ function MediaElementReference({
             uuid={uuid}
             kind={element.data.kind}
             mime={element.data.mime}
-            {...(reference.alt !== undefined ? { alt: reference.alt } : {})}
+            {...(element.data.alt !== undefined ? { alt: element.data.alt } : {})}
           />
         </>
       ) : null}

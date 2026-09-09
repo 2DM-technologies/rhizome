@@ -499,7 +499,7 @@ export interface components {
     IngestRecord: RnetIngestRecord;
     /**
      * MediaElement
-     * @description An immutable, UUIDv7-identified atomic content record: an owner, a content-addressed payload, and contextual metadata. Five kinds, closed set: an element kind exists iff a human consumes that thing directly. Every live element resolves — bytes is required; platform-locked content is referenced via the owning object's keys, never modelled as an element with a missing payload.
+     * @description A UUIDv7-identified atomic content record: an owner, a content-addressed payload, and contextual metadata, all immutable, plus an inferred block that is the record's only mutable part. Five kinds, closed set: an element kind exists iff a human consumes that thing directly. Every live element resolves — bytes is required; platform-locked content is referenced via the owning object's keys, never modelled as an element with a missing payload.
      */
     MediaElement: RnetMediaElement;
     /**

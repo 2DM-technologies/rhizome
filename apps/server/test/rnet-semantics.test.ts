@@ -17,6 +17,7 @@ import {
   rnetUriPattern,
   validateMediaObject,
   validateSchema,
+  type MediaElement,
   type MediaObject,
   type OriginArtifact,
   type Vibe,
@@ -58,6 +59,8 @@ let otherVibe: Vibe;
 let otherOrigin: OriginArtifact;
 let otherElement: { uri: string };
 let otherObject: MediaObject;
+let authoredObject: MediaObject;
+let authoredElement: MediaElement;
 let authoredElementBytesUrl = "";
 const authoredPayload = "“atomic” client payload 🤔";
 
@@ -266,13 +269,13 @@ describe("rNet semantics", () => {
     );
     expect(response.status).toBe(201);
     const authored = ((await response.json()) as { mediaObjects: MediaObject[] }).mediaObjects[0]!;
+    authoredObject = authored;
     const validation = validateMediaObject(authored);
     if (!validation.ok) expect(validation.issues).toEqual([]);
     expect(authored.elements).toEqual([
       {
         uri: expect.stringMatching(/^rnet:\/\/element\/[0-9a-f-]{36}$/),
         role: "content",
-        alt: "Atomic note body",
       },
     ]);
 
@@ -281,7 +284,10 @@ describe("rNet semantics", () => {
     const elementResponse = await request(`/rnet/v0/elements/${elementId}`, { headers: dmachine });
     expect(elementResponse.status).toBe(200);
 
-    const element = (await elementResponse.json()) as { bytes: string; content_hash: string };
+    const element = (await elementResponse.json()) as MediaElement;
+    const elementValidation = validateSchema("media-element", element);
+    if (!elementValidation.ok) expect(elementValidation.issues).toEqual([]);
+    authoredElement = element;
     authoredElementBytesUrl = element.bytes;
     expect(authoredElementBytesUrl).toBe(`http://rhizome.test/rnet/v0/elements/${elementId}/bytes`);
     const payload = await app.request(authoredElementBytesUrl, { headers: dmachine });
@@ -290,6 +296,31 @@ describe("rNet semantics", () => {
     expect(payload.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
     expect(await payload.text()).toBe(authoredPayload);
     expect(element.content_hash).toBe(await sha256(new TextEncoder().encode(authoredPayload)));
+  });
+
+  test("alt text describes the element, not the association", async () => {
+    // An upload descriptor's alt lands on the element record it creates...
+    expect(authoredElement.alt).toBe("Atomic note body");
+    expect(authoredElement).not.toHaveProperty("inferred");
+    // ...and never on the object's reference to it.
+    expect(authoredObject.elements[0]).not.toHaveProperty("alt");
+
+    // A reference to an existing element carries only identity and role.
+    const response = await createObjects(owner, {
+      vibe: vibe.uri,
+      objects: [
+        {
+          type: "note",
+          elements: [{ uri: authoredElement.uri, role: "content", alt: "Re-described" }],
+          source: {
+            ingest: { method: "parser", reproducible: true },
+            origins: [origin.uri],
+            properties: {},
+          },
+        },
+      ],
+    });
+    expect(response.status).toBe(422);
   });
 
   test("a read grant reaches objects through Vibe membership", async () => {

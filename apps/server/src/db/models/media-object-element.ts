@@ -23,7 +23,6 @@ export const mediaObjectElements = pgTable(
       .references(() => mediaElements.uuid),
     position: integer("position").notNull(),
     role: text("role", { enum: MediaObjectElementRoleEnum }),
-    alt: text("alt"),
   },
   (mediaObjectElement) => [
     primaryKey({ columns: [mediaObjectElement.mediaObjectUuid, mediaObjectElement.position] }),

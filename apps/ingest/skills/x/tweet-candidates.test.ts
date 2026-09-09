@@ -131,10 +131,9 @@ describe("X shared post candidates", () => {
       uri: "rnet://object/0198f2a1-a001-7a01-8001-000000000001",
       owner: "rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
       type: original!.type,
-      elements: original!.elements.map(({ role, alt }, index) => ({
+      elements: original!.elements.map(({ role }, index) => ({
         uri: `rnet://element/${elementUuids[index]}`,
         role,
-        ...(alt === undefined ? {} : { alt }),
       })),
       keys: { ...original!.keys },
       source: {

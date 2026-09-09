@@ -1943,6 +1943,7 @@ export class ImportService {
         kind: element.kind,
         mime: element.mime,
         byteSize: element.byte_size,
+        ...(element.alt !== undefined ? { alt: element.alt } : {}),
         rnetSchema: RNET_SCHEMA_VERSION,
         createdBy: "rhizome:ingest",
       });
@@ -1951,7 +1952,6 @@ export class ImportService {
         mediaElementUuid,
         position,
         role: element.role,
-        ...(element.alt !== undefined ? { alt: element.alt } : {}),
       });
     }
     await transaction.insert(mediaObjectRevisions).values({
@@ -2520,11 +2520,7 @@ async function candidatesFromBundle(
       uri: objectUri,
       owner: `rnet://id/${ownerUuid}`,
       type: draft.type,
-      elements: elements.map(({ uri, role, alt }) => ({
-        uri,
-        role,
-        ...(alt !== undefined ? { alt } : {}),
-      })),
+      elements: elements.map(({ uri, role }) => ({ uri, role })),
       keys: { ...draft.keys },
       source: {
         ingest: {
@@ -2633,7 +2629,9 @@ async function digest(value: unknown): Promise<string> {
 /**
  * Identifies canonical source values independently of the candidate URI and capture event.
  * Element identity is content-based, so a provider can later mint fresh staged element URIs
- * without making an unchanged candidate appear changed.
+ * without making an unchanged candidate appear changed. `alt` describes the element payload
+ * (it lands on the MediaElement record, not the object's reference), so it participates here as
+ * an element attribute alongside the payload facts.
  */
 export function candidateSemanticDigest(
   candidate: MediaObject,
@@ -2771,12 +2769,7 @@ function assertCandidate(
     candidate.elements.length !== elements.length ||
     candidate.elements.some((reference, index) => {
       const element = elements[index];
-      return (
-        !element ||
-        reference.uri !== element.uri ||
-        reference.role !== element.role ||
-        reference.alt !== element.alt
-      );
+      return !element || reference.uri !== element.uri || reference.role !== element.role;
     }) ||
     new Set(candidate.elements.map(({ uri }) => uri)).size !== candidate.elements.length
   ) {

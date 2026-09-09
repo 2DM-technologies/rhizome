@@ -8,7 +8,6 @@ export interface MediaObjectAggregate {
   mediaElementReferences: Array<{
     uuid: string;
     role?: NonNullable<MediaObjectElementRef["role"]>;
-    alt?: string;
   }>;
 }
 
@@ -21,10 +20,9 @@ export function serializeMediaObject({
     uri: `rnet://object/${mediaObject.uuid}`,
     owner: `rnet://id/${mediaObject.ownerUuid}`,
     type: mediaObject.type,
-    elements: mediaElementReferences.map(({ uuid, role, alt }) => ({
+    elements: mediaElementReferences.map(({ uuid, role }) => ({
       uri: `rnet://element/${uuid}`,
       ...(role ? { role } : {}),
-      ...(alt !== undefined ? { alt } : {}),
     })),
     ...(Object.keys(mediaObject.keys).length ? { keys: mediaObject.keys } : {}),
     source: mediaObject.source,

@@ -37,7 +37,6 @@ import { uriId } from "./uris.ts";
 type MediaElementReferenceRow = {
   uuid: string;
   role: CreatedMediaObjectElementReference["role"] | null;
-  alt: string | null;
 };
 
 type MediaObjectBlockSnapshot =
@@ -276,17 +275,15 @@ export class MediaObjectsService {
       .select({
         uuid: mediaObjectElements.mediaElementUuid,
         role: mediaObjectElements.role,
-        alt: mediaObjectElements.alt,
       })
       .from(mediaObjectElements)
       .where(eq(mediaObjectElements.mediaObjectUuid, mediaObjectRecord.uuid))
       .orderBy(asc(mediaObjectElements.position));
     return {
       mediaObject: mediaObjectRecord,
-      mediaElementReferences: mediaElementReferences.map(({ uuid, role, alt }) => ({
+      mediaElementReferences: mediaElementReferences.map(({ uuid, role }) => ({
         uuid,
         ...(role ? { role } : {}),
-        ...(alt !== null ? { alt } : {}),
       })),
     };
   }
@@ -350,12 +347,11 @@ export class MediaObjectsService {
   }): Promise<void> {
     if (!mediaElementReferences.length) return;
     await transaction.insert(mediaObjectElements).values(
-      mediaElementReferences.map(({ uuid, role, alt }, position) => ({
+      mediaElementReferences.map(({ uuid, role }, position) => ({
         mediaObjectUuid,
         mediaElementUuid: uuid,
         position,
         ...(role ? { role } : {}),
-        ...(alt !== undefined ? { alt } : {}),
       })),
     );
   }

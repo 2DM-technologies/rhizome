@@ -13,6 +13,8 @@ export function serializeMediaElement(mediaElement: DbMediaElement, baseUrl: str
     mime: mediaElement.mime,
     bytes: `${baseUrl}/rnet/v0/elements/${mediaElement.uuid}/bytes`,
     byte_size: mediaElement.byteSize,
+    ...(mediaElement.alt !== null ? { alt: mediaElement.alt } : {}),
     created_at: mediaElement.createdAt.toISOString(),
+    ...(Object.keys(mediaElement.inferred).length ? { inferred: mediaElement.inferred } : {}),
   };
 }
