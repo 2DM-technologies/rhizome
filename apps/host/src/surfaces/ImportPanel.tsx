@@ -192,7 +192,7 @@ export function ImportPanel({
     setLocalError(undefined);
 
     const manifest = importSkills.find((skill) => skill.skill_id === attempt.skill_id);
-    if (!manifest || manifest.connection?.mode !== "oauth2_pkce") {
+    if (!manifest || manifest.connection?.mode !== "oauth2") {
       setLocalError("The connected source is no longer installed. Choose another source.");
       return;
     }
@@ -282,7 +282,7 @@ export function ImportPanel({
 
   async function beginOAuthConnection() {
     const manifest = selectedSkill;
-    if (!manifest || manifest.connection?.mode !== "oauth2_pkce") return;
+    if (!manifest || manifest.connection?.mode !== "oauth2") return;
     resetMutationErrors();
     setOutcome(undefined);
     setOperationId(undefined);
@@ -357,7 +357,7 @@ export function ImportPanel({
       // network await. Credential fields are scrubbed again as soon as the connection request
       // settles below.
       const sourceInput = sourceInputForManifest(manifest, new FormData(form));
-      if (manifest.connection?.mode === "oauth2_pkce") {
+      if (manifest.connection?.mode === "oauth2") {
         if (
           sourceInput.kind !== "credentialed_remote" ||
           resumedOAuthCredential?.skillId !== manifest.skill_id
@@ -694,8 +694,8 @@ function SourceSkillForm({
   onInput: () => void;
 }) {
   const connection = manifest.connection;
-  const oauth = connection?.mode === "oauth2_pkce";
-  const oauthButtonLabel = connection?.mode === "oauth2_pkce" ? connection.button_label : "";
+  const oauth = connection?.mode === "oauth2";
+  const oauthButtonLabel = connection?.mode === "oauth2" ? connection.button_label : "";
   const visibleFields = oauth
     ? oauthCredentialReady
       ? manifest.input_fields.filter((field) => field.target === "source")
@@ -1112,7 +1112,7 @@ function sourceInputForManifest(
     return {
       kind: "credentialed_remote",
       connection:
-        manifest.connection?.mode === "oauth2_pkce"
+        manifest.connection?.mode === "oauth2"
           ? {}
           : fieldsForTarget(manifest, formData, "connection"),
       source,

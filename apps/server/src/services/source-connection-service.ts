@@ -10,7 +10,8 @@ import { v7 as uuidv7 } from "uuid";
 import {
   CredentialConnectionError,
   type CredentialedSourceCatalog,
-  type OAuth2PkceConnectionDefinition,
+  type OAuth2ConnectionDefinition,
+  type OAuth2CredentialResult,
 } from "../../../ingest/connected-sources/types.ts";
 import type { Database } from "../db/index.ts";
 import {
@@ -128,7 +129,7 @@ export class SourceConnectionService {
     const skill = this.catalog.forSkillId(skillId);
     if (!skill) throw unsupportedSkill(skillId);
     const oauthConnection = skill.connection;
-    if (oauthConnection.mode !== "oauth2_pkce") throw connectionModeMismatch();
+    if (oauthConnection.mode !== "oauth2") throw connectionModeMismatch();
     await this.assertIntentOwnership(input.intent);
     const returnUrl = approvedReturnUrl(input.return_to, this.allowedReturnOrigins, input.intent);
     const now = this.now();
@@ -216,7 +217,7 @@ export class SourceConnectionService {
     if (
       !skill ||
       skill.manifest.connector_version !== attempt.connectorVersion ||
-      oauthConnection?.mode !== "oauth2_pkce"
+      oauthConnection?.mode !== "oauth2"
     ) {
       await this.fail(attempt.uuid, "oauth_connector_unavailable", "failed");
       return {
@@ -255,23 +256,12 @@ export class SourceConnectionService {
     let acquiredSecret: string | undefined;
     let credentialCommitted = false;
     try {
-      const verifier = await this.credentialCrypto.open(
-        attempt.verifier,
-        oauthVerifierAssociatedData(attempt.uuid, attempt.userUuid, attempt.skillId),
-      );
       const credentialUuid = uuidv7();
       const credentialSeal = await this.credentialCrypto.prepareSeal(
         credentialAssociatedData(credentialUuid, attempt.userUuid, attempt.skillId),
       );
       try {
-        const acquired = await withProviderRequestDeadline((signal) =>
-          oauthConnection.exchange({
-            callbackUrl: attempt.callbackUrl,
-            code: input.code,
-            codeVerifier: verifier,
-            signal,
-          }),
-        );
+        const acquired = await this.exchangeAuthorizationCode(oauthConnection, attempt, input.code);
         acquiredSecret = acquired.secret;
         const secret = await credentialSeal.seal(acquired.secret);
         await this.store.succeed({
@@ -352,6 +342,41 @@ export class SourceConnectionService {
     status: Extract<SourceConnectionAttemptStatus, "failed" | "rejected">,
   ): Promise<boolean> {
     return this.store.fail({ attemptUuid, errorCode, status, now: this.now() });
+  }
+
+  private async exchangeAuthorizationCode(
+    connection: OAuth2ConnectionDefinition,
+    attempt: DbSourceConnectionAttempt,
+    code: string,
+  ): Promise<OAuth2CredentialResult> {
+    switch (connection.pkce) {
+      case "S256": {
+        const verifier = await this.credentialCrypto.open(
+          attempt.verifier,
+          oauthVerifierAssociatedData(attempt.uuid, attempt.userUuid, attempt.skillId),
+        );
+        return withProviderRequestDeadline((signal) =>
+          connection.exchange({
+            pkce: "S256",
+            callbackUrl: attempt.callbackUrl,
+            code,
+            codeVerifier: verifier,
+            signal,
+          }),
+        );
+      }
+      case "none":
+        return withProviderRequestDeadline((signal) =>
+          connection.exchange({
+            pkce: "none",
+            callbackUrl: attempt.callbackUrl,
+            code,
+            signal,
+          }),
+        );
+      default:
+        return invalidOAuthPkce(connection);
+    }
   }
 }
 
@@ -680,16 +705,49 @@ function approvedReturnUrl(
 }
 
 function validatedAuthorizationUrl(
-  connection: OAuth2PkceConnectionDefinition,
+  connection: OAuth2ConnectionDefinition,
   input: { callbackUrl: string; codeChallenge: string; state: string },
   verifier: string,
 ): string {
-  const value = connection.authorizationUrl(input);
+  let value: string;
+  switch (connection.pkce) {
+    case "S256":
+      value = connection.authorizationUrl({
+        pkce: "S256",
+        callbackUrl: input.callbackUrl,
+        codeChallenge: input.codeChallenge,
+        state: input.state,
+      });
+      break;
+    case "none":
+      value = connection.authorizationUrl({
+        pkce: "none",
+        callbackUrl: input.callbackUrl,
+        state: input.state,
+      });
+      break;
+    default:
+      return invalidOAuthPkce(connection);
+  }
   let url: URL;
   try {
     url = new URL(value);
   } catch {
     throw new Error("OAuth source produced an invalid authorization URL");
+  }
+  let invalidPkceParameters: boolean;
+  switch (connection.pkce) {
+    case "S256":
+      invalidPkceParameters =
+        !exactSearchParameter(url, "code_challenge", input.codeChallenge) ||
+        !exactSearchParameter(url, "code_challenge_method", "S256");
+      break;
+    case "none":
+      invalidPkceParameters =
+        url.searchParams.has("code_challenge") || url.searchParams.has("code_challenge_method");
+      break;
+    default:
+      return invalidOAuthPkce(connection);
   }
   if (
     url.protocol !== "https:" ||
@@ -699,8 +757,7 @@ function validatedAuthorizationUrl(
     new TextEncoder().encode(url.href).byteLength > MAX_AUTHORIZATION_URL_BYTES ||
     url.href.includes(verifier) ||
     !exactSearchParameter(url, "state", input.state) ||
-    !exactSearchParameter(url, "code_challenge", input.codeChallenge) ||
-    !exactSearchParameter(url, "code_challenge_method", "S256") ||
+    invalidPkceParameters ||
     !exactSearchParameter(url, "redirect_uri", input.callbackUrl) ||
     !exactSearchParameter(url, "response_type", "code") ||
     [...url.searchParams.keys()].some(isSensitiveAuthorizationParameter)
@@ -708,6 +765,12 @@ function validatedAuthorizationUrl(
     throw new Error("OAuth source produced an unsafe authorization URL");
   }
   return url.href;
+}
+
+function invalidOAuthPkce(connection: never): never {
+  throw new Error(
+    `OAuth source declared an unsupported PKCE mode: ${String((connection as { pkce?: unknown }).pkce)}`,
+  );
 }
 
 function isSensitiveAuthorizationParameter(name: string): boolean {
@@ -814,7 +877,7 @@ function connectionModeMismatch(): Problem {
     422,
     "schema_violation",
     "Connection mode mismatch",
-    "This source does not advertise OAuth 2.0 PKCE",
+    "This source does not advertise OAuth 2.0",
   );
 }
 

@@ -317,7 +317,7 @@ type ConnectionManifest =
       claim_policy: { kind: "single_use_global" };
     }
   | {
-      mode: "oauth2_pkce";
+      mode: "oauth2";
       button_label: string;
     };
 ```
@@ -326,11 +326,11 @@ type ConnectionManifest =
 
 Do not add skill-level `attempts` or `window_hours` policy. Generic server-owned abuse protection may still throttle connection endpoints operationally, but the source manifest exposes only the single-use policy that the product currently supports.
 
-`oauth2_pkce` is a connection mode rather than a form control. The manifest produces a “Sign in with X” action that starts a pending connection attempt, redirects to the provider, handles the callback, seals the resulting credential, and resumes the intended import.
+`oauth2` is a connection mode rather than a form control. The manifest produces a “Sign in with X” action that starts a pending connection attempt, redirects to the provider, handles the callback, seals the resulting credential, and resumes the intended import. X's executable adapter separately declares `pkce: "S256"`, keeping transport security policy out of the client-facing manifest.
 
 The generic OAuth platform must:
 
-- Generate high-entropy state and PKCE verifier/challenge values.
+- Generate high-entropy state and a verifier for every attempt; derive and expose its S256 challenge only when the adapter declares `pkce: "S256"`.
 - Persist only a state hash plus an encrypted verifier in a durable `source_connection_attempts` record.
 - Bind the attempt to owner, skill, connector version, import intent, exact callback, and a server-approved return target.
 - Enforce expiry, one-time consumption, and explicit terminal status.
@@ -346,7 +346,7 @@ For X, request only `tweet.read`, `users.read`, and `offline.access`. The X skil
 
 OAuth is intentionally secondary to archive import in M2. Its acceptance target is:
 
-- The generic PKCE connection lifecycle has synthetic conformance coverage.
+- The generic OAuth connection lifecycle has synthetic conformance coverage for both explicit PKCE policies; X takes the `S256` path.
 - X can connect an identity with `/users/me` and store sealed credentials.
 - When an operator enables provider access and budget, the X timeline capture fetches at most one 100-result page because the product cap is 100.
 - The returned records compile through the same X normalizer and candidate-bundle path as the archive.
@@ -378,7 +378,7 @@ The destination Vibe should be staged and created on confirmation so cancellatio
 - Candidate-bundle contract and conformance tests.
 - Regression coverage proving CSV, OFX, SimpleFIN, and Are.na behavior is unchanged.
 - A synthetic source exercising the generic file-preprocessor contract.
-- A synthetic OAuth source covering PKCE, state replay, expiry, actor binding, callback binding, open-redirect prevention, token leakage, refresh serialization, and disconnect.
+- Synthetic OAuth sources covering both `pkce: "S256"` and `pkce: "none"`, state replay, expiry, actor binding, callback binding, open-redirect prevention, token leakage, refresh serialization, and disconnect.
 - A generic host E2E driven by synthetic manifests rather than an X-named host test.
 
 ### rNet coverage
@@ -414,7 +414,7 @@ The X package owns its parser and connector E2E tests. A quarantine test prevent
 3. **Generic limits and preprocessing:** persist `SourceExecutionLimits` and add the allowlisted worker-based `FileCapturePreprocessor` capability.
 4. **X shared core:** add package boundaries, manifests, common contracts, post eligibility, normalization, VERIFY, and fixtures.
 5. **X archive:** implement selective browser capture, untrusted server parsing/verification, generic host flow, and archive E2E.
-6. **Generic OAuth:** add durable PKCE connection attempts and synthetic conformance coverage.
+6. **Generic OAuth:** add durable connection attempts, explicit adapter PKCE policy, and synthetic conformance coverage for both policies.
 7. **X OAuth:** add identity, budgeted timeline capture, media retrieval, refresh/revoke behavior, and mocked E2E.
 8. **Hardening:** complete quarantine, regression, documentation, operation/redaction, and conformance checks.
 
@@ -444,7 +444,7 @@ M2 X import is complete when:
 - CSV, OFX, and SimpleFIN are independently registered sources under the transaction skill family, with no transaction- or SimpleFIN-specific server behavior.
 - rNet and Rhizome use object-only element references with optional role/alt fields.
 - The host and server contain no X-specific behavioral branches.
-- Generic OAuth PKCE conformance passes, and the X adapter can connect an identity and exercise mocked capture without requiring provider spend in CI.
+- Generic OAuth conformance passes for both PKCE policies, and the X adapter can connect an identity through the S256 path and exercise mocked capture without requiring provider spend in CI.
 - Limits are manifest-driven, persisted, and independently enforced on client and server.
 - X quarantine, security, parser, integration, and E2E suites are green without large generated snapshots.
 

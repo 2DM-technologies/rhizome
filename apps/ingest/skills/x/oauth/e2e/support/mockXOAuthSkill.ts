@@ -57,6 +57,7 @@ export function createMockXOAuthSkill(): {
     operationId: X_OAUTH_OPERATION_ID,
     sourceId: X_OAUTH_SOURCE_ID,
     oauth: {
+      pkce: "S256",
       authorizationEndpoint: X_OAUTH_AUTHORIZATION_ENDPOINT,
       authorizationCode: X_OAUTH_AUTHORIZATION_CODE,
     },
