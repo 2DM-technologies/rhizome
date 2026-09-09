@@ -1,7 +1,7 @@
 import {
   CredentialConnectionError,
-  type OAuth2PkceConnectionDefinition,
-  type OAuth2PkceCredentialResult,
+  type OAuth2CredentialResult,
+  type OAuth2S256ConnectionDefinition,
 } from "../../../connected-sources/types.ts";
 import { isXAccountName, isXHandle, type XAccountIdentity } from "../contracts.ts";
 import {
@@ -40,11 +40,12 @@ export interface XOAuthConnectionOptions extends XApiClientOptions {
 export function createXOAuthConnection(
   settings: XOAuthSettings,
   options: XOAuthConnectionOptions = {},
-): OAuth2PkceConnectionDefinition {
+): OAuth2S256ConnectionDefinition {
   const client = options.client ?? new XApiClient(options);
   const now = options.now ?? (() => new Date());
   return {
-    mode: "oauth2_pkce",
+    mode: "oauth2",
+    pkce: "S256",
     authorizationUrl({ callbackUrl, codeChallenge, state }) {
       const url = new URL(client.endpoints.authorization);
       url.searchParams.set("response_type", "code");
@@ -220,7 +221,7 @@ function tokenCredential(
 function credentialResult(
   credential: XOAuthCredential,
   account: XAccountIdentity,
-): OAuth2PkceCredentialResult {
+): OAuth2CredentialResult {
   return {
     secret: serializeXOAuthSecret(credential),
     publicMetadata: {

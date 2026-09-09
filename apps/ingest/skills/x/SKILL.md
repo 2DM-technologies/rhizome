@@ -4,7 +4,7 @@ This package owns two independently registered source definitions that will shar
 post compiler:
 
 - `x_archive`, a selectively preprocessed file source.
-- `x_oauth`, a credentialed remote source using the generic OAuth 2.0 PKCE capability.
+- `x_oauth`, a credentialed remote source using the generic OAuth 2.0 capability with S256 PKCE.
 
 The shared core classifies authored posts, filters replies and reposts, requires authored quote
 commentary, orders newest-first, applies manifest limits, constructs ordered media elements, and

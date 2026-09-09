@@ -16,7 +16,7 @@ describe("X OAuth connected-source adapter", () => {
       skillId: "x_oauth",
       displayName: "X account",
       parser: { name: "x-posts", version: "x-posts@1.0.0" },
-      connection: { mode: "oauth2_pkce" },
+      connection: { mode: "oauth2", pkce: "S256" },
       sourceRequestSchema: {
         type: "object",
         properties: {},
