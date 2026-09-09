@@ -62,6 +62,11 @@ These become required only when the associated source or product scope expands:
   runs in the API process, and settings load from that process's environment. Before independently
   packaged skills are enabled, add stronger package/runtime isolation behind a generic, fail-closed
   boundary. Provider endpoint policy must remain source-owned.
+- Host payload presentation resolves by prefix-matching MIME with a terminal `download`
+  fallback, so an element kind or media type the host cannot render silently degrades to a file
+  chip instead of reporting that it is unsupported. Before adding element kinds or media types
+  beyond the currently rendered set, replace this with an explicit capability registry and a
+  distinct unsupported state.
 - Before substantially increasing X archive limits, add the required resumable upload,
   complete-archive retention, range-backed access, paginated review, and durable large-job support.
 - Define file refresh and reselection semantics for replacing a compact capture on the same logical
