@@ -343,27 +343,31 @@ describe("rNet semantics", () => {
     expect(response.status).toBe(422);
   });
 
-  test("client task output cannot mark itself durable", async () => {
+  test("a client may mark an entry its agent run accumulated as durable", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}/inferred`, {
       method: "PUT",
       headers: dmachine,
-      json: { task: "forecast", entry: { model: "semantics/test", durable: true, properties: {} } },
+      json: { task: "pattern", entry: { model: "semantics/test", durable: true, properties: {} } },
     });
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as MediaObject;
+    expect(body.inferred?.["rbudget:pattern"]?.durable).toBe(true);
   });
 
-  test("a direct user inference is keyed to the user's UUID namespace", async () => {
+  test("people hold no inferred writer namespace; the owner's corrections are user data", async () => {
     const response = await request(`/rnet/v0/objects/${objectId}/inferred`, {
       method: "PUT",
       headers: owner,
       json: {
         task: "correction",
-        entry: { model: "user/direct", durable: true, properties: { corrected: true } },
+        entry: { model: "user/direct", properties: { corrected: true } },
       },
     });
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as MediaObject;
-    expect(body.inferred?.[`user/${vibe.owner.split("/").at(-1)}:correction`]).toBeDefined();
+    expect(response.status).toBe(403);
+    const body = (await (
+      await request(`/rnet/v0/objects/${objectId}`, { headers: owner })
+    ).json()) as MediaObject;
+    expect(Object.keys(body.inferred ?? {}).some((key) => key.startsWith("user/"))).toBe(false);
   });
 
   test("a second owner can create a Vibe, an origin, an element, and an object", async () => {

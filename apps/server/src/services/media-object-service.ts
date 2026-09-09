@@ -208,17 +208,12 @@ export class MediaObjectsService {
         "Pass a bare task name",
       );
     }
-    if (this.actor.kind === "public") throw grantMissing(GRANT_SCOPE.WRITE_INFERRED);
-    if (this.actor.kind === "client" && entry.durable === true) {
-      throw schemaProblem([
-        {
-          instancePath: "/entry/durable",
-          message: "cannot be set by reproducible client task output",
-        },
-      ]);
-    }
-    const writer = this.actor.kind === "client" ? this.actor.name : `user/${this.actor.uuid}`;
-    const key = `${writer}:${task}`;
+    // Only registered clients hold an inferred writer namespace (spec §3.2). A person's
+    // assertions and corrections are `user` block data, not inference. A client may mark an
+    // entry durable when its agent run accumulated it; the store cannot tell that apart from
+    // task output, so it never treats another writer's entries as trusted context.
+    if (this.actor.kind !== "client") throw grantMissing("client");
+    const key = `${this.actor.name}:${task}`;
     const updatedMediaObject = await this.updateMediaObjectBlock(currentMediaObject, {
       block: "inferred",
       buildSnapshot: (currentMediaObject) => ({
