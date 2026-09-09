@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 
-import { isStoreError } from "../api/client.ts";
+import { isStoreError } from "../api/storeError.ts";
 
 /**
  * Whether retrying could plausibly change the answer.

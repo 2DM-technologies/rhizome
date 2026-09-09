@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes } from "react";
 
 import { cn } from "./cn.ts";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost";
+export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
@@ -12,6 +12,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   primary: "bg-accent text-on-accent",
   secondary: "bg-surface border border-hairline text-primary",
   ghost: "text-accent",
+  danger: "bg-error text-white",
 };
 
 /** Figma 4859:265 — pill radius, Label type. Primary fills, Secondary is surface + hairline. */

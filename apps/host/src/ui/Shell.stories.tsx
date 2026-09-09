@@ -75,7 +75,7 @@ export const DockAtRest: Story = {
         apps={<DockApp name="Rhizome" src={marks.app} state="active" />}
         tray={
           <DockTray>
-            <TrayContents search={<SearchField className="shrink-0" />} />
+            <TrayContents search={<SearchField containerClassName="shrink-0" />} />
           </DockTray>
         }
       />
@@ -312,7 +312,7 @@ export const DesktopEmpty: Story = {
             apps={<DockApp name="Rhizome" src={marks.app} state="active" />}
             tray={
               <DockTray>
-                <TrayContents search={<SearchField className="shrink-0" />} />
+                <TrayContents search={<SearchField containerClassName="shrink-0" />} />
               </DockTray>
             }
           />
@@ -354,7 +354,7 @@ export const DesktopWithAgent: Story = {
             apps={<DockApp name="Rhizome" src={marks.app} state="active" />}
             tray={
               <DockTray>
-                <TrayContents search={<SearchField className="shrink-0" />} />
+                <TrayContents search={<SearchField containerClassName="shrink-0" />} />
               </DockTray>
             }
           />

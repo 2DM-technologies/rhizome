@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { payloadPresentation } from "../src/surfaces/payloadPresentation.ts";
+import { payloadPresentation, primaryPayloadCandidate } from "../src/ui/ElementPreview.tsx";
 
 test("selects browser-native payload renderers from MIME types", () => {
   expect(payloadPresentation("image/png")).toBe("image");
@@ -10,4 +10,41 @@ test("selects browser-native payload renderers from MIME types", () => {
   expect(payloadPresentation("application/json")).toBe("text");
   expect(payloadPresentation("application/pdf")).toBe("document");
   expect(payloadPresentation("application/octet-stream")).toBe("download");
+});
+
+test("selects a generic primary payload by presentation and then source order", () => {
+  const plainText = { element: { kind: "text", mime: "text/plain" }, index: 0 };
+  const laterImage = { element: { kind: "image", mime: "image/png" }, index: 2 };
+  const firstImage = { element: { kind: "image", mime: "image/jpeg" }, index: 1 };
+
+  expect(primaryPayloadCandidate([plainText, laterImage, firstImage])).toBe(firstImage);
+  expect(primaryPayloadCandidate([laterImage, firstImage])).toBe(firstImage);
+});
+
+test("prefers a natively renderable payload over inconsistent metadata", () => {
+  const mismatchedImage = { element: { kind: "text", mime: "image/png" }, index: 0 };
+  const plainText = { element: { kind: "text", mime: "text/plain" }, index: 1 };
+  const genericDownload = {
+    element: { kind: "document", mime: "application/octet-stream" },
+    index: 2,
+  };
+
+  expect(primaryPayloadCandidate([mismatchedImage, plainText])).toBe(plainText);
+  expect(primaryPayloadCandidate([genericDownload, mismatchedImage])).toBe(mismatchedImage);
+  expect(primaryPayloadCandidate([])).toBeUndefined();
+});
+
+test("uses association roles to keep title elements out of the primary payload slot", () => {
+  const titleImage = {
+    element: { kind: "image", mime: "image/png" },
+    index: 0,
+    role: "title" as const,
+  };
+  const contentText = {
+    element: { kind: "text", mime: "text/plain" },
+    index: 1,
+    role: "content" as const,
+  };
+
+  expect(primaryPayloadCandidate([titleImage, contentText])).toBe(contentText);
 });

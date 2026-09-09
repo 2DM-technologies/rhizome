@@ -1,16 +1,27 @@
 import {
+  createImportPreviewRequestSchema,
   createVibeRequestSchema,
   mediaObjectRefsRequestSchema,
   mediaObjectsResponseSchema,
+  operationDocumentSchema,
+  pullVibeRequestSchema,
   updateVibeRequestSchema,
   vibesResponseSchema,
 } from "@rhizome/store-contract";
+import { UUIDV7_PATTERN } from "@rnet/types/patterns";
 
-import type { Database } from "../db/index.ts";
+import type { CredentialedSourceCatalog } from "../../../ingest/connected-sources/types.ts";
+import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
+import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
+import type { BlobStore } from "../blobs/index.ts";
+import type { Database, ProviderLeasePool } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
 import { VibesService } from "../services/vibe-service.ts";
+import { ImportService } from "../services/import-service.ts";
+import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
+import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
 import { serializeVibe } from "../serializers/vibe-serializer.ts";
 import {
@@ -25,6 +36,18 @@ import { createRhizomeRouter } from "./rhizome-router.ts";
 export const CreateVibeRequestSchema = jsonSchema(createVibeRequestSchema);
 export const UpdateVibeRequestSchema = jsonSchema(updateVibeRequestSchema);
 export const MediaObjectRefsRequestSchema = jsonSchema(mediaObjectRefsRequestSchema);
+const CreateImportPreviewRequestSchema = jsonSchema(createImportPreviewRequestSchema);
+const OperationDocumentSchema = jsonSchema(operationDocumentSchema);
+const PullVibeRequestSchema = jsonSchema(pullVibeRequestSchema);
+const ImportConfirmParamsSchema = jsonSchema({
+  type: "object",
+  required: ["id", "operation_id"],
+  properties: {
+    id: { type: "string", pattern: UUIDV7_PATTERN },
+    operation_id: { type: "string", pattern: UUIDV7_PATTERN },
+  },
+  additionalProperties: false,
+});
 
 const VibeDocumentSchema = rnetDocument("vibe");
 const VibeCollectionSchema = collectionOf(VibeDocumentSchema, "vibes", vibesResponseSchema);
@@ -33,7 +56,18 @@ const MediaObjectCollectionSchema = collectionOf(
   "mediaObjects",
   mediaObjectsResponseSchema,
 );
-export function createVibeRoutes(db: Database) {
+export function createVibeRoutes(
+  db: Database,
+  blobs: BlobStore,
+  connectedSources: {
+    baseUrl: string;
+    credentialedSources: CredentialedSourceCatalog;
+    credentialCrypto: SourceCredentialCrypto;
+    fileSources: FileSourceCatalog;
+    providerLeasePool: ProviderLeasePool;
+    publicRemoteSources: PublicRemoteSourceCatalog;
+  },
+) {
   const router = createRhizomeRouter();
 
   router.get(
@@ -164,6 +198,61 @@ export function createVibeRoutes(db: Database) {
     },
   );
   router.post(
+    "/:id/imports",
+    {
+      operationId: "createImportPreview",
+      auth: "user",
+      request: { param: RecordIdParamsSchema, json: CreateImportPreviewRequestSchema },
+      responses: {
+        202: OperationDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        404: ProblemSchema,
+        422: ProblemSchema,
+        429: ProblemSchema,
+      },
+    },
+    async (context) => {
+      const service = new ImportService({
+        db,
+        blobs,
+        actor: context.get("actor"),
+        ...connectedSources,
+      });
+      const operation = await service.startPreview(
+        context.req.valid("param").id,
+        context.req.valid("json"),
+      );
+      return context.json(serializeOperation(operation, { exposeOwnerOnlyResult: true }), 202);
+    },
+  );
+  router.post(
+    "/:id/imports/:operation_id/confirm",
+    {
+      operationId: "confirmImportPreview",
+      auth: "user",
+      request: { param: ImportConfirmParamsSchema },
+      responses: {
+        200: VibeDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        404: ProblemSchema,
+        422: ProblemSchema,
+      },
+    },
+    async (context) => {
+      const parameters = context.req.valid("param");
+      const service = new ImportService({
+        db,
+        blobs,
+        actor: context.get("actor"),
+        ...connectedSources,
+      });
+      const vibe = await service.confirm(parameters.id, parameters.operation_id);
+      return context.json(serializeVibe(vibe));
+    },
+  );
+  router.post(
     "/:id/push",
     {
       operationId: "pushVibe",
@@ -192,23 +281,28 @@ export function createVibeRoutes(db: Database) {
     {
       operationId: "pullVibe",
       auth: "user_or_client",
-      request: { param: RecordIdParamsSchema },
+      request: { param: RecordIdParamsSchema, json: PullVibeRequestSchema },
       responses: {
+        202: OperationDocumentSchema,
         401: ProblemSchema,
         403: ProblemSchema,
+        404: ProblemSchema,
         422: ProblemSchema,
-        501: ProblemSchema,
+        429: ProblemSchema,
       },
     },
     async (context) => {
-      const accessService = new AccessService({ db, actor: context.get("actor") });
-      await accessService.assertVibeScope(context.req.valid("param").id, GRANT_SCOPE.PULL);
-      throw new Problem(
-        501,
-        "not_implemented",
-        "Pull is scheduled for M2",
-        "Compiled ingestion lands in M2",
+      const service = new ImportService({
+        db,
+        blobs,
+        actor: context.get("actor"),
+        ...connectedSources,
+      });
+      const operation = await service.startPull(
+        context.req.valid("param").id,
+        context.req.valid("json"),
       );
+      return context.json(serializeOperation(operation, { exposeOwnerOnlyResult: false }), 202);
     },
   );
 

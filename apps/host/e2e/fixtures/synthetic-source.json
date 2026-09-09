@@ -1,0 +1,14 @@
+{
+  "records": [
+    {
+      "id": "field-note",
+      "title": "Synthetic field note",
+      "body": "A small provider-neutral record used by browser tests."
+    },
+    {
+      "id": "reference-card",
+      "title": "Synthetic reference card",
+      "body": "A second generic record proves reviewed imports preserve source ordering."
+    }
+  ]
+}

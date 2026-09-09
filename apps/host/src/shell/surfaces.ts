@@ -2,20 +2,30 @@ import { matchPath } from "react-router";
 
 /**
  * A surface is anything the shell can focus and the dock can list. Host views and dMachines
- * are the same kind of thing here — both are windows that stay alive while backgrounded — so
- * they share one registry, one geometry, and one focus mechanism.
+ * share one registry, geometry, and focus mechanism. They stay alive while backgrounded only
+ * when navigation explicitly opts into retaining the current window.
  */
 export type Surface =
+  | { readonly kind: "import" }
   | { readonly kind: "vibes" }
   | { readonly kind: "vibe"; readonly uuid: string }
   | { readonly kind: "object"; readonly uuid: string }
   | { readonly kind: "dmachine"; readonly name: string };
+
+/** The Vibes index and an individual Vibe participate in one dock-recency model. */
+export type VibeSurface = Extract<Surface, { readonly kind: "vibes" | "vibe" }>;
+
+export function isVibeSurface(surface: Surface): surface is VibeSurface {
+  return surface.kind === "vibes" || surface.kind === "vibe";
+}
 
 /** Stable identity for the open set, the dock, and React keys. */
 export type SurfaceId = string;
 
 export function surfaceId(surface: Surface): SurfaceId {
   switch (surface.kind) {
+    case "import":
+      return "import";
     case "vibes":
       return "vibes";
     case "vibe":
@@ -29,6 +39,8 @@ export function surfaceId(surface: Surface): SurfaceId {
 
 export function pathOf(surface: Surface): string {
   switch (surface.kind) {
+    case "import":
+      return "/imports";
     case "vibes":
       return "/vibes";
     case "vibe":
@@ -49,6 +61,7 @@ const PATTERNS: readonly {
   pattern: string;
   surface: (params: Record<string, string>) => Surface;
 }[] = [
+  { pattern: "/imports", surface: () => ({ kind: "import" }) },
   { pattern: "/vibes", surface: () => ({ kind: "vibes" }) },
   { pattern: "/vibes/:uuid", surface: (p) => ({ kind: "vibe", uuid: p.uuid ?? "" }) },
   { pattern: "/objects/:uuid", surface: (p) => ({ kind: "object", uuid: p.uuid ?? "" }) },
@@ -89,6 +102,8 @@ export function labelOf(
   vibeTitles: ReadonlyMap<string, string> = new Map(),
 ): string {
   switch (surface.kind) {
+    case "import":
+      return "Import";
     case "vibes":
       return "Vibes";
     case "vibe":

@@ -1,8 +1,24 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "../api/client.ts";
 
-const createObjectUrl = (blob: Blob) => URL.createObjectURL(blob);
+function useObjectUrl(blob: Blob | undefined): string | undefined {
+  const [current, setCurrent] = useState<{ blob: Blob; url: string } | null>(null);
+
+  useEffect(() => {
+    if (!blob) {
+      setCurrent(null);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    setCurrent({ blob, url });
+    return () => URL.revokeObjectURL(url);
+  }, [blob]);
+
+  // Effects run after render. Never expose the preceding payload's URL during that gap when a
+  // caller changes ids without unmounting.
+  return current && current.blob === blob ? current.url : undefined;
+}
 
 /**
  * A displayable URL for a payload's bytes.
@@ -27,21 +43,39 @@ export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undef
     },
     {
       enabled: Boolean(uuid),
-      // An object URL is a handle to a blob held in memory, not a cacheable value.
       gcTime: 0,
       staleTime: Number.POSITIVE_INFINITY,
       refetchOnWindowFocus: false,
-      select: createObjectUrl,
     },
   );
 
-  // Revoking on unmount is the whole reason this is a hook: the blob stays resident until it
-  // is released, so a gallery that mounted a hundred of these would hold a hundred payloads.
-  const url = query.data;
-  useEffect(() => {
-    if (!url) return;
-    return () => URL.revokeObjectURL(url);
-  }, [url]);
+  // Keep the fetched Blob in the query cache, but make the object URL component-owned. Query
+  // selectors may reuse their result across observer lifecycles; a reused URL may already have
+  // been revoked by the surface that created it.
+  return { ...query, data: useObjectUrl(query.data) };
+}
 
-  return query;
+/** A short-lived reviewed-import payload; authorization is inherited from the API client. */
+export function useImportPreviewPayloadUrl(
+  operationUuid: string | undefined,
+  elementUuid: string | undefined,
+) {
+  const query = api.useQuery(
+    "get",
+    "/rnet/v0/operations/{id}/elements/{element_id}/bytes",
+    {
+      params: {
+        path: { id: operationUuid ?? "", element_id: elementUuid ?? "" },
+      },
+      parseAs: "blob",
+    },
+    {
+      enabled: Boolean(operationUuid && elementUuid),
+      gcTime: 0,
+      staleTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+    },
+  );
+
+  return { ...query, data: useObjectUrl(query.data) };
 }

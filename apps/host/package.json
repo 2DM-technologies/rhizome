@@ -9,7 +9,7 @@
     "preview": "bunx --bun vite preview",
     "storybook": "bunx --bun storybook dev -p 6006",
     "build:storybook": "bunx --bun storybook build -o dist-storybook",
-    "test:e2e": "playwright test --config=playwright.config.ts",
+    "test:e2e": "node scripts/run-playwright.mjs",
     "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
