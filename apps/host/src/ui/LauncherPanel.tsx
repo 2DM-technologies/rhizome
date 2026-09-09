@@ -9,7 +9,7 @@ import {
 } from "react";
 
 import { cn } from "./cn.ts";
-import { SearchField } from "./SearchField.tsx";
+import { SearchIcon } from "./icons.tsx";
 
 export interface LauncherSection {
   title: string;
@@ -63,15 +63,6 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
     // ShellLayout clears the query while closing. Hold the last visible result geometry until
     // the fade finishes so that reset cannot change the panel's height underneath the input.
     const displayedSections = open || !hasOpened.current ? sections : lastOpenSections.current;
-    const surfaceStyle = {
-      "--rz-launcher-expanded-alpha": open ? 1 : 0,
-    } as CSSProperties;
-    const surfaceMotion = animate
-      ? cn(
-          "transition-[--rz-launcher-expanded-alpha,opacity] duration-100",
-          open ? "ease-out" : "ease-in",
-        )
-      : "transition-none";
 
     return (
       <div
@@ -79,7 +70,6 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
         aria-label={open ? "Start something new" : undefined}
         data-launcher-container
         data-expanded={open ? "true" : "false"}
-        data-tier="light"
         onKeyDownCapture={(event) => {
           if (!open || event.key !== "Escape") return;
           event.preventDefault();
@@ -113,20 +103,17 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
       >
         <div data-launcher-backdrops aria-hidden className="pointer-events-none absolute inset-0">
           <div
-            data-launcher-blur
-            style={surfaceStyle}
-            className={cn(
-              "launcher-surface-mask absolute inset-0 rounded-[24px] opacity-100",
-              open ? "backdrop-blur-[24px]" : "backdrop-blur-[20px]",
-              surfaceMotion,
-            )}
-          />
-          <div
             data-launcher-surface
-            style={surfaceStyle}
+            style={{ "--rz-launcher-expanded-alpha": open ? 1 : 0 } as CSSProperties}
             className={cn(
-              "launcher-surface-mask absolute inset-0 rounded-[24px] bg-dock-search",
-              surfaceMotion,
+              "launcher-surface-mask absolute inset-0 rounded-[24px] backdrop-blur-[20px]",
+              open ? "bg-[rgb(26_26_26/77.5%)]" : "bg-dock-search",
+              animate
+                ? cn(
+                    "transition-[--rz-launcher-expanded-alpha,background-color] duration-100",
+                    open ? "ease-out" : "ease-in",
+                  )
+                : "transition-none",
             )}
           />
         </div>
@@ -152,13 +139,13 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
                 data-launcher-section={section.title}
                 className="flex flex-col gap-2"
               >
-                <span className="flex items-center gap-1 text-body-lg font-medium text-primary">
+                <span className="flex items-center gap-1 text-body-lg font-medium text-white/90">
                   {section.title}
                   <span className="size-1.5 rounded-full bg-accent" aria-hidden />
                 </span>
                 <div
                   data-launcher-item-rail
-                  className="flex gap-[22px] overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="flex gap-[22px] overflow-x-auto overflow-y-hidden"
                 >
                   {section.items}
                 </div>
@@ -166,21 +153,27 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
             ))}
           </div>
         </div>
-        <SearchField
-          ref={ref}
-          surface="embedded"
-          containerClassName="pointer-events-auto relative z-10 shrink-0"
-          containerProps={{ "data-launcher-input-row": true }}
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          onFocus={onOpen}
-          onClick={onOpen}
-          onKeyDown={onInputKeyDown}
-          aria-label="Search everything"
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          aria-controls={resultsId}
-        />
+        <div
+          data-launcher-input-row
+          className="pointer-events-auto relative z-10 flex h-12 w-60 shrink-0 items-center gap-2.5 px-[22px] pr-5"
+        >
+          <SearchIcon className="shrink-0 text-white/85" />
+          <input
+            ref={ref}
+            type="search"
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onFocus={onOpen}
+            onClick={onOpen}
+            onKeyDown={onInputKeyDown}
+            aria-label="Search everything"
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            aria-controls={resultsId}
+            placeholder="Search"
+            className="min-w-0 flex-1 bg-transparent text-body-lg text-white outline-none placeholder:text-white/85 [&::-webkit-search-cancel-button]:appearance-none"
+          />
+        </div>
       </div>
     );
   },

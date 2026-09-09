@@ -20,15 +20,6 @@ export interface CreateOriginArtifactInput {
   label?: string;
 }
 
-interface StoreOwnedOriginArtifactInput extends CreateOriginArtifactInput {
-  ownerUuid: string;
-}
-
-interface OriginArtifactPersistence {
-  db: Database;
-  blobs: BlobStore;
-}
-
 export class OriginArtifactsService {
   private readonly db: Database;
   private readonly access: AccessService;
@@ -50,10 +41,28 @@ export class OriginArtifactsService {
 
   async createOriginArtifact(input: CreateOriginArtifactInput): Promise<DbOriginArtifact> {
     if (this.actor.kind !== "user") throw grantMissing("owner");
-    return storeOwnedOriginArtifact(
-      { db: this.db, blobs: this.blobs },
-      { ...input, ownerUuid: this.actor.uuid },
-    );
+
+    const originArtifactUuid = uuidv7();
+    const contentHashValue = await contentHash(input.bytes);
+    const uploadedAt = new Date();
+    await this.blobs.put("origins", contentHashValue, input.bytes, input.mime);
+
+    const newOriginArtifact: NewDbOriginArtifact = {
+      uuid: originArtifactUuid,
+      ownerUuid: this.actor.uuid,
+      contentHash: contentHashValue,
+      mime: input.mime,
+      byteSize: input.bytes.byteLength,
+      label: input.label,
+      rnetSchema: RNET_SCHEMA_VERSION,
+      uploadedAt,
+    };
+    const [originArtifact] = await this.db
+      .insert(originArtifacts)
+      .values(newOriginArtifact)
+      .returning();
+    if (!originArtifact) throw new Error("Origin artifact insert did not return a row");
+    return originArtifact;
   }
 
   async getOriginArtifact(uuid: string): Promise<DbOriginArtifact> {
@@ -74,40 +83,4 @@ export class OriginArtifactsService {
       .returning({ uuid: originArtifacts.uuid });
     if (!tombstonedOriginArtifact) throw notFound("Origin");
   }
-}
-
-/**
- * Trusted ingestion primitive for payloads fetched on behalf of a Vibe owner.
- *
- * HTTP callers must continue through `OriginArtifactsService.createOriginArtifact`, which
- * derives ownership from the authenticated user. A connected-source runner may call this only
- * after resolving an active source against the target Vibe and therefore obtaining the immutable
- * owner UUID from store records. Keeping that boundary here avoids manufacturing a user actor for
- * delegated pulls while still making ownership explicit at the persistence edge.
- */
-export async function storeOwnedOriginArtifact(
-  persistence: OriginArtifactPersistence,
-  input: StoreOwnedOriginArtifactInput,
-): Promise<DbOriginArtifact> {
-  const originArtifactUuid = uuidv7();
-  const contentHashValue = await contentHash(input.bytes);
-  const uploadedAt = new Date();
-  await persistence.blobs.put("origins", contentHashValue, input.bytes, input.mime);
-
-  const newOriginArtifact: NewDbOriginArtifact = {
-    uuid: originArtifactUuid,
-    ownerUuid: input.ownerUuid,
-    contentHash: contentHashValue,
-    mime: input.mime,
-    byteSize: input.bytes.byteLength,
-    label: input.label,
-    rnetSchema: RNET_SCHEMA_VERSION,
-    uploadedAt,
-  };
-  const [originArtifact] = await persistence.db
-    .insert(originArtifacts)
-    .values(newOriginArtifact)
-    .returning();
-  if (!originArtifact) throw new Error("Origin artifact insert did not return a row");
-  return originArtifact;
 }

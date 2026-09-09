@@ -8,34 +8,6 @@
       "when": 1787615919185,
       "tag": "0000_colossal_sentinel",
       "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1788059862844,
-      "tag": "0001_m2_ingestion",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1788151270003,
-      "tag": "0002_white_moira_mactaggert",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1788152905605,
-      "tag": "0003_lowly_captain_britain",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1788161085913,
-      "tag": "0004_classy_songbird",
-      "breakpoints": true
     }
   ]
 }

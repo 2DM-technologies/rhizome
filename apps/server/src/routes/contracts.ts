@@ -5,7 +5,6 @@ import {
   mediaObjectSchema,
   originArtifactSchema,
   trackPropertiesSchema,
-  tweetPropertiesSchema,
   transactionPropertiesSchema,
   validateMediaObject,
   validateSchema,
@@ -45,7 +44,7 @@ export interface UnvalidatedContractResponse {
 
 /** A validated response that also declares its protocol-visible headers. */
 export interface ContractResponseWithHeaders {
-  readonly schema: ContractSchema<unknown> | null;
+  readonly schema: ContractSchema<unknown>;
   readonly headers: Readonly<Record<string, JsonSchemaDocument>>;
 }
 
@@ -61,7 +60,6 @@ export type ContractRequest = Readonly<{
   json?: ContractSchema<object>;
   multipart?: ContractSchema<object>;
   param?: ContractSchema<object>;
-  query?: ContractSchema<object>;
 }>;
 
 export type RouteContract<
@@ -97,8 +95,7 @@ type ContractTargets<Request extends ContractRequest> = (Request extends { json:
       }
     : object) &
   (Request extends { header: infer Schema } ? { header: ContractValue<Schema> } : object) &
-  (Request extends { param: infer Schema } ? { param: ContractValue<Schema> } : object) &
-  (Request extends { query: infer Schema } ? { query: ContractValue<Schema> } : object);
+  (Request extends { param: infer Schema } ? { param: ContractValue<Schema> } : object);
 
 export type ContractInput<Request extends ContractRequest | undefined> =
   Request extends ContractRequest
@@ -135,7 +132,6 @@ type RnetSchemaReferences = [
   typeof mediaObjectSchema,
   typeof originArtifactSchema,
   typeof trackPropertiesSchema,
-  typeof tweetPropertiesSchema,
   typeof transactionPropertiesSchema,
   typeof vibeSchema,
 ];
@@ -160,7 +156,6 @@ export const RNET_DOCUMENTS = {
   "media-object": mediaObjectSchema,
   "origin-artifact": originArtifactSchema,
   track: trackPropertiesSchema,
-  tweet: tweetPropertiesSchema,
   transaction: transactionPropertiesSchema,
   vibe: vibeSchema,
 } satisfies Record<SchemaName, JsonSchemaDocument>;
@@ -203,7 +198,7 @@ export function jsonSchemaValue<Value>(document: JsonSchemaDocument): ContractSc
 
 /** Declare the headers a validated response sets, so they reach the OpenAPI document. */
 export function withResponseHeaders(
-  schema: ContractSchema<unknown> | null,
+  schema: ContractSchema<unknown>,
   headers: Readonly<Record<string, JsonSchemaDocument>>,
 ): ContractResponseWithHeaders {
   return { schema, headers };
@@ -375,15 +370,6 @@ export function rhizomeRoute<
           pickContractHeaders(headers, headerSchema.propertyNames),
           context.get("actor"),
         ),
-      ),
-    );
-  }
-
-  const querySchema = contract.request?.query;
-  if (querySchema) {
-    middleware.push(
-      validator("query", (query, context) =>
-        validatedValue(querySchema, query, context.get("actor")),
       ),
     );
   }

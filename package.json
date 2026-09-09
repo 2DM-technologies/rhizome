@@ -27,8 +27,7 @@
     "check": "bun run openapi:check && bun run format:check && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
-    "@rnet/types": "file:../rnet/packages/types",
-    "@zip.js/zip.js": "2.8.61"
+    "@rnet/types": "file:../rnet/packages/types"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",

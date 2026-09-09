@@ -1,11 +1,8 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 
-const actualReactQuery = { ...(await import("@tanstack/react-query")) };
-const actualClient = { ...(await import("../src/api/client.ts")) };
-
 const invalidateQueries = mock(async () => undefined);
 const removeQueries = mock(() => undefined);
-const setQueryData = mock((_queryKey: unknown, _updater?: unknown) => undefined);
+const setQueryData = mock(() => undefined);
 const useQuery = mock(
   (_method: string, _path: string, _request: unknown, options: unknown) => options,
 );
@@ -15,12 +12,10 @@ const queryOptions = mock((method: string, path: string, request?: unknown) => (
 }));
 
 mock.module("@tanstack/react-query", () => ({
-  ...actualReactQuery,
   useQueryClient: () => ({ invalidateQueries, removeQueries, setQueryData }),
 }));
 
 mock.module("../src/api/client.ts", () => ({
-  ...actualClient,
   api: { queryOptions, useMutation, useQuery },
 }));
 
@@ -72,13 +67,11 @@ test("media objects reconcile another tab's write on every focus", () => {
   expect(query.refetchOnWindowFocus).toBe("always");
 });
 
-test("deleting a Vibe clears its queries and immediately removes it from search data", () => {
+test("deleting a Vibe clears both its document and object collection", () => {
   const mutation = useDeleteVibe() as unknown as {
     onSuccess: (data: unknown, request: { params: { path: { id: string } } }) => void;
   };
 
-  const retainedVibe = { uri: "rnet://vibe/vibe-2", title: "Retained" };
-  const deletedVibe = { uri: "rnet://vibe/vibe-1", title: "Deleted" };
   mutation.onSuccess(null, { params: { path: { id: "vibe-1" } } });
 
   expect(removeQueries).toHaveBeenCalledTimes(2);
@@ -88,12 +81,6 @@ test("deleting a Vibe clears its queries and immediately removes it from search 
   expect(removeQueries).toHaveBeenCalledWith({
     queryKey: ["get", "/rnet/v0/vibes/{id}/objects", { params: { path: { id: "vibe-1" } } }],
   });
-  expect(setQueryData).toHaveBeenCalledWith(["get", "/rnet/v0/vibes"], expect.any(Function));
-  const update = setQueryData.mock.calls[0]?.[1] as (current: {
-    vibes: Array<{ uri: string; title: string }>;
-  }) => { vibes: Array<{ uri: string; title: string }> };
-  expect(update({ vibes: [retainedVibe, deletedVibe] })).toEqual({ vibes: [retainedVibe] });
-  expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["get", "/rnet/v0/vibes"] });
 });
 
 test("membership changes refresh the global Vibe collection", () => {

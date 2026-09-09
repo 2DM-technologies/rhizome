@@ -3,16 +3,11 @@ import { defineConfig, devices } from "@playwright/test";
 const host = "127.0.0.1";
 const port = 4173;
 const baseURL = `http://${host}:${port}`;
-const externallyManagedServer = process.env.PLAYWRIGHT_EXTERNAL_SERVER === "1";
 
 export default defineConfig({
-  testDir: "../..",
-  // Skill suites live with their installed skills; host-wide flows remain under apps/host/e2e.
-  testMatch: [
-    "**/apps/host/e2e/**/*.e2e.ts",
-    "**/apps/ingest/skills/*/e2e/**/*.e2e.ts",
-    "**/apps/ingest/skills/**/e2e/**/*.e2e.ts",
-  ],
+  testDir: "./e2e",
+  // Bun discovers *.spec.ts itself. A distinct suffix keeps the browser suite in its own lane.
+  testMatch: "**/*.e2e.ts",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
@@ -30,15 +25,12 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: externallyManagedServer
-    ? undefined
-    : {
-        command: `node node_modules/vite/bin/vite.js --host ${host} --port ${port} --strictPort`,
-        url: baseURL,
-        reuseExistingServer: false,
-        timeout: 120_000,
-        stdout: "pipe",
-        // Keep Store requests on the page origin. The mocked lane intercepts them before Vite.
-        env: { VITE_RHIZOME_API_URL: baseURL },
-      },
+  webServer: {
+    command: `bunx --bun vite --host ${host} --port ${port}`,
+    url: baseURL,
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+    // Keep Store requests on the page origin. The mocked lane intercepts them before Vite.
+    env: { VITE_RHIZOME_API_URL: baseURL },
+  },
 });

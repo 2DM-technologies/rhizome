@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { useShellStore } from "./store.ts";
@@ -11,8 +11,8 @@ import {
   type SurfaceId,
   type ViewMode,
 } from "./surfaces.ts";
-import { setDockTransitionTarget } from "./dockOpenMotion.ts";
-import type { DockTransitionSource } from "./dockOpenMotion.ts";
+import { setDockTransitionTarget } from "./viewTransitions.ts";
+import type { DockTransitionSource } from "./viewTransitions.ts";
 
 /**
  * The URL half of the shell's contract: which surface is focused, and how it is presented.
@@ -37,9 +37,7 @@ export function useEnsureSurfaceOpen(surface: Surface | null, mode: ViewMode): v
   const setDefaultViewMode = useShellStore((state) => state.setDefaultViewMode);
   const initializedDefaultMode = useRef(false);
   const id = surface ? surfaceId(surface) : null;
-  // A POP updates the URL before the destination surface exists in the window store. Reconcile
-  // in a layout effect so React can commit that surface before the browser paints an empty shell.
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (surface) {
       openSurface(surface);
       // A cold deep link establishes the initial default. After that, history traversal may
@@ -65,39 +63,16 @@ export interface SurfaceNavigation {
   /** Return to the bare desktop. */
   home: () => void;
   /** Focus a surface, opening it if it is not already open. */
-  open: (surface: Surface, options?: ViewMode | SurfaceOpenOptions) => void;
+  open: (surface: Surface, mode?: ViewMode) => void;
   /** Focus a surface with a shared-element transition from its dock control. */
   openFromDock: (
     surface: Surface,
-    options: {
-      origin: Element | null;
-      source: DockTransitionSource;
-      mode?: ViewMode;
-      /** Preserve the current window instead of replacing it with this surface. */
-      keepCurrentOpen?: boolean;
-    },
+    options: { source: DockTransitionSource; mode?: ViewMode },
   ) => void;
   /** Close a surface. Navigates away only if it was the focused one. */
   close: (id: SurfaceId) => void;
   /** Toggle maximized presentation without spending a history entry. */
   toggleMaximized: () => void;
-}
-
-export interface SurfaceOpenOptions {
-  mode?: ViewMode;
-  /** Preserve the current window instead of replacing it with this surface. */
-  keepCurrentOpen?: boolean;
-}
-
-function resolveOpenOptions(
-  options: ViewMode | SurfaceOpenOptions | undefined,
-  defaultMode: ViewMode,
-): Required<SurfaceOpenOptions> {
-  if (typeof options === "string") return { mode: options, keepCurrentOpen: false };
-  return {
-    mode: options?.mode ?? defaultMode,
-    keepCurrentOpen: options?.keepCurrentOpen ?? false,
-  };
 }
 
 export function useSurfaceNavigation(): SurfaceNavigation {
@@ -111,26 +86,25 @@ export function useSurfaceNavigation(): SurfaceNavigation {
   return {
     home: () => navigate("/"),
 
-    open: (surface, options) => {
-      const { mode: nextMode, keepCurrentOpen } = resolveOpenOptions(options, defaultViewMode);
-      openSurface(surface, { keepCurrentOpen });
+    open: (surface, nextMode = defaultViewMode) => {
+      openSurface(surface);
       setDefaultViewMode(nextMode);
       navigate(locationOf(surface, nextMode));
     },
 
-    openFromDock: (
-      surface,
-      { origin, source, mode: nextMode = defaultViewMode, keepCurrentOpen = false },
-    ) => {
+    openFromDock: (surface, { source, mode: nextMode = defaultViewMode }) => {
       const alreadyFocused = focused !== null && surfaceId(focused) === surfaceId(surface);
       const animate =
         !alreadyFocused &&
-        origin !== null &&
+        typeof document.startViewTransition === "function" &&
         !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      if (animate) setDockTransitionTarget(surface, source, origin.getBoundingClientRect());
-      openSurface(surface, { keepCurrentOpen });
+      if (animate) setDockTransitionTarget(surface, source);
+      openSurface(surface);
       setDefaultViewMode(nextMode);
-      void navigate(locationOf(surface, nextMode), animate ? { flushSync: true } : undefined);
+      void navigate(
+        locationOf(surface, nextMode),
+        animate ? { flushSync: true, viewTransition: true } : undefined,
+      );
     },
 
     close: (id) => {

@@ -36,10 +36,7 @@ export function DockApp({ name, src, state = "running", onOpen, style, className
       )}
     >
       {active ? (
-        <span
-          data-dock-app-surface
-          className="flex size-16 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm bg-dock-card shadow-[0px_0px_6px_0px_var(--rz-dock-glow)] backdrop-blur-[10px]"
-        >
+        <span className="flex size-16 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm bg-dock-card shadow-[0px_0px_6px_0px_var(--rz-dock-glow)]">
           <img src={src} alt="" aria-hidden className="size-10 shrink-0 object-cover" />
           <span
             data-dock-app-label

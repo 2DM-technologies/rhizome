@@ -127,7 +127,7 @@ export function Dock({ leading, apps, tray, trailing, className }: DockProps) {
   const appPresent = apps != null;
 
   return (
-    <div data-tier="dark" className={cn("flex w-full items-end gap-[30px]", className)}>
+    <div className={cn("flex w-full items-end gap-[30px]", className)}>
       <DockSegment className="min-h-16">{leading}</DockSegment>
       <DockSegment grow={1} className="relative min-h-16">
         <DockAppPresence>{apps}</DockAppPresence>

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useViewTransitionState } from "react-router";
 
 import appMark from "../assets/brand/app-mark.png";
 import orb1 from "../assets/orbs/orb-1-44.png";
@@ -8,6 +9,7 @@ import orb4 from "../assets/orbs/orb-4-44.png";
 import orbHome from "../assets/orbs/orb-home-48.png";
 import { uuidOf } from "../api/uris.ts";
 import { useVibes } from "../queries/index.ts";
+import { useSession } from "../session/session.ts";
 import {
   Desktop,
   Dock,
@@ -16,13 +18,18 @@ import {
   DockTray,
   LauncherItem,
   LauncherPanel,
-  OrbButton,
+  VibeOrb,
 } from "../ui/index.ts";
 import { SurfaceLayer } from "./SurfaceLayer.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
 import { useOpenSurfaces, useShellStore } from "./store.ts";
-import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import { labelOf, locationOf, surfaceId, type Surface, type ViewMode } from "./surfaces.ts";
+import {
+  isDockTransitionSource,
+  SURFACE_VIEW_TRANSITION_CLASS,
+  surfaceViewTransitionName,
+} from "./viewTransitions.ts";
 
 /**
  * There is no Figma spec for host surfaces in the dock — the mockups only show dMachine apps —
@@ -30,9 +37,8 @@ import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
  * same face across a session.
  */
 const STAND_IN_ORBS = [orb1, orb2, orb3, orb4];
-const DOCK_RAIL_ITEM_SIZE = 44;
-const DOCK_RAIL_GAP = 20;
-const DOCK_RAIL_VISIBLE_VIBE_ITEMS = 3;
+const RUNNING_APP_SIZE = 44;
+const RUNNING_APP_GAP = 20;
 const HOME_SURFACE = { kind: "vibes" } satisfies Surface;
 
 function markFor(surface: Surface): string {
@@ -43,33 +49,78 @@ function markFor(surface: Surface): string {
   return STAND_IN_ORBS[hash % STAND_IN_ORBS.length] as string;
 }
 
+interface RunningSurfaceDockAppProps {
+  surface: Surface;
+  mode: ViewMode;
+  name: string;
+  src: string;
+  onOpen: () => void;
+}
+
+function RunningSurfaceDockApp({ surface, mode, name, src, onOpen }: RunningSurfaceDockAppProps) {
+  const transitioning = useViewTransitionState(locationOf(surface, mode));
+  const participates = transitioning && isDockTransitionSource(surface, "running");
+
+  return (
+    <DockApp
+      name={name}
+      src={src}
+      onOpen={onOpen}
+      style={
+        participates
+          ? {
+              viewTransitionName: surfaceViewTransitionName(surface),
+              viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
+            }
+          : undefined
+      }
+    />
+  );
+}
+
 /**
- * The persistent shell. The dock and desktop live above the router's control, while the URL
- * decides which surface is focused. Surface navigation replaces the window tree by default;
- * callers can explicitly retain a background window when its local state must survive.
+ * The persistent shell. Nothing here unmounts on navigation — that is the entire point. The
+ * dock, the desktop, and the surface layer live above the router's control, and the URL only
+ * decides which surface inside them is focused.
  */
 export function ShellLayout() {
   const { surface: focused, mode } = useFocusedSurface();
   useEnsureSurfaceOpen(focused, mode);
 
   const open = useOpenSurfaces();
-  const recentVibeSurfaces = useShellStore((state) => state.recentVibeSurfaces);
   const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const launcherOpen = useShellStore((state) => state.launcherOpen);
   const setLauncherOpen = useShellStore((state) => state.setLauncherOpen);
   const navigation = useSurfaceNavigation();
+  const session = useSession();
   const vibes = useVibes();
   const [query, setQuery] = useState("");
   const [launcherMotion, setLauncherMotion] = useState(true);
+  const [launcherTransitionTarget, setLauncherTransitionTarget] = useState<Surface | null>(null);
   const launcherInput = useRef<HTMLInputElement>(null);
   const launcherContainer = useRef<HTMLDivElement>(null);
-  const dockRail = useRef<HTMLDivElement>(null);
 
   const focusedId = focused ? surfaceId(focused) : null;
-  const background = useMemo(
-    () => open.filter((surface) => surfaceId(surface) !== focusedId),
-    [focusedId, open],
+  const vibesTransitioning = useViewTransitionState(locationOf(HOME_SURFACE, defaultViewMode));
+  const homeParticipates =
+    vibesTransitioning &&
+    focusedId !== surfaceId(HOME_SURFACE) &&
+    isDockTransitionSource(HOME_SURFACE, "home");
+  const launcherTransitioning = useViewTransitionState(
+    locationOf(launcherTransitionTarget ?? HOME_SURFACE, defaultViewMode),
   );
+  const launcherParticipates =
+    launcherTransitionTarget !== null &&
+    launcherTransitioning &&
+    focusedId !== surfaceId(launcherTransitionTarget) &&
+    isDockTransitionSource(launcherTransitionTarget, "launcher");
+  const background = open.filter((surface) => surfaceId(surface) !== focusedId);
+  // Match the tray's active-app transition: intrinsic flex reflow would move the launcher in
+  // the opposite direction for one frame before the tray's 80px reserve starts moving.
+  const runningAppsWidth =
+    background.length === 0
+      ? 0
+      : background.length * RUNNING_APP_SIZE + (background.length - 1) * RUNNING_APP_GAP;
   const loadedVibes = useMemo(
     () =>
       (vibes.data ?? []).map((vibe) => ({
@@ -82,43 +133,7 @@ export function ShellLayout() {
     () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.title])),
     [loadedVibes],
   );
-  const vibeCatalogLoaded = vibes.data !== undefined;
-  const dockRailSurfaces = useMemo(() => {
-    // Preserve the persisted rail geometry with fallback labels during hydration. Once the
-    // authoritative catalog arrives, missing or deleted Vibes disappear from the shortcuts.
-    const recentVibes = recentVibeSurfaces.filter(
-      (surface) =>
-        surfaceId(surface) !== focusedId &&
-        (surface.kind === "vibes" || !vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
-    );
-
-    // Every Vibe route already appears in the shared recency list. Pin only other explicitly
-    // retained windows before those shortcuts so one route cannot appear twice in the rail.
-    return [...background.filter((surface) => !isVibeSurface(surface)), ...recentVibes];
-  }, [background, focusedId, recentVibeSurfaces, vibeCatalogLoaded, vibeTitles]);
-  const retainedDockRailItems = dockRailSurfaces.filter(
-    (surface) => !isVibeSurface(surface),
-  ).length;
-  // Retained windows do not consume the three visible MRU Vibe slots. Additional Vibes remain
-  // available through the scrollbar-free horizontal rail.
-  const visibleDockRailItems = Math.min(
-    dockRailSurfaces.length,
-    retainedDockRailItems + DOCK_RAIL_VISIBLE_VIBE_ITEMS,
-  );
-  // Match the tray's active-app transition: an explicit width avoids intrinsic flex reflow
-  // moving the launcher in the opposite direction while the active-app reserve animates.
-  const dockRailWidth =
-    visibleDockRailItems === 0
-      ? 0
-      : visibleDockRailItems * DOCK_RAIL_ITEM_SIZE + (visibleDockRailItems - 1) * DOCK_RAIL_GAP;
-  const dockRailOrder = dockRailSurfaces.map(surfaceId).join("\0");
   const results = useMemo(() => searchShell(query, loadedVibes), [loadedVibes, query]);
-
-  // The rail is an MRU view, so a newly opened Vibe should always restore its newest edge even
-  // if the user had scrolled back through older entries immediately beforehand.
-  useLayoutEffect(() => {
-    dockRail.current?.scrollTo({ left: 0 });
-  }, [dockRailOrder]);
 
   function dismissLauncher({ blurFocus = false, animate = true } = {}) {
     if (
@@ -151,15 +166,24 @@ export function ShellLayout() {
     return () => document.removeEventListener("pointerdown", dismissFromOutside, true);
   }, [launcherOpen, setLauncherOpen]);
 
+  useEffect(() => {
+    if (
+      launcherTransitionTarget &&
+      !launcherTransitioning &&
+      focusedId === surfaceId(launcherTransitionTarget)
+    ) {
+      setLauncherTransitionTarget(null);
+    }
+  }, [focusedId, launcherTransitionTarget, launcherTransitioning]);
+
   function selectResult(result: ShellSearchResult) {
     dismissLauncher({ blurFocus: true, animate: false });
     if (result.action.kind === "home") {
+      setLauncherTransitionTarget(null);
       navigation.home();
     } else {
-      navigation.openFromDock(result.action.surface, {
-        origin: launcherContainer.current,
-        source: "launcher",
-      });
+      setLauncherTransitionTarget(result.action.surface);
+      navigation.openFromDock(result.action.surface, { source: "launcher" });
     }
   }
 
@@ -194,18 +218,23 @@ export function ShellLayout() {
       dock={
         <Dock
           leading={
-            <OrbButton
-              label="Home"
-              src={orbHome}
-              onClick={(event) =>
-                navigation.openFromDock(HOME_SURFACE, {
-                  origin: event.currentTarget,
-                  source: "home",
-                  // Preserve an in-progress review; every ordinary window switch still replaces.
-                  keepCurrentOpen: focused?.kind === "import",
-                })
+            <button
+              type="button"
+              aria-label="Home"
+              onClick={() => navigation.openFromDock(HOME_SURFACE, { source: "home" })}
+              style={
+                homeParticipates
+                  ? {
+                      viewTransitionName: surfaceViewTransitionName(HOME_SURFACE),
+                      viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
+                    }
+                  : undefined
               }
-            />
+              className="rounded-full transition-transform hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              <VibeOrb src={orbHome} size="lg" alt="" />
+              <span className="sr-only">{session.data?.user.handle ?? "Home"}</span>
+            </button>
           }
           apps={
             focused ? (
@@ -215,35 +244,35 @@ export function ShellLayout() {
           tray={
             <DockTray>
               <div
-                ref={dockRail}
-                role="region"
-                aria-label="Recent Vibes and retained windows"
-                data-dock-recent-vibes
                 data-dock-running-apps
-                data-count={dockRailSurfaces.length}
-                style={{ width: dockRailWidth }}
-                className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden transition-[width] duration-100 ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                data-count={background.length}
+                style={{ width: runningAppsWidth }}
+                className="flex min-w-0 shrink items-center gap-5 overflow-hidden transition-[width] duration-100 ease-out"
               >
-                <div className="flex w-max items-center gap-5">
-                  {dockRailSurfaces.map((surface) => (
-                    <DockApp
-                      key={surfaceId(surface)}
-                      name={labelOf(surface, vibeTitles)}
-                      src={markFor(surface)}
-                      onOpen={(event) =>
-                        navigation.openFromDock(surface, {
-                          origin: event.currentTarget,
-                          source: "running",
-                        })
-                      }
-                    />
-                  ))}
-                </div>
+                {background.map((surface) => (
+                  <RunningSurfaceDockApp
+                    key={surfaceId(surface)}
+                    surface={surface}
+                    mode={defaultViewMode}
+                    name={labelOf(surface, vibeTitles)}
+                    src={markFor(surface)}
+                    onOpen={() => navigation.openFromDock(surface, { source: "running" })}
+                  />
+                ))}
               </div>
               <DockDivider />
               <div
                 ref={launcherContainer}
                 data-launcher-slot
+                data-surface-transition-source={launcherParticipates ? "launcher" : undefined}
+                style={
+                  launcherParticipates && launcherTransitionTarget
+                    ? {
+                        viewTransitionName: surfaceViewTransitionName(launcherTransitionTarget),
+                        viewTransitionClass: SURFACE_VIEW_TRANSITION_CLASS,
+                      }
+                    : undefined
+                }
                 className="relative h-12 w-60 shrink-0"
               >
                 <LauncherPanel

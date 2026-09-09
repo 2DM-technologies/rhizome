@@ -11,7 +11,7 @@ export interface LauncherItemProps {
 }
 
 /**
- * Figma 4860:46 — icon + caption cell for the launcher popover
+ * Figma 4860:46 — icon + caption cell for the dark launcher popover
  * ("Start something new" / "Import Vibe" grids).
  */
 export function LauncherItem({ label, icon, onSelect, className }: LauncherItemProps) {
@@ -20,19 +20,19 @@ export function LauncherItem({ label, icon, onSelect, className }: LauncherItemP
       type="button"
       onClick={onSelect}
       className={cn(
-        "flex w-18 shrink-0 flex-col items-center gap-1.5 rounded-sm bg-surface p-2",
-        "transition-colors hover:bg-[#e7e7e2]",
+        "flex w-18 shrink-0 flex-col items-center gap-1.5 rounded-sm bg-[#3d3d3d] p-2",
+        "transition-colors hover:bg-[#4a4a4a]",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         className,
       )}
     >
       <span
         aria-hidden
-        className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm bg-primary/8 text-[22px] leading-none text-primary"
+        className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm bg-white/12 text-[22px] leading-none"
       >
         {icon}
       </span>
-      <span className="w-full text-center text-mono-label font-sans text-secondary">{label}</span>
+      <span className="w-full text-center text-mono-label font-sans text-on-pill">{label}</span>
     </button>
   );
 }

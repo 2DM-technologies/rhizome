@@ -1,16 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import type { VibesResponse } from "@rhizome/store-contract";
 
 import { api } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
 
 const vibePath = "/rnet/v0/vibes/{id}";
 const vibeObjectsPath = "/rnet/v0/vibes/{id}/objects";
-const vibesPath = "/rnet/v0/vibes";
-
-function vibesQuery() {
-  return api.queryOptions("get", vibesPath);
-}
 
 function vibeQuery(uuid: string) {
   return api.queryOptions("get", vibePath, {
@@ -25,7 +19,7 @@ function vibeObjectsQuery(uuid: string) {
 }
 
 export function useVibes() {
-  return api.useQuery("get", vibesPath, undefined, {
+  return api.useQuery("get", "/rnet/v0/vibes", undefined, {
     refetchOnWindowFocus: "always",
     select: (response) => response.vibes,
   });
@@ -63,15 +57,11 @@ export function useVibeObjects(uuid: string | undefined) {
 
 export function useCreateVibe() {
   const client = useQueryClient();
-  return api.useMutation("post", vibesPath, {
-    onSuccess: (vibe) => {
-      client.setQueryData<VibesResponse>(vibesQuery().queryKey, (current) => {
-        if (!current) return current;
-        const withoutDuplicate = current.vibes.filter((candidate) => candidate.uri !== vibe.uri);
-        return { ...current, vibes: [...withoutDuplicate, vibe] };
-      });
-      return client.invalidateQueries({ queryKey: vibesQuery().queryKey });
-    },
+  return api.useMutation("post", "/rnet/v0/vibes", {
+    onSuccess: () =>
+      client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+      }),
   });
 }
 
@@ -80,14 +70,9 @@ export function useUpdateVibe() {
   return api.useMutation("patch", vibePath, {
     onSuccess: (vibe, request) => {
       client.setQueryData(vibeQuery(request.params.path.id).queryKey, vibe);
-      client.setQueryData<VibesResponse>(vibesQuery().queryKey, (current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          vibes: current.vibes.map((candidate) => (candidate.uri === vibe.uri ? vibe : candidate)),
-        };
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
       });
-      return client.invalidateQueries({ queryKey: vibesQuery().queryKey });
     },
   });
 }
@@ -98,14 +83,9 @@ export function useDeleteVibe() {
     onSuccess: (_response, { params }) => {
       client.removeQueries({ queryKey: vibeQuery(params.path.id).queryKey });
       client.removeQueries({ queryKey: vibeObjectsQuery(params.path.id).queryKey });
-      client.setQueryData<VibesResponse>(vibesQuery().queryKey, (current) => {
-        if (!current) return current;
-        return {
-          ...current,
-          vibes: current.vibes.filter((vibe) => uuidOf(vibe.uri) !== params.path.id),
-        };
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
       });
-      return client.invalidateQueries({ queryKey: vibesQuery().queryKey });
     },
   });
 }
@@ -114,7 +94,7 @@ function useInvalidateVibeMembership() {
   const client = useQueryClient();
   return (uuid: string, objects: string[]) => {
     void client.invalidateQueries({
-      queryKey: vibesQuery().queryKey,
+      queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
     });
     void client.invalidateQueries({ queryKey: vibeQuery(uuid).queryKey });
     void client.invalidateQueries({ queryKey: vibeObjectsQuery(uuid).queryKey });

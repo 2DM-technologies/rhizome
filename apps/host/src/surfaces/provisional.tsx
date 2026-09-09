@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
-import { isStoreError } from "../api/storeError.ts";
-import { Badge, InlineError, LoadingText, SurfaceHeader, cn } from "../ui/index.ts";
+import { isStoreError } from "../api/client.ts";
+import { StatusChip, cn } from "../ui/index.ts";
 
 /**
  * Scaffolding, not design.
@@ -23,7 +23,13 @@ export function Provisional({
 }) {
   return (
     <div className={cn("flex min-h-full flex-col gap-5", className)}>
-      <SurfaceHeader title={title} detail={detail} actions={<Badge>provisional</Badge>} />
+      <div className="flex items-start gap-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="text-heading text-primary">{title}</span>
+          {detail ? <span className="text-caption text-secondary">{detail}</span> : null}
+        </div>
+        <StatusChip status="neutral">provisional</StatusChip>
+      </div>
       <div className="flex-1">{children}</div>
     </div>
   );
@@ -45,14 +51,20 @@ export function StoreSurface({
 }) {
   return (
     <div className={cn("flex min-h-full flex-col gap-5", className)}>
-      <SurfaceHeader title={title} detail={detail} actions={actions} />
+      <div className="flex items-start gap-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <h1 className="text-heading text-primary">{title}</h1>
+          {detail ? <span className="text-caption text-secondary">{detail}</span> : null}
+        </div>
+        {actions}
+      </div>
       <div className="flex-1">{children}</div>
     </div>
   );
 }
 
 export function Pending({ label }: { label: string }) {
-  return <LoadingText label={label} />;
+  return <span className="text-body text-tertiary">Loading {label}…</span>;
 }
 
 export function Failed({ error }: { error: unknown }) {
@@ -61,5 +73,5 @@ export function Failed({ error }: { error: unknown }) {
     : error instanceof Error
       ? error.message
       : String(error);
-  return <InlineError>{message}</InlineError>;
+  return <span className="text-body text-error">{message}</span>;
 }

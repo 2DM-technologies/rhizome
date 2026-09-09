@@ -1,17 +1,11 @@
 import { createApp } from "./app.ts";
 import { createBlobStore } from "./blobs/index.ts";
 import { loadConfig } from "./config.ts";
-import { createDatabase, createProviderLeasePool } from "./db/index.ts";
+import { createDatabase } from "./db/index.ts";
 
 const config = loadConfig();
 const { db } = createDatabase(config.databaseUrl);
-const providerLeasePool = createProviderLeasePool(config.databaseUrl);
-const { app } = createApp({
-  config,
-  db,
-  blobs: createBlobStore(config),
-  providerLeasePool,
-});
+const { app } = createApp({ config, db, blobs: createBlobStore(config) });
 
 console.log(`Rhizome listening on ${config.baseUrl}`);
 

@@ -22,13 +22,6 @@ export interface ShellSearchResult {
 
 const STATIC_COMMANDS: readonly ShellSearchResult[] = [
   {
-    id: "command:import",
-    group: "Commands",
-    label: "Import",
-    keywords: ["connect", "file", "media", "source", "upload"],
-    action: { kind: "open", surface: { kind: "import" } },
-  },
-  {
     id: "command:open-vibes",
     group: "Commands",
     label: "Open Vibes",
