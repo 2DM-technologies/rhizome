@@ -66,7 +66,7 @@ import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { vibes, type DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
-import { RNET_SCHEMA_VERSION } from "../rnet.ts";
+import { RNET_SCHEMA_VERSION, STORE_ACTOR } from "../rnet.ts";
 import type { VibeAggregate } from "../serializers/vibe-serializer.ts";
 import { AccessService } from "./access-service.ts";
 import { CREDENTIAL_FETCH_LOCK_SEED } from "./credential-lease.ts";
@@ -330,6 +330,7 @@ export class ImportService {
         kind: "pull",
         status: "queued",
         invokedBy: input.invokedBy,
+        ownerUuid: input.vibe.ownerUuid,
         vibeUuid: input.operationVibeUuid,
         request: {
           mode: "import_preview",
@@ -404,6 +405,7 @@ export class ImportService {
         kind: "pull",
         status: "queued",
         invokedBy: this.actor.subject,
+        ownerUuid: vibe.ownerUuid,
         vibeUuid,
         request: {
           mode: "pull",
@@ -1920,7 +1922,7 @@ export class ImportService {
     await transaction.insert(mediaObjects).values({
       uuid: mediaObjectUuid,
       ownerUuid,
-      createdBy: "rhizome:ingest",
+      createdBy: STORE_ACTOR,
       type: candidate.type,
       keys: candidate.keys ?? {},
       source: candidate.source,
@@ -1945,7 +1947,7 @@ export class ImportService {
         byteSize: element.byte_size,
         ...(element.alt !== undefined ? { alt: element.alt } : {}),
         rnetSchema: RNET_SCHEMA_VERSION,
-        createdBy: "rhizome:ingest",
+        createdBy: STORE_ACTOR,
       });
       await transaction.insert(mediaObjectElements).values({
         mediaObjectUuid,

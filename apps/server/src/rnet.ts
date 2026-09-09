@@ -6,3 +6,11 @@ export function supportedRnetSchemaVersion(version: string): typeof RNET_SCHEMA_
   }
   return version;
 }
+
+/**
+ * The store's own identity wherever a record names who acted: `created_by` on ingested records,
+ * `actor` on revisions the store writes, `invoked_by` on store-initiated operations, and the
+ * payer on every meter row. Bare, not `rhizome:{something}`, so it can never be mistaken for an
+ * inferred key (`{writer}:{task}`).
+ */
+export const STORE_ACTOR = "rhizome";

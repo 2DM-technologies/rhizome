@@ -11,6 +11,7 @@ const actionFailure: DbOperation = {
   kind: "pull",
   status: "failed",
   invokedBy: "client:puller",
+  ownerUuid: "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
   vibeUuid: "0198f2a1-a003-7a03-8003-000000000003",
   request: { mode: "pull", sources: [source], dry_run: false },
   result: {

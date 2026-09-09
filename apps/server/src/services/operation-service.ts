@@ -26,27 +26,21 @@ export class OperationsService {
   async getOperation(uuid: string): Promise<AuthorizedOperation> {
     const [operation] = await this.db.select().from(operations).where(eq(operations.uuid, uuid));
     if (!operation) throw notFound("Operation");
-    let exposeOwnerOnlyResult = false;
+    const isOwner = this.actor.kind === "user" && this.actor.uuid === operation.ownerUuid;
     if (operation.vibeUuid) {
       if (operation.request.mode === "import_preview") {
         await this.access.assertVibeOwner(operation.vibeUuid);
-        exposeOwnerOnlyResult = true;
       } else if (operation.kind === "pull") {
-        const vibe = await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.PULL);
-        exposeOwnerOnlyResult = this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid;
+        await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.PULL);
       } else {
-        const vibe = await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.READ);
-        exposeOwnerOnlyResult = this.actor.kind === "user" && this.actor.uuid === vibe.ownerUuid;
+        await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.READ);
       }
     } else {
       await this.access.assertAuthenticated();
-      if (this.actor.subject !== operation.invokedBy) throw grantMissing("operation");
-      // Import previews can only be created by the Vibe owner, so the original invoker
-      // remains entitled to its review payload after the Vibe has been deleted. A pull
-      // can also be invoked through a delegated grant, so keep its owner-only fields
-      // redacted once the Vibe is no longer available to prove ownership.
-      exposeOwnerOnlyResult = operation.request.mode === "import_preview";
+      // Once the Vibe is gone there is no grant to check: the owner and the original invoker
+      // keep access; a delegated invoker sees only the redacted view.
+      if (!isOwner && this.actor.subject !== operation.invokedBy) throw grantMissing("operation");
     }
-    return { exposeOwnerOnlyResult, operation };
+    return { exposeOwnerOnlyResult: isOwner, operation };
   }
 }
