@@ -79,6 +79,7 @@ describe("X OAuth provider protocol", () => {
     });
     const authorization = new URL(
       connection.authorizationUrl({
+        pkce: "S256",
         callbackUrl: "https://rhizome.test/api/source-connections/callback",
         codeChallenge: "challenge-value",
         state: "state-value",
@@ -95,6 +96,7 @@ describe("X OAuth provider protocol", () => {
     });
 
     const result = await connection.exchange({
+      pkce: "S256",
       callbackUrl: "https://rhizome.test/api/source-connections/callback",
       code: "authorization-code",
       codeVerifier: "pkce-verifier",
@@ -137,6 +139,7 @@ describe("X OAuth provider protocol", () => {
       },
     );
     await connection.exchange({
+      pkce: "S256",
       callbackUrl: "https://rhizome.test/callback",
       code: "authorization-code",
       codeVerifier: "pkce-verifier",
@@ -162,6 +165,7 @@ describe("X OAuth provider protocol", () => {
       );
       await expect(
         connection.exchange({
+          pkce: "S256",
           callbackUrl: "https://rhizome.test/callback",
           code: "authorization-code",
           codeVerifier: "pkce-verifier",
@@ -197,6 +201,7 @@ describe("X OAuth provider protocol", () => {
     });
     await expect(
       connection.exchange({
+        pkce: "S256",
         callbackUrl: "https://rhizome.test/callback",
         code: "authorization-code",
         codeVerifier: "pkce-verifier",
@@ -219,6 +224,7 @@ describe("X OAuth provider protocol", () => {
     });
     await expect(
       connection.exchange({
+        pkce: "S256",
         callbackUrl: "https://rhizome.test/callback",
         code: "authorization-code",
         codeVerifier: "pkce-verifier",

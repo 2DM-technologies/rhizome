@@ -231,7 +231,7 @@ export class SourceCredentialsService {
     const skill = this.credentialedSources.forInstalledSkillId(credential.skillId);
     if (
       skill?.manifest.connector_version === credential.connectorVersion &&
-      skill.connection.mode === "oauth2_pkce"
+      skill.connection.mode === "oauth2"
     ) {
       if (credential.revokedAt && credential.providerRevokedAt) return;
       await this.revokeOAuthCredential(credential, skill.connection.revoke);

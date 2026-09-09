@@ -5,6 +5,7 @@ import {
   CredentialConnectionError,
   CredentialedSourceCatalog,
   type CredentialedSourceSkill,
+  type OAuth2ConnectionDefinition,
 } from "../../ingest/connected-sources/types.ts";
 import {
   CANDIDATE_BUNDLE_CAPABILITY,
@@ -41,10 +42,15 @@ const intent = {
   destination: { kind: "new_vibe" },
 } as const satisfies SourceConnectionIntent;
 
-describe("generic OAuth 2.0 PKCE connections", () => {
+describe("generic OAuth 2.0 connections", () => {
   test("persists only hashed state and an encrypted verifier bound to the exact attempt", async () => {
     const store = new MemoryAttemptStore();
-    const observed: Array<{ callbackUrl: string; codeChallenge: string; state: string }> = [];
+    const observed: Array<{
+      pkce: "S256";
+      callbackUrl: string;
+      codeChallenge: string;
+      state: string;
+    }> = [];
     const service = serviceFor({
       store,
       skill: oauthSkill({
@@ -90,9 +96,84 @@ describe("generic OAuth 2.0 PKCE connections", () => {
     expect(JSON.stringify(result.attempt)).not.toContain(verifier);
   });
 
+  test("keeps generated PKCE material outside a non-PKCE adapter", async () => {
+    const store = new MemoryAttemptStore();
+    const authorizationInputs: Array<{
+      pkce: "none";
+      callbackUrl: string;
+      state: string;
+    }> = [];
+    const exchangeInputs: Array<{
+      pkce: "none";
+      callbackUrl: string;
+      code: string;
+    }> = [];
+    const service = serviceFor({
+      store,
+      skill: oauthWithoutPkceSkill({
+        authorization(input) {
+          authorizationInputs.push(input);
+          return authorizationUrlWithoutPkce(input);
+        },
+        async exchange(input) {
+          exchangeInputs.push(input);
+          return { secret: "NON-PKCE-ACCESS-SENTINEL" };
+        },
+      }),
+    });
+
+    const started = await service.start("synthetic_oauth", { return_to: returnUrl, intent });
+    const authorization = new URL(started.attempt.authorization_url);
+    const state = authorization.searchParams.get("state")!;
+    expect(authorization.searchParams.has("code_challenge")).toBe(false);
+    expect(authorization.searchParams.has("code_challenge_method")).toBe(false);
+    expect(authorizationInputs).toEqual([
+      {
+        pkce: "none",
+        callbackUrl,
+        state,
+      },
+    ]);
+    expect(authorizationInputs[0]).not.toHaveProperty("codeChallenge");
+
+    const stored = store.attempts.get(started.attempt.attempt_id)!;
+    const generatedVerifier = await createLocalSourceCredentialCrypto(key).open(
+      stored.verifier,
+      oauthVerifierAssociatedData(stored.uuid, ownerUuid, stored.skillId),
+    );
+    expect(generatedVerifier.length).toBeGreaterThanOrEqual(43);
+
+    await service.complete(
+      {
+        state,
+        code: "NON-PKCE-AUTHORIZATION-CODE-SENTINEL",
+      },
+      cookieHeader(started),
+    );
+
+    expect(exchangeInputs).toHaveLength(1);
+    expect(exchangeInputs[0]).toMatchObject({
+      pkce: "none",
+      callbackUrl,
+      code: "NON-PKCE-AUTHORIZATION-CODE-SENTINEL",
+    });
+    expect(exchangeInputs[0]).not.toHaveProperty("codeVerifier");
+    expect(JSON.stringify({ authorizationInputs, exchangeInputs })).not.toContain(
+      generatedVerifier,
+    );
+    const status = await service.getOwned(started.attempt.attempt_id);
+    expect(status).toMatchObject({ status: "succeeded" });
+    expect(JSON.stringify(status)).not.toContain("NON-PKCE-ACCESS-SENTINEL");
+  });
+
   test("consumes state once, uses the exact callback binding, and atomically seals tokens", async () => {
     const store = new MemoryAttemptStore();
-    const exchanges: Array<{ callbackUrl: string; code: string; codeVerifier: string }> = [];
+    const exchanges: Array<{
+      pkce: "S256";
+      callbackUrl: string;
+      code: string;
+      codeVerifier: string;
+    }> = [];
     const service = serviceFor({
       store,
       skill: oauthSkill({
@@ -195,6 +276,44 @@ describe("generic OAuth 2.0 PKCE connections", () => {
     expect(exchanges).toBe(1);
   });
 
+  test("keeps state, browser, actor, return-target, and replay controls without PKCE", async () => {
+    const store = new MemoryAttemptStore();
+    let exchanges = 0;
+    const skill = oauthWithoutPkceSkill({
+      async exchange() {
+        exchanges += 1;
+        return { secret: "non-pkce-token-set" };
+      },
+    });
+    const owner = serviceFor({ store, skill });
+    const started = await owner.start("synthetic_oauth", { return_to: returnUrl, intent });
+    const state = new URL(started.attempt.authorization_url).searchParams.get("state")!;
+
+    await expect(owner.complete({ state, code: "wrong-browser" }, undefined)).rejects.toMatchObject(
+      { code: "source_connection_failed" },
+    );
+    const other = serviceFor({ store, skill, actor: ownerActor(otherOwnerUuid) });
+    await expect(
+      other.complete({ state, code: "wrong-actor" }, cookieHeader(started)),
+    ).rejects.toMatchObject({ code: "source_connection_failed" });
+    expect(exchanges).toBe(0);
+    expect(await owner.getOwned(started.attempt.attempt_id)).toMatchObject({ status: "pending" });
+
+    await expect(
+      owner.start("synthetic_oauth", {
+        return_to: "https://evil.example/imports",
+        intent,
+      }),
+    ).rejects.toMatchObject({ code: "schema_violation" });
+
+    await owner.complete({ state, code: "valid-code" }, cookieHeader(started));
+    expect(exchanges).toBe(1);
+    await expect(
+      owner.complete({ state, code: "replayed-code" }, cookieHeader(started)),
+    ).rejects.toMatchObject({ code: "source_connection_failed" });
+    expect(exchanges).toBe(1);
+  });
+
   test("rejects duplicated, missing, or mutated authorization security parameters", async () => {
     const cases: Array<{
       label: string;
@@ -207,6 +326,27 @@ describe("generic OAuth 2.0 PKCE connections", () => {
       {
         label: "missing PKCE method",
         mutate: (url) => url.searchParams.delete("code_challenge_method"),
+      },
+      {
+        label: "missing PKCE challenge",
+        mutate: (url) => url.searchParams.delete("code_challenge"),
+      },
+      {
+        label: "wrong PKCE method",
+        mutate: (url) => url.searchParams.set("code_challenge_method", "plain"),
+      },
+      {
+        label: "wrong PKCE challenge",
+        mutate: (url) => url.searchParams.set("code_challenge", "wrong-challenge"),
+      },
+      {
+        label: "duplicate PKCE method",
+        mutate: (url) => url.searchParams.append("code_challenge_method", "S256"),
+      },
+      {
+        label: "duplicate PKCE challenge",
+        mutate: (url) =>
+          url.searchParams.append("code_challenge", url.searchParams.get("code_challenge")!),
       },
       {
         label: "mutated callback",
@@ -237,6 +377,49 @@ describe("generic OAuth 2.0 PKCE connections", () => {
         skill: oauthSkill({
           authorization(input) {
             const url = new URL(authorizationUrl(input));
+            testCase.mutate(url);
+            return url.href;
+          },
+        }),
+      });
+
+      await expect(
+        service.start("synthetic_oauth", { return_to: returnUrl, intent }),
+      ).rejects.toThrow("unsafe authorization URL");
+      expect(store.attempts.size, testCase.label).toBe(0);
+    }
+  });
+
+  test("forbids every PKCE authorization parameter for a non-PKCE adapter", async () => {
+    const cases: Array<{
+      label: string;
+      mutate: (url: URL) => void;
+    }> = [
+      {
+        label: "challenge",
+        mutate: (url) => url.searchParams.set("code_challenge", "unused-challenge"),
+      },
+      {
+        label: "method",
+        mutate: (url) => url.searchParams.set("code_challenge_method", "S256"),
+      },
+      {
+        label: "empty challenge",
+        mutate: (url) => url.searchParams.set("code_challenge", ""),
+      },
+      {
+        label: "empty method",
+        mutate: (url) => url.searchParams.set("code_challenge_method", ""),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const store = new MemoryAttemptStore();
+      const service = serviceFor({
+        store,
+        skill: oauthWithoutPkceSkill({
+          authorization(input) {
+            const url = new URL(authorizationUrlWithoutPkce(input));
             testCase.mutate(url);
             return url.href;
           },
@@ -304,6 +487,34 @@ describe("generic OAuth 2.0 PKCE connections", () => {
     ).rejects.toMatchObject({
       code: "source_connection_failed",
     });
+    expect(exchanges).toBe(0);
+    expect(await service.getOwned(started.attempt.attempt_id)).toMatchObject({
+      status: "expired",
+      error_code: "oauth_attempt_expired",
+    });
+  });
+
+  test("expires non-PKCE attempts without contacting the provider", async () => {
+    const store = new MemoryAttemptStore();
+    let now = new Date("2026-08-31T12:00:00.000Z");
+    let exchanges = 0;
+    const service = serviceFor({
+      store,
+      now: () => now,
+      skill: oauthWithoutPkceSkill({
+        async exchange() {
+          exchanges += 1;
+          return { secret: "must-not-be-used" };
+        },
+      }),
+    });
+    const started = await service.start("synthetic_oauth", { return_to: returnUrl, intent });
+    const state = new URL(started.attempt.authorization_url).searchParams.get("state")!;
+    now = new Date("2026-08-31T12:11:00.000Z");
+
+    await expect(
+      service.complete({ state, code: "late" }, cookieHeader(started)),
+    ).rejects.toMatchObject({ code: "source_connection_failed" });
     expect(exchanges).toBe(0);
     expect(await service.getOwned(started.attempt.attempt_id)).toMatchObject({
       status: "expired",
@@ -495,6 +706,7 @@ function serviceFor(options: {
 function oauthSkill(
   options: {
     authorization?: (input: {
+      pkce: "S256";
       callbackUrl: string;
       codeChallenge: string;
       state: string;
@@ -504,6 +716,7 @@ function oauthSkill(
       errorDescription?: string;
     }) => CredentialConnectionError;
     exchange?: (input: {
+      pkce: "S256";
       callbackUrl: string;
       code: string;
       codeVerifier: string;
@@ -511,6 +724,52 @@ function oauthSkill(
     revoke?: (secret: string, input: { signal: AbortSignal }) => Promise<void>;
   } = {},
 ): CredentialedSourceSkill {
+  const connection: OAuth2ConnectionDefinition = {
+    mode: "oauth2",
+    pkce: "S256",
+    authorizationUrl(input) {
+      return options.authorization?.(input) ?? authorizationUrl(input);
+    },
+    callbackError: options.callbackError,
+    async exchange(input) {
+      return options.exchange?.(input) ?? { secret: "synthetic-token-set" };
+    },
+    revoke: options.revoke,
+  };
+  return syntheticOAuthSkill(connection);
+}
+
+function oauthWithoutPkceSkill(
+  options: {
+    authorization?: (input: { pkce: "none"; callbackUrl: string; state: string }) => string;
+    callbackError?: (input: {
+      error: string;
+      errorDescription?: string;
+    }) => CredentialConnectionError;
+    exchange?: (input: {
+      pkce: "none";
+      callbackUrl: string;
+      code: string;
+    }) => Promise<{ secret: string; publicMetadata?: Record<string, string> }>;
+    revoke?: (secret: string, input: { signal: AbortSignal }) => Promise<void>;
+  } = {},
+): CredentialedSourceSkill {
+  const connection: OAuth2ConnectionDefinition = {
+    mode: "oauth2",
+    pkce: "none",
+    authorizationUrl(input) {
+      return options.authorization?.(input) ?? authorizationUrlWithoutPkce(input);
+    },
+    callbackError: options.callbackError,
+    async exchange(input) {
+      return options.exchange?.(input) ?? { secret: "synthetic-token-set" };
+    },
+    revoke: options.revoke,
+  };
+  return syntheticOAuthSkill(connection);
+}
+
+function syntheticOAuthSkill(connection: OAuth2ConnectionDefinition): CredentialedSourceSkill {
   return {
     skillId: "synthetic_oauth",
     displayName: "Synthetic OAuth",
@@ -527,21 +786,11 @@ function oauthSkill(
         maxElementBytes: 512,
         maxTotalElementBytes: 1_024,
       },
-      connection: { mode: "oauth2_pkce", button_label: "Connect synthetic source" },
+      connection: { mode: "oauth2", button_label: "Connect synthetic source" },
       input_fields: [],
       review_actions: ["review_import", "refresh_source"],
     },
-    connection: {
-      mode: "oauth2_pkce",
-      authorizationUrl(input) {
-        return options.authorization?.(input) ?? authorizationUrl(input);
-      },
-      callbackError: options.callbackError,
-      async exchange(input) {
-        return options.exchange?.(input) ?? { secret: "synthetic-token-set" };
-      },
-      revoke: options.revoke,
-    },
+    connection,
     parser: {
       name: "synthetic-oauth",
       version: "synthetic-oauth@1.0.0",
@@ -570,6 +819,7 @@ function oauthSkill(
 }
 
 function authorizationUrl(input: {
+  pkce: "S256";
   callbackUrl: string;
   codeChallenge: string;
   state: string;
@@ -580,6 +830,18 @@ function authorizationUrl(input: {
   url.searchParams.set("state", input.state);
   url.searchParams.set("code_challenge", input.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
+  return url.href;
+}
+
+function authorizationUrlWithoutPkce(input: {
+  pkce: "none";
+  callbackUrl: string;
+  state: string;
+}): string {
+  const url = new URL("https://provider.example/authorize");
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("redirect_uri", input.callbackUrl);
+  url.searchParams.set("state", input.state);
   return url.href;
 }
 
