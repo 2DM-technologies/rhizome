@@ -138,7 +138,6 @@ export interface MockSourceSkillAdapter {
   readonly oauth?: {
     readonly authorizationEndpoint: string;
     readonly authorizationCode: string;
-    readonly pkce: "S256" | "none";
   };
   readonly sourceAction?: MockSourceActionDefinition;
   readonly sourceId: string;
@@ -353,10 +352,10 @@ export async function installMockStore(
     throw new Error("Mock source-skill registrations must have unique skill IDs");
   }
   const oauthAdapters = installedSourceSkillAdapters.filter(
-    (adapter) => adapter.manifest.connection?.mode === "oauth2",
+    (adapter) => adapter.manifest.connection?.mode === "oauth2_pkce",
   );
   for (const adapter of installedSourceSkillAdapters) {
-    const declaresOAuth = adapter.manifest.connection?.mode === "oauth2";
+    const declaresOAuth = adapter.manifest.connection?.mode === "oauth2_pkce";
     if (declaresOAuth !== Boolean(adapter.oauth)) {
       throw new Error(
         `Mock source skill ${adapter.manifest.skill_id} must keep its OAuth manifest and provider adapter in sync`,
@@ -494,17 +493,12 @@ export async function installMockStore(
       const authorization = new URL(request.url());
       const state = authorization.searchParams.get("state") ?? "";
       const attempt = oauthAttemptsByState.get(state);
-      const validPkce =
-        oauth.pkce === "S256"
-          ? authorization.searchParams.get("code_challenge_method") === "S256" &&
-            Boolean(authorization.searchParams.get("code_challenge"))
-          : !authorization.searchParams.has("code_challenge_method") &&
-            !authorization.searchParams.has("code_challenge");
       if (
         !attempt ||
         attempt.adapter !== adapter ||
         authorization.searchParams.get("response_type") !== "code" ||
-        !validPkce ||
+        authorization.searchParams.get("code_challenge_method") !== "S256" ||
+        !authorization.searchParams.get("code_challenge") ||
         authorization.searchParams.get("redirect_uri") !== attempt.callbackUrl
       ) {
         return problem(route, 422, "invalid_authorization_request", "Invalid mock OAuth request");
@@ -570,7 +564,7 @@ export async function installMockStore(
       if (
         !adapter?.oauth ||
         !adapter.credentialId ||
-        adapter.manifest.connection?.mode !== "oauth2"
+        adapter.manifest.connection?.mode !== "oauth2_pkce"
       ) {
         return problem(route, 404, "not_found", "The OAuth source skill does not exist");
       }
@@ -611,13 +605,11 @@ export async function installMockStore(
       authorization.searchParams.set("client_id", adapter.manifest.skill_id);
       authorization.searchParams.set("redirect_uri", callbackUrl);
       authorization.searchParams.set("state", state);
-      if (adapter.oauth.pkce === "S256") {
-        authorization.searchParams.set(
-          "code_challenge",
-          `${"c".repeat(42)}${String(sourceConnectionSequence).padStart(2, "0")}`,
-        );
-        authorization.searchParams.set("code_challenge_method", "S256");
-      }
+      authorization.searchParams.set(
+        "code_challenge",
+        `${"c".repeat(42)}${String(sourceConnectionSequence).padStart(2, "0")}`,
+      );
+      authorization.searchParams.set("code_challenge_method", "S256");
       const document = {
         attempt_id: attemptId,
         skill_id: adapter.manifest.skill_id,

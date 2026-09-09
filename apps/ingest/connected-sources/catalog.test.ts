@@ -79,27 +79,6 @@ function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill 
   };
 }
 
-function fakeOAuthSkill(skillId: string, pkce?: unknown): CredentialedSourceSkill {
-  const base = fakeSkill(skillId, "csv");
-  return {
-    ...base,
-    manifest: {
-      ...base.manifest,
-      connection: { mode: "oauth2", button_label: "Sign in" },
-    },
-    connection: {
-      mode: "oauth2",
-      ...(pkce === undefined ? {} : { pkce }),
-      authorizationUrl() {
-        return "https://provider.test/oauth";
-      },
-      async exchange() {
-        return { secret: `${skillId}-secret` };
-      },
-    },
-  } as unknown as CredentialedSourceSkill;
-}
-
 describe("CredentialedSourceCatalog", () => {
   test("preserves registration order and looks skills up by skill id", () => {
     const first = fakeSkill("first", "csv");
@@ -166,17 +145,6 @@ describe("CredentialedSourceCatalog", () => {
     expect(() => new CredentialedSourceCatalog([mismatched])).toThrow(
       "manifest id second does not match skill id first",
     );
-  });
-
-  test("requires every OAuth adapter to declare a supported PKCE policy", () => {
-    expect(() => new CredentialedSourceCatalog([fakeOAuthSkill("missing")])).toThrow(
-      "invalid OAuth PKCE policy",
-    );
-    expect(() => new CredentialedSourceCatalog([fakeOAuthSkill("invalid", "plain")])).toThrow(
-      "invalid OAuth PKCE policy",
-    );
-    expect(() => new CredentialedSourceCatalog([fakeOAuthSkill("s256", "S256")])).not.toThrow();
-    expect(() => new CredentialedSourceCatalog([fakeOAuthSkill("none", "none")])).not.toThrow();
   });
 
   test("publishes immutable serializable manifest snapshots", () => {

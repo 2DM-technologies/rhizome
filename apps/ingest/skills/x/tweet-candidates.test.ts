@@ -52,7 +52,7 @@ describe("X shared post candidates", () => {
     expect(xOAuthSourceManifest).toMatchObject({
       skill_id: "x_oauth",
       source_kind: "credentialed_remote",
-      connection: { mode: "oauth2", button_label: "Sign in with X" },
+      connection: { mode: "oauth2_pkce", button_label: "Sign in with X" },
       limits: X_SOURCE_LIMITS,
     });
   });
