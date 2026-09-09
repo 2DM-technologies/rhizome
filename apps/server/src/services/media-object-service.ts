@@ -210,7 +210,8 @@ export class MediaObjectsService {
     }
     // Only registered clients hold an inferred writer namespace (spec §3.2). A person's
     // assertions and corrections are `user` block data, not inference. A client may mark an
-    // entry durable when its agent run accumulated it; the store cannot tell that apart from
+    // entry durable when its agent run accumulated it. The key names the writer, not how the
+    // entry was produced: the store cannot tell a client's agent-run entry from its reproducible
     // task output, so it never treats another writer's entries as trusted context.
     if (this.actor.kind !== "client") throw grantMissing("client");
     const key = `${this.actor.name}:${task}`;
