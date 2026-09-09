@@ -48,12 +48,12 @@ export const mockXArchiveSkill = {
           mime: element.mime,
           bytes: `http://127.0.0.1/rnet/v0/elements/${elementId}/bytes`,
           byte_size: element.byteSize,
+          ...(element.alt ? { alt: element.alt } : {}),
           created_at: selection.retrievedAt ?? "2026-08-22T12:00:00.000Z",
         } satisfies MediaElement;
         references.push({
           uri,
           role: element.role,
-          ...(element.alt ? { alt: element.alt } : {}),
         });
         elements.push({
           document,

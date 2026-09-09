@@ -10,7 +10,10 @@ export type SourceElementRole = "title" | "content" | "preview";
 
 export interface SourceElementDraft {
   readonly role: SourceElementRole;
-  /** Association-specific alternative text; omitted when the source does not provide it. */
+  /**
+   * Human-authored description of the element payload, written onto the created MediaElement
+   * record (not the object's reference); omitted when the source does not provide it.
+   */
   readonly alt?: string;
   readonly kind: SourceElementKind;
   readonly mime: string;

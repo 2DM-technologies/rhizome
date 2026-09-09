@@ -58,12 +58,12 @@ export const mockArenaSourceSkill = {
           mime: element.mime,
           bytes: `http://127.0.0.1/rnet/v0/elements/${elementId}/bytes`,
           byte_size: element.byteSize,
+          ...(element.alt ? { alt: element.alt } : {}),
           created_at: parsed.retrievedAt,
         } satisfies MediaElement;
         elementReferences.push({
           uri,
           role: element.role,
-          ...(element.alt ? { alt: element.alt } : {}),
         });
         elements.push({
           document,

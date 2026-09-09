@@ -93,7 +93,10 @@ test("the generic file capability selectively captures and imports an X archive"
   const tweets = [...mockStore.objects.values()].filter(({ type }) => type === "tweet");
   expect(tweets.map(({ keys }) => keys?.x_tweet_id)).toEqual(["4", "3"]);
   expect(tweets[0]?.elements.map(({ role }) => role)).toEqual(["content", "content"]);
-  expect(tweets[0]?.elements[1]?.alt).toBe("A synthetic pixel");
+  expect(tweets[0]?.elements[1]).not.toHaveProperty("alt");
+  expect(mockStore.elements.get(tweets[0]!.elements[1]!.uri.split("/").at(-1) ?? "")?.alt).toBe(
+    "A synthetic pixel",
+  );
   expect(tweets[0]?.source.properties).not.toHaveProperty("text");
 });
 
