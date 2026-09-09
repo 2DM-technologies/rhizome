@@ -629,6 +629,15 @@ describe("rNet M1 store", () => {
       fitid: "shared-transaction",
       account_hash: expect.stringMatching(/^sha256:/),
     });
+    // The operation records who it was for, independently of the Vibe row and the invoker.
+    const [previewOperation] = await db
+      .select({ ownerUuid: operations.ownerUuid, invokedBy: operations.invokedBy })
+      .from(operations)
+      .where(eq(operations.uuid, preview.operation_id));
+    expect(previewOperation).toEqual({
+      ownerUuid: DEV_USER_UUID,
+      invokedBy: `id:rnet://id/${DEV_USER_UUID}`,
+    });
     const firstPullOrigin = pullCandidates[0]?.source.origins[0];
     expect(firstPullOrigin).not.toBe(previewResult.staged_origin);
     expect(
@@ -1219,6 +1228,7 @@ describe("rNet M1 store", () => {
         kind: "pull" as const,
         status: "failed" as const,
         invokedBy: `id:rnet://id/${DEV_USER_UUID}`,
+        ownerUuid: DEV_USER_UUID,
         request: { mode: "rate-limit-fixture" },
         error: "seeded provider attempt",
         finishedAt: new Date(),
