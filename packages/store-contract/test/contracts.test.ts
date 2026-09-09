@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { ingestRecordSchema, mediaObjectSchema, vibeSchema } from "@rnet/types/schemas";
+import {
+  ingestRecordSchema,
+  mediaElementSchema,
+  mediaObjectSchema,
+  vibeSchema,
+} from "@rnet/types/schemas";
 
 import {
   STORE_SCHEMA_COMPONENTS,
@@ -18,6 +23,7 @@ import {
   credentialIngestionSourceDocumentSchema,
   ingestionSourceDocumentSchema,
   mediaElementReferenceInputSchema,
+  mediaElementUploadReferenceSchema,
   mediaObjectsResponseSchema,
   ownerCreateMediaObjectInputSchema,
   ownerCreateMediaObjectsRequestSchema,
@@ -65,12 +71,21 @@ describe("shared store schemas", () => {
       required: ["uri"],
       properties: {
         role: { enum: ["title", "content", "preview"] },
-        alt: { type: "string" },
       },
       additionalProperties: false,
     });
+    expect(mediaObjectSchema.properties.elements.items.properties).not.toHaveProperty("alt");
     expect(mediaElementReferenceInputSchema.anyOf).not.toContainEqual(
       expect.objectContaining({ type: "string" }),
+    );
+  });
+
+  test("upload descriptors describe the element being created, so alt is the element's", () => {
+    expect(mediaElementUploadReferenceSchema.properties.alt).toBe(
+      mediaElementSchema.properties.alt,
+    );
+    expect(mediaElementUploadReferenceSchema.properties.role).toBe(
+      mediaObjectSchema.properties.elements.items.properties.role,
     );
   });
 

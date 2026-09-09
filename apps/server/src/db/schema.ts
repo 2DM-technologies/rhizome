@@ -4,6 +4,7 @@ export * from "./models/ingestion-source-fetch.ts";
 export * from "./models/ingestion-source-object.ts";
 export * from "./models/dmachine.ts";
 export * from "./models/media-element.ts";
+export * from "./models/media-element-revision.ts";
 export * from "./models/media-object-element.ts";
 export * from "./models/media-object-origin.ts";
 export * from "./models/media-object-revision.ts";

@@ -549,7 +549,7 @@ export const mediaElementUploadReferenceSchema = {
     kind: mediaElementSchema.properties.kind,
     mime: mediaElementSchema.properties.mime,
     role: mediaObjectSchema.properties.elements.items.properties.role,
-    alt: mediaObjectSchema.properties.elements.items.properties.alt,
+    alt: mediaElementSchema.properties.alt,
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;
