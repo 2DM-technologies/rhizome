@@ -264,7 +264,7 @@ CREATE TABLE media_object_revisions (
   block         TEXT NOT NULL CHECK (block IN ('source','user','inferred')),
   rev           INTEGER NOT NULL,
   snapshot      JSONB NOT NULL,         -- the block as it was
-  actor         TEXT NOT NULL,          -- 'id:…' | 'client:…' | 'system'
+  actor         TEXT NOT NULL,          -- 'id:…' | 'client:…' | 'rhizome'
   operation_uuid UUID REFERENCES operations(uuid),
   created_at    TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (media_object_uuid, block, rev)
@@ -307,10 +307,16 @@ CREATE TABLE operations (
   invoked_by    TEXT NOT NULL,          -- who caused this job, in the same namespaced
                                         -- grammar as grant subjects: 'client:rbudget',
                                         -- 'client:maker', 'id:{uuid}' for direct user
-                                        -- action, or 'rhizome:{subsystem}' for
-                                        -- store-initiated work with no dMachine involved
-                                        -- ('rhizome:ingest', 'rhizome:scheduler').
-                                        -- Always set — never null.
+                                        -- action, or 'rhizome' for store-initiated
+                                        -- work with no dMachine involved (a scheduled
+                                        -- pull). Always set — never null.
+  owner_uuid    UUID NOT NULL REFERENCES users(uuid),
+                                        -- who the job was FOR: the Vibe's owner, or the
+                                        -- invoking user for a pending-destination
+                                        -- preview. Explicit rather than derived through
+                                        -- vibe_uuid, which is nulled when the Vibe is
+                                        -- deleted, so per-user cost and ownership
+                                        -- checks never depend on a join that can go away.
   vibe_uuid     UUID REFERENCES vibes(uuid),
   request       JSONB NOT NULL,
   result        JSONB,                  -- import preview/dry-run pull: candidates +
@@ -324,14 +330,13 @@ CREATE TABLE operations (
 CREATE INDEX operations_status_idx ON operations(status);
 CREATE INDEX operations_invoked_by_idx ON operations(invoked_by);
 
--- Cost only. WHO CAUSED the work is operations.invoked_by; who PAYS is here,
--- and they differ routinely: a dMachine whose manifest says metering.payer =
--- "user" produces invoked_by 'client:rbudget' and payer 'id:{uuid}'. Keeping
--- them separate is what makes both "what does rBudget cost across all users"
--- and "what did this user spend, by dMachine" answerable.
+-- Cost only. WHO CAUSED the work is operations.invoked_by; who PAYS is here.
+-- The store pays for every run, so payer is always 'rhizome'; the column is
+-- kept separate from invoked_by so "what does rBudget cost across all users"
+-- and "what did this user's runs cost" stay one query grouped by invoked_by.
 CREATE TABLE meter_entry (
   operation_uuid UUID PRIMARY KEY REFERENCES operations(uuid),
-  payer         TEXT NOT NULL,          -- 'id:…' | 'client:…' | 'rhizome' (own account)
+  payer         TEXT NOT NULL,          -- 'rhizome': the store's own account
   model         TEXT,                   -- provider-qualified: 'openai/gpt-5'
   tokens_in     INTEGER NOT NULL DEFAULT 0,
   tokens_out    INTEGER NOT NULL DEFAULT 0,
@@ -460,7 +465,7 @@ CREATE TABLE dmachines (
                 -- dependent columns.
   generated     BOOLEAN NOT NULL DEFAULT false,
   code_hash     TEXT NOT NULL,          -- sha256 of the built bundle, in R2
-  manifest      JSONB NOT NULL,         -- declared requires/metering
+  manifest      JSONB NOT NULL,         -- declared requires
   created_at    TIMESTAMPTZ NOT NULL,
   updated_at    TIMESTAMPTZ NOT NULL    -- bundles are rebuilt and manifests change on
                                         -- redeploy; without this a stale row is
@@ -634,7 +639,7 @@ System-only at launch: shipping skills (plan §5.2), tool-enabled agent runs (pl
 1. **Sandboxed.** Locked iframe, CSP with no network egress, postMessage bridge through `@rhizome/dmachine-sdk` only. A dMachine never holds credentials and never talks to the store directly.
 2. **Scoped by user-granted permission.** A dMachine declares required scopes in its manifest; the user grants them per-Vibe (`dmachine_grants`), and the **store** enforces them on every request. No grant, no data. A fully compromised dMachine reads exactly what was granted.
 3. **Registered and code-hashed.** Every dMachine — generated or committed — has a `dmachines` row carrying its code hash, so whatever is running is always identifiable.
-4. **Metered.** dMachine-invoked pushes, pulls, and agent runs bill to the dMachine's payer identity under its budget.
+4. **Metered.** Every dMachine-invoked push, pull, and agent run writes a `meter_entry` row attributed to its invoker. The store pays.
 
 Consequences worth stating: `dmachines/rbudget` must be developed against the sandbox from M4, not retrofitted at M6 — if the first-party dMachine needs an escape hatch, the SDK is wrong. And the sandbox is the _containment_, while grants are the _boundary_: sandboxing stops egress, grants decide what there is to exfiltrate.
 
@@ -698,7 +703,6 @@ export interface DmachineManifest {
   // Powers "try it out" in the dMachine store, gives the Maker concrete shapes to
   // generate against, and lets a dMachine be exercised without granting real data.
   examples?: Record<string, VibeFixture>;
-  metering: { payer: "developer" | "user"; budget_usd_per_user_month?: number };
   // trust is NOT self-declared — the host assigns it (plan §6.1). A manifest
   // claiming system tier is ignored; signing decides.
 }
@@ -795,7 +799,7 @@ Notes for implementers:
 - **`elements.url()` returns a signed URL, never bytes through the bridge** — keeps large media off the postMessage channel and blob auth in the host. Every element's bytes are reachable by protocol (spec §2.1), so there is no capability negotiation and no unrenderable-media path: platform-locked content is a reference in `keys`, and a dMachine that wants to hand off to a player reads the key.
 - **Origins are absent from the SDK by design** and not delegable at all (doctrine 2). A dMachine can refresh an existing source with `ops.pull`; adding a _new_ source, uploading a file, and reviewing a dry-run diff are host-rendered flows (`ui.importToVibe`), because the dry-run gate is a trust surface — a dMachine must not be able to spoof "totals reconcile ✓".
 - **Three write scopes, three surfaces.** `write:user` annotates existing objects; `write:objects` creates authored ones (the notes/journal/tagger case); `write:inferred` persists a dMachine's own model output under a dMachine-namespaced task key. None of them can touch `source` after creation, `keys`, or `type`. dMachines are apps, not only lenses — but every write is separately granted, so a read-only dMachine gets none of them.
-- **Cost consent:** server-enforced hard cap from the manifest budget, `usage.onCost` firing on every billable op, and a host-rendered indicator the dMachine cannot suppress. A dMachine must not be able to burn a budget silently in a loop.
+- **Cost visibility:** `usage.onCost` firing on every billable op and a host-rendered indicator the dMachine cannot suppress. A dMachine must not be able to burn a budget silently in a loop.
 - The Maker generates against this surface only. If a generated dMachine reaches for something outside it, that's a signal about the SDK's design, not a prompt bug.
 
 **What ships when:**
