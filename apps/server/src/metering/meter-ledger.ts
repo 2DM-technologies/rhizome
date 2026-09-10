@@ -109,6 +109,10 @@ export class MeterLedger {
     return new MeterLedger(db, operationUuid, registry, row.breakdown as Breakdown);
   }
 
+  get turns(): number {
+    return this.breakdown.calls.length;
+  }
+
   get usage(): Usage {
     const {
       cache_write_tokens_in: _cacheWrite,

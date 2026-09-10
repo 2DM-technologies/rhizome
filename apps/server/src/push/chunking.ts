@@ -2,6 +2,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import type { JSONSchema } from "json-schema-to-ts";
 import type { ModelConnectorRegistry } from "../inference/connector-registry.ts";
+import type { CompletionRequest } from "../inference/model-connector.ts";
 import { assertStructuredOutputSchema } from "../inference/structured-output-schema.ts";
 import type { PushLimits } from "./limits.ts";
 import type { PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
@@ -54,36 +55,46 @@ export function unpackResults(
   return refs.map((ref) => byRef.get(ref)!);
 }
 
-export async function packChunks<T>(
-  records: readonly T[],
+export async function* packChunks<T>(
+  records: Iterable<T> | AsyncIterable<T>,
   task: PushTaskDefinition,
   registry: ModelConnectorRegistry,
   limits: PushLimits,
   inputFor: (records: readonly T[]) => string,
-): Promise<{ chunks: T[][]; skipped: T[] }> {
-  const chunks: T[][] = [];
-  const skipped: T[] = [];
+  onSkip: (record: T) => void,
+  attachmentsFor?: (records: readonly T[]) => CompletionRequest["attachments"],
+): AsyncGenerator<T[]> {
   const maximum = Math.min(
     task.maxObjectsPerCall ?? limits.maxObjectsPerCall,
     limits.maxObjectsPerCall,
   );
   let chunk: T[] = [];
-  const fits = async (values: T[]) =>
-    values.length <= maximum &&
-    (await registry.connector.countTokens({
-      target: registry.target,
-      instructions: task.prompt,
-      input: inputFor(values),
-    })) <= limits.maxInputTokensPerCall;
-  for (const record of records) {
+  const fits = async (values: T[]) => {
+    if (values.length > maximum) return false;
+    const attachments = attachmentsFor?.(values);
+    if (
+      (attachments ?? []).reduce((sum, { bytes }) => sum + bytes.byteLength, 0) >
+      limits.maxAttachmentBytesPerCall
+    )
+      return false;
+    return (
+      (await registry.connector.countTokens({
+        target: registry.target,
+        instructions: task.prompt,
+        input: inputFor(values),
+        ...(attachments?.length ? { attachments } : {}),
+      })) <= limits.maxInputTokensPerCall
+    );
+  };
+  // Yield before reading the whole workset: only a chunk plus its lookahead retains image bytes.
+  for await (const record of records) {
     if (await fits([...chunk, record])) chunk.push(record);
     else {
-      if (chunk.length) chunks.push(chunk);
+      if (chunk.length) yield chunk;
       chunk = [];
       if (await fits([record])) chunk.push(record);
-      else skipped.push(record);
+      else onSkip(record);
     }
   }
-  if (chunk.length) chunks.push(chunk);
-  return { chunks, skipped };
+  if (chunk.length) yield chunk;
 }

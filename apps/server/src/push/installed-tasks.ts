@@ -2,6 +2,7 @@ import { storeTaskKey } from "@rhizome/store-contract";
 import type { Vibe } from "@rnet/types";
 import { PushTaskCatalog, type PushTaskDefinition } from "./task-catalog.ts";
 import type { VibeContext } from "./context.ts";
+import { describeMedia } from "./tasks/element/describe_media/manifest.ts";
 import { displayName } from "./tasks/object/display_name/manifest.ts";
 import { searchKeywords } from "./tasks/object/search_keywords/manifest.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
@@ -13,6 +14,7 @@ export const installedPushTasks = new PushTaskCatalog([
   vibeView,
   displayName,
   searchKeywords,
+  describeMedia,
 ]);
 
 /** Apply any installed task's context-dependent output policy after static schema validation. */

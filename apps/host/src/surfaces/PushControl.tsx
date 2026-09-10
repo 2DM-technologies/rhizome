@@ -7,7 +7,11 @@ import { usePushOperation, usePushVibe } from "../queries/index.ts";
 import { Button, SelectInput } from "../ui/index.ts";
 import { Failed } from "./provisional.tsx";
 
-const TASKS = [...Object.values(PUSH_TASKS.vibe), ...Object.values(PUSH_TASKS.object)];
+const TASKS = [
+  ...Object.values(PUSH_TASKS.vibe),
+  ...Object.values(PUSH_TASKS.object),
+  ...Object.values(PUSH_TASKS.element),
+];
 
 export function missingObjectUris(objects: MediaObject[], task: string): string[] {
   const key = storeTaskKey(task);
@@ -31,7 +35,9 @@ export function PushControl({ objects, vibeUuid }: { objects: MediaObject[]; vib
         body:
           task.level === "object"
             ? { level: "object", task: task.name, ...(selection ? { selection } : {}) }
-            : { level: "vibe", task: task.name },
+            : task.level === "element"
+              ? { level: "element", task: task.name }
+              : { level: "vibe", task: task.name },
       },
       { onSuccess: (result) => setOperationId(result.operation_id) },
     );
@@ -76,7 +82,7 @@ export function PushControl({ objects, vibeUuid }: { objects: MediaObject[]; vib
           </>
         ) : (
           <Button variant="secondary" disabled={busy} onClick={() => run()}>
-            {busy ? "Running…" : "Run"}
+            {task.level === "element" ? "Rerun all" : busy ? "Running…" : "Run"}
           </Button>
         )}
       </div>

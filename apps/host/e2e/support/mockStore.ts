@@ -139,6 +139,48 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
     };
     return;
   }
+  if (operation.input.level === "element") {
+    const reachable = vibe.objects
+      .flatMap((uri) => store.objects.get(uri.split("/").at(-1)!)?.elements ?? [])
+      .map(({ uri }) => uri)
+      .filter((uri) => store.elements.get(uri.split("/").at(-1)!)?.kind === "image");
+    const selected = [...new Set(operation.input.selection ?? reachable)];
+    const written = selected.map((uri) => ({ uri, key, rev: 1 }));
+    for (const uri of selected) {
+      const id = uri.split("/").at(-1)!;
+      const element = store.elements.get(id)!;
+      store.elements.set(id, {
+        ...element,
+        inferred: {
+          ...element.inferred,
+          [key]: envelope({
+            caption: "A small monochrome image",
+            description: "A single light pixel fills a square frame.",
+            medium: "other",
+            subjects: [],
+            text_in_image: null,
+          }),
+        },
+      });
+    }
+    operation.document.result = {
+      ...shared,
+      level: "element",
+      elements: {
+        selected: selected.length,
+        sent: selected.length,
+        written: written.length,
+        removed: 0,
+        preserved_durable: 0,
+        skipped: 0,
+        failed: 0,
+      },
+      written,
+      preserved: [],
+      skipped: [],
+    };
+    return;
+  }
   const selected = [...new Set(operation.input.selection ?? vibe.objects)];
   const written = selected.map((uri) => ({ uri, key, rev: 1 }));
   for (const uri of selected) {
@@ -649,7 +691,11 @@ export async function installMockStore(
 
     if (method === "GET" && path === "/rnet/v0/push-tasks") {
       return json(route, {
-        tasks: [...Object.values(PUSH_TASKS.vibe), ...Object.values(PUSH_TASKS.object)],
+        tasks: [
+          ...Object.values(PUSH_TASKS.vibe),
+          ...Object.values(PUSH_TASKS.object),
+          ...Object.values(PUSH_TASKS.element),
+        ],
       });
     }
 
@@ -1267,6 +1313,7 @@ export async function installMockStore(
       const installed = [
         ...Object.values(PUSH_TASKS.vibe),
         ...Object.values(PUSH_TASKS.object),
+        ...Object.values(PUSH_TASKS.element),
       ].some((task) => task.level === input.level && task.name === input.task);
       if (!installed)
         return problem(route, 422, "schema_violation", "The push task is not installed");

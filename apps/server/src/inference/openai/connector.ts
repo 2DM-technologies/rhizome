@@ -12,6 +12,7 @@ import {
 import { assertStructuredOutputSchema } from "../structured-output-schema.ts";
 import type { OpenAIProviderSettings } from "./config.ts";
 import { priceUsage } from "./rate-card.ts";
+import { countLunaInputTokens } from "./image-tokens.ts";
 import {
   hasOpenAIResponseUsage,
   isOpenAIResponsesResponse,
@@ -124,8 +125,10 @@ export class OpenAIConnector implements ModelConnector {
     throw lastError ?? connectorError("provider_unavailable", { retryable: true });
   }
 
-  async countTokens(input: { instructions: string; input: string }): Promise<number> {
-    return Math.ceil(new TextEncoder().encode(input.instructions + input.input).byteLength / 4);
+  async countTokens(
+    input: Pick<CompletionRequest, "instructions" | "input" | "attachments">,
+  ): Promise<number> {
+    return countLunaInputTokens(input);
   }
 
   reportCost(usage: ModelUsage, target: ModelTarget) {
@@ -133,12 +136,23 @@ export class OpenAIConnector implements ModelConnector {
   }
 
   private requestBody(request: CompletionRequest): OpenAIResponsesRequest {
+    const content: OpenAIResponsesRequest["input"][number]["content"] = [
+      { type: "input_text", text: request.input },
+    ];
+    for (const { ref, mime, bytes } of request.attachments ?? []) {
+      content.push({ type: "input_text", text: ref });
+      content.push({
+        type: "input_image",
+        detail: "high",
+        image_url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+      });
+    }
     return {
       model: request.target.name,
       service_tier: "flex",
       store: false,
       instructions: request.instructions,
-      input: [{ role: "user", content: [{ type: "input_text", text: request.input }] }],
+      input: [{ role: "user", content }],
       text: {
         format: {
           type: "json_schema",

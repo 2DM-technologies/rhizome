@@ -8,6 +8,7 @@ import {
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Actor } from "../auth.ts";
+import type { BlobStore } from "../blobs/types.ts";
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { mediaElements, type DbMediaElement } from "../db/models/media-element.ts";
@@ -25,6 +26,7 @@ import {
   type ModelConnectorErrorKind,
 } from "../inference/model-connector.ts";
 import { assertStructuredOutputSchema } from "../inference/structured-output-schema.ts";
+import { imageDimensions } from "../inference/image.ts";
 import { MeterLedger } from "../metering/meter-ledger.ts";
 import { STORE_ACTOR } from "../rnet.ts";
 import { jsonSchema } from "../routes/contracts.ts";
@@ -79,6 +81,7 @@ export class PushService {
   constructor(
     private readonly dependencies: {
       db: Database;
+      blobs: BlobStore;
       modelConnectors?: ModelConnectorRegistry;
       pushTasks: PushTaskCatalog;
       pushLimits: PushLimits;
@@ -305,20 +308,63 @@ export class PushService {
         }
       } else {
         const pending = request.resolved.selection.filter((uuid) => !state.outcomes.has(uuid));
-        const prepared =
-          request.level === "object"
-            ? (await loadContextObjects(db, pending)).map((record) => ({
-                uuid: record.object.uuid,
-                ...assembleObjectContext(record, task),
-              }))
-            : (await loadElements(db, pending)).map((element) => ({
+        type Prepared = {
+          uuid: string;
+          data: Record<string, unknown>;
+          clipped: boolean;
+          attachment?: { mime: string; bytes: Uint8Array };
+        };
+        const { blobs } = this.dependencies;
+        const prepare = async function* (): AsyncGenerator<Prepared> {
+          if (request.level === "object") {
+            for (const record of await loadContextObjects(db, pending)) {
+              const context = assembleObjectContext(record, task);
+              if (context.clipped) state.context.clipped_objects++;
+              yield { uuid: record.object.uuid, ...context };
+            }
+          } else {
+            for (const element of await loadElements(db, pending)) {
+              if (controller.signal.aborted) {
+                stopForCeiling();
+                return;
+              }
+              if (
+                element.byteSize > limits.maxAttachmentBytes ||
+                !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(element.mime)
+              ) {
+                state.outcomes.set(element.uuid, {
+                  outcome: "skipped",
+                  reason: "unsupported_media",
+                });
+                continue;
+              }
+              const payload = await blobs.get("elements", element.contentHash);
+              if (!payload) throw new Error("Push image payload disappeared");
+              if (
+                payload.bytes.byteLength > limits.maxAttachmentBytes ||
+                !imageDimensions(element.mime, payload.bytes)
+              ) {
+                state.outcomes.set(element.uuid, {
+                  outcome: "skipped",
+                  reason: "unsupported_media",
+                });
+                continue;
+              }
+              yield {
                 uuid: element.uuid,
                 data: assembleElementContext(element),
                 clipped: false,
-              }));
-        state.context.clipped_objects = prepared.filter((record) => record.clipped).length;
+                attachment: { mime: element.mime, bytes: payload.bytes },
+              };
+            }
+          }
+        };
         const prefix = request.level === "object" ? "o" : "e";
-        const inputFor = (records: readonly (typeof prepared)[number][]) =>
+        const attachmentsFor = (records: readonly Prepared[]) =>
+          records.flatMap((record, index) =>
+            record.attachment ? [{ ref: `${prefix}${index + 1}`, ...record.attachment }] : [],
+          );
+        const inputFor = (records: readonly Prepared[]) =>
           dataBlock({
             [request.level === "object" ? "objects" : "elements"]: records.map((record, index) => ({
               ref: `${prefix}${index + 1}`,
@@ -329,10 +375,17 @@ export class PushService {
               clipped_objects: records.filter((record) => record.clipped).length,
             },
           });
-        const packed = await packChunks(prepared, task, registry, limits, inputFor);
-        for (const record of packed.skipped)
-          state.outcomes.set(record.uuid, { outcome: "skipped", reason: "context_too_large" });
-        for (const chunk of packed.chunks) {
+        const packed = packChunks(
+          prepare(),
+          task,
+          registry,
+          limits,
+          inputFor,
+          (record) =>
+            state.outcomes.set(record.uuid, { outcome: "skipped", reason: "context_too_large" }),
+          attachmentsFor,
+        );
+        for await (const chunk of packed) {
           if (stopForCeiling()) break;
           const refs = chunk.map((_, index) => `${prefix}${index + 1}`);
           const result = await this.complete(
@@ -345,6 +398,7 @@ export class PushService {
             ledger,
             controller.signal,
             chunk.map((record) => record.uuid),
+            attachmentsFor(chunk),
           );
           if (state.status !== "done") break;
           if (!result) continue;
@@ -412,6 +466,7 @@ export class PushService {
     ledger: MeterLedger,
     signal: AbortSignal,
     uuids: string[] = [],
+    attachments?: CompletionRequest["attachments"],
   ): Promise<CompletionResult | undefined> {
     const registry = this.dependencies.modelConnectors!;
     assertStructuredOutputSchema(schema);
@@ -425,6 +480,7 @@ export class PushService {
         target: registry.target,
         instructions: task.prompt,
         input,
+        ...(attachments?.length ? { attachments } : {}),
         schema,
         schemaName: `rhizome_${task.name}`,
         effort: task.effort,
@@ -465,7 +521,7 @@ function buildResult(state: RunState, ledger: MeterLedger): PushOperationResult 
   const shared = {
     task: state.request.task,
     model: state.producer,
-    llm_calls: state.calls,
+    llm_calls: ledger.turns,
     usage: ledger.usage,
     context: state.context,
     abort_reason: state.abortReason,
@@ -505,7 +561,7 @@ function buildResult(state: RunState, ledger: MeterLedger): PushOperationResult 
         reason: outcome.reason,
         ...(outcome.code ? { code: outcome.code } : {}),
       });
-      if (outcome.reason === "call_failed" || outcome.reason === "invalid_output") failed++;
+      if (outcome.reason === "call_failed") failed++;
     }
   }
   const tally = {

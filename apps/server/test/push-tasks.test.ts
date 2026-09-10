@@ -58,18 +58,23 @@ function decode(input: string) {
 }
 
 describe("push task catalog and static schemas", () => {
-  test("installs the step 7 tasks in convention order with approved generation settings", () => {
+  test("installs all M3 tasks in convention order with approved generation settings", () => {
     expect(installedPushTasks.manifests().map(({ level, name }) => `${level}:${name}`)).toEqual([
       "vibe:summarize",
       "vibe:vibe_view",
       "object:display_name",
       "object:search_keywords",
+      "element:describe_media",
     ]);
     expect([vibeView, displayName, searchKeywords].map(({ effort }) => effort)).toEqual([
       "low",
       "low",
       "low",
     ]);
+    expect(installedPushTasks.get("element", "describe_media")).toMatchObject({
+      effort: "low",
+      outputTokens: { base: 128, perObject: 1024 },
+    });
     expect(vibeView.outputTokens).toEqual({ base: 1024, perObject: 0 });
     expect(displayName.outputTokens).toEqual({ base: 128, perObject: 64 });
     expect(searchKeywords.outputTokens).toEqual({ base: 128, perObject: 512 });
@@ -332,17 +337,31 @@ describe("record-intrinsic push context", () => {
   test("packs by both record count and estimated tokens, skipping an oversized record", async () => {
     const connector = new FakeModelConnector();
     connector.countTokens = async ({ input }) => input.length;
-    const result = await packChunks(
+    const skipped: string[] = [];
+    const chunks: string[][] = [];
+    for await (const chunk of packChunks(
       ["a", "b", "too large", "c", "d", "e"],
       { ...objectTask, maxObjectsPerCall: 2 },
       { ...registry, connector },
       { ...DEFAULT_PUSH_LIMITS, maxInputTokensPerCall: 2 },
       (records) => records.join(""),
-    );
-    expect(result).toEqual({ chunks: [["a", "b"], ["c", "d"], ["e"]], skipped: ["too large"] });
-    expect(await packChunks([], objectTask, registry, DEFAULT_PUSH_LIMITS, () => "")).toEqual({
-      chunks: [],
-      skipped: [],
+      (record) => skipped.push(record),
+    ))
+      chunks.push(chunk);
+    expect({ chunks, skipped }).toEqual({
+      chunks: [["a", "b"], ["c", "d"], ["e"]],
+      skipped: ["too large"],
     });
+    const empty = packChunks<string>(
+      [],
+      objectTask,
+      registry,
+      DEFAULT_PUSH_LIMITS,
+      () => "",
+      () => {
+        throw new Error("No records to skip");
+      },
+    );
+    expect((await empty.next()).done).toBe(true);
   });
 });

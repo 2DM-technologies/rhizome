@@ -18,6 +18,7 @@ export interface CompletionRequest {
   target: ModelTarget;
   instructions: string;
   input: string;
+  attachments?: Array<{ ref: string; mime: string; bytes: Uint8Array }>;
   schema: JSONSchema;
   schemaName: string;
   effort: "low" | "medium" | "high";
@@ -83,6 +84,8 @@ export interface ModelConnector {
   provider: string;
   models: readonly string[];
   complete(request: CompletionRequest): Promise<CompletionResult>;
-  countTokens(input: { target: ModelTarget; instructions: string; input: string }): Promise<number>;
+  countTokens(
+    input: Pick<CompletionRequest, "target" | "instructions" | "input" | "attachments">,
+  ): Promise<number>;
   reportCost(usage: ModelUsage, target: ModelTarget): CostReport;
 }

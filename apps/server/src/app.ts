@@ -97,6 +97,7 @@ export function createApp({
   const resolvedPushTasks = pushTasks ?? installedPushTasks;
   const pushService = new PushService({
     db,
+    blobs,
     modelConnectors: modelConnectors ?? createModelConnectorRegistry(config.inference),
     pushTasks: resolvedPushTasks,
     pushLimits: pushLimits ?? DEFAULT_PUSH_LIMITS,

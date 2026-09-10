@@ -5,7 +5,13 @@ export interface OpenAIResponsesRequest {
   service_tier: "flex";
   store: false;
   instructions: string;
-  input: Array<{ role: "user"; content: Array<{ type: "input_text"; text: string }> }>;
+  input: Array<{
+    role: "user";
+    content: Array<
+      | { type: "input_text"; text: string }
+      | { type: "input_image"; image_url: string; detail: "high" }
+    >;
+  }>;
   text: {
     format: {
       type: "json_schema";

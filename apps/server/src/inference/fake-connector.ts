@@ -10,6 +10,7 @@ import {
   type ModelUsage,
 } from "./model-connector.ts";
 import { priceUsage } from "./openai/rate-card.ts";
+import { countLunaInputTokens } from "./openai/image-tokens.ts";
 import { assertStructuredOutputSchema } from "./structured-output-schema.ts";
 
 /** Deterministic provider substitute; scripted failures carry the same usage as real responses. */
@@ -53,8 +54,10 @@ export class FakeModelConnector implements ModelConnector {
       throw new ModelConnectorError("output_invalid", { retryable: false, usage: response.usage });
     return response;
   }
-  async countTokens(input: { instructions: string; input: string }): Promise<number> {
-    return Math.ceil(new TextEncoder().encode(input.instructions + input.input).byteLength / 4);
+  async countTokens(
+    input: Pick<CompletionRequest, "instructions" | "input" | "attachments">,
+  ): Promise<number> {
+    return countLunaInputTokens(input);
   }
   reportCost(usage: ModelUsage, target: ModelTarget) {
     return priceUsage(usage, target);
