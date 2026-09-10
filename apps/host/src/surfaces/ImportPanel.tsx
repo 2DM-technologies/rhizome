@@ -19,7 +19,7 @@ import {
   useStartSourceOAuthConnection,
   useSourceSkills,
 } from "../queries/index.ts";
-import { prepareSourceCapture } from "../source-skills/fileCapturePreprocessors.ts";
+import { prepareSourceCapture } from "../source-skills/fileCapture.ts";
 import {
   Button,
   Callout,

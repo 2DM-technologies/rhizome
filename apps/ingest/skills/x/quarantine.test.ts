@@ -5,7 +5,6 @@ import { isAbsolute, relative, resolve } from "node:path";
 const repoRoot = resolve(import.meta.dir, "../../../..");
 const allowedRoot = resolve(import.meta.dir);
 const providerPatterns = [
-  /\bx_archive\b/,
   /\bx_oauth\b/,
   /api\.x\.com/,
   /https:\/\/(?:[A-Za-z0-9-]+\.)*x\.com(?:[/?#:]|$)/u,

@@ -198,7 +198,7 @@ Pinterest images are typically well under 10 MiB, so omissions should be rare. V
 
 Resolve the board URL to a board id, read board metadata for the Vibe title, then paginate the board's pins with Pinterest's bookmark cursor until the 200 cap or exhaustion. Retrieve image bytes during capture and write a versioned capture archive with MIME `application/vnd.rhizome.pinterest-board+zip`.
 
-The attachment walk is the same deterministic algorithm as X §9: source order, skip oversize, skip what would breach the aggregate budget, keep checking later smaller items, record every omission. The server re-parses the capture as untrusted, validates schema and limits, hashes contents, and runs VERIFY before staging.
+The attachment walk is the same deterministic algorithm as X §8: source order, skip oversize, skip what would breach the aggregate budget, keep checking later smaller items, record every omission. The server re-parses the capture as untrusted, validates schema and limits, hashes contents, and runs VERIFY before staging.
 
 Video pins are deferred (§18): the media shape is unverified, and images are the overwhelming majority of board content.
 
@@ -269,7 +269,7 @@ Authorize with a `code_challenge`, then exchange with a deliberately **wrong** v
 - Original provenance is preserved as source facts on every pin.
 - Expired or revoked credentials surface through the existing generic envelope.
 - The host and server contain no Pinterest-specific branches, enforced by the shared quarantine harness for both X and Pinterest.
-- X, Are.na, CSV, OFX, and SimpleFIN behavior is unchanged.
+- X, Are.na, OFX, and SimpleFIN behavior is unchanged.
 - Mocked Pinterest capture runs in CI without live provider access.
 
 ## 18. Deferred

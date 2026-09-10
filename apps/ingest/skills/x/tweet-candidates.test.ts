@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { validateMediaObject, validateMediaObjectProperties, type MediaObject } from "@rnet/types";
 
 import { SourceSkillManifestCatalog } from "../../source-skills/manifest-catalog.ts";
-import { xArchiveSourceSkillManifest } from "./archive/manifest.ts";
 import type {
   NormalizedXAttachment,
   NormalizedXPost,
@@ -43,12 +42,11 @@ const fixture = (await Bun.file(
 };
 
 describe("X shared post candidates", () => {
-  test("keeps archive and OAuth source identities quarantined behind shared definitions", () => {
-    expect(new SourceSkillManifestCatalog([xArchiveSourceSkillManifest]).all()[0]).toEqual(
-      xArchiveSourceSkillManifest,
+  test("keeps the OAuth source identity quarantined behind shared definitions", () => {
+    expect(new SourceSkillManifestCatalog([xOAuthSourceManifest]).all()[0]).toEqual(
+      xOAuthSourceManifest,
     );
-    expect(xArchiveSourceSkillManifest.limits).toEqual(X_SOURCE_LIMITS);
-    expect(xArchiveSourceSkillManifest.file_capture.kind).toBe("file_capture_preprocessor@1");
+    expect(xOAuthSourceManifest.limits).toEqual(X_SOURCE_LIMITS);
     expect(xOAuthSourceManifest).toMatchObject({
       skill_id: "x_oauth",
       source_kind: "credentialed_remote",

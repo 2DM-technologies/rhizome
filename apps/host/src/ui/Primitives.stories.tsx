@@ -47,14 +47,14 @@ export const Fields: Story = {
       <TextInput aria-label="Object URI" placeholder="rnet://object/…" typography="mono" />
       <SelectInput aria-label="Source" defaultValue="arena">
         <option value="arena">Are.na</option>
-        <option value="csv">CSV transactions</option>
+        <option value="ofx">QFX / OFX transactions</option>
       </SelectInput>
       <TextArea
         aria-label="Properties"
         defaultValue={'{\n  "favorite": true\n}'}
         typography="mono"
       />
-      <FilePicker aria-label="Transaction export" accept=".csv,.qfx" />
+      <FilePicker aria-label="Transaction export" accept=".qfx,.ofx" />
     </div>
   ),
 };

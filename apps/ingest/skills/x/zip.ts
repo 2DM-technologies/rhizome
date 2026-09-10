@@ -1,7 +1,5 @@
 import { BlobReader, Uint8ArrayWriter, ZipReader, type Entry } from "@zip.js/zip.js";
 
-import { safePath } from "./contracts.ts";
-
 const MAX_ARCHIVE_ENTRIES = 100_000;
 const MAX_COMPRESSION_RATIO = 1_000;
 
@@ -87,4 +85,17 @@ class BoundedUint8ArrayWriter extends Uint8ArrayWriter {
     this.#writtenBytes += value.byteLength;
     await super.writeUint8Array(value);
   }
+}
+
+/** Rejects absolute, escaping, and NUL-bearing entry names before any entry is read. */
+function safePath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 1_024 &&
+    !value.startsWith("/") &&
+    !value.includes("\\") &&
+    !value.includes("\0") &&
+    !value.split("/").includes("..")
+  );
 }
