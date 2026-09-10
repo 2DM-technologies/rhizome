@@ -6,6 +6,7 @@ import {
   type ModelConnector,
   type ModelTarget,
 } from "./model-connector.ts";
+import { OpenAIConnector } from "./openai/connector.ts";
 
 export interface ModelConnectorRegistry {
   target: ModelTarget;
@@ -17,10 +18,15 @@ export function createModelConnectorRegistry(
 ): ModelConnectorRegistry | undefined {
   if (!config) return undefined;
   const target = parseModelTarget(config.defaultTarget);
-  if (!config.useFake) return undefined;
-  if (process.env.NODE_ENV === "production")
-    throw new Error("Fake inference is forbidden in production");
-  const connector = new FakeModelConnector();
+  let connector: ModelConnector | undefined;
+  if (config.useFake) {
+    if (process.env.NODE_ENV === "production")
+      throw new Error("Fake inference is forbidden in production");
+    connector = new FakeModelConnector();
+  } else if (config.openai) {
+    connector = new OpenAIConnector(config.openai);
+  }
+  if (!connector) return undefined;
   if (
     connector.provider !== target.provider ||
     !(connector.models as readonly string[]).includes(target.name)

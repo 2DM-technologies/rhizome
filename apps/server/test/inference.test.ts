@@ -72,6 +72,16 @@ describe("inference boundary primitives", () => {
       createModelConnectorRegistry({ ...config, defaultTarget: "model:other/gpt-5.6-luna" }),
     ).toThrow("does not serve");
   });
+  test("registry creates the configured OpenAI connector and rejects unsupported targets", () => {
+    const config = loadInferenceConfig({ OPENAI_API_KEY: "test-key" });
+    expect(createModelConnectorRegistry(config)?.connector.provider).toBe("openai");
+    expect(() =>
+      createModelConnectorRegistry({ ...config, defaultTarget: "model:openai/unknown" }),
+    ).toThrow("does not serve");
+    expect(() =>
+      createModelConnectorRegistry({ ...config, defaultTarget: "model:other/gpt-5.6-luna" }),
+    ).toThrow("does not serve");
+  });
   test("strict-subset checks inspect every nested schema without transforming it", () => {
     const before = JSON.stringify(output);
     expect(() => assertStructuredOutputSchema(output)).not.toThrow();
