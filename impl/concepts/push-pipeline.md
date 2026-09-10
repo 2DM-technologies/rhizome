@@ -56,7 +56,7 @@ flowchart TD
     A1["POST /rnet/v0/vibes/{id}/push<br/>{ level, task, selection? }"] --> A2["assertVibeScope(push)"]
     A2 --> A3["task catalog lookup<br/>422 /task"]
     A3 --> A4["configured connector<br/>503 push_unavailable"]
-    A4 --> A6["selection → Vibe members<br/>422 /selection/{i}"]
+    A4 --> A6["selection → members, or their image elements<br/>422 /selection/{i}"]
     A6 --> A7["one transaction<br/>vibes FOR UPDATE · 409 if the same (vibe, level, task) is running<br/>INSERT operations (queued, resolved workset) · INSERT meter_entry (zeros)"]
     A7 --> A8["202 Operation"]
   end
@@ -101,7 +101,7 @@ The loop drawn is the object-level path (`display_name`, `search_keywords`). An 
 - the write targets the `vibes` row (`rev + 1`, a `vibe_revisions` snapshot) instead of one transaction per object;
 - the result carries a single `vibe.outcome` instead of per-object outcomes.
 
-An element-level task reports per-element outcomes under `elements` (`written`, `preserved`, `skipped` with the same reasons) alongside the per-object `no_input` skips.
+An element-level task reports per-element outcomes in the same shape an object-level task reports per-object ones, with element URIs.
 
 ## 4. ModelConnector boundary
 
@@ -368,7 +368,7 @@ Rules first, in this order, each returning nothing when its condition does not h
 
 **`search_keywords` (object).** Document expansion for the host's lexical search. Output `{ keywords: string[1..20] (pattern ^[a-z0-9][a-z0-9 .'&-]{0,47}$) }`. PROMPT.md requires every term to be grounded in the object's own properties or element metadata (synonyms, spellings, and category words a person would type; no invented facts, no personal identifiers not already present). Indexed through a GIN over the inferred JSONB; embeddings, when they come, are a store-built index (rnet-spec-v0.1.md §2.4), not an inferred entry.
 
-**`describe_media` (element).** The selection is still objects; the pipeline collects their image elements (`elementKinds: ["image"]`, §5.4), deduplicated by element UUID and remembering every selected object each came from, so a shared element is described once and reported under each of its objects. An object with no image element contributes nothing and is reported `no_input`. `output.json` is one result per element: `{ caption: string (one line, pattern ^.{1,120}$), description: string (dense prose of what is in the frame and how it is arranged, pattern ^[\\s\\S]{1,1200}$), medium: enum[photo, screenshot, illustration, diagram, document_scan, other], subjects: string[0..10] (objects, places, brands; people as roles, never identities), text_in_image: string|null (verbatim legible text) }`; chunking wraps it in the ref envelope (§5.5) with refs `e1..eN` over the attached elements only, so each attachment gets exactly one description and non-visual elements are never referenced. The call receives only the element's intrinsic fields (kind, MIME, `alt`) and its bytes, never the parent object or Vibe. `caption` is what a list shows and `description` is what a later text-only run receives in place of the image; each result is written to its element as `inferred["rhizome:describe_media"]`.
+**`describe_media` (element).** Selection names elements: image elements reachable from the Vibe's members (`elementKinds: ["image"]`, §5.4, §6.3); omitted, it is every such element, deduplicated by element UUID so a shared element is described once. `output.json` is one result per element: `{ caption: string (one line, pattern ^.{1,120}$), description: string (dense prose of what is in the frame and how it is arranged, pattern ^[\\s\\S]{1,1200}$), medium: enum[photo, screenshot, illustration, diagram, document_scan, other], subjects: string[0..10] (objects, places, brands; people as roles, never identities), text_in_image: string|null (verbatim legible text) }`; chunking wraps it in the ref envelope (§5.5) with refs `e1..eN` over the attached elements only, so each attachment gets exactly one description and non-visual elements are never referenced. The call receives only the element's intrinsic fields (kind, MIME, `alt`) and its bytes, never the parent object or Vibe. `caption` is what a list shows and `description` is what a later text-only run receives in place of the image; each result is written to its element as `inferred["rhizome:describe_media"]`.
 
 ### 5.4 Attachments
 
@@ -452,11 +452,10 @@ export type PushOperationResult =
     })
   | (Shared & {
       level: "element";
-      objects: { selected: number; no_input: string[] };
       elements: Tally;
-      written: Array<{ uri: string; key: StoreTaskKey; rev: number; parents: string[] }>;
-      preserved: Array<{ uri: string; parents: string[] }>;
-      skipped: Array<Skip & { parents: string[] }>;
+      written: Array<{ uri: string; key: StoreTaskKey; rev: number }>;
+      preserved: string[];
+      skipped: Skip[];
     })
   | (Shared & {
       level: "vibe";
@@ -466,7 +465,6 @@ export type PushOperationResult =
     });
 export const SKIP_REASONS = [
   "not_applicable",
-  "no_input",
   "unsupported_media",
   "context_too_large",
   "invalid_output",
@@ -487,14 +485,15 @@ export function isPushOperation(
 export const pushVibeRequestSchema = {
   // Task identity is (level, task). Required rather than inferred so a name that exists at two
   // levels is never ambiguous; the host has both from its generated task list. The request
-  // branches on level because selection is meaningful only for record-level tasks.
+  // branches on level because selection lists records at the task's level: object URIs, element
+  // URIs, or nothing for a Vibe-level task.
   anyOf: [
     {
       type: "object",
       required: ["level", "task"],
       additionalProperties: false,
       properties: {
-        level: { enum: ["element", "object"] },
+        level: { const: "object" },
         // A bare task name, lowercase snake_case ("search_keywords"); TASK_PATTERN comes from
         // @rnet/types/patterns and is the task half of the inferred key grammar. The store adds
         // the writer prefix, so a client can never name another writer's namespace.
@@ -505,6 +504,24 @@ export const pushVibeRequestSchema = {
           maxItems: 500,
           uniqueItems: true,
           items: vibeSchema.properties.objects.items,
+        },
+      },
+    },
+    {
+      type: "object",
+      required: ["level", "task"],
+      additionalProperties: false,
+      properties: {
+        level: { const: "element" },
+        task: { type: "string", pattern: TASK_PATTERN },
+        // Element URIs, the records the task writes to; each must be reachable from a member of
+        // this Vibe and be of a kind the task takes (§6.3).
+        selection: {
+          type: "array",
+          minItems: 1,
+          maxItems: 2000,
+          uniqueItems: true,
+          items: mediaObjectSchema.properties.elements.items.properties.uri,
         },
       },
     },
@@ -536,11 +553,11 @@ One route for all three levels: push is one Vibe operation in the spec and the S
 1. `assertVibeScope(vibe, PUSH)` (owner implicit).
 2. Task lookup by `(level, task)`, else 422 at `/task`.
 3. A configured connector (§4.6), else 503 `push_unavailable`.
-4. Resolve the workset. Selection URIs → members of this Vibe, else 422 at `/selection/{i}`; omitted = every member in position order. A Vibe may hold the same object at several positions (spec §2.4), so the workset is deduplicated by object UUID, first placement wins, at every level; `> maxObjects` after deduplication → 422 at `/selection`. For element-level tasks, collect the selected objects' elements of the task's `elementKinds`, deduplicated by element UUID, each remembering every selected object it came from (for reporting, nothing else); `> maxElements` → 422 at `/selection`. Records whose `rhizome:{task}` entry is already `durable: true` are classified `preserved_durable` now and never sent (the locked guard in §7 still catches one that lands mid-run and reports it as `skipped` with reason `preserved_durable`); objects with no element of the task's kinds are `no_input`. A workset with nothing left to send is still accepted: the run completes immediately as `done` at zero cost with its outcomes reported (§6.4).
+4. Resolve the workset, which lists records at the task's level. Object level: selection URIs → members of this Vibe, else 422 at `/selection/{i}`; omitted = every member in position order. A Vibe may hold the same object at several positions (spec §2.4), so the workset is deduplicated by object UUID, first placement wins; `> maxObjects` after deduplication → 422 at `/selection`. Element level: selection URIs → elements reachable from a member of this Vibe (through `media_object_elements`) whose kind is in the task's `elementKinds`, else 422 at `/selection/{i}`; omitted = every such element of every member, deduplicated by element UUID, in the order of its first object's first placement; `> maxElements` → 422 at `/selection`. Vibe level: the distinct members, first placement wins, as the context's input (§5.2). Records whose `rhizome:{task}` entry is already `durable: true` are classified `preserved_durable` now and never sent (the locked guard in §7 still catches one that lands mid-run and reports it as `skipped` with reason `preserved_durable`). A workset with nothing left to send is still accepted: the run completes immediately as `done` at zero cost with its outcomes reported (§6.4).
 5. One transaction: `SELECT vibes FOR UPDATE`, so two accepts for the same Vibe serialize and the check that follows is atomic; if an operation with the same `(vibe, level, task)` is `queued` or `running` and younger than `maxWallMs + 60 s` → 409 `operation_in_progress`. An older one is ignored: its run cannot be alive (the wall ceiling aborted it long ago), so it is either a row the boot sweep (§6.4) has not reached or a finalizer bug, and neither should block the Vibe. Insert `operations{kind: push, status: queued, invokedBy: actor.subject, ownerUuid: vibe.ownerUuid, vibeUuid, request}` and `meter_entry{payer: "rhizome", model, zeros}`.
 6. `queueMicrotask(runPush)`; every exit path goes through the one finalizer (§6.4).
 
-Stored `request`: `{ mode: "push", level, task, vibe: "rnet://vibe/…", selection?: [the URIs the caller sent, only when it sent them], resolved: { selection: [object uuids, first-placement order], elements: [{ uuid, parents: [object uuids] }] | null, outcomes_before_run: { preserved_durable: [...], no_input: [...] } } }`. `resolved` is execution state: `serializeOperation` strips it from every push view, the way it strips `sources` from a pull request, so the 202 and every poll echo only what the caller sent and a push-only caller learns nothing about membership it did not supply. `resolved.selection` is always the full ordered list, never `null`, so the run's records are enumerable from the row alone after membership changes; records and the Vibe are loaded live at run time, never snapshotted, so a Vibe-level run fails when the Vibe is gone (§7.4).
+Stored `request`: `{ mode: "push", level, task, vibe: "rnet://vibe/…", selection?: [the URIs the caller sent, only when it sent them], resolved: { selection: [record uuids in workset order: the objects or elements the run writes to, or the members a Vibe-level run reads], outcomes_before_run: { preserved_durable: [...] } } }`. `resolved` is execution state: `serializeOperation` strips it from every push view, the way it strips `sources` from a pull request, so the 202 and every poll echo only what the caller sent and a push-only caller learns nothing about membership it did not supply. `resolved.selection` is always the full ordered list, never `null`, so the run's records are enumerable from the row alone after membership changes; records and the Vibe are loaded live at run time, never snapshotted, so a Vibe-level run fails when the Vibe is gone (§7.4).
 
 ### 6.4 `runPush`
 
@@ -575,7 +592,7 @@ A billed `failed` response is therefore metered like a refusal: the connector ma
 
 Everything runs in the API process for the alpha; scaling is a later problem. CONFORMANCE's M7 entry moves preview and pull to durable execution with a reaper, and push rides that same move rather than getting its own queue. Three constraints keep that move a relocation instead of a rewrite, and the implementation must not drift from them:
 
-- `startPush` does all synchronous work (auth, task, workset, operation row, ledger open); `runPush(operationUuid)` rehydrates from the `operations` row alone (task, and the resolved selection and elements in `request.resolved`), so a worker can call it with nothing but the id; records and the Vibe are loaded live, never snapshotted.
+- `startPush` does all synchronous work (auth, task, workset, operation row, ledger open); `runPush(operationUuid)` rehydrates from the `operations` row alone (task, and the resolved selection in `request.resolved`), so a worker can call it with nothing but the id; records and the Vibe are loaded live, never snapshotted.
 - Writes are per record and the ledger is persisted per call, so partial progress is durable and visible; a restarted run re-runs from the row (resumption at chunk granularity is M7 work, since a `null` or a preserved entry leaves nothing to resume from).
 - The same-`(vibe, level, task)` guard is a status check with an age bound, not a lock a process holds; a queue can replace it with a lease later.
 
@@ -645,25 +662,25 @@ A completed push's `result`, as returned inside the operation document by `GET /
 }
 ```
 
-The result is a union on `level` (§6.1), and this is the object branch. `skipped[]` lists every sent record that was not written, and the tally partitions it: `removed` counts a `null` that deleted an older non-durable entry, `failed` counts `call_failed`, and `skipped` counts everything else, so `written + removed + skipped + failed = sent` and `sent + preserved_durable = selected`. `llm_calls` is the number of completions the run received, the same count as `meter_entry.turns`; a retried request is one completion with `attempts > 1` in `breakdown.calls`, and a rule that answered without the model leaves it `0`. The element branch reports the distinct selected objects and the `no_input` ones under `objects`, and the element tally under `elements` with the same three lists, each entry naming its `parents`. The Vibe branch reports `vibe` alone. `usage.served_tiers` is the sorted set of tiers the run's calls were served at and `usage.tier_assumed` is true when any call's tier was assumed (§4.3); the per-call truth is in `breakdown`. The whole result validates against `pushOperationResultSchema` (§6.1): the integration suite asserts it for every stored push result, and the host narrows a generic operation with `isPushOperation`.
+The result is a union on `level` (§6.1), and this is the object branch. `skipped[]` lists every sent record that was not written, and the tally partitions it: `removed` counts a `null` that deleted an older non-durable entry, `failed` counts `call_failed`, and `skipped` counts everything else, so `written + removed + skipped + failed = sent` and `sent + preserved_durable = selected`. `llm_calls` is the number of completions the run received, the same count as `meter_entry.turns`; a retried request is one completion with `attempts > 1` in `breakdown.calls`, and a rule that answered without the model leaves it `0`. The element branch is the same shape with element URIs and its tally under `elements`. The Vibe branch reports `vibe` alone. `usage.served_tiers` is the sorted set of tiers the run's calls were served at and `usage.tier_assumed` is true when any call's tier was assumed (§4.3); the per-call truth is in `breakdown`. The whole result validates against `pushOperationResultSchema` (§6.1): the integration suite asserts it for every stored push result, and the host narrows a generic operation with `isPushOperation`.
 
-`skipped[].reason` is one of: `not_applicable` (the model returned `null`; `removed: true` when an older non-durable entry was deleted as a result), `no_input` (an element-level task and the object has no element of the task's kinds), `unsupported_media` (MIME not on the allowlist, magic bytes disagree, or over `maxAttachmentBytes`), `context_too_large` (one record exceeds the per-call input ceiling on its own), `invalid_output` (the chunk's envelope, ref set, or a result failed validation; nothing from the chunk is written), `call_failed` (the chunk's provider call failed, with the connector error kind as `code`), `preserved_durable` (a `durable: true` entry landed at the key between accept and the locked write, so the record was sent and nothing was written; `preserved[]` and the `preserved_durable` tally count accept-time preservation only, so the partition still holds), `aborted` (a ceiling or a failure stopped the run before this record was written). The list is closed: it is the `reason` enum in store-contract's push result schema, and a new reason is a contract change. For a Vibe-level task, `vibe` is `{ outcome: "written", key, rev }` or `{ outcome: "preserved_durable", key }`; preservation writes no revision, so it carries no `rev`.
+`skipped[].reason` is one of: `not_applicable` (the model returned `null`; `removed: true` when an older non-durable entry was deleted as a result), `unsupported_media` (MIME not on the allowlist, magic bytes disagree, or over `maxAttachmentBytes`), `context_too_large` (one record exceeds the per-call input ceiling on its own), `invalid_output` (the chunk's envelope, ref set, or a result failed validation; nothing from the chunk is written), `call_failed` (the chunk's provider call failed, with the connector error kind as `code`), `preserved_durable` (a `durable: true` entry landed at the key between accept and the locked write, so the record was sent and nothing was written; `preserved[]` and the `preserved_durable` tally count accept-time preservation only, so the partition still holds), `aborted` (a ceiling or a failure stopped the run before this record was written). The list is closed: it is the `reason` enum in store-contract's push result schema, and a new reason is a contract change. For a Vibe-level task, `vibe` is `{ outcome: "written", key, rev }` or `{ outcome: "preserved_durable", key }`; preservation writes no revision, so it carries no `rev`.
 
 **Visibility.** Polling follows the rule every non-pull operation already has: `GET /operations/{id}` requires `read` on the Vibe (owner implicit), so `OperationsService` is unchanged. `serializeOperation` today redacts only pull results and returns every other result whole, so it gains a push branch: `request.resolved` is omitted for every viewer (§6.3), and `result.usage` is omitted unless the viewer is the owner, keyed on the existing `exposeOwnerOnlyResult` flag. Nothing else is redacted, because anyone who can poll can already read the records the result names. A grant that carries `push` without `read` can start a run but not poll it, so a dMachine that pushes should hold `read` as well.
 
 ### 6.6 Ceilings (`push/limits.ts`, server policy, code constants overridable by injection)
 
-| Limit                       | Default     | Effect                                                             |
-| --------------------------- | ----------- | ------------------------------------------------------------------ |
-| `maxObjects`                | 500         | 422 at accept                                                      |
-| `maxElements`               | 2 000       | 422 at accept (element-level tasks, after deduplication)           |
-| `maxObjectsPerCall`         | 25          | chunk size                                                         |
-| `maxInputTokensPerCall`     | 24 000 est. | chunk size; keeps every call far below the 272K long-context cliff |
-| `maxCalls`                  | 40          | `abort_reason: "max_turns"`                                        |
-| `maxTokens`                 | 400 000     | `"max_tokens"`                                                     |
-| `maxWallMs`                 | 900 000     | `"max_wall"`, aborts the in-flight call                            |
-| `maxAttachmentBytes`        | 8 MiB       | larger payloads skip as `unsupported_media`                        |
-| `maxAttachmentBytesPerCall` | 32 MiB      | chunk size for element-level tasks                                 |
+| Limit                       | Default     | Effect                                                                                     |
+| --------------------------- | ----------- | ------------------------------------------------------------------------------------------ |
+| `maxObjects`                | 500         | 422 at accept                                                                              |
+| `maxElements`               | 2 000       | 422 at accept (an element selection, or the omitted-selection fan-out after deduplication) |
+| `maxObjectsPerCall`         | 25          | chunk size                                                                                 |
+| `maxInputTokensPerCall`     | 24 000 est. | chunk size; keeps every call far below the 272K long-context cliff                         |
+| `maxCalls`                  | 40          | `abort_reason: "max_turns"`                                                                |
+| `maxTokens`                 | 400 000     | `"max_tokens"`                                                                             |
+| `maxWallMs`                 | 900 000     | `"max_wall"`, aborts the in-flight call                                                    |
+| `maxAttachmentBytes`        | 8 MiB       | larger payloads skip as `unsupported_media`                                                |
+| `maxAttachmentBytesPerCall` | 32 MiB      | chunk size for element-level tasks                                                         |
 
 The abort vocabulary is the plan's, unchanged. Budgets are out of M3's scope.
 
@@ -710,7 +727,7 @@ Per object rather than per chunk so a durable preserve never rolls back neighbou
 
 ### 7.3 Element algorithm
 
-`writeElementTaskInferred` follows the object algorithm against `media_elements` (FOR UPDATE, durable guard, whole-block validation against `media-element.json`'s `properties.inferred`, `UPDATE media_elements SET inferred, inferred_rev = inferred_rev + 1`, a `media_element_revisions` row with `block = 'inferred'`, `rev = inferred_rev`, `actor = 'rhizome'`, and `operation_uuid`). The selected parents recorded in the request are for reporting only: the element's outcome is listed under each of them in the result (§6.5).
+`writeElementTaskInferred` follows the object algorithm against `media_elements` (FOR UPDATE, durable guard, whole-block validation against `media-element.json`'s `properties.inferred`, `UPDATE media_elements SET inferred, inferred_rev = inferred_rev + 1`, a `media_element_revisions` row with `block = 'inferred'`, `rev = inferred_rev`, `actor = 'rhizome'`, and `operation_uuid`).
 
 ### 7.4 Vibe algorithm
 
@@ -770,8 +787,8 @@ Minimal and generic, in this PR (decision D5). The OpenAPI generator (`scripts/g
 
 ## 11. Tests
 
-- **Unit (no DB):** strict-subset assertions over every installed `output.json` and a 25-ref envelope; OpenAI connector with injected `fetch`/`sleep`/`now` (request body, usage mapping, refusal/incomplete/invalid **with usage**, retry on 429 then 200, 4×503 → `provider_unavailable`, 401 no retry, never escalates tier, messages never contain the body); rate card (1M+1M at flex = `"0.700000"`, long-context flip, served tier overrides requested, a missing echo priced at the requested tier and an unrecognized one at standard with `tierAssumed`, unknown model throws); provider response mapping for every row of the §4.3 table, including the cumulative deadline across attempts, a wall abort during backoff, a `Retry-After` past the deadline, and a final 3xx; registry (boot rejects a default target the connector does not serve); fake connector (pattern samples, scripted `respond`); boundary grep; task catalog load and negatives (bad name, duplicate `(level, name)`, element level without `elementKinds`, `rules` below Vibe level); chunking and context rules (including "no summary in summarize's context", "no Vibe input in object or element context", the 2 KiB per-object clip and the `VibeContext` caps counted in `result.context`, and an injection string serialized unchanged as data); `batchEnvelope` strict-subset for every task at sizes 1 and max; ref-set equality (duplicate, missing, unknown → `invalid_output`); `vibe_view` rule table (a transaction Vibe without `posted_at`, a transaction Vibe with only a noncanonical property where no rule fires, a Vibe with no properties and no elements → `simplelist`, an `arena.block` Vibe with one image-less object, every rule output passing the schema and observed-pointer checks), the discriminator matching `VIBE_VIEWS`, branch-matches-view and pointer-in-observed-set checks, the no-pointer fallback; `resolvePointer`; attachment allowlist, magic-byte check, part ordering, and ceilings; catalog accepts one name at two levels; `level` required and `selection` rejected for Vibe level at validation; ledger accumulation and the constant payer; config; serializer (push `request.resolved` omitted for everyone, `usage` for non-owners); store-contract schemas and OpenAPI ids/components, with the push result schema accepting an object, an element, and a Vibe result and rejecting a preserved Vibe outcome that carries `rev`; the generated `push-tasks.ts` equals the catalog's manifests keyed by level and name, and `openapi:check` fails when it is stale.
-- **Integration (`push.integration.test.ts`, Postgres + S3rver, fake injected):** `search_keywords` over a Vibe with an image-only object present → entries on the applicable objects, the rest `not_applicable`, revisions with `operation_uuid` and `inferred_rev` matching the revision row, meter row with rate-card `usd`; same-key durable preservation (seeded via Drizzle); a `null` result removes an existing non-durable entry with a revision row; `describe_media` writes to elements with `media_element_revisions` rows and reports each element under its parents; gated-fake concurrency with `PUT /inferred` landing mid-run keeps both keys; a `PATCH /user` landing mid-run is kept and the task's entry still lands; two tasks running at once on one Vibe keep each other's keys; a `running` row older than the wall ceiling does not block a new accept; the boot sweep fails a `queued` and a `running` operation, rejects their `fetching`, `fetched`, and `verified` fetch rows with `error_code = "interrupted"`, and leaves meter rows and origins alone; an all-durable selection completes `done` at zero cost; the finalizer sets `committed_at` for a removal-only run; summarize writes the Vibe and validates; a Vibe holding one object at two positions runs it once and reports it once; the mixed-Vibe `vibe_view` model path with a scripted observed pointer; every stored push result validates against `pushOperationResultSchema`, and a result the finalizer cannot validate finalizes `failed` with a null result and a closed ledger; second summarize does not receive the first's summary; partial failure keeps chunk 1 and meters chunk 2; a `failed` response carrying usage is metered and its chunk is `call_failed`; `auth` → `failed` with a closed ledger; ceilings → `aborted` with `max_turns`; `maxElements` → 422; a client-invoked push is metered with `payer = 'rhizome'` and `invoked_by = client:{name}`; 409 while active; 503 keyless after 403 still wins; foreign-Vibe selection → 422.
+- **Unit (no DB):** strict-subset assertions over every installed `output.json` and a 25-ref envelope; OpenAI connector with injected `fetch`/`sleep`/`now` (request body, usage mapping, refusal/incomplete/invalid **with usage**, retry on 429 then 200, 4×503 → `provider_unavailable`, 401 no retry, never escalates tier, messages never contain the body); rate card (1M+1M at flex = `"0.700000"`, long-context flip, served tier overrides requested, a missing echo priced at the requested tier and an unrecognized one at standard with `tierAssumed`, unknown model throws); provider response mapping for every row of the §4.3 table, including the cumulative deadline across attempts, a wall abort during backoff, a `Retry-After` past the deadline, and a final 3xx; registry (boot rejects a default target the connector does not serve); fake connector (pattern samples, scripted `respond`); boundary grep; task catalog load and negatives (bad name, duplicate `(level, name)`, element level without `elementKinds`, `rules` below Vibe level); chunking and context rules (including "no summary in summarize's context", "no Vibe input in object or element context", the 2 KiB per-object clip and the `VibeContext` caps counted in `result.context`, and an injection string serialized unchanged as data); `batchEnvelope` strict-subset for every task at sizes 1 and max; ref-set equality (duplicate, missing, unknown → `invalid_output`); `vibe_view` rule table (a transaction Vibe without `posted_at`, a transaction Vibe with only a noncanonical property where no rule fires, a Vibe with no properties and no elements → `simplelist`, an `arena.block` Vibe with one image-less object, every rule output passing the schema and observed-pointer checks), the discriminator matching `VIBE_VIEWS`, branch-matches-view and pointer-in-observed-set checks, the no-pointer fallback; `resolvePointer`; attachment allowlist, magic-byte check, part ordering, and ceilings; catalog accepts one name at two levels; `level` required, `selection` rejected for Vibe level, and element URIs required at element level, all at validation; ledger accumulation and the constant payer; config; serializer (push `request.resolved` omitted for everyone, `usage` for non-owners); store-contract schemas and OpenAPI ids/components, with the push result schema accepting an object, an element, and a Vibe result and rejecting a preserved Vibe outcome that carries `rev`; the generated `push-tasks.ts` equals the catalog's manifests keyed by level and name, and `openapi:check` fails when it is stale.
+- **Integration (`push.integration.test.ts`, Postgres + S3rver, fake injected):** `search_keywords` over a Vibe with an image-only object present → entries on the applicable objects, the rest `not_applicable`, revisions with `operation_uuid` and `inferred_rev` matching the revision row, meter row with rate-card `usd`; same-key durable preservation (seeded via Drizzle); a `null` result removes an existing non-durable entry with a revision row; `describe_media` writes to elements with `media_element_revisions` rows; an element selection naming an element outside the Vibe → 422, naming a non-image element → 422; an omitted selection describes every image element once; gated-fake concurrency with `PUT /inferred` landing mid-run keeps both keys; a `PATCH /user` landing mid-run is kept and the task's entry still lands; two tasks running at once on one Vibe keep each other's keys; a `running` row older than the wall ceiling does not block a new accept; the boot sweep fails a `queued` and a `running` operation, rejects their `fetching`, `fetched`, and `verified` fetch rows with `error_code = "interrupted"`, and leaves meter rows and origins alone; an all-durable selection completes `done` at zero cost; the finalizer sets `committed_at` for a removal-only run; summarize writes the Vibe and validates; a Vibe holding one object at two positions runs it once and reports it once; the mixed-Vibe `vibe_view` model path with a scripted observed pointer; every stored push result validates against `pushOperationResultSchema`, and a result the finalizer cannot validate finalizes `failed` with a null result and a closed ledger; second summarize does not receive the first's summary; partial failure keeps chunk 1 and meters chunk 2; a `failed` response carrying usage is metered and its chunk is `call_failed`; `auth` → `failed` with a closed ledger; ceilings → `aborted` with `max_turns`; `maxElements` → 422; a client-invoked push is metered with `payer = 'rhizome'` and `invoked_by = client:{name}`; 409 while active; 503 keyless after 403 still wins; foreign-Vibe selection → 422.
 - **Black-box (`rnet-semantics.test.ts`):** push requires and names the `push` scope; a push-only grantee can invoke but not poll, a read-only grantee can poll but not invoke; a read grantee polls a push and sees no `usage` while the owner does; a push-only client's 202 for an omitted selection carries neither `selection` nor `resolved`; push writes land only in `inferred` under the store's namespace; a push never replaces a durable entry or another writer's key; push output is never durable; a later run replaces only its own key; task names are discoverable; a Vibe-level task lands in the Vibe and the Vibe still conforms; every push is metered; a store with no provider answers 503.
 - **Playwright:** existing gate unchanged plus `m3-push.e2e.ts` against the mock store, covering a Vibe task and an object task from step 9 and `describe_media` from step 10, and asserting the object and element queries refresh.
 - **Deliberately not tested in CI:** the live OpenAI API (an out-of-CI smoke script may follow), restart recovery beyond the boot sweep (M7), budgets.
@@ -800,36 +817,37 @@ Each commit keeps `bun run check` green; push returns 202 only from commit 6.
 
 Settled with the owner before implementation; the sections above already reflect them.
 
-| #   | Decision                                                        | Outcome                                                                                                                                         |
-| --- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Revision `actor` for push rows                                  | bare `rhizome`, the store's one identity as actor, invoker, and payer; plan comments normalized                                                 |
-| D2  | `vibe_revisions.operation_uuid`                                 | Added now, one migration                                                                                                                        |
-| D3  | Who pays                                                        | The store pays for everything in the alpha; developer-pays and user-pays are set aside (speculative doc)                                        |
-| D4  | `GET /push-tasks`                                               | Shipped                                                                                                                                         |
-| D5  | Host push control                                               | In this PR, minimal and generic                                                                                                                 |
-| D6  | `committed_at` on push                                          | Set at run end when ≥ 1 entry landed, aborted runs included                                                                                     |
-| D7  | Type `scripts/**` and stub `providerLeasePool` in the generator | Yes if it typechecks cleanly; dropped from the PR otherwise                                                                                     |
-| D8  | `vibe_view` views                                               | `datatable`, `mediaboard`, `simplelist` to start, each with config (§5.3)                                                                       |
-| D9  | Usage visibility                                                | Owner: the serializer omits `result.usage` from push results for other viewers; polling needs `read` like every other non-pull operation (§6.5) |
-| D10 | Same-`(vibe, level, task)` 409 guard                            | Included: Vibe row lock at accept, age bound, no fencing (§6.3, §7.5)                                                                           |
-| D11 | Freshness rule                                                  | Removed; reruns are manual host controls with "lacking the entry" as the default selection (§10)                                                |
-| D12 | Referencing record fields from inferred values                  | `RecordPointer` (JSON Pointer into the object's own document) in store-contract; media views show image elements                                |
-| D13 | Per-call schemas                                                | None beyond the batch envelope; `output.json` is static and pointers are validated after generation                                             |
-| D14 | Object and element context                                      | Record-intrinsic only; Vibe-level tasks reject `selection`                                                                                      |
-| D15 | Attachments                                                     | Image bytes only; nothing else is attachable in M3                                                                                              |
-| D16 | Alpha concurrency posture                                       | Row locks and the 409 guard; membership, `user`-edit, and in-flight-call edge cases stay open in CONFORMANCE M7                                 |
-| D17 | Interrupted runs                                                | A boot sweep from `index.ts` fails every `queued` or `running` operation at startup and rejects their open fetch rows (§6.4)                    |
-| D18 | `inferred_rev`                                                  | Per-block counter on objects and elements, same as `source_rev` and `user_rev` (§9)                                                             |
-| D19 | How the host names tasks                                        | Generated `push-tasks.ts` from the catalog, no `hostRole` (§10)                                                                                 |
-| D20 | Model choice                                                    | The configured default only; no per-request or per-task target in M3 (§4.6)                                                                     |
-| D21 | Provider mapping and tier                                       | Total response mapping in §4.3; a missing echo prices at the requested tier and an unrecognized one at standard, both flagged `tierAssumed`     |
-| D22 | Outcome vocabulary                                              | Closed in store-contract's result schema; a missing row at write time fails the run (§6.4, §7.2)                                                |
-| D23 | Public push request                                             | The caller's fields only; `request.resolved` is execution state, stripped from every view (§6.3)                                                |
-| D24 | Push result contract                                            | `pushOperationResultSchema` and `isPushOperation` in store-contract; `usage` optional (§6.1)                                                    |
-| D25 | Duplicate placements                                            | Deduplicated by object UUID at every level, first placement wins; every count is a record count (§6.3)                                          |
-| D26 | Element-level rerun                                             | "Rerun all" only in M3; "run on missing" needs a batch element read the host does not have (§10)                                                |
-| D27 | Producer fields                                                 | `meter_entry.model` prices; `result.model` and `inferred.model` name the producer, per the §8.1 table                                           |
-| D28 | Connector deadline                                              | `timeoutMs` spans attempts and backoff, abortable by the operation signal (§4.3)                                                                |
+| #   | Decision                                                        | Outcome                                                                                                                                                  |
+| --- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Revision `actor` for push rows                                  | bare `rhizome`, the store's one identity as actor, invoker, and payer; plan comments normalized                                                          |
+| D2  | `vibe_revisions.operation_uuid`                                 | Added now, one migration                                                                                                                                 |
+| D3  | Who pays                                                        | The store pays for everything in the alpha; developer-pays and user-pays are set aside (speculative doc)                                                 |
+| D4  | `GET /push-tasks`                                               | Shipped                                                                                                                                                  |
+| D5  | Host push control                                               | In this PR, minimal and generic                                                                                                                          |
+| D6  | `committed_at` on push                                          | Set at run end when ≥ 1 entry landed, aborted runs included                                                                                              |
+| D7  | Type `scripts/**` and stub `providerLeasePool` in the generator | Yes if it typechecks cleanly; dropped from the PR otherwise                                                                                              |
+| D8  | `vibe_view` views                                               | `datatable`, `mediaboard`, `simplelist` to start, each with config (§5.3)                                                                                |
+| D9  | Usage visibility                                                | Owner: the serializer omits `result.usage` from push results for other viewers; polling needs `read` like every other non-pull operation (§6.5)          |
+| D10 | Same-`(vibe, level, task)` 409 guard                            | Included: Vibe row lock at accept, age bound, no fencing (§6.3, §7.5)                                                                                    |
+| D11 | Freshness rule                                                  | Removed; reruns are manual host controls with "lacking the entry" as the default selection (§10)                                                         |
+| D12 | Referencing record fields from inferred values                  | `RecordPointer` (JSON Pointer into the object's own document) in store-contract; media views show image elements                                         |
+| D13 | Per-call schemas                                                | None beyond the batch envelope; `output.json` is static and pointers are validated after generation                                                      |
+| D14 | Object and element context                                      | Record-intrinsic only; Vibe-level tasks reject `selection`                                                                                               |
+| D15 | Attachments                                                     | Image bytes only; nothing else is attachable in M3                                                                                                       |
+| D16 | Alpha concurrency posture                                       | Row locks and the 409 guard; membership, `user`-edit, and in-flight-call edge cases stay open in CONFORMANCE M7                                          |
+| D17 | Interrupted runs                                                | A boot sweep from `index.ts` fails every `queued` or `running` operation at startup and rejects their open fetch rows (§6.4)                             |
+| D18 | `inferred_rev`                                                  | Per-block counter on objects and elements, same as `source_rev` and `user_rev` (§9)                                                                      |
+| D19 | How the host names tasks                                        | Generated `push-tasks.ts` from the catalog, no `hostRole` (§10)                                                                                          |
+| D20 | Model choice                                                    | The configured default only; no per-request or per-task target in M3 (§4.6)                                                                              |
+| D21 | Provider mapping and tier                                       | Total response mapping in §4.3; a missing echo prices at the requested tier and an unrecognized one at standard, both flagged `tierAssumed`              |
+| D22 | Outcome vocabulary                                              | Closed in store-contract's result schema; a missing row at write time fails the run (§6.4, §7.2)                                                         |
+| D23 | Public push request                                             | The caller's fields only; `request.resolved` is execution state, stripped from every view (§6.3)                                                         |
+| D24 | Push result contract                                            | `pushOperationResultSchema` and `isPushOperation` in store-contract; `usage` optional (§6.1)                                                             |
+| D25 | Duplicate placements                                            | Deduplicated by object UUID at every level, first placement wins; every count is a record count (§6.3)                                                   |
+| D26 | Element-level rerun                                             | "Rerun all" only in M3; "run on missing" needs a batch element read the host does not have (§10)                                                         |
+| D27 | Producer fields                                                 | `meter_entry.model` prices; `result.model` and `inferred.model` name the producer, per the §8.1 table                                                    |
+| D28 | Connector deadline                                              | `timeoutMs` spans attempts and backoff, abortable by the operation signal (§4.3)                                                                         |
+| D29 | Selection level                                                 | Selection lists records at the task's level: object URIs, element URIs reachable from a member and of the task's kinds, none for Vibe level (§6.1, §6.3) |
 
 ## 15. Provider references
 
