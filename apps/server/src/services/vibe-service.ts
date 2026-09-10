@@ -23,6 +23,7 @@ import { MediaObjectsService } from "./media-object-service.ts";
 import { schemaProblem } from "./problems.ts";
 import type { ServiceContext } from "./types.ts";
 import { uriId } from "./uris.ts";
+import { snapshotVibe } from "./vibe-snapshot.ts";
 
 export class VibesService {
   private readonly db: Database;
@@ -352,15 +353,6 @@ export class VibesService {
       membershipDelta: { added, removed },
     });
   }
-}
-
-function snapshotVibe(vibeRecord: DbVibe, activeGrants: Grant[]): Record<string, unknown> {
-  return {
-    title: vibeRecord.title,
-    inferred: vibeRecord.inferred,
-    pull_config: vibeRecord.pullConfig,
-    grants: activeGrants,
-  };
 }
 
 function assertNoIntroducedPullSources(

@@ -1,5 +1,15 @@
 import type { MediaElement } from "@rnet/types";
-import { bigint, check, index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  bigint,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
 
 import { textEnumCheck } from "./shared.ts";
 import { users } from "./user.ts";
@@ -23,6 +33,7 @@ export const mediaElements = pgTable(
       .$type<NonNullable<MediaElement["inferred"]>>()
       .notNull()
       .default({}),
+    inferredRev: integer("inferred_rev").notNull().default(0),
     rnetSchema: text("rnet_schema").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: text("created_by").notNull(),
