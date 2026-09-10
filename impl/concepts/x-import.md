@@ -228,7 +228,7 @@ Initial X limits are:
 
 All element bytes, including text, count toward the total. The installed source definition supplies defaults; the effective values are persisted with the source/capture, exposed through the manifest, passed to compilation, and enforced by the server. This makes a later default change auditable.
 
-Changing the default from 100 to 500 would not require a new source definition, only configuration plus a fresh capture: records beyond the cap never entered the stored capture archive, so raising it means fetching again rather than re-reading what was retained.
+The 100-post cap is not a configuration value, and raising it is a code change rather than a setting. The provider request is fixed at a single `max_results=100` page, the capture manifest records `maxResults: 100` as request evidence, and replay rejects a capture whose `maxCandidates` exceeds 100. Going to 500 therefore requires provider pagination, relaxed timeline and parser validation, and a new capture format version. Below that ceiling the retained capture is authoritative rather than stale: the stored archive holds the complete returned page, so a cap lowered and then restored under 100 re-reads what was retained instead of refetching.
 
 ## 8. Text, images, video, and deterministic omissions
 

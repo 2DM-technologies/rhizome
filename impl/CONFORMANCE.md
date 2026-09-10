@@ -26,6 +26,10 @@ suites.
   shared eligibility, VERIFY, ordering, identity, text, and media compiler. The rNet `tweet`
   vocabulary and object-form element references (`{ uri, role?, alt? }`) are implemented across the
   schema, serializers, generated contracts, and host consumers.
+- X import requires provider configuration and an explicit operator budget opt-in, because X has no
+  meaningful free read tier and the removed archive-upload source was the only unpaid path. Without
+  both, the source is absent from the installed catalog or reaches only the connection lifecycle, so
+  a deployment can be conformant with no working X import. CI never depends on provider spend.
 - Reviewed imports create no MediaObject, MediaElement, object-element link, Vibe membership, or
   pull-configuration entry before confirmation. Cancellation retains owner-only source and origin
   audit records, while confirmation commits the reviewed object-and-element bundle atomically.

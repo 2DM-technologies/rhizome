@@ -65,7 +65,7 @@ describe("SourceSkillManifestCatalog", () => {
     ).toThrow("field claim is invalid");
   });
 
-  test("requires bounded generic limits and restricts preprocessing to file sources", () => {
+  test("requires bounded generic limits", () => {
     const manifest = credentialedManifest();
     expect(
       () =>

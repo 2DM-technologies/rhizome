@@ -9,7 +9,7 @@ export interface XTextSpan {
   readonly end: number;
 }
 
-/** Canonical source-fact shape shared by archive v1 and API v2 URL entities. */
+/** Canonical source-fact shape for normalized URL entities, independent of the provider shape. */
 export interface NormalizedXUrlEntity extends XTextSpan {
   readonly url: string;
   readonly expanded_url?: string;

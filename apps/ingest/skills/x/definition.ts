@@ -9,7 +9,6 @@ import { compileXPostCandidates } from "./tweet-candidates.ts";
 
 export const X_OAUTH_SKILL_ID = "x_oauth" as const;
 
-export const X_ARCHIVE_CONNECTOR_VERSION = "x-archive-selection@1" as const;
 export const X_OAUTH_CONNECTOR_VERSION = "x-oauth@1" as const;
 export const X_POST_PARSER_NAME = "x-posts" as const;
 export const X_POST_PARSER_VERSION = "x-posts@1.0.0" as const;
@@ -21,7 +20,7 @@ export const X_SOURCE_LIMITS = Object.freeze({
   maxTotalElementBytes: 40 * 1_024 * 1_024,
 }) satisfies SourceExecutionLimits;
 
-/** Archive and OAuth adapters normalize independently, then share this exact compiler boundary. */
+/** A provider adapter normalizes independently, then shares this exact compiler boundary. */
 export function defineXCandidateBundle<Input extends { readonly limits: SourceExecutionLimits }>(
   normalize: (input: Input) => SelectedXPosts | Promise<SelectedXPosts>,
 ): CandidateBundleCapability<Input> {

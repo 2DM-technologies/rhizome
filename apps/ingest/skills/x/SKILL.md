@@ -9,4 +9,5 @@ source could be added without moving it. The shared core classifies authored pos
 commentary, orders newest-first, applies manifest limits, constructs ordered media elements, and
 emits `candidate_bundle@1` with source VERIFY evidence.
 
-The source definitions are activated only when their generic platform capabilities are complete.
+The source definition is activated only when its generic platform capabilities are complete, and
+X import additionally requires provider configuration and an operator budget opt-in.

@@ -4,7 +4,7 @@ import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from "@zip.js/zip
 import { sha256 } from "../contracts.ts";
 import { X_SOURCE_LIMITS } from "../definition.ts";
 import { normalizeXTextSpan } from "../entities.ts";
-import { compileXPostCandidates, selectXPosts } from "../tweet-candidates.ts";
+import { compileXPostCandidates } from "../tweet-candidates.ts";
 import {
   X_OAUTH_CAPTURE_FORMAT,
   X_OAUTH_CAPTURE_MIME,
@@ -655,6 +655,28 @@ describe("X OAuth parser", () => {
     });
     await expect(parseXOAuthCapture(malformedLongFormCapture, X_SOURCE_LIMITS)).rejects.toThrow(
       "note tweet text is invalid",
+    );
+  });
+  test("fails closed on a capture whose entries are not parseable JSON", async () => {
+    const malformed: ReadonlyArray<readonly [string, string]> = [
+      ["{not json", '{"data":[]}'],
+      ['{"format":"x-oauth-capture@1"}', "not json either"],
+    ];
+    for (const [manifestBody, timelineBody] of malformed) {
+      const writer = new ZipWriter(new BlobWriter(X_OAUTH_CAPTURE_MIME));
+      await writer.add(X_OAUTH_MANIFEST_PATH, new TextReader(manifestBody));
+      await writer.add(X_OAUTH_TIMELINE_PATH, new TextReader(timelineBody));
+      const bytes = new Uint8Array(await (await writer.close()).arrayBuffer());
+      await expect(parseXOAuthCapture(bytes, X_SOURCE_LIMITS)).rejects.toThrow();
+    }
+  });
+
+  test("fails closed on a capture that is missing a required entry", async () => {
+    const writer = new ZipWriter(new BlobWriter(X_OAUTH_CAPTURE_MIME));
+    await writer.add(X_OAUTH_MANIFEST_PATH, new TextReader("{}"));
+    const bytes = new Uint8Array(await (await writer.close()).arrayBuffer());
+    await expect(parseXOAuthCapture(bytes, X_SOURCE_LIMITS)).rejects.toThrow(
+      "missing required entries",
     );
   });
 });
