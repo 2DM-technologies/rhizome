@@ -5,7 +5,7 @@ Rhizome architecture. Every open gap names the milestone that closes it; product
 evidence belong in the [implementation plan](./IMPLEMENTATION_PLAN.md), concept documents, and test
 suites.
 
-## Implemented through M2
+## Implemented through M3
 
 - The store implements the M1 store surface for origins, elements, MediaObjects, and Vibes, with
   server-enforced grants, provenance validation, last-write-wins user edits, and internal revision
@@ -33,14 +33,19 @@ suites.
 - Reviewed imports create no MediaObject, MediaElement, object-element link, Vibe membership, or
   pull-configuration entry before confirmation. Cancellation retains owner-only source and origin
   audit records, while confirmation commits the reviewed object-and-element bundle atomically.
-
-## M3
-
-- Make `POST /vibes/{id}/push` operational while preserving any existing `durable: true` inferred
-  entry instead of overwriting it.
+- Push is an asynchronous, metered operation across elements, objects, and Vibes. Five installed
+  tasks write only their own `rhizome:{task}` entry, preserve same-key durable entries, and keep
+  other writers' entries intact under row locks. Each run has one cost row; owner-visible results
+  report recorded usage while read grantees receive the same outcomes with usage omitted.
+- The host consumes generated task manifests, runs and polls push operations, renders inferred
+  Vibe views, and refreshes every object or element named by a terminal result. The fake connector,
+  provider boundary tests, and stubbed OpenAI tests make the full gate independent of provider spend.
 
 ## M5
 
+- Define the `users.inferred` warm-start policy, including its writer and what client-invoked
+  inference may read without leaking cross-Vibe information. M3 excludes this block from push
+  context and writes.
 - The schema conditionals already require `parser_hash` for `generated_parser` and prohibit
   reproducible `agent` records, but current execution and object-creation paths make only
   `parser`/reproducible and `authored`/non-reproducible stamps reachable. Add executable `agent` and
