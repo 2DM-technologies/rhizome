@@ -57,6 +57,11 @@ suites.
 - Move import preview and pull work from in-process `queueMicrotask` jobs to durable execution. Add
   a reaper that reconciles work interrupted while `queued` or `running`, and stop host polling when a
   job can no longer make progress.
+- Push runs in the API process like preview and pull (`impl/concepts/push-pipeline.md` §6.4a). Until
+  durable execution: a restart fails every `queued` or `running` operation at the next boot instead
+  of resuming it; a push's writes are not guarded against `user` edits or membership changes between
+  assembly and write; a stranded run's late writes are not fenced, since a run cannot be stranded
+  while its process is alive; and a provider call in flight when the process dies is not metered.
 - Add reference-aware garbage collection for unreferenced staged capture/origin and element bytes
   left by failed, canceled, or abandoned previews. Preserve bytes referenced by live
   OriginArtifacts, MediaElements, or retained preview manifests.
