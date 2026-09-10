@@ -10,6 +10,10 @@ import type {
   Vibe as RnetVibe,
 } from "@rnet/types";
 import type {
+  PushVibeRequest as StorePushVibeRequest,
+  PushOperationResult as StorePushOperationResult,
+  PushTaskManifest as StorePushTaskManifest,
+  PushTaskManifestsResponse as StorePushTaskManifestsResponse,
   ProblemDocument as StoreProblemDocument,
   OperationDocument as StoreOperationDocument,
   SourceCredentialDocument as StoreSourceCredentialDocument,
@@ -532,6 +536,10 @@ export interface components {
      * @description A dynamic, owned collection of MediaObjects, plus the state that makes it living: its pull configuration and its inferred block. Vibes contain object references, not copies. Vibes carry no source block — they are authored, not ingested; the omission is the ontology.
      */
     Vibe: RnetVibe;
+    PushVibeRequest: StorePushVibeRequest;
+    PushOperationResult: StorePushOperationResult;
+    PushTaskManifest: StorePushTaskManifest;
+    PushTaskManifestsResponse: StorePushTaskManifestsResponse;
     Problem: StoreProblemDocument;
     Operation: StoreOperationDocument;
     SourceCredential: StoreSourceCredentialDocument;

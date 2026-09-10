@@ -16,6 +16,7 @@
     "noEmit": true
   },
   "include": [
+    "scripts/**/*.ts",
     "apps/**/*.ts",
     "apps/**/*.tsx",
     "apps/*/.storybook/**/*.ts",

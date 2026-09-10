@@ -1,4 +1,11 @@
 import {
+  pushVibeRequestSchema,
+  pushOperationResultSchema,
+  pushTaskManifestSchema,
+  pushTaskManifestsResponseSchema,
+} from "./push.ts";
+export * from "./push.ts";
+import {
   grantSchema,
   ingestRecordSchema,
   mediaElementSchema,
@@ -59,6 +66,8 @@ export const PROBLEM_CODES = [
   "mime_required",
   "not_found",
   "not_implemented",
+  "push_unavailable",
+  "operation_in_progress",
   "payload_too_large",
   "parser_unsupported",
   "rate_limited",
@@ -680,6 +689,10 @@ export type MediaObjectsResponse = ContractValue<typeof mediaObjectsResponseSche
 
 /** Stable names used when registering these schemas as OpenAPI components. */
 export const STORE_SCHEMA_COMPONENTS = {
+  PushVibeRequest: pushVibeRequestSchema,
+  PushOperationResult: pushOperationResultSchema,
+  PushTaskManifest: pushTaskManifestSchema,
+  PushTaskManifestsResponse: pushTaskManifestsResponseSchema,
   Problem: problemDocumentSchema,
   Operation: operationDocumentSchema,
   SourceCredential: sourceCredentialDocumentSchema,
