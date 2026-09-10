@@ -17,6 +17,9 @@ import { installedPushTasks } from "../src/push/installed-tasks.ts";
 import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
+import { displayName } from "../src/push/tasks/object/display_name/manifest.ts";
+import { searchKeywords } from "../src/push/tasks/object/search_keywords/manifest.ts";
+import { vibeView } from "../src/push/tasks/vibe/vibe_view/manifest.ts";
 import { jsonSchema } from "../src/routes/contracts.ts";
 
 const target = { provider: "openai", name: "gpt-5.6-luna" };
@@ -55,6 +58,22 @@ function decode(input: string) {
 }
 
 describe("push task catalog and static schemas", () => {
+  test("installs the step 7 tasks in convention order with approved generation settings", () => {
+    expect(installedPushTasks.manifests().map(({ level, name }) => `${level}:${name}`)).toEqual([
+      "vibe:summarize",
+      "vibe:vibe_view",
+      "object:display_name",
+      "object:search_keywords",
+    ]);
+    expect([vibeView, displayName, searchKeywords].map(({ effort }) => effort)).toEqual([
+      "low",
+      "low",
+      "low",
+    ]);
+    expect(vibeView.outputTokens).toEqual({ base: 1024, perObject: 0 });
+    expect(displayName.outputTokens).toEqual({ base: 128, perObject: 64 });
+    expect(searchKeywords.outputTokens).toEqual({ base: 128, perObject: 512 });
+  });
   test("installed manifests are valid and the same name may exist at two levels", () => {
     expect(
       jsonSchema(pushTaskManifestsResponseSchema).validate({

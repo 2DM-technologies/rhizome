@@ -46,6 +46,9 @@ import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import { finalizePush } from "../src/push/push-service.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
+import { displayName } from "../src/push/tasks/object/display_name/manifest.ts";
+import { searchKeywords } from "../src/push/tasks/object/search_keywords/manifest.ts";
+import { vibeView } from "../src/push/tasks/vibe/vibe_view/manifest.ts";
 import { RNET_SCHEMA_VERSION } from "../src/rnet.ts";
 import { jsonSchema } from "../src/routes/contracts.ts";
 import * as writer from "../src/services/inferred-writer.ts";
@@ -93,7 +96,15 @@ const elementTask: PushTaskDefinition = {
   level: "element",
   elementKinds: ["image"],
 };
-const tasks = new PushTaskCatalog([summarize, objectTask, otherTask, elementTask]);
+const tasks = new PushTaskCatalog([
+  summarize,
+  vibeView,
+  displayName,
+  searchKeywords,
+  objectTask,
+  otherTask,
+  elementTask,
+]);
 let config: ServerConfig;
 let s3: S3rver;
 let scratch: string;
@@ -569,6 +580,174 @@ describe("push lifecycle and inferred writes", () => {
     });
     expect(preserved.result).not.toHaveProperty("vibe.rev");
     expect(fake.requests).toHaveLength(0);
+  });
+  test("the installed vibe_view rule path records the rule producer and makes no model call", async () => {
+    const fake = new FakeModelConnector();
+    const { vibeUuid } = await fixture();
+    const operation = await run(application(fake), vibeUuid, {
+      level: "vibe",
+      task: vibeView.name,
+    });
+    expect(operation.result).toMatchObject({
+      model: "rhizome/vibe_view-rules@1",
+      llm_calls: 0,
+      vibe: { outcome: "written" },
+      usage: { usd: "0.000000" },
+    });
+    expect(
+      (await db.query.vibes.findFirst({ where: eq(vibes.uuid, vibeUuid) }))?.inferred[
+        storeTaskKey(vibeView.name)
+      ],
+    ).toMatchObject({
+      model: "rhizome/vibe_view-rules@1",
+      properties: { view: "datatable" },
+    });
+    expect(fake.requests).toHaveLength(0);
+    expect(
+      (
+        await db.query.meterEntries.findFirst({
+          where: eq(meterEntries.operationUuid, operation.operation_id),
+        })
+      )?.model,
+    ).toBe(registry(fake).identity);
+  });
+  test("the installed mixed-Vibe vibe_view model path accepts an observed pointer", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    await db
+      .update(mediaObjects)
+      .set({ type: "transaction" })
+      .where(eq(mediaObjects.uuid, ids[1]!));
+    await imageFor(ids[0]!);
+    const fake = new FakeModelConnector({
+      respond: () => ({
+        usage,
+        output: {
+          view: "simplelist",
+          config: { subtitle_pointer: "/source/properties/title" },
+        },
+      }),
+    });
+    const operation = await run(application(fake), vibeUuid, {
+      level: "vibe",
+      task: vibeView.name,
+    });
+    expect(operation.result).toMatchObject({
+      model: registry(fake).identity,
+      llm_calls: 1,
+      vibe: { outcome: "written" },
+    });
+    expect(
+      (await db.query.vibes.findFirst({ where: eq(vibes.uuid, vibeUuid) }))?.inferred[
+        storeTaskKey(vibeView.name)
+      ]?.properties,
+    ).toEqual({
+      view: "simplelist",
+      config: { subtitle_pointer: "/source/properties/title" },
+    });
+    expect(fake.requests).toHaveLength(1);
+  });
+  test("vibe_view rejects model pointers and config branches that fail its context post-check", async () => {
+    for (const output of [
+      {
+        view: "simplelist",
+        config: { subtitle_pointer: "/source/properties/missing" },
+      },
+      {
+        view: "simplelist",
+        config: { caption_pointer: "/source/properties/title" },
+      },
+    ]) {
+      const { vibeUuid, ids } = await fixture(2);
+      await db
+        .update(mediaObjects)
+        .set({ type: "transaction" })
+        .where(eq(mediaObjects.uuid, ids[1]!));
+      await imageFor(ids[0]!);
+      const fake = new FakeModelConnector({ respond: () => ({ usage, output }) });
+      const operation = await run(application(fake), vibeUuid, {
+        level: "vibe",
+        task: vibeView.name,
+      });
+      expect(operation.result).toMatchObject({
+        llm_calls: 1,
+        vibe: { outcome: "skipped", reason: "invalid_output" },
+        usage: { tokens_in: usage.tokensIn, tokens_out: usage.tokensOut },
+      });
+      expect(
+        (await db.query.vibes.findFirst({ where: eq(vibes.uuid, vibeUuid) }))?.inferred[
+          storeTaskKey(vibeView.name)
+        ],
+      ).toBeUndefined();
+    }
+  });
+  test("installed search_keywords evaluates an image-only object by observed shape", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    await db
+      .update(mediaObjects)
+      .set({
+        source: {
+          properties: {},
+          origins: [`rnet://client/${DEV_DMACHINE_UUID}`],
+          ingest: { method: "authored", reproducible: false },
+        },
+      })
+      .where(eq(mediaObjects.uuid, ids[0]!));
+    await imageFor(ids[0]!);
+    const fake = new FakeModelConnector({
+      respond: (request) => {
+        const data = JSON.parse(request.input.slice(6, -7));
+        return {
+          usage,
+          output: {
+            results: data.objects.map((record: { ref: string; elements: unknown[] }) => ({
+              ref: record.ref,
+              result: record.elements.length ? { keywords: ["image"] } : null,
+            })),
+          },
+        };
+      },
+    });
+    const operation = await run(application(fake), vibeUuid, {
+      level: "object",
+      task: searchKeywords.name,
+    });
+    expect(operation.result).toMatchObject({
+      objects: { selected: 2, sent: 2, written: 1, skipped: 1 },
+      skipped: [{ uri: `rnet://object/${ids[1]}`, reason: "not_applicable" }],
+    });
+    const written = await db.query.mediaObjects.findFirst({
+      where: eq(mediaObjects.uuid, ids[0]!),
+    });
+    expect(written?.inferred[storeTaskKey(searchKeywords.name)]?.properties).toEqual({
+      keywords: ["image"],
+    });
+    expect(
+      (await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, ids[1]!) }))?.inferred[
+        storeTaskKey(searchKeywords.name)
+      ],
+    ).toBeUndefined();
+    expect(
+      await db.query.mediaObjectRevisions.findFirst({
+        where: and(
+          eq(mediaObjectRevisions.mediaObjectUuid, ids[0]!),
+          eq(mediaObjectRevisions.block, "inferred"),
+        ),
+      }),
+    ).toMatchObject({
+      operationUuid: operation.operation_id,
+      rev: written!.inferredRev,
+    });
+    const meter = await db.query.meterEntries.findFirst({
+      where: eq(meterEntries.operationUuid, operation.operation_id),
+    });
+    expect(Number(meter?.usd)).toBeGreaterThan(0);
+    expect(meter?.breakdown).toMatchObject({
+      rate_card: {
+        id: expect.any(String),
+        source: expect.any(String),
+        verified_at: expect.any(String),
+      },
+    });
   });
   test("a missing object at write time fails the run while earlier revisions stand", async () => {
     const { vibeUuid, ids } = await fixture(2);

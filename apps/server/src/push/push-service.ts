@@ -50,6 +50,7 @@ import {
   type ContextCounts,
 } from "./context.ts";
 import type { PushLimits } from "./limits.ts";
+import { validateInstalledTaskOutput } from "./installed-tasks.ts";
 import type { PushTaskCatalog, PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
 
 type StoredPushRequest = PushVibeRequest & {
@@ -280,7 +281,10 @@ export class PushService {
             }
           }
           if (output !== undefined) {
-            if (!jsonSchema(task.outputSchema).validate(output).ok)
+            if (
+              !jsonSchema(task.outputSchema).validate(output).ok ||
+              !validateInstalledTaskOutput(task, output, context.vibe)
+            )
               state.vibe = { outcome: "skipped", reason: "invalid_output" };
             else if (controller.signal.aborted) {
               state.abortReason = "max_wall";
