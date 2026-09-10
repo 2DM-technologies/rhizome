@@ -1,10 +1,10 @@
 # Push pipeline
 
-**Status:** Draft M3 implementation plan for review. No implementation is included in this document.
+**Status:** Active. This is the M3 implementation plan after five external review rounds; §13 is the commit sequence, §14 the settled decisions D1–D29, and neither is reopened during implementation.
 
 **Companion docs:** [implementation plan](../IMPLEMENTATION_PLAN.md) §3 (Inference, Agent harness), §5.1, §8 M3; [conformance status](../CONFORMANCE.md); rNet spec §2.3, §2.4, §3.2, §4.3, §6.2.
 
-**Base:** `main` at `07f9434`. Branch `m3/01-push-pipeline`, one PR to `main`.
+**Base:** `main` at `220e289`. Branch `m3/01-push-pipeline`, one PR to `main`.
 
 ## 1. Purpose
 
