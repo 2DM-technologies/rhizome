@@ -135,7 +135,7 @@ JSON columns are `JSONB`. Timestamps are `TIMESTAMPTZ`.
 
 **Record ownership is explicit in both protocol and storage, not inferred from Vibe membership.** Origins, elements, objects, and Vibes carry required immutable `owner` URIs on the wire; Rhizome stores their local identifiers as `owner_uuid`. A record may be temporarily unattached or referenced by several Vibes, so joins cannot answer who may administer, tombstone, or garbage-collect it. A dMachine-created element or object inherits the owner of the Vibe that authorized the atomic write. `created_by` remains separate audit data identifying the actor, while Vibe membership and grants continue to determine delegated read/write access. No persistent upload entitlement is needed: delegated element creation is inseparable from the first object reference and Vibe membership. For v0.1, an object's owner must match its Vibe, its elements, and any OriginArtifacts in its provenance; cross-owner references wait for sharing semantics.
 
-**`updated_at` only where there is no revision log.** `media_objects` and `vibes` carry rev counters and write to `media_object_revisions` / `vibe_revisions` on every mutation, so "when did this change" is answered more precisely — and with _what_ changed and _who_ changed it — by the log. `origins` and `media_elements` are immutable (only tombstoned). `dMachines` has no log, so it carries `updated_at`. `users` carries both: `updated_at` for editable fields, and `user_revisions` for `inferred`, because memory is not recomputable and an accidental clear must be recoverable.
+**`updated_at` only where there is no revision log.** `media_objects` and `vibes` carry rev counters and write to `media_object_revisions` / `vibe_revisions` on every mutation, so "when did this change" is answered more precisely — and with _what_ changed and _who_ changed it — by the log. `origins` are immutable (only tombstoned). A `media_elements` row's payload and metadata are immutable, while its `inferred` block is mutable: it carries `inferred_rev` and writes to `media_element_revisions`. `dMachines` has no log, so it carries `updated_at`. `users` carries both: `updated_at` for editable fields, and `user_revisions` for `inferred`, because memory is not recomputable and an accidental clear must be recoverable.
 
 **Every stored document records its version.** `rnet_schema` is on origins, elements, objects, and vibes without exception — a short column on rows you are writing anyway, and the alternative is a carve-out that has to be justified and will eventually be justified wrongly. Note that record metadata is _not_ fully re-derivable from the bytes: `label` is the filename the user handed over, `uploaded_at` is when they did it, and `mime` cannot be reliably sniffed. Only `content_hash` and `byte_size` come from the content.
 
@@ -167,12 +167,16 @@ CREATE TABLE media_elements (           -- media records: what a human consumes
   kind          TEXT NOT NULL CHECK (kind IN ('text','image','audio','video','document')),
   mime          TEXT NOT NULL,
   byte_size     BIGINT NOT NULL,
+  alt           TEXT,                    -- authored alternative text, immutable with the payload
+  inferred      JSONB NOT NULL DEFAULT '{}'::jsonb,  -- {writer}:{task} keyed map; the one mutable block
+  inferred_rev  INTEGER NOT NULL DEFAULT 0,
   rnet_schema   TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL,
   created_by    TEXT NOT NULL,           -- authenticated user/client URI; internal audit
   tombstoned_at TIMESTAMPTZ
 );
 CREATE INDEX media_elements_content_hash_idx ON media_elements(content_hash);
+CREATE INDEX media_elements_inferred_idx ON media_elements USING GIN (inferred jsonb_path_ops);
 
 -- ══ Objects ══════════════════════════════════════════════════════════
 CREATE TABLE media_objects (
@@ -188,6 +192,7 @@ CREATE TABLE media_objects (
                                         -- `SELECT user` silently returns CURRENT_USER.
   user_rev      INTEGER NOT NULL DEFAULT 0,   -- internal history sequence; not an MVP API field
   inferred      JSONB NOT NULL DEFAULT '{}'::jsonb,  -- {writer}:{task} keyed map
+  inferred_rev  INTEGER NOT NULL DEFAULT 0,   -- same per-block counter as source_rev and user_rev
   extensions    JSONB NOT NULL DEFAULT '{}'::jsonb,  -- x-* namespaced
   rnet_schema   TEXT NOT NULL,          -- protocol version this row was written under
   created_at    TIMESTAMPTZ NOT NULL
@@ -201,7 +206,6 @@ CREATE TABLE media_object_elements (    -- ordered element refs
   media_element_uuid UUID NOT NULL REFERENCES media_elements(uuid),
   position      INTEGER NOT NULL,
   role          TEXT CHECK (role IN ('title', 'content', 'preview')),
-  alt           TEXT,
   PRIMARY KEY (media_object_uuid, position)
 );
 
@@ -270,12 +274,24 @@ CREATE TABLE media_object_revisions (
   PRIMARY KEY (media_object_uuid, block, rev)
 );
 
+CREATE TABLE media_element_revisions (
+  media_element_uuid UUID NOT NULL REFERENCES media_elements(uuid) ON DELETE CASCADE,
+  block         TEXT NOT NULL CHECK (block IN ('inferred')),   -- the only mutable block on an element
+  rev           INTEGER NOT NULL,
+  snapshot      JSONB,
+  actor         TEXT NOT NULL,          -- 'id:…' | 'client:…' | 'rhizome'
+  operation_uuid UUID REFERENCES operations(uuid),
+  created_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (media_element_uuid, block, rev)
+);
+
 CREATE TABLE vibe_revisions (
   vibe_uuid     UUID NOT NULL REFERENCES vibes(uuid) ON DELETE CASCADE,
   rev           INTEGER NOT NULL,
   snapshot      JSONB NOT NULL,         -- title, inferred, pull_config, grants
   membership_delta JSONB,               -- {added:[…], removed:[…]}
   actor         TEXT NOT NULL,
+  operation_uuid UUID REFERENCES operations(uuid),   -- the push that wrote inferred; null for pull
   created_at    TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (vibe_uuid, rev)
 );
@@ -489,7 +505,7 @@ Base: `/rnet/v0`, bearer session auth, JSON structured bodies except multipart a
 
 Full surface per spec §4: Vibes CRUD, `/objects`, `/elements`, `/origins`, two operations (`push`, `pull`), and `/operations/{id}` polling.
 
-**Alpha scope (single-user).** Implement the full surface: Vibes / objects / elements / origins CRUD, push, pull, operations polling. Scope checking is real from M1 — every request validates the caller's scopes against the Vibe's grants, server-side — there just happens to be one user and one granted dMachine in the alpha, so the grants table has one row. Multiple tabs or an authorized dMachine can race; last-write-wins deliberately keeps writes stateless, while retained history and revert provide recovery. `CONFORMANCE.md` records chosen gaps and their target milestone. Behaviour that diverges from this plan unintentionally is a bug: fix it, don't merely document it.
+**Alpha scope.** Implement the full surface: Vibes / objects / elements / origins CRUD, push, pull, operations polling. Scope checking is real from M1 — every request validates the caller's scopes against the Vibe's grants, server-side — the alpha simply has a handful of users and one granted dMachine, so the grants table stays small. Multiple tabs or an authorized dMachine can race; last-write-wins deliberately keeps writes stateless, while retained history and revert provide recovery. `CONFORMANCE.md` records chosen gaps and their target milestone. Behaviour that diverges from this plan unintentionally is a bug: fix it, don't merely document it.
 
 Semantics that must be real even in alpha:
 
@@ -812,7 +828,7 @@ Notes for implementers:
 | `usage.current`, `usage.onCost`, `ui.toast`, `ui.pickVibe`    | M4                                                  |
 | `objects.history`, `objects.revert`                           | M7 (store keeps revisions from M1; this is the UI)  |
 | `agent.*`, `<AgentSurface>`                                   | M5 (harness); the Maker at M6 is the first consumer |
-| `session.requestGrant`                                        | M7 (single-user alpha grants at install)            |
+| `session.requestGrant`                                        | M7 (alpha grants are given at install)              |
 
 ---
 
@@ -857,7 +873,7 @@ Element, origin, object, Vibe, user, and client record URIs use UUIDv7 in canoni
 
 ## 10. Alpha scope rules
 
-Single-user alpha. Breaking DB changes are fine — nuke and re-migrate freely; the database is disposable.
+Alpha envelope: one API process serving roughly one to twenty people, with disposable pre-production state. Concurrency and restart handling are designed for that envelope (`impl/concepts/push-pipeline.md` §6.4a, §7.5), not beyond it. Breaking DB changes are fine — nuke and re-migrate freely; the database is disposable.
 
 The **spec does not get slimmer because the DB is disposable.** `rhizome/impl/CONFORMANCE.md` is a running list of _deliberate_ gaps — things deferred on purpose — and remains the punch list for later milestones. Unintentional divergence is a bug and gets fixed, not logged. The roadmap still targets the whole spec, but the file is nonempty while an explicit milestone deferral remains; every entry must name and be closed by its target milestone. Product/runtime gaps close by M7, while production-infrastructure proof may close in M8.
 
