@@ -11,21 +11,21 @@ suites.
   server-enforced grants, provenance validation, last-write-wins user edits, and internal revision
   history.
 - Every installed ingestion source compiles to the generic `candidate_bundle@1` contract before it
-  reaches shared staging, review, and atomic confirmation. CSV, OFX, and SimpleFIN remain
-  independently registered sources under the transaction family, which owns their canonical
-  transaction representation, shared VERIFY, and candidate compiler. Are.na and both X sources
-  compile their own media candidates through the same boundary.
+  reaches shared staging, review, and atomic confirmation. OFX and SimpleFIN remain independently
+  registered sources under the transaction family, which owns their canonical transaction
+  representation, shared VERIFY, and candidate compiler. Are.na and X compile their own media
+  candidates through the same boundary.
 - The host and server consume serializable source manifests and dispatch through generic capability
   and implementation/version pins rather than provider-specific branches. Source- and family-owned
-  parsing and VERIFY, provider-specific capture and endpoint behavior, and browser workers remain
-  quarantined with their skills, while generic enforcement remains platform-owned. Persisted
-  execution limits are enforced independently by the browser and server where applicable.
-- X archive import uses an allowlisted, version-pinned browser preprocessor, while X account import
-  uses the generic OAuth 2.0 Authorization Code with PKCE lifecycle. Each normalizes its provider
-  input into the shared X post representation; both then use the shared eligibility, VERIFY,
-  ordering, identity, text, and media compiler. The rNet `tweet` vocabulary and object-form element
-  references (`{ uri, role?, alt? }`) are implemented across the schema, serializers, generated
-  contracts, and host consumers.
+  parsing and VERIFY and provider-specific capture and endpoint behavior remain quarantined with
+  their skills, while generic enforcement remains platform-owned. Persisted execution limits are
+  enforced by the server.
+- X import uses the generic OAuth 2.0 Authorization Code with PKCE lifecycle. The skill captures one
+  provider page into a versioned server-side capture archive, stores it as the OriginArtifact,
+  re-reads it during parsing, and normalizes it into the shared X post representation before the
+  shared eligibility, VERIFY, ordering, identity, text, and media compiler. The rNet `tweet`
+  vocabulary and object-form element references (`{ uri, role?, alt? }`) are implemented across the
+  schema, serializers, generated contracts, and host consumers.
 - Reviewed imports create no MediaObject, MediaElement, object-element link, Vibe membership, or
   pull-configuration entry before confirmation. Cancellation retains owner-only source and origin
   audit records, while confirmation commits the reviewed object-and-element bundle atomically.
@@ -41,6 +41,9 @@ suites.
   reproducible `agent` records, but current execution and object-creation paths make only
   `parser`/reproducible and `authored`/non-reproducible stamps reachable. Add executable `agent` and
   `generated_parser` paths and accept their conformant ingest records.
+- No committed CSV parser ships. “CSV” is a convention rather than a format, so a hand-written CSV
+  skill is a registry of bank dialects that is never complete; file-based bank import is QFX/OFX-only
+  until this path lands, and every CSV dialect reaches the store through it.
 
 ## M7
 
@@ -53,6 +56,16 @@ suites.
 - Add reference-aware garbage collection for unreferenced staged capture/origin and element bytes
   left by failed, canceled, or abandoned previews. Preserve bytes referenced by live
   OriginArtifacts, MediaElements, or retained preview manifests.
+- Generic material is stored inside its first consumer, so the next consumer must either duplicate it
+  or import across a package boundary the quarantine rules otherwise forbid. Two instances exist
+  today. `apps/ingest/skills/x/zip.ts` is a general bounded capture-archive reader — traversal,
+  entry-count, and byte guards — that lives in the X package only because X was the first source to
+  store a zip capture; Pinterest’s planned server-side capture archive would have to import from
+  another provider’s package or copy it. Separately, every skill’s E2E suite imports the host
+  application’s test harness from `apps/host/e2e/support/` for the Playwright fixture, mock store,
+  and shared reviewed-file conformance driver, so no skill package can be exercised without reaching
+  into another app. Move both behind shared, skill-facing modules before alpha: a skill package must
+  import the platform, never another skill package or the host.
 
 ### M7 conditional follow-ups
 
@@ -67,12 +80,8 @@ These become required only when the associated source or product scope expands:
   chip instead of reporting that it is unsupported. Before adding element kinds or media types
   beyond the currently rendered set, replace this with an explicit capability registry and a
   distinct unsupported state.
-- Before substantially increasing X archive limits, add the required resumable upload,
-  complete-archive retention, range-backed access, paginated review, and durable large-job support.
-- Define file refresh and reselection semantics for replacing a compact capture on the same logical
-  source.
-- X MediaObject identity deduplication is currently source-scoped. Define cross-source
-  reconciliation for the same stable X post imported through archive and OAuth.
+- Define file refresh and reselection semantics for replacing the origin bytes bound to an existing
+  file source.
 
 ## M8
 

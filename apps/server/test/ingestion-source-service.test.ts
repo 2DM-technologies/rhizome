@@ -83,10 +83,10 @@ describe("ingestion sources", () => {
     expect(serializeIngestionSource(source())).toEqual({
       source: `source:${sourceUuid}`,
       kind: "origin",
-      skill_id: "csv",
+      skill_id: "ofx",
       connector_version: "origin-upload@1.0.0",
-      parser: "csv",
-      parser_version: "csv@1.1.0",
+      parser: "ofx",
+      parser_version: "ofx@1.1.0",
       limits: sourceExecutionLimits,
       origin: `rnet://origin/${originUuid}`,
       created_at: "2026-08-29T12:00:00.000Z",
@@ -249,7 +249,7 @@ describe("ingestion sources", () => {
     const problem = await capturedProblem(
       service.create({
         origin: `rnet://origin/${originUuid}`,
-        skill_id: "csv",
+        skill_id: "ofx",
       }),
     );
     expect(problem).toMatchObject({ status: 403, code: "grant_missing" });
@@ -294,7 +294,7 @@ describe("ingestion sources", () => {
     const problem = await capturedProblem(
       service.create({
         origin: `rnet://origin/${originUuid}`,
-        skill_id: "csv",
+        skill_id: "ofx",
       }),
     );
     expect(problem).toMatchObject({
@@ -340,7 +340,7 @@ describe("ingestion sources", () => {
     );
 
     const problem = await capturedProblem(
-      service.create({ origin: `rnet://origin/${originUuid}`, skill_id: "csv" }),
+      service.create({ origin: `rnet://origin/${originUuid}`, skill_id: "ofx" }),
     );
     expect(problem).toMatchObject({ status: 422, code: "payload_too_large" });
     expect(inserted).toBe(false);
@@ -498,9 +498,9 @@ function origin(overrides: Partial<DbOriginArtifact> = {}): DbOriginArtifact {
     uuid: originUuid,
     ownerUuid,
     contentHash: `sha256:${"a".repeat(64)}`,
-    mime: "text/csv",
+    mime: "application/x-ofx",
     byteSize: 128,
-    label: "transactions.csv",
+    label: "transactions.qfx",
     rnetSchema: "0.1",
     uploadedAt: new Date("2026-08-29T11:00:00.000Z"),
     tombstonedAt: null,
@@ -513,10 +513,10 @@ function source(overrides: Partial<DbIngestionSource> = {}): DbIngestionSource {
     uuid: sourceUuid,
     ownerUuid,
     kind: "origin",
-    skillId: "csv",
+    skillId: "ofx",
     connectorVersion: "origin-upload@1.0.0",
-    parser: "csv",
-    parserVersion: "csv@1.1.0",
+    parser: "ofx",
+    parserVersion: "ofx@1.1.0",
     executionLimits: sourceExecutionLimits,
     originUuid,
     credentialUuid: null,

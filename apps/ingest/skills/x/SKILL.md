@@ -1,12 +1,11 @@
 # X import source family
 
-This package owns two independently registered source definitions that will share one normalized
-post compiler:
+This package owns one registered source definition:
 
-- `x_archive`, a selectively preprocessed file source.
 - `x_oauth`, a credentialed remote source using the generic OAuth 2.0 PKCE capability.
 
-The shared core classifies authored posts, filters replies and reposts, requires authored quote
+The normalized post compiler stays at the package root rather than inside `oauth/`, so a second X
+source could be added without moving it. The shared core classifies authored posts, filters replies and reposts, requires authored quote
 commentary, orders newest-first, applies manifest limits, constructs ordered media elements, and
 emits `candidate_bundle@1` with source VERIFY evidence.
 

@@ -118,11 +118,6 @@ describe("OpenAPI", () => {
     expect(await response.json()).toEqual({
       skills: expect.arrayContaining([
         expect.objectContaining({
-          skill_id: "csv",
-          source_kind: "file",
-          parser: { name: "csv", version: "csv@1.1.0" },
-        }),
-        expect.objectContaining({
           skill_id: "ofx",
           source_kind: "file",
           parser: { name: "ofx", version: "ofx@1.1.0" },

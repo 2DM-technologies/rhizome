@@ -7,7 +7,6 @@ import {
 import type { SelectedXPosts } from "./contracts.ts";
 import { compileXPostCandidates } from "./tweet-candidates.ts";
 
-export const X_ARCHIVE_SKILL_ID = "x_archive" as const;
 export const X_OAUTH_SKILL_ID = "x_oauth" as const;
 
 export const X_ARCHIVE_CONNECTOR_VERSION = "x-archive-selection@1" as const;

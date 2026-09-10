@@ -95,22 +95,14 @@ describe("candidate_bundle@1 compiled-source contract", () => {
     });
   });
 
-  test("registers CSV, OFX, and SimpleFIN independently with their parser pins", () => {
+  test("registers OFX and SimpleFIN independently with their parser pins", () => {
     expect(
-      installedFileSourceSkills
-        .all()
-        .slice(0, 2)
-        .map(({ manifest, compiledSource }) => ({
-          skillId: manifest.skill_id,
-          parser: manifest.parser,
-          capability: compiledSource.kind,
-        })),
+      installedFileSourceSkills.all().map(({ manifest, compiledSource }) => ({
+        skillId: manifest.skill_id,
+        parser: manifest.parser,
+        capability: compiledSource.kind,
+      })),
     ).toEqual([
-      {
-        skillId: "csv",
-        parser: { name: "csv", version: "csv@1.1.0" },
-        capability: "candidate_bundle@1",
-      },
       {
         skillId: "ofx",
         parser: { name: "ofx", version: "ofx@1.1.0" },

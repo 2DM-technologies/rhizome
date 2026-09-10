@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BlobWriter, TextReader, Uint8ArrayReader, ZipWriter } from "@zip.js/zip.js";
 
-import { normalizeRawArchiveTweet } from "../archive/contracts.ts";
 import { sha256 } from "../contracts.ts";
 import { X_SOURCE_LIMITS } from "../definition.ts";
 import { normalizeXTextSpan } from "../entities.ts";
@@ -410,7 +409,7 @@ describe("X OAuth parser", () => {
     ).toThrow("no unambiguous exact-text span");
   });
 
-  test("compiles an equivalent provider and archive record to identical candidates", async () => {
+  test("normalizes provider entities into exact-text spans", async () => {
     const mention = "@Friend";
     const hashtag = "#Topic";
     const cashtag = "$CASH";
@@ -422,10 +421,6 @@ describe("X OAuth parser", () => {
       start: [...text.slice(0, text.indexOf(token))].length,
       end: [...text.slice(0, text.indexOf(token) + token.length)].length,
     });
-    const archiveSpan = (token: string) => [
-      text.indexOf(token),
-      text.indexOf(token) + token.length,
-    ];
     const provider = normalizeXOAuthTimeline({
       account,
       timeline: page([
@@ -451,46 +446,7 @@ describe("X OAuth parser", () => {
       limits: X_SOURCE_LIMITS,
       retrievedAt,
     }).selection;
-    const archivePost = normalizeRawArchiveTweet(
-      {
-        tweet: {
-          id_str: "100",
-          full_text: text,
-          created_at: "Thu Aug 20 10:00:00 +0000 2026",
-          conversation_id_str: "100",
-          quoted_status_id_str: "70",
-          lang: "en",
-          possibly_sensitive: false,
-          edit_info: { initial: { editTweetIds: ["100"] } },
-          entities: {
-            user_mentions: [{ screen_name: "Friend", indices: archiveSpan(mention) }],
-            hashtags: [{ text: "Topic", indices: archiveSpan(hashtag) }],
-            symbols: [{ text: "CASH", indices: archiveSpan(cashtag) }],
-            urls: [
-              {
-                url: quoteUrl,
-                expanded_url: expandedQuoteUrl,
-                indices: [quoteStart, quoteStart + quoteUrl.length],
-              },
-            ],
-          },
-        },
-      },
-      account,
-    ).post;
-    const archive = selectXPosts({
-      account,
-      posts: [archivePost],
-      cap: X_SOURCE_LIMITS.maxCandidates,
-      retrievedAt,
-    });
-
-    const [providerBundle, archiveBundle] = await Promise.all([
-      compileXPostCandidates(provider, X_SOURCE_LIMITS),
-      compileXPostCandidates(archive, X_SOURCE_LIMITS),
-    ]);
-    expect(providerBundle.candidates).toEqual(archiveBundle.candidates);
-    expect(providerBundle.destination).toEqual(archiveBundle.destination);
+    const providerBundle = await compileXPostCandidates(provider, X_SOURCE_LIMITS);
     expect(providerBundle.candidates[0]!.sourceProperties.entities).toEqual({
       urls: [
         {

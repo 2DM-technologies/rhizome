@@ -1,6 +1,5 @@
 import {
   SOURCE_CREDENTIAL_CLAIM_POLICIES,
-  FILE_CAPTURE_PREPROCESSOR_CAPABILITY,
   SOURCE_SKILL_INPUT_CONTROLS,
   SOURCE_SKILL_INPUT_TARGETS,
   SOURCE_SKILL_KINDS,
@@ -51,7 +50,6 @@ export function assertSourceSkillManifest(value: unknown): asserts value is Sour
     "connector_version",
     "parser",
     "limits",
-    "file_capture",
     "connection",
     "input_fields",
     "review_actions",
@@ -83,7 +81,6 @@ export function assertSourceSkillManifest(value: unknown): asserts value is Sour
     );
   }
   assertExecutionLimits(value);
-  assertFileCapturePreprocessor(value);
   if (!Array.isArray(value.input_fields)) {
     throw new Error(`Source-skill ${value.skill_id} input_fields must be an array`);
   }
@@ -109,23 +106,6 @@ function assertExecutionLimits(manifest: Record<string, unknown>): void {
     if (!boundedInteger(value, 1, 2_147_483_647)) {
       throw new Error(`Source-skill ${manifest.skill_id} has invalid execution limits`);
     }
-  }
-}
-
-function assertFileCapturePreprocessor(manifest: Record<string, unknown>): void {
-  if (manifest.file_capture === undefined) return;
-  const capability = manifest.file_capture;
-  const skillIdPattern = new RegExp(SOURCE_SKILL_ID_PATTERN);
-  if (
-    manifest.source_kind !== "file" ||
-    !isRecord(capability) ||
-    !onlyKeys(capability, ["kind", "implementation", "version"]) ||
-    capability.kind !== FILE_CAPTURE_PREPROCESSOR_CAPABILITY ||
-    typeof capability.implementation !== "string" ||
-    !skillIdPattern.test(capability.implementation) ||
-    !boundedString(capability.version, 1, 256)
-  ) {
-    throw new Error(`Source-skill ${manifest.skill_id} has an invalid file capture preprocessor`);
   }
 }
 

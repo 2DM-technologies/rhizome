@@ -21,6 +21,7 @@ import {
   type CredentialedSourceSkill,
   type OAuth2PkceCredentialResult,
 } from "../../ingest/connected-sources/types.ts";
+import { FileSourceCatalog, type FileSourceSkill } from "../../ingest/file-sources/types.ts";
 import {
   PublicRemoteSourceCatalog,
   type PublicRemoteSourceSkill,
@@ -35,6 +36,7 @@ import {
   SIMPLEFIN_SKILL_ID,
 } from "../../ingest/skills/transactions/simplefin/contracts.ts";
 import { createSimpleFinSkill } from "../../ingest/skills/transactions/simplefin/source.ts";
+import { ofxSourceSkill } from "../../ingest/skills/transactions/ofx/source.ts";
 import { createApp } from "../src/app.ts";
 import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../src/auth.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
@@ -106,6 +108,7 @@ let syntheticOAuthRetrieve: (
   signal: AbortSignal,
 ) => Promise<Uint8Array> = async () => syntheticOAuthCaptureBytes.slice();
 let syntheticOAuthRevoke: (secret: string, signal: AbortSignal) => Promise<void> = async () => {};
+const syntheticFileSourceSkill = createSyntheticFileSourceSkill();
 const syntheticOAuthSourceSkill = createSyntheticOAuthSourceSkill();
 const syntheticPublicSourceSkill = createSyntheticPublicSourceSkill();
 
@@ -181,6 +184,7 @@ beforeAll(async () => {
     publicRemoteSources: new PublicRemoteSourceCatalog({
       current: [syntheticPublicSourceSkill],
     }),
+    fileSources: new FileSourceCatalog([syntheticFileSourceSkill, ofxSourceSkill]),
   });
   app = created.app;
   await seedDb(db);
@@ -1741,7 +1745,7 @@ describe("rNet M1 store", () => {
     expect(new Uint8Array(await originBytes.arrayBuffer())).toEqual(windows1252Origin);
   });
 
-  test("stages, verifies, and atomically confirms supported CSV and QFX imports", async () => {
+  test("stages, verifies, and atomically confirms generic file and QFX imports", async () => {
     const vibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -1754,13 +1758,10 @@ describe("rNet M1 store", () => {
     const importVibe = await vibeResponse.json();
     const importVibeId = importVibe.uri.split("/").at(-1);
 
-    const csvBytes = await Bun.file(
-      new URL("../../ingest/skills/transactions/csv/fixtures/rhizome-bank.csv", import.meta.url),
-    ).text();
     const csvOriginResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
       method: "POST",
-      headers: { ...owner, "Content-Type": "text/csv", "X-Rnet-Label": "rhizome-bank.csv" },
-      body: csvBytes,
+      headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Label": "records.synthetic" },
+      body: SYNTHETIC_FILE_CAPTURE,
     });
     expect(csvOriginResponse.status).toBe(201);
     const csvOrigin = await csvOriginResponse.json();
@@ -1770,7 +1771,7 @@ describe("rNet M1 store", () => {
         await request("/rnet/v0/ingestion-sources", {
           method: "POST",
           headers: otherOwner,
-          json: { origin: csvOrigin.uri, skill_id: "csv" },
+          json: { origin: csvOrigin.uri, skill_id: "synthetic-file" },
         })
       ).status,
     ).toBe(404);
@@ -1779,7 +1780,7 @@ describe("rNet M1 store", () => {
         await request("/rnet/v0/ingestion-sources", {
           method: "POST",
           headers: dmachine,
-          json: { origin: csvOrigin.uri, skill_id: "csv" },
+          json: { origin: csvOrigin.uri, skill_id: "synthetic-file" },
         })
       ).status,
     ).toBe(403);
@@ -1787,15 +1788,15 @@ describe("rNet M1 store", () => {
     const csvSourceResponse = await request("/rnet/v0/ingestion-sources", {
       method: "POST",
       headers: owner,
-      json: { origin: csvOrigin.uri, skill_id: "csv" },
+      json: { origin: csvOrigin.uri, skill_id: "synthetic-file" },
     });
     expect(csvSourceResponse.status).toBe(201);
     const csvSource = await csvSourceResponse.json();
     expect(csvSource).toMatchObject({
       kind: "origin",
-      skill_id: "csv",
-      parser: "csv",
-      parser_version: "csv@1.1.0",
+      skill_id: "synthetic-file",
+      parser: "synthetic-file",
+      parser_version: "synthetic-file@1.0.0",
       origin: csvOrigin.uri,
     });
 
@@ -1809,18 +1810,13 @@ describe("rNet M1 store", () => {
     const csvPreview = await waitForOperation(await csvPreviewResponse.json(), owner);
     expect(csvPreview.status).toBe("done");
     expect(csvPreview.result).toMatchObject({
-      verify: {
-        ok: true,
-        source_record_count: 3,
-        candidate_count: 3,
-        totals_by_currency: { USD: "2410.25" },
-      },
+      verify: { ok: true, source_record_count: 3, candidate_count: 3 },
     });
     expect((csvPreview.result as { candidates: unknown[] }).candidates).toHaveLength(3);
     expect(
       (csvPreview.result as { candidates: Array<{ source: { ingest: { skill?: string } } }> })
         .candidates[0]?.source.ingest.skill,
-    ).toBe("csv@1.1.0");
+    ).toBe("synthetic-file@1.0.0");
     const [afterPreview] = await client.unsafe("select count(*)::int as count from media_objects");
     expect(afterPreview?.count).toBe(beforeCsv?.count);
 
@@ -2210,7 +2206,7 @@ describe("rNet M1 store", () => {
   });
 
   test("reuses a confirmed source within and across Vibes without partial derived state", async () => {
-    const fixture = await createCsvSourceFixture("repeat-review.csv");
+    const fixture = await createSyntheticFileSourceFixture("repeat-review.synthetic");
     const firstVibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -2267,7 +2263,7 @@ describe("rNet M1 store", () => {
   });
 
   test("only reviewed confirmation can introduce a source and cancellation leaves no derived state", async () => {
-    const fixture = await createCsvSourceFixture("cancel-review.csv");
+    const fixture = await createSyntheticFileSourceFixture("cancel-review.synthetic");
     const [beforeObjects] = await client.unsafe("select count(*)::int as count from media_objects");
 
     const createBypass = await request("/rnet/v0/vibes", {
@@ -2350,7 +2346,7 @@ describe("rNet M1 store", () => {
   });
 
   test("wrong-Vibe and tampered reviews fail without consuming or partially committing", async () => {
-    const fixture = await createCsvSourceFixture("tampered-review.csv");
+    const fixture = await createSyntheticFileSourceFixture("tampered-review.synthetic");
     const targetResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -2411,7 +2407,7 @@ describe("rNet M1 store", () => {
   });
 
   test("tombstoning an origin after preview makes the review stale without writes", async () => {
-    const fixture = await createCsvSourceFixture("tombstoned-review.csv");
+    const fixture = await createSyntheticFileSourceFixture("tombstoned-review.synthetic");
     const vibeResponse = await request("/rnet/v0/vibes", {
       method: "POST",
       headers: owner,
@@ -3275,6 +3271,90 @@ function resetSyntheticOAuthRuntime(): void {
   syntheticOAuthRevoke = async () => {};
 }
 
+const SYNTHETIC_FILE_RECORDS = ["alpha", "bravo", "charlie"] as const;
+const SYNTHETIC_FILE_CAPTURE = `${SYNTHETIC_FILE_RECORDS.join("\n")}\n`;
+
+/**
+ * A file source with no format of its own. The generic staging, review, pull, and commit paths are
+ * exercised through this rather than through a shipped skill, so deleting or changing a real skill
+ * cannot silently change what the platform is proven to do.
+ */
+function createSyntheticFileSourceSkill(): FileSourceSkill {
+  const parse = (bytes: Uint8Array): readonly string[] => {
+    const records = new TextDecoder("utf-8", { fatal: true })
+      .decode(bytes)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (records.length === 0) throw new Error("Synthetic file capture has no records");
+    if (new Set(records).size !== records.length) {
+      throw new Error("Synthetic file capture repeats a record");
+    }
+    return records;
+  };
+  const parser = {
+    name: "synthetic-file",
+    version: "synthetic-file@1.0.0",
+    async parse(bytes: Uint8Array) {
+      return parse(bytes);
+    },
+  };
+  return {
+    manifest: {
+      skill_id: "synthetic-file",
+      label: "Synthetic file export",
+      description: "Exercises the generic file ingestion contract in store tests.",
+      source_kind: "file",
+      connector_version: "origin-upload@1.0.0",
+      parser: { name: parser.name, version: parser.version },
+      limits: {
+        maxCandidates: 1_000,
+        maxCaptureBytes: 1_024 * 1_024,
+        maxElementBytes: 256 * 1_024,
+        maxTotalElementBytes: 512 * 1_024,
+      },
+      input_fields: [
+        {
+          name: "file",
+          label: "Synthetic export",
+          target: "source",
+          control: "file",
+          required: true,
+          secret: false,
+        },
+      ],
+      review_actions: ["review_import"],
+    },
+    parser,
+    compiledSource: {
+      kind: CANDIDATE_BUNDLE_CAPABILITY,
+      async compile({ bytes }) {
+        const records = parse(bytes);
+        const candidates = records.map((record, index) => ({
+          type: "synthetic.record",
+          keys: { synthetic_record_id: record },
+          sourceProperties: { record, position: index },
+          retrievedAt: "2026-08-30T12:00:00.000Z",
+          elements: [],
+          semanticIdentity: { type: "synthetic.record", synthetic_record_id: record },
+        }));
+        return candidateBundle(candidates, {
+          ok: true,
+          source_record_count: records.length,
+          candidate_count: candidates.length,
+          checks: [
+            {
+              name: "record_accounting",
+              ok: true,
+              detail: `${candidates.length} of ${records.length} records became candidates`,
+            },
+          ],
+        });
+      },
+    },
+  };
+}
+
 function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
   const capture: SyntheticPublicCapture = {
     version: "synthetic-public-capture@1",
@@ -3511,24 +3591,21 @@ async function waitForOperation(
   return operation;
 }
 
-async function createCsvSourceFixture(label: string): Promise<{
+async function createSyntheticFileSourceFixture(label: string): Promise<{
   origin: { uri: string };
   source: { source: string };
 }> {
-  const bytes = await Bun.file(
-    new URL("../../ingest/skills/transactions/csv/fixtures/rhizome-bank.csv", import.meta.url),
-  ).text();
   const originResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
     method: "POST",
-    headers: { ...owner, "Content-Type": "text/csv", "X-Rnet-Label": label },
-    body: bytes,
+    headers: { ...owner, "Content-Type": "text/plain", "X-Rnet-Label": label },
+    body: SYNTHETIC_FILE_CAPTURE,
   });
   expect(originResponse.status).toBe(201);
   const origin = (await originResponse.json()) as { uri: string };
   const sourceResponse = await request("/rnet/v0/ingestion-sources", {
     method: "POST",
     headers: owner,
-    json: { origin: origin.uri, skill_id: "csv" },
+    json: { origin: origin.uri, skill_id: "synthetic-file" },
   });
   expect(sourceResponse.status).toBe(201);
   return {

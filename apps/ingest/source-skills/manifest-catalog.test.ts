@@ -73,19 +73,6 @@ describe("SourceSkillManifestCatalog", () => {
           { ...manifest, limits: { ...manifest.limits, maxCandidates: 0 } },
         ]),
     ).toThrow("invalid execution limits");
-    expect(
-      () =>
-        new SourceSkillManifestCatalog([
-          {
-            ...manifest,
-            file_capture: {
-              kind: "file_capture_preprocessor@1",
-              implementation: "synthetic",
-              version: "test",
-            },
-          },
-        ]),
-    ).toThrow("invalid file capture preprocessor");
   });
 
   test("rejects source-kind forms that the generic host cannot serialize", () => {

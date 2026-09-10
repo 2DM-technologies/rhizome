@@ -269,7 +269,7 @@ Authorize with a `code_challenge`, then exchange with a deliberately **wrong** v
 - Original provenance is preserved as source facts on every pin.
 - Expired or revoked credentials surface through the existing generic envelope.
 - The host and server contain no Pinterest-specific branches, enforced by the shared quarantine harness for both X and Pinterest.
-- X, Are.na, CSV, OFX, and SimpleFIN behavior is unchanged.
+- X, Are.na, OFX, and SimpleFIN behavior is unchanged.
 - Mocked Pinterest capture runs in CI without live provider access.
 
 ## 18. Deferred
