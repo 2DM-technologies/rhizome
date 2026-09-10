@@ -31,6 +31,8 @@ import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
+import { InferredVibeView, inferredVibeView } from "./InferredVibeView.tsx";
+import { PushControl } from "./PushControl.tsx";
 
 const OBJECT_URI = new RegExp(rnetUriPattern("object"));
 const MEDIA_ELEMENT_PATH = "/rnet/v0/elements/{id}";
@@ -463,12 +465,27 @@ export function VibeSurface({ uuid }: { uuid: string }) {
         </div>
       ) : null}
 
+      {vibe.data && objects.data ? (
+        <InferredVibeView
+          objects={objects.data}
+          vibe={vibe.data}
+          openObject={(object) => open({ kind: "object", uuid: uuidOf(object.uri) })}
+          removePending={remove.isPending}
+          removeObject={
+            isOwner
+              ? (object) =>
+                  remove.mutate({ params: { path: { id: uuid } }, body: { objects: [object.uri] } })
+              : undefined
+          }
+        />
+      ) : null}
+
       {objects.isPending ? <Pending label="objects" /> : null}
       {objects.isError ? <Failed error={objects.error} /> : null}
       {objects.data?.length === 0 ? (
         <span className="text-body text-tertiary">This Vibe has no objects yet.</span>
       ) : null}
-      {objects.data?.length ? (
+      {objects.data?.length && (!vibe.data || !inferredVibeView(vibe.data)) ? (
         <section aria-labelledby="media-objects-heading" className="mb-8 flex flex-col gap-4">
           <div className="flex items-baseline justify-between gap-4">
             <h2 id="media-objects-heading" className="text-label text-primary">
@@ -496,6 +513,9 @@ export function VibeSurface({ uuid }: { uuid: string }) {
             ))}
           </ul>
         </section>
+      ) : null}
+      {vibe.data && objects.data && isOwner ? (
+        <PushControl objects={objects.data} vibeUuid={uuid} />
       ) : null}
     </StoreSurface>
   );

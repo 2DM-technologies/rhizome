@@ -7,6 +7,14 @@ function objectWithProperties(properties: Record<string, unknown>, type = "note"
 }
 
 describe("media object display names", () => {
+  test("prefers the generated display name", () => {
+    expect(
+      mediaObjectDisplayName({
+        ...objectWithProperties({ title: "Source title" }),
+        inferred: { "rhizome:display_name": { properties: { display_name: "Inferred title" } } },
+      }),
+    ).toBe("Inferred title");
+  });
   test("uses the established source property precedence", () => {
     const properties = {
       title: "Title",

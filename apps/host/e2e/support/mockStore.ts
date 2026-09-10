@@ -10,7 +10,10 @@ import type {
   SourceCredentialDocument,
   SourceSkillManifest,
   StartSourceConnectionRequest,
+  PushVibeRequest,
 } from "@rhizome/store-contract";
+import { storeTaskKey } from "@rhizome/store-contract";
+import { PUSH_TASKS } from "../../src/api/generated/push-tasks.ts";
 
 export const OWNER_ID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 export const VIBE_ID = "0198f2a1-a09b-76aa-95d8-fc5b55b41fd2";
@@ -83,6 +86,90 @@ interface MockImportOperation {
   verify: MockImportVerification;
   destination?: { title: string };
   pendingVibe?: boolean;
+}
+
+interface MockPushOperation {
+  document: OperationDocument;
+  input: PushVibeRequest;
+  polls: number;
+  applied: boolean;
+  vibeId: string;
+}
+
+function applyPush(operation: MockPushOperation, store: MockStore) {
+  if (operation.applied) return;
+  operation.applied = true;
+  const vibe = store.vibes.find((candidate) => candidate.uri.endsWith(`/${operation.vibeId}`));
+  if (!vibe) return;
+  const key = storeTaskKey(operation.input.task);
+  const envelope = (taskProperties: Record<string, unknown>) => ({
+    model: "mock/rhizome",
+    inferred_at: "2026-08-27T12:04:00.050Z",
+    properties: taskProperties,
+  });
+  const shared = {
+    task: operation.input.task,
+    model: "mock/rhizome",
+    llm_calls: 1,
+    context: { truncated_objects: 0, truncated_pointers: 0, clipped_objects: 0 },
+    abort_reason: null,
+    usage: {
+      tokens_in: 10,
+      cached_tokens_in: 0,
+      tokens_out: 5,
+      usd: "0.000004",
+      served_tiers: ["flex"],
+      tier_assumed: false,
+    },
+  } as const;
+  if (operation.input.level === "vibe") {
+    const taskProperties =
+      operation.input.task === PUSH_TASKS.vibe.summarize.name
+        ? {
+            summary: "A focused collection of monthly planning notes.",
+            tags: ["planning"],
+            confidence: 0.9,
+          }
+        : { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } };
+    vibe.inferred = { ...(vibe.inferred ?? {}), [key]: envelope(taskProperties) };
+    operation.document.result = {
+      ...shared,
+      level: "vibe",
+      vibe: { outcome: "written", key, rev: 1 },
+    };
+    return;
+  }
+  const selected = [...new Set(operation.input.selection ?? vibe.objects)];
+  const written = selected.map((uri) => ({ uri, key, rev: 1 }));
+  for (const uri of selected) {
+    const id = uri.split("/").at(-1) ?? "";
+    const object = store.objects.get(id);
+    if (!object) continue;
+    const taskProperties =
+      operation.input.task === PUSH_TASKS.object.display_name.name
+        ? { display_name: "Enriched monthly plan" }
+        : { keywords: ["monthly", "planning"] };
+    store.objects.set(id, {
+      ...object,
+      inferred: { ...(object.inferred ?? {}), [key]: envelope(taskProperties) },
+    });
+  }
+  operation.document.result = {
+    ...shared,
+    level: "object",
+    objects: {
+      selected: selected.length,
+      sent: selected.length,
+      written: written.length,
+      removed: 0,
+      preserved_durable: 0,
+      skipped: 0,
+      failed: 0,
+    },
+    written,
+    preserved: [],
+    skipped: [],
+  };
 }
 
 export interface MockImportVerification {
@@ -380,6 +467,8 @@ export async function installMockStore(
   let pendingIngestionSourceCreation: Promise<void> | null = null;
   let pendingUserWrite: Promise<void> | null = null;
   let pullOperation: Record<string, unknown> | undefined;
+  let pushSequence = 0;
+  const pushOperations = new Map<string, MockPushOperation>();
   let nextSourceAction: MockSourceActionRequest | undefined;
   let pendingPullFailureResult: Record<string, unknown> | undefined;
   let pendingPullFailureError: string | undefined;
@@ -555,6 +644,12 @@ export async function installMockStore(
     if (method === "GET" && path === "/rnet/v0/source-skills") {
       return json(route, {
         skills: installedSourceSkillAdapters.map((adapter) => adapter.manifest),
+      });
+    }
+
+    if (method === "GET" && path === "/rnet/v0/push-tasks") {
+      return json(route, {
+        tasks: [...Object.values(PUSH_TASKS.vibe), ...Object.values(PUSH_TASKS.object)],
       });
     }
 
@@ -1068,6 +1163,18 @@ export async function installMockStore(
 
     const operationDocument = path.match(/^\/rnet\/v0\/operations\/([^/]+)$/);
     if (method === "GET" && operationDocument) {
+      const pushOperation = pushOperations.get(operationDocument[1] ?? "");
+      if (pushOperation) {
+        pushOperation.polls += 1;
+        if (pushOperation.polls === 1) pushOperation.document.status = "running";
+        else {
+          applyPush(pushOperation, store);
+          pushOperation.document.status = "done";
+          pushOperation.document.finished_at = "2026-08-27T12:04:00.100Z";
+          pushOperation.document.committed_at = "2026-08-27T12:04:00.100Z";
+        }
+        return json(route, pushOperation.document);
+      }
       const staged = importOperations.get(operationDocument[1] ?? "");
       if (staged) {
         staged.polls += 1;
@@ -1152,6 +1259,36 @@ export async function installMockStore(
         );
         return noContent(route);
       }
+    }
+
+    const pushVibe = path.match(/^\/rnet\/v0\/vibes\/([^/]+)\/push$/);
+    if (method === "POST" && pushVibe) {
+      const input = request.postDataJSON() as PushVibeRequest;
+      const installed = [
+        ...Object.values(PUSH_TASKS.vibe),
+        ...Object.values(PUSH_TASKS.object),
+      ].some((task) => task.level === input.level && task.name === input.task);
+      if (!installed)
+        return problem(route, 422, "schema_violation", "The push task is not installed");
+      pushSequence += 1;
+      const operationId = `0198f2a1-e4cf-7add-99bc-${String(pushSequence).padStart(12, "0")}`;
+      const pushOperation: MockPushOperation = {
+        input,
+        polls: 0,
+        applied: false,
+        vibeId: pushVibe[1] ?? "",
+        document: {
+          operation_id: operationId,
+          kind: "push",
+          status: "queued",
+          request: { mode: "push", vibe: `rnet://vibe/${pushVibe[1]}`, ...input },
+          result: null,
+          error: null,
+          created_at: "2026-08-27T12:04:00.000Z",
+        },
+      };
+      pushOperations.set(operationId, pushOperation);
+      return json(route, pushOperation.document, 202);
     }
 
     const elementBytes = path.match(/^\/rnet\/v0\/elements\/([^/]+)\/bytes$/);
