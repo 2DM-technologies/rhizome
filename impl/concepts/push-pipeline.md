@@ -199,7 +199,7 @@ Plan §3 also names `stream`; it is added in M5 with its first consumer (the har
 ### 4.3 OpenAI connector
 
 - `POST {baseUrl}/v1/responses` with `service_tier: "flex"`, `store: false`, `instructions` = PROMPT.md, `input` = one user turn of assembled context, `text.format = { type: "json_schema", name, strict: true, schema }`, `reasoning.effort`, `max_output_tokens`, `metadata.rhizome_operation`.
-- Retries: ≤ 4 attempts on network errors, 408, 409, 429 (flex capacity shortfall is a 429 and is uncharged), 5xx; exponential backoff honoring `Retry-After`. **Never** escalates to `service_tier: "default"`: that silently doubles the rate the plan budgeted. Per-call timeout 10 min (the flex guide recommends 15; the operation wall ceiling bounds the run).
+- Retries: ≤ 4 attempts on network errors, 408, 409, 429 (flex capacity shortfall is a 429 and is uncharged), 5xx; exponential backoff honoring `Retry-After`. `timeoutMs` (10 min; the flex guide recommends 15, and the operation wall ceiling bounds the run) is one deadline for the whole `complete` call, attempts and backoff included: a backoff sleep is capped by the remaining deadline and interrupted by the operation's signal, so a `Retry-After` past the deadline ends retrying with the last failure's kind. **Never** escalates to `service_tier: "default"`: that silently doubles the rate the plan budgeted.
 - Mapping: every response or failure becomes exactly one result or error kind, per the table below; a row that reached a billed response carries its usage. There is no other exit, and a unit case covers every row.
 - Usage: `input_tokens`, `input_tokens_details.cached_tokens`, `cache_write_tokens`, `output_tokens`, `output_tokens_details.reasoning_tokens`, the echoed `service_tier`, `x-request-id`.
 - Tier: the echoed `service_tier` can differ from the requested one (verified), so usage is priced against it after normalization: `flex` → `flex`, `default` → `standard`; a missing echo is priced at the requested tier with `tierAssumed: true`; any other value is priced at `standard`, the higher known rate, with the raw string kept in `servedTierRaw` and `tierAssumed: true`. `ledger.record` persists tokens before it prices, and `reportCost` throws only on an unknown model, which boot prevents (§4.6).
@@ -222,8 +222,9 @@ Plan §3 also names `stream`; it is added in M5 with its first consumer (the har
 | `incomplete` for `content_filter`                                                                          | `output_refused`, with usage                                 |
 | `incomplete` for any other reason                                                                          | `output_invalid`, with usage                                 |
 | `failed`                                                                                                   | `provider_unavailable`, with usage when the body carries it  |
+| any other HTTP status, a final 3xx included                                                                | `provider_unavailable`                                       |
 | `queued`, `in_progress`, or `cancelled` (M3 never sets `background`, so these are fail-closed, not polled) | `provider_unavailable`, with usage when the body carries it  |
-| the connector's own `timeoutMs` elapses                                                                    | `timeout`                                                    |
+| the connector's deadline (`timeoutMs`, across attempts and backoff) elapses                                | `timeout`                                                    |
 | the operation's `AbortSignal` fires (the wall ceiling)                                                     | `aborted`                                                    |
 
 ### 4.4 Fake connector
@@ -269,7 +270,7 @@ export function createModelConnectorRegistry(
 ): ModelConnectorRegistry | undefined; // undefined when no provider is configured: push answers 503 push_unavailable
 ```
 
-`createModelConnectorRegistry` is the one place that maps provider settings to a connector: `openai` → `OpenAIConnector`, or `FakeModelConnector` when `useFake` is set (refused in production). It asserts at boot that the connector serves the configured default target, so a misconfiguration fails startup rather than the first push. Every push runs on `registry.target`; there is no per-request or per-task model choice in M3, so the model a run used is recorded (`meter_entry.model`, `inferred.model`, `result.model`) rather than requested.
+`createModelConnectorRegistry` is the one place that maps provider settings to a connector: `openai` → `OpenAIConnector`, or `FakeModelConnector` when `useFake` is set (refused in production). It asserts at boot that the connector serves the configured default target, so a misconfiguration fails startup rather than the first push. Every push runs on `registry.target`; there is no per-request or per-task model choice in M3. `meter_entry.model` is the configured identity the run prices against; `result.model` and `inferred.model` name the producer (§8.1).
 
 `AppDependencies` gains `modelConnectors?`, `pushTasks?`, and `pushLimits?`, each resolved to its default when not injected, the same way the ingestion catalogs are; tests inject the fake through `modelConnectors`.
 
@@ -406,13 +407,77 @@ export const RECORD_POINTER_PATTERN = "^(/[^/~]*(~[01][^/~]*)*)+$"; // RFC 6901,
 export const recordPointerSchema = { type: "string", pattern: RECORD_POINTER_PATTERN };
 export function resolvePointer(document: MediaObject, pointer: string): unknown; // undefined when absent
 
-export const pushOperationResultSchema = {
-  /* task, model, objects{selected, sent, written, removed, preserved_durable, skipped, failed},
-     written[{uri, key, rev}], preserved[uri], skipped[{uri, reason: the closed enum of §6.5, code?, removed?}],
-     vibe, elements, llm_calls, usage? (absent for non-owners, §6.5), context, abort_reason;
-     additionalProperties false throughout */
+// The push result is a discriminated union on `level`. Every object is additionalProperties: false
+// and every field below is required unless marked optional; pushOperationResultSchema is the JSON
+// Schema form of these types and is what the finalizer validates against before it commits (§6.4).
+type Usage = {
+  tokens_in: number;
+  cached_tokens_in: number;
+  tokens_out: number; // integers ≥ 0
+  usd: string; // 6-dp decimal
+  served_tiers: string[]; // sorted, unique
+  tier_assumed: boolean;
+}; // a zero-call run reports zeros, "0.000000", [], false
+type Tally = {
+  selected: number;
+  sent: number;
+  written: number;
+  removed: number;
+  preserved_durable: number;
+  skipped: number;
+  failed: number;
 };
-export type PushOperationResult = FromSchema<typeof pushOperationResultSchema>;
+// selected = sent + preserved_durable; sent = written + removed + skipped + failed; pre-dispatch skips count as sent
+type Skip = {
+  uri: string;
+  reason: SkipReason;
+  code?: ModelConnectorErrorKind /* call_failed only */;
+  removed?: true; /* not_applicable only */
+};
+type Shared = {
+  task: string;
+  model: string | null; // the producer (§8.1): the provider identity, the rule identifier, or null when nothing executed
+  llm_calls: number;
+  usage?: Usage; // absent for non-owners (§6.5)
+  context: { truncated_objects: number; truncated_pointers: number; clipped_objects: number };
+  abort_reason: "max_turns" | "max_tokens" | "max_wall" | null;
+};
+export type PushOperationResult =
+  | (Shared & {
+      level: "object";
+      objects: Tally;
+      written: Array<{ uri: string; key: StoreTaskKey; rev: number }>;
+      preserved: string[];
+      skipped: Skip[];
+    })
+  | (Shared & {
+      level: "element";
+      objects: { selected: number; no_input: string[] };
+      elements: Tally;
+      written: Array<{ uri: string; key: StoreTaskKey; rev: number; parents: string[] }>;
+      preserved: Array<{ uri: string; parents: string[] }>;
+      skipped: Array<Skip & { parents: string[] }>;
+    })
+  | (Shared & {
+      level: "vibe";
+      vibe:
+        | { outcome: "written"; key: StoreTaskKey; rev: number }
+        | { outcome: "preserved_durable"; key: StoreTaskKey };
+    });
+export const SKIP_REASONS = [
+  "not_applicable",
+  "no_input",
+  "unsupported_media",
+  "context_too_large",
+  "invalid_output",
+  "call_failed",
+  "preserved_durable",
+  "aborted",
+] as const;
+export type SkipReason = (typeof SKIP_REASONS)[number];
+export const pushOperationResultSchema = {
+  /* anyOf over the three branches above, discriminated by level */
+};
 // Narrows a generic operation document by request.mode === "push"; the host and the black-box
 // suite use it instead of reading result fields off `object | null`.
 export function isPushOperation(
@@ -492,7 +557,7 @@ What each connector error does to the run, after its usage has been recorded:
 
 A billed `failed` response is therefore metered like a refusal: the connector maps it to `provider_unavailable` with usage (§4.3), the boundary records it, and the chunk is `call_failed`. The pipeline's own checks after a result (envelope, ref set, per-result re-validation) fail the chunk as `invalid_output`, and nothing from it is written.
 
-**Finalizer.** One function for every exit (normal end, ceiling, thrown error). From the in-memory outcomes it builds the tally and the result, then in one transaction sets `operations{status, result, error, finished_at, committed_at}` `WHERE status = 'running'` (so a second finalize is a no-op) and `meter_entry{duration_ms, abort_reason, breakdown}`. `committed_at` is set when at least one write or removal landed, aborted runs included, so the host refreshes exactly when data changed. A thrown error after some chunks wrote is ordinary: those writes stand and are reported, and every record not yet written is reported `aborted`. A missing row at write time (§7.2) is one such error: no route deletes an object or element, so it is a bug, and the run fails rather than skipping the record.
+**Finalizer.** One function for every exit (normal end, ceiling, thrown error). From the in-memory outcomes it builds the tally and the result and validates that result against `pushOperationResultSchema` (a miss is a bug: the run finalizes `failed` with a generic internal error, a null result, and a closed ledger, and a test asserts the schema accepts every result the suite produces), then in one transaction sets `operations{status, result, error, finished_at, committed_at}` `WHERE status = 'running'` (so a second finalize is a no-op) and `meter_entry{duration_ms, abort_reason, breakdown}`. `committed_at` is set when at least one write or removal landed, aborted runs included, so the host refreshes exactly when data changed. A thrown error after some chunks wrote is ordinary: those writes stand and are reported, and every record not yet written is reported `aborted`. A missing row at write time (§7.2) is one such error: no route deletes an object or element, so it is a bug, and the run fails rather than skipping the record.
 
 **Boot sweep.** `sweepInterruptedOperations(db)` (`services/operation-sweep.ts`) runs once from `index.ts`, after the database is created and before the server is exported, and never inside `createApp`: the OpenAPI generator builds the app with a fake database and the test suites build it repeatedly. In one transaction: `UPDATE operations SET status = 'failed', error = 'interrupted', finished_at = now() WHERE status IN ('queued', 'running')`, and for those operations `UPDATE ingestion_source_fetches SET status = 'rejected', error_code = 'interrupted' WHERE status IN ('fetching', 'fetched', 'verified')`, the transition the import service's own failure paths make and cannot make after a process death. Everything runs in one process, so nothing survives a restart and every such row is a run that died; this covers preview and pull too, which today stay `running` after a restart. Captured origins are untouched. Meter rows are left as they are: the usage recorded before the restart is accurate, `duration_ms` stays null, and no `result.usage` is reconstructed.
 
@@ -503,7 +568,7 @@ A billed `failed` response is therefore metered like a refusal: the connector ma
 | every chunk ran; any mix of written, removed, preserved, skipped, `call_failed`                                             | `done`    | null                                    |
 | nothing left to send after accept-time classification or the pre-dispatch checks (`unsupported_media`, `context_too_large`) | `done`    | null (zero cost)                        |
 | a ceiling stopped scheduling before every chunk ran                                                                         | `aborted` | `max_turns` / `max_tokens` / `max_wall` |
-| `auth`, `invalid_request`, a missing row at write time, or an unexpected exception                                          | `failed`  | null; `error` set                       |
+| `auth`, `invalid_request`, a missing row at write time, an unexpected exception, or a result that fails its own schema      | `failed`  | null; `error` set                       |
 | the process restarted while the run was queued or running (boot sweep)                                                      | `failed`  | null; `error = "interrupted"`           |
 
 ### 6.4a Durable execution readiness
@@ -522,6 +587,7 @@ A completed push's `result`, as returned inside the operation document by `GET /
 
 ```json
 {
+  "level": "object",
   "task": "search_keywords",
   "model": "openai/gpt-5.6-luna",
   "objects": {
@@ -565,8 +631,6 @@ A completed push's `result`, as returned inside the operation document by `GET /
       "code": "output_truncated"
     }
   ],
-  "vibe": null,
-  "elements": null,
   "llm_calls": 1,
   "usage": {
     "tokens_in": 1180,
@@ -581,9 +645,9 @@ A completed push's `result`, as returned inside the operation document by `GET /
 }
 ```
 
-`vibe` and `elements` are the slots for the other two task levels and are `null` when unused, so every result has the same shape. `skipped[]` lists every sent record that was not written, and the tally partitions it: `removed` counts a `null` that deleted an older non-durable entry, `failed` counts `call_failed`, and `skipped` counts everything else, so `written + removed + skipped + failed = sent`. `llm_calls` is the number of completions the run received, the same count as `meter_entry.turns`; a retried request is one completion with `attempts > 1` in `breakdown.calls`, and a rule that answered without the model leaves it `0`. For an element-level task, `elements` carries one entry per element (`written`, `preserved`, `skipped` with the same reasons), each with `parents`, the selected objects it belongs to, and the per-object `no_input` skips sit in `skipped`. `usage.served_tiers` is the sorted set of tiers the run's calls were served at and `usage.tier_assumed` is true when any call's tier was assumed (§4.3); the per-call truth is in `breakdown`. The whole result validates against `pushOperationResultSchema` (§6.1): the integration suite asserts it for every stored push result, and the host narrows a generic operation with `isPushOperation`.
+The result is a union on `level` (§6.1), and this is the object branch. `skipped[]` lists every sent record that was not written, and the tally partitions it: `removed` counts a `null` that deleted an older non-durable entry, `failed` counts `call_failed`, and `skipped` counts everything else, so `written + removed + skipped + failed = sent` and `sent + preserved_durable = selected`. `llm_calls` is the number of completions the run received, the same count as `meter_entry.turns`; a retried request is one completion with `attempts > 1` in `breakdown.calls`, and a rule that answered without the model leaves it `0`. The element branch reports the distinct selected objects and the `no_input` ones under `objects`, and the element tally under `elements` with the same three lists, each entry naming its `parents`. The Vibe branch reports `vibe` alone. `usage.served_tiers` is the sorted set of tiers the run's calls were served at and `usage.tier_assumed` is true when any call's tier was assumed (§4.3); the per-call truth is in `breakdown`. The whole result validates against `pushOperationResultSchema` (§6.1): the integration suite asserts it for every stored push result, and the host narrows a generic operation with `isPushOperation`.
 
-`skipped[].reason` is one of: `not_applicable` (the model returned `null`; `removed: true` when an older non-durable entry was deleted as a result), `no_input` (an element-level task and the object has no element of the task's kinds), `unsupported_media` (MIME not on the allowlist, magic bytes disagree, or over `maxAttachmentBytes`), `context_too_large` (one record exceeds the per-call input ceiling on its own), `invalid_output` (the chunk's envelope, ref set, or a result failed validation; nothing from the chunk is written), `call_failed` (the chunk's provider call failed, with the connector error kind as `code`), `preserved_durable` (a `durable: true` entry landed at the key between accept and the locked write, so the record was sent and nothing was written; `preserved[]` and the `preserved_durable` tally count accept-time preservation only, so the partition still holds), `aborted` (a ceiling or a failure stopped the run before this record was written). The list is closed: it is the `reason` enum in store-contract's push result schema, and a new reason is a contract change. For a Vibe-level task, `vibe` is `{ outcome: "written" | "preserved_durable", key, rev }`.
+`skipped[].reason` is one of: `not_applicable` (the model returned `null`; `removed: true` when an older non-durable entry was deleted as a result), `no_input` (an element-level task and the object has no element of the task's kinds), `unsupported_media` (MIME not on the allowlist, magic bytes disagree, or over `maxAttachmentBytes`), `context_too_large` (one record exceeds the per-call input ceiling on its own), `invalid_output` (the chunk's envelope, ref set, or a result failed validation; nothing from the chunk is written), `call_failed` (the chunk's provider call failed, with the connector error kind as `code`), `preserved_durable` (a `durable: true` entry landed at the key between accept and the locked write, so the record was sent and nothing was written; `preserved[]` and the `preserved_durable` tally count accept-time preservation only, so the partition still holds), `aborted` (a ceiling or a failure stopped the run before this record was written). The list is closed: it is the `reason` enum in store-contract's push result schema, and a new reason is a contract change. For a Vibe-level task, `vibe` is `{ outcome: "written", key, rev }` or `{ outcome: "preserved_durable", key }`; preservation writes no revision, so it carries no `rev`.
 
 **Visibility.** Polling follows the rule every non-pull operation already has: `GET /operations/{id}` requires `read` on the Vibe (owner implicit), so `OperationsService` is unchanged. `serializeOperation` today redacts only pull results and returns every other result whole, so it gains a push branch: `request.resolved` is omitted for every viewer (§6.3), and `result.usage` is omitted unless the viewer is the owner, keyed on the existing `exposeOwnerOnlyResult` flag. Nothing else is redacted, because anyone who can poll can already read the records the result names. A grant that carries `push` without `read` can start a run but not poll it, so a dMachine that pushes should hold `read` as well.
 
@@ -662,6 +726,14 @@ Pushes with the same `(vibe, level, task)` are refused at accept (409) while one
 
 The store pays for everything in the alpha. Every `meter_entry` row is written with `payer = 'rhizome'`, the spelling plan §3 reserves for the store's own account, and nothing reads a dMachine manifest's `metering` block or enforces `budget_usd_per_user_month`. Attribution is unaffected: `operations.invoked_by` still records who triggered every run, and `operations.owner_uuid` records whose Vibe it ran on, so "what does this dMachine cost across users" is one query grouped by `invoked_by` and "what did this user's Vibes cost this month" is one grouped by `owner_uuid` (§8.4). The developer-pays and user-pays policies are set aside in `impl/speculative/metering-payers.md`; the column is already there for them, and M3 rows are disposable alpha data that never need re-attributing. No seed change.
 
+**Producer.** Three fields name a model and they mean two things: `meter_entry.model` is what the row prices against and is set at accept; `result.model` and `inferred.model` are the producer of what was written.
+
+| Run                                                                            | `meter_entry.model`     | `result.model`                                    | `inferred.model`        |
+| ------------------------------------------------------------------------------ | ----------------------- | ------------------------------------------------- | ----------------------- |
+| at least one completion                                                        | the configured identity | the configured identity                           | the configured identity |
+| rule-decided, no call (`vibe_view` rules)                                      | the configured identity | the rule identifier (`rhizome/vibe_view-rules@1`) | the rule identifier     |
+| nothing executed (all durable, no input, every record skipped before dispatch) | the configured identity | null                                              | no entry written        |
+
 ### 8.2 Ledger (`metering/meter-ledger.ts`)
 
 `open` inserts the row with zeros in the accept transaction; `record` runs after **every** provider response that carried usage (a result, or any `ModelConnectorError` with `usage` set, which the catch boundary in §6.4 guarantees for every kind): it appends the call to `breakdown.calls`, adds tokens and `usd` (BigInt nano-USD rendered as a 6-dp string), increments `turns`, and writes the row, so the ledger is persisted per call and is never behind a write; `close` runs in the finalizer's transaction with `duration_ms` and `abort_reason`. A failure after chunk 2 of 5 leaves chunks 1–2 written and recorded and chunk 3's usage recorded if a response reached us. A call in flight when the process dies is not recorded, and a run the boot sweep fails is never closed: its row keeps the usage recorded so far with `duration_ms` null (§6.4).
@@ -694,14 +766,14 @@ Storage note: `inferred` stays a JSONB column in M3.
 
 ## 10. Host
 
-Minimal and generic, in this PR (decision D5). The OpenAPI generator (`scripts/generate-host-openapi.ts`) also imports the server's task catalog and writes `apps/host/src/api/generated/push-tasks.ts`: `PUSH_TASKS`, keyed by level then name, each entry the manifest exactly as `GET /push-tasks` serves it (`level`, `name`, `label`, `description`, `output_schema`), so the file is a keyed copy of the discovery response and a unit test checks it against `manifests()`. It is regenerated by `bun run openapi:generate`, `openapi:check` fails when it is stale, and a renamed task fails the host's typecheck, so the host never spells a task name the server does not have. `queries/push.ts` (`usePushVibe`, reuse `useOperation`); a task control on `VibeSurface` that lists `PUSH_TASKS` by label, runs one, and polls; the Vibe surface renders `PUSH_TASKS.vibe.summarize`'s entry and maps `PUSH_TASKS.vibe.vibe_view`'s to a surface with `resolvePointer` from store-contract, showing each object's image elements for `mediaboard` and `rhizome:display_name` as every row's label; `ObjectSurface` keeps its raw inferred block. When a push completes the host invalidates the Vibe and every object and element the result names, not only the Vibe list that `useOperation` refreshes on `committed_at`. Re-running is a manual control with two actions per record-level task: "run on missing", which selects the members lacking `rhizome:{task}` (for an element-level task, the objects whose image elements lack it) and is disabled when that set is empty, and "rerun all", which omits `selection`; the host never sends an empty selection, which the request schema rejects. The host has no signal for whether an existing entry is stale, since the Vibe document carries no revision, and the server has no freshness rule. Mock-store handlers for `GET /push-tasks`, `POST /vibes/{id}/push`, and a push branch in the operation mock, built from the generated file rather than the server tree; `apps/host/e2e/m3-push.e2e.ts` proves run → poll → refreshed inferred.
+Minimal and generic, in this PR (decision D5). The OpenAPI generator (`scripts/generate-host-openapi.ts`) also imports the server's task catalog and writes `apps/host/src/api/generated/push-tasks.ts`: `PUSH_TASKS`, keyed by level then name, each entry the manifest exactly as `GET /push-tasks` serves it (`level`, `name`, `label`, `description`, `output_schema`), so the file is a keyed copy of the discovery response and a unit test checks it against `manifests()`. It is regenerated by `bun run openapi:generate`, `openapi:check` fails when it is stale, and a renamed task fails the host's typecheck, so the host never spells a task name the server does not have. `queries/push.ts` (`usePushVibe`, reuse `useOperation`); a task control on `VibeSurface` that lists `PUSH_TASKS` by label, runs one, and polls; the Vibe surface renders `PUSH_TASKS.vibe.summarize`'s entry and maps `PUSH_TASKS.vibe.vibe_view`'s to a surface with `resolvePointer` from store-contract, showing each object's image elements for `mediaboard` and `rhizome:display_name` as every row's label; `ObjectSurface` keeps its raw inferred block. When a push completes the host invalidates the Vibe and every object and element the result names, not only the Vibe list that `useOperation` refreshes on `committed_at`. Re-running is a manual control. An object-level task has two actions: "run on missing", which selects the members lacking `rhizome:{task}` from the object documents the host already holds and is disabled when that set is empty, and "rerun all", which omits `selection`. An element-level task has only "rerun all": knowing which image elements lack an entry takes one element read per element, since object documents carry only element references, and a batch read for one button is not M3 work. A Vibe-level task has one run action. The host never sends an empty selection, which the request schema rejects. The host has no signal for whether an existing entry is stale, since the Vibe document carries no revision, and the server has no freshness rule. Mock-store handlers for `GET /push-tasks`, `POST /vibes/{id}/push`, and a push branch in the operation mock, built from the generated file rather than the server tree; `apps/host/e2e/m3-push.e2e.ts` proves run → poll → refreshed inferred.
 
 ## 11. Tests
 
-- **Unit (no DB):** strict-subset assertions over every installed `output.json` and a 25-ref envelope; OpenAI connector with injected `fetch`/`sleep`/`now` (request body, usage mapping, refusal/incomplete/invalid **with usage**, retry on 429 then 200, 4×503 → `provider_unavailable`, 401 no retry, never escalates tier, messages never contain the body); rate card (1M+1M at flex = `"0.700000"`, long-context flip, served tier overrides requested, a missing echo priced at the requested tier and an unrecognized one at standard with `tierAssumed`, unknown model throws); provider response mapping for every row of the §4.3 table, including the connector's own timeout against the operation's abort; registry (boot rejects a default target the connector does not serve); fake connector (pattern samples, scripted `respond`); boundary grep; task catalog load and negatives (bad name, duplicate `(level, name)`, element level without `elementKinds`, `rules` below Vibe level); chunking and context rules (including "no summary in summarize's context", "no Vibe input in object or element context", the 2 KiB per-object clip and the `VibeContext` caps counted in `result.context`, and an injection string serialized unchanged as data); `batchEnvelope` strict-subset for every task at sizes 1 and max; ref-set equality (duplicate, missing, unknown → `invalid_output`); `vibe_view` rule table (a transaction Vibe without `posted_at`, a transaction Vibe with only a noncanonical property where no rule fires, a Vibe with no properties and no elements → `simplelist`, an `arena.block` Vibe with one image-less object, every rule output passing the schema and observed-pointer checks), the discriminator matching `VIBE_VIEWS`, branch-matches-view and pointer-in-observed-set checks, the no-pointer fallback; `resolvePointer`; attachment allowlist, magic-byte check, part ordering, and ceilings; catalog accepts one name at two levels; `level` required and `selection` rejected for Vibe level at validation; ledger accumulation and the constant payer; config; serializer (push `request.resolved` omitted for everyone, `usage` for non-owners); store-contract schemas and OpenAPI ids/components; the generated `push-tasks.ts` equals the catalog's manifests keyed by level and name, and `openapi:check` fails when it is stale.
-- **Integration (`push.integration.test.ts`, Postgres + S3rver, fake injected):** `search_keywords` over a Vibe with an image-only object present → entries on the applicable objects, the rest `not_applicable`, revisions with `operation_uuid` and `inferred_rev` matching the revision row, meter row with rate-card `usd`; same-key durable preservation (seeded via Drizzle); a `null` result removes an existing non-durable entry with a revision row; `describe_media` writes to elements with `media_element_revisions` rows and reports each element under its parents; gated-fake concurrency with `PUT /inferred` landing mid-run keeps both keys; a `PATCH /user` landing mid-run is kept and the task's entry still lands; two tasks running at once on one Vibe keep each other's keys; a `running` row older than the wall ceiling does not block a new accept; the boot sweep fails a `queued` and a `running` operation, rejects their `fetching`, `fetched`, and `verified` fetch rows with `error_code = "interrupted"`, and leaves meter rows and origins alone; an all-durable selection completes `done` at zero cost; the finalizer sets `committed_at` for a removal-only run; summarize writes the Vibe and validates; a Vibe holding one object at two positions runs it once and reports it once; the mixed-Vibe `vibe_view` model path with a scripted observed pointer; every stored push result validates against `pushOperationResultSchema`; second summarize does not receive the first's summary; partial failure keeps chunk 1 and meters chunk 2; a `failed` response carrying usage is metered and its chunk is `call_failed`; `auth` → `failed` with a closed ledger; ceilings → `aborted` with `max_turns`; `maxElements` → 422; a client-invoked push is metered with `payer = 'rhizome'` and `invoked_by = client:{name}`; 409 while active; 503 keyless after 403 still wins; foreign-Vibe selection → 422.
+- **Unit (no DB):** strict-subset assertions over every installed `output.json` and a 25-ref envelope; OpenAI connector with injected `fetch`/`sleep`/`now` (request body, usage mapping, refusal/incomplete/invalid **with usage**, retry on 429 then 200, 4×503 → `provider_unavailable`, 401 no retry, never escalates tier, messages never contain the body); rate card (1M+1M at flex = `"0.700000"`, long-context flip, served tier overrides requested, a missing echo priced at the requested tier and an unrecognized one at standard with `tierAssumed`, unknown model throws); provider response mapping for every row of the §4.3 table, including the cumulative deadline across attempts, a wall abort during backoff, a `Retry-After` past the deadline, and a final 3xx; registry (boot rejects a default target the connector does not serve); fake connector (pattern samples, scripted `respond`); boundary grep; task catalog load and negatives (bad name, duplicate `(level, name)`, element level without `elementKinds`, `rules` below Vibe level); chunking and context rules (including "no summary in summarize's context", "no Vibe input in object or element context", the 2 KiB per-object clip and the `VibeContext` caps counted in `result.context`, and an injection string serialized unchanged as data); `batchEnvelope` strict-subset for every task at sizes 1 and max; ref-set equality (duplicate, missing, unknown → `invalid_output`); `vibe_view` rule table (a transaction Vibe without `posted_at`, a transaction Vibe with only a noncanonical property where no rule fires, a Vibe with no properties and no elements → `simplelist`, an `arena.block` Vibe with one image-less object, every rule output passing the schema and observed-pointer checks), the discriminator matching `VIBE_VIEWS`, branch-matches-view and pointer-in-observed-set checks, the no-pointer fallback; `resolvePointer`; attachment allowlist, magic-byte check, part ordering, and ceilings; catalog accepts one name at two levels; `level` required and `selection` rejected for Vibe level at validation; ledger accumulation and the constant payer; config; serializer (push `request.resolved` omitted for everyone, `usage` for non-owners); store-contract schemas and OpenAPI ids/components, with the push result schema accepting an object, an element, and a Vibe result and rejecting a preserved Vibe outcome that carries `rev`; the generated `push-tasks.ts` equals the catalog's manifests keyed by level and name, and `openapi:check` fails when it is stale.
+- **Integration (`push.integration.test.ts`, Postgres + S3rver, fake injected):** `search_keywords` over a Vibe with an image-only object present → entries on the applicable objects, the rest `not_applicable`, revisions with `operation_uuid` and `inferred_rev` matching the revision row, meter row with rate-card `usd`; same-key durable preservation (seeded via Drizzle); a `null` result removes an existing non-durable entry with a revision row; `describe_media` writes to elements with `media_element_revisions` rows and reports each element under its parents; gated-fake concurrency with `PUT /inferred` landing mid-run keeps both keys; a `PATCH /user` landing mid-run is kept and the task's entry still lands; two tasks running at once on one Vibe keep each other's keys; a `running` row older than the wall ceiling does not block a new accept; the boot sweep fails a `queued` and a `running` operation, rejects their `fetching`, `fetched`, and `verified` fetch rows with `error_code = "interrupted"`, and leaves meter rows and origins alone; an all-durable selection completes `done` at zero cost; the finalizer sets `committed_at` for a removal-only run; summarize writes the Vibe and validates; a Vibe holding one object at two positions runs it once and reports it once; the mixed-Vibe `vibe_view` model path with a scripted observed pointer; every stored push result validates against `pushOperationResultSchema`, and a result the finalizer cannot validate finalizes `failed` with a null result and a closed ledger; second summarize does not receive the first's summary; partial failure keeps chunk 1 and meters chunk 2; a `failed` response carrying usage is metered and its chunk is `call_failed`; `auth` → `failed` with a closed ledger; ceilings → `aborted` with `max_turns`; `maxElements` → 422; a client-invoked push is metered with `payer = 'rhizome'` and `invoked_by = client:{name}`; 409 while active; 503 keyless after 403 still wins; foreign-Vibe selection → 422.
 - **Black-box (`rnet-semantics.test.ts`):** push requires and names the `push` scope; a push-only grantee can invoke but not poll, a read-only grantee can poll but not invoke; a read grantee polls a push and sees no `usage` while the owner does; a push-only client's 202 for an omitted selection carries neither `selection` nor `resolved`; push writes land only in `inferred` under the store's namespace; a push never replaces a durable entry or another writer's key; push output is never durable; a later run replaces only its own key; task names are discoverable; a Vibe-level task lands in the Vibe and the Vibe still conforms; every push is metered; a store with no provider answers 503.
-- **Playwright:** existing gate unchanged plus `m3-push.e2e.ts` against the mock store, covering a Vibe task, an object task, and `describe_media`, and asserting the object and element queries refresh.
+- **Playwright:** existing gate unchanged plus `m3-push.e2e.ts` against the mock store, covering a Vibe task and an object task from step 9 and `describe_media` from step 10, and asserting the object and element queries refresh.
 - **Deliberately not tested in CI:** the live OpenAI API (an out-of-CI smoke script may follow), restart recovery beyond the boot sweep (M7), budgets.
 
 ## 12. Deferred and out of scope
@@ -720,8 +792,8 @@ Each commit keeps `bun run check` green; push returns 202 only from commit 6.
 6. push: the migration (`vibe_revisions.operation_uuid`, `inferred_rev`), store writer, ledger, operation lifecycle, boot sweep, routes, app wiring, integration suite
 7. tasks: `vibe_view` (with rules), `display_name`, `search_keywords`
 8. semantics: push rules in `rnet-semantics.test.ts`
-9. host: generated `push-tasks.ts`, push queries, task control, `vibe_view` → surface mapping, mock-store handlers, `m3-push.e2e.ts`
-10. inference + tasks: image attachments on `CompletionRequest`, OpenAI `input_image`, `describe_media` (last, so everything before it can merge if it slips)
+9. host: generated `push-tasks.ts`, push queries, task control, `vibe_view` → surface mapping, mock-store handlers, `m3-push.e2e.ts` for the object and Vibe cases
+10. inference + tasks + host: image attachments on `CompletionRequest`, OpenAI `input_image`, `describe_media`, then the regenerated task list, the element task control, its mock, and the `describe_media` E2E case (last, so everything before it can merge if it slips)
 11. docs: this document finalized, CONFORMANCE M3 closed (M7 gains the in-process push entry, M5 "`users.inferred` warm-start policy")
 
 ## 14. Decisions
@@ -755,6 +827,9 @@ Settled with the owner before implementation; the sections above already reflect
 | D23 | Public push request                                             | The caller's fields only; `request.resolved` is execution state, stripped from every view (§6.3)                                                |
 | D24 | Push result contract                                            | `pushOperationResultSchema` and `isPushOperation` in store-contract; `usage` optional (§6.1)                                                    |
 | D25 | Duplicate placements                                            | Deduplicated by object UUID at every level, first placement wins; every count is a record count (§6.3)                                          |
+| D26 | Element-level rerun                                             | "Rerun all" only in M3; "run on missing" needs a batch element read the host does not have (§10)                                                |
+| D27 | Producer fields                                                 | `meter_entry.model` prices; `result.model` and `inferred.model` name the producer, per the §8.1 table                                           |
+| D28 | Connector deadline                                              | `timeoutMs` spans attempts and backoff, abortable by the operation signal (§4.3)                                                                |
 
 ## 15. Provider references
 
