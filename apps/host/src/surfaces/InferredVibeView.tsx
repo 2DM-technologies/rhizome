@@ -3,6 +3,8 @@ import { resolvePointer, storeTaskKey, VIBE_VIEWS } from "@rhizome/store-contrac
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { uuidOf } from "../api/uris.ts";
 import { useMediaElement, usePayloadUrl } from "../queries/index.ts";
+import { pathOf } from "../shell/surfaces.ts";
+import { TextLink } from "../ui/index.ts";
 
 type View = (typeof VIBE_VIEWS)[number];
 type Config = Record<string, unknown>;
@@ -121,14 +123,31 @@ function SimpleList({ objects, config, ...actions }: RowsProps) {
     <ul className="divide-y divide-hairline">
       {objects.map((object, index) => (
         <li key={`${object.uri}:${index}`} className="flex items-center justify-between gap-3 py-3">
-          <div>
+          <TextLink
+            href={pathOf({ kind: "object", uuid: uuidOf(object.uri) })}
+            className="min-w-0 flex-1"
+            size="label"
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              actions.openObject(object);
+            }}
+          >
             <div className="text-label text-primary">{inferredObjectLabel(object)}</div>
             {pointer ? (
               <div className="text-caption text-tertiary">
                 {displayValue(resolvePointer(object, pointer))}
               </div>
             ) : null}
-          </div>
+          </TextLink>
           <Actions object={object} {...actions} />
         </li>
       ))}
