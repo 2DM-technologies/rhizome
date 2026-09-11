@@ -129,7 +129,7 @@ describe("inferred Vibe surfaces", () => {
     expect(rows.map((record) => record.source.properties.amount)).toEqual([10, 2]);
   });
 
-  test("mediaboard renders every image element and ignores non-image elements", () => {
+  test("mediaboard uses the M2 media card with inferred names and configured captions", () => {
     const record = object(1, 2);
     const elements = ["image", "text", "image"].map((kind, index): MediaElement => ({
       rnet_schema: "0.1",
@@ -149,10 +149,9 @@ describe("inferred Vibe surfaces", () => {
       [record],
       elements,
     );
-    expect(markup.match(/<img /g)).toHaveLength(2);
-    expect(markup).toContain('alt="Element 0"');
-    expect(markup).toContain('alt="Element 2"');
-    expect(markup).not.toContain("Element 1");
+    expect(markup.match(/data-media-object-card/g)).toHaveLength(1);
+    expect(markup).toContain("image/png · ");
+    expect(markup).toContain("3 elements");
     expect(markup).toContain("Object 1");
     expect(markup).toContain("Source 1");
   });
@@ -164,7 +163,6 @@ describe("inferred Vibe surfaces", () => {
       vibe("mediaboard", { caption_pointer: null }),
     ]) {
       const markup = render(document, [object(1, 2)], [], true);
-      expect(markup).toContain(">Open</button>");
       expect(markup).toContain(">Remove</button>");
       expect(markup).toContain('disabled=""');
       expect(render(document, [object(1, 2)])).not.toContain(">Remove</button>");

@@ -2,9 +2,9 @@ import type { MediaObject, Vibe } from "@rnet/types";
 import { resolvePointer, storeTaskKey, VIBE_VIEWS } from "@rhizome/store-contract";
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { uuidOf } from "../api/uris.ts";
-import { useMediaElement, usePayloadUrl } from "../queries/index.ts";
 import { pathOf } from "../shell/surfaces.ts";
 import { TextLink } from "../ui/index.ts";
+import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 
 type View = (typeof VIBE_VIEWS)[number];
 type Config = Record<string, unknown>;
@@ -40,19 +40,6 @@ function displayValue(value: unknown): string {
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
     return String(value);
   return JSON.stringify(value);
-}
-function ImageElement({ uri, label }: { uri: string; label: string }) {
-  const id = uuidOf(uri);
-  const element = useMediaElement(id);
-  const payload = usePayloadUrl("elements", element.data?.kind === "image" ? id : undefined);
-  if (element.data?.kind !== "image") return null;
-  return (
-    <img
-      className="aspect-square w-full rounded-md object-cover"
-      src={payload.data}
-      alt={element.data.alt ?? label}
-    />
-  );
 }
 function Actions({
   object,
@@ -211,20 +198,15 @@ function MediaBoard({ objects, config, ...actions }: RowsProps) {
   return (
     <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {objects.map((object, index) => (
-        <li key={`${object.uri}:${index}`}>
-          <div className="grid grid-cols-2 gap-2">
-            {object.elements.map(({ uri }, i) => (
-              <ImageElement key={`${uri}:${i}`} uri={uri} label={inferredObjectLabel(object)} />
-            ))}
-          </div>
-          <div className="mt-2 text-label text-primary">{inferredObjectLabel(object)}</div>
-          {caption ? (
-            <div className="text-caption text-tertiary">
-              {displayValue(resolvePointer(object, caption))}
-            </div>
-          ) : null}
-          <Actions object={object} {...actions} />
-        </li>
+        <MediaObjectEntry
+          key={`${object.uri}:${index}`}
+          object={object}
+          title={inferredObjectLabel(object)}
+          {...(caption ? { caption: displayValue(resolvePointer(object, caption)) } : {})}
+          openObject={() => actions.openObject(object)}
+          removePending={actions.removePending}
+          removeObject={actions.removeObject ? () => actions.removeObject?.(object) : undefined}
+        />
       ))}
     </ul>
   );

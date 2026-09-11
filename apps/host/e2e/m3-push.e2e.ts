@@ -3,7 +3,13 @@ import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
 
-import { installMockStore, OBJECT_ID, VIBE_ID, type MockStore } from "./support/mockStore.ts";
+import {
+  ELEMENT_ID,
+  installMockStore,
+  OBJECT_ID,
+  VIBE_ID,
+  type MockStore,
+} from "./support/mockStore.ts";
 
 let store: MockStore;
 test.beforeEach(async ({ page }) => {
@@ -148,4 +154,67 @@ test("describe_media offers rerun all and refreshes a cached element's inferred 
   });
   expect(reads()).toBeGreaterThan(before);
   await expect(page.getByRole("img", { name: original.alt })).toBeVisible();
+});
+
+test("mediaboard shows an uncropped M2 card and fetches only its primary payload", async ({
+  page,
+}) => {
+  const original = store.elements.get(ELEMENT_ID)!;
+  const imageIds = ["0198f2a1-c2ad-78cc-b7fa-1e7d77d63bf5", "0198f2a1-c2ad-78cc-b7fa-1e7d77d63bf6"];
+  const bytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT3cAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const record = store.objects.get(OBJECT_ID)!;
+  record.elements[0]!.role = "title";
+  for (const [index, id] of imageIds.entries()) {
+    const uri = `rnet://element/${id}` as const;
+    store.elements.set(id, {
+      ...original,
+      uri,
+      kind: "image",
+      mime: "image/png",
+      alt: `Board image ${index + 1}`,
+      byte_size: bytes.length,
+      content_hash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    });
+    store.elementPayloads.set(id, bytes);
+    record.elements.push({ uri, role: "content" });
+  }
+  record.inferred = {
+    [storeTaskKey(PUSH_TASKS.object.display_name.name)]: {
+      model: "mock/rhizome",
+      properties: { display_name: "An inferred board title" },
+    },
+  };
+  store.vibes[0]!.inferred = {
+    [storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]: {
+      model: "rhizome/vibe_view-rules@1",
+      properties: {
+        view: "mediaboard",
+        config: { caption_pointer: "/source/properties/title" },
+      },
+    },
+  };
+
+  await page.goto(`/vibes/${VIBE_ID}`);
+  const board = page.getByLabel("Inferred Vibe view");
+  const card = board.locator("[data-media-object-card]");
+  await expect(card).toHaveCount(1);
+  const image = card.getByRole("img", { name: "Board image 1" });
+  await expect(image).toBeVisible();
+  await expect(image).toHaveCSS("object-fit", "contain");
+  await expect
+    .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+    .toBe(1);
+  await expect(card.getByText("An inferred board title", { exact: true })).toBeVisible();
+  await expect(card.getByText("Monthly plan", { exact: true })).toBeVisible();
+  await expect(card).toContainText("image/png · 3 elements");
+  expect(
+    store.requests
+      .map((request) => new URL(request.url()).pathname)
+      .filter((path) => /^\/rnet\/v0\/elements\/[^/]+\/bytes$/.test(path)),
+  ).toEqual([`/rnet/v0/elements/${imageIds[0]}/bytes`]);
+  await card.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
+  await expect(page.getByLabel("User properties, as JSON")).toBeVisible();
 });
