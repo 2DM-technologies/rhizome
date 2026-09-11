@@ -176,8 +176,45 @@ function DataTable({ objects, config, ...actions }: RowsProps) {
         </thead>
         <tbody>
           {rows.map(({ object, position }) => (
-            <tr key={`${object.uri}:${position}`} className="border-t border-hairline">
-              <th className="p-3 font-normal">{inferredObjectLabel(object)}</th>
+            <tr
+              key={`${object.uri}:${position}`}
+              className="cursor-pointer border-t border-hairline hover:bg-canvas"
+              onClick={(event) => {
+                if (
+                  event.defaultPrevented ||
+                  event.button !== 0 ||
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey ||
+                  (event.target instanceof Element && event.target.closest("a, button")) ||
+                  window.getSelection()?.isCollapsed === false
+                )
+                  return;
+                actions.openObject(object);
+              }}
+            >
+              <th scope="row" className="p-3 font-normal">
+                <a
+                  href={pathOf({ kind: "object", uuid: uuidOf(object.uri) })}
+                  className="text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+                  onClick={(event) => {
+                    if (
+                      event.defaultPrevented ||
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey
+                    )
+                      return;
+                    event.preventDefault();
+                    actions.openObject(object);
+                  }}
+                >
+                  {inferredObjectLabel(object)}
+                </a>
+              </th>
               {columns.map((c, index) => (
                 <td key={`${c}:${index}`} className="p-3">
                   {displayValue(resolvePointer(object, c))}

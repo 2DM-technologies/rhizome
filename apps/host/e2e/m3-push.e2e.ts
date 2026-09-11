@@ -218,3 +218,39 @@ test("mediaboard shows an uncropped M2 card and fetches only its primary payload
   await card.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
   await expect(page.getByLabel("User properties, as JSON")).toBeVisible();
 });
+
+test("datatable rows open objects from values and title links without intercepting row actions", async ({
+  page,
+}) => {
+  store.vibes[0]!.inferred = {
+    [storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]: {
+      model: "mock/rhizome",
+      properties: {
+        view: "datatable",
+        config: { columns: ["/source/properties/title"], sort: null },
+      },
+    },
+  };
+  await page.goto(`/vibes/${VIBE_ID}`);
+  const board = page.getByLabel("Inferred Vibe view");
+  const objectLink = board.getByRole("link");
+  await expect(objectLink).toHaveAttribute("href", `/objects/${OBJECT_ID}`);
+
+  await board.getByRole("cell", { name: "Monthly plan", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page.getByLabel("User properties, as JSON")).toBeVisible();
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(board).toBeVisible();
+
+  await objectLink.focus();
+  await objectLink.press("Enter");
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await page.getByRole("button", { name: "Back" }).click();
+  await board.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await page.getByRole("button", { name: "Back" }).click();
+
+  await board.getByRole("button", { name: `Remove rnet://object/${OBJECT_ID} from Vibe` }).click();
+  await expect(page.getByText("This Vibe has no objects yet.")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+});
