@@ -191,8 +191,8 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
       {object.data ? (
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-5">
-            <SectionCard title="Source">
-              <JsonBlock value={object.data.source} />
+            <SectionCard title="Inferred">
+              <JsonBlock value={object.data.inferred ?? {}} />
             </SectionCard>
 
             <SectionCard title="User">
@@ -244,8 +244,8 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
               )}
             </SectionCard>
 
-            <SectionCard title="Inferred">
-              <JsonBlock value={object.data.inferred ?? {}} />
+            <SectionCard title="Source">
+              <JsonBlock value={object.data.source} />
             </SectionCard>
           </div>
 
