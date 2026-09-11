@@ -786,6 +786,7 @@ test("an owner can refresh configured sources and see the deduplication result",
 }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
 
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByRole("button", { name: "Refresh sources" }).click();
   const pullSummary = page
     .getByRole("status")

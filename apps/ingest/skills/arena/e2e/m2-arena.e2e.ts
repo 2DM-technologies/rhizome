@@ -37,6 +37,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   const initialElementCount = mockStore.elements.size;
 
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
   await page.getByLabel("Are.na channel URL").fill(CHANNEL_URL);
   await page.getByRole("button", { name: "Review Are.na channel" }).click();
@@ -144,6 +145,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
 
 test("a non-Are.na URL fails before a remote source is captured or created", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
   await page.getByLabel("Are.na channel URL").fill("https://example.com/not-an-arena/channel");
   await page.getByRole("button", { name: "Review Are.na channel" }).click();

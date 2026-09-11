@@ -156,10 +156,14 @@ test("generic OAuth restores an existing destination and stages its source exact
   page,
 }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await selectAndConnect(page);
 
   await expectSyntheticReview(page);
   await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(
+    page.getByRole("button", { name: "Import into this Vibe", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
   expectExactlyOnceConnectionAndPreview(`/rnet/v0/vibes/${VIBE_ID}/imports`);
   expect([...mockStore.sourceConnectionAttempts.values()]).toEqual([
     expect.objectContaining({
@@ -196,6 +200,7 @@ test("a provider denial is terminal, cleans the callback URL, and never creates 
 }) => {
   mockStore.rejectNextOAuthConnection();
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await selectAndConnect(page);
 
   await expect(page.getByRole("alert")).toHaveText(

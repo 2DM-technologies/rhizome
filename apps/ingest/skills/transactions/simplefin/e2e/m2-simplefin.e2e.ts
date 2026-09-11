@@ -33,6 +33,7 @@ test("the SimpleFIN browser adapter satisfies credentialed-source conformance", 
 
 async function stageSimpleFin(page: Page): Promise<void> {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "SimpleFIN" });
   const token = page.getByLabel("SimpleFIN setup token");
   await token.fill(VALID_SETUP_TOKEN);
@@ -147,6 +148,7 @@ test("a rejected compromised token is cleared and its disable warning stops the 
   page,
 }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "SimpleFIN" });
   const token = page.getByLabel("SimpleFIN setup token");
   await token.fill(COMPROMISED_SIMPLEFIN_TOKEN);

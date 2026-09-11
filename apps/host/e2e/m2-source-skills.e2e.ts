@@ -37,6 +37,7 @@ test.beforeEach(async ({ page }) => {
 
 async function openImport(page: Page, sourceLabel: string): Promise<void> {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: sourceLabel });
 }
 
@@ -81,6 +82,7 @@ function postsTo(pathname: string): Request[] {
 
 test("the host renders every installed source kind from the generic catalog", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
 
   const sourceSelect = page.getByLabel("Import source", { exact: true });
   await expect(sourceSelect.locator("option")).toHaveText([

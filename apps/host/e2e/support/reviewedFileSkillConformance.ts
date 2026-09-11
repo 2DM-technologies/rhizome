@@ -41,6 +41,7 @@ export function createReviewedFileSkillConformance({
 
   async function stageFixture(page: Page): Promise<void> {
     await page.goto(`/vibes/${VIBE_ID}`);
+    await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
     await page
       .getByLabel("Import source", { exact: true })
       .selectOption({ label: adapter.manifest.label });
@@ -146,6 +147,7 @@ export function createReviewedFileSkillConformance({
     },
     async rejectUnsupportedFile(page: Page, mockStore: MockStore): Promise<void> {
       await page.goto(`/vibes/${VIBE_ID}`);
+      await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
       await page
         .getByLabel("Import source", { exact: true })
         .selectOption({ label: adapter.manifest.label });

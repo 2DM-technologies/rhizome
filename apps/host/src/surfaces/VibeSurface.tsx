@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 import { rnetUriPattern } from "@rnet/types/patterns";
 
 import {
@@ -38,6 +38,8 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   const session = useSession();
   const { open, close } = useSurfaceNavigation();
   const objectUriErrorId = useId();
+  const importPanelId = useId();
+  const [importExpanded, setImportExpanded] = useState(false);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
   const [objectUri, setObjectUri] = useState("");
   const [objectUriError, setObjectUriError] = useState<string | null>(null);
@@ -45,6 +47,12 @@ export function VibeSurface({ uuid }: { uuid: string }) {
 
   const title = titleDraft ?? vibe.data?.title ?? "";
   const isOwner = vibe.data?.owner === session.data?.user.id;
+
+  useEffect(() => {
+    if (sourceConnectionReturn.attemptId || sourceConnectionReturn.failureMessage) {
+      setImportExpanded(true);
+    }
+  }, [sourceConnectionReturn.attemptId, sourceConnectionReturn.failureMessage]);
 
   function rename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -159,11 +167,22 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           ) : null}
           {add.isError ? <Failed error={add.error} /> : null}
           {remove.isError ? <Failed error={remove.error} /> : null}
-          <ImportPanel
-            vibeUuid={uuid}
-            configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
-            sourceConnectionReturn={sourceConnectionReturn}
-          />
+          <Button
+            variant="secondary"
+            className="self-start"
+            aria-expanded={importExpanded}
+            aria-controls={importPanelId}
+            onClick={() => setImportExpanded((expanded) => !expanded)}
+          >
+            Import into this Vibe
+          </Button>
+          <div id={importPanelId} hidden={!importExpanded}>
+            <ImportPanel
+              vibeUuid={uuid}
+              configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
+              sourceConnectionReturn={sourceConnectionReturn}
+            />
+          </div>
         </div>
       ) : null}
 
