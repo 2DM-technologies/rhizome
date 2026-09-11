@@ -131,6 +131,10 @@ function MediaElementReference({
             mime={element.data.mime}
             {...(element.data.alt !== undefined ? { alt: element.data.alt } : {})}
           />
+          <div className="flex min-w-0 flex-col gap-3">
+            <h3 className="text-label text-primary">Inferred</h3>
+            <JsonBlock value={element.data.inferred ?? {}} />
+          </div>
         </>
       ) : null}
     </ReferenceCard>
