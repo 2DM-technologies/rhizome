@@ -32,12 +32,14 @@ export function Provisional({
 /** Store-backed host surface frame. Unlike a future-milestone placeholder, it carries no badge. */
 export function StoreSurface({
   title,
+  heading,
   detail,
   children,
   actions,
   className,
 }: {
   title: string;
+  heading?: ReactNode;
   detail?: string;
   children?: ReactNode;
   actions?: ReactNode;
@@ -45,7 +47,7 @@ export function StoreSurface({
 }) {
   return (
     <div className={cn("flex min-h-full flex-col gap-5", className)}>
-      <SurfaceHeader title={title} detail={detail} actions={actions} />
+      <SurfaceHeader title={title} heading={heading} detail={detail} actions={actions} />
       <div className="flex-1">{children}</div>
     </div>
   );

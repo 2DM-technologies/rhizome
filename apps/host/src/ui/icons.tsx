@@ -1,11 +1,26 @@
 /**
- * Icon geometry is copied verbatim from the Figma exports (viewBox and path data unchanged);
+ * Icons labeled with Figma references retain their exported geometry (viewBox and path data);
  * only the hard-coded stroke and fill colours become `currentColor`, so an icon inherits the
  * tier it is rendered in rather than pinning one tier's palette.
  */
 import type { SVGProps } from "react";
 
 type IconProps = SVGProps<SVGSVGElement>;
+
+/** Inline title editing. */
+export function EditIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M10.5 4.5L13.5 7.5M3 15L4 11L12.5 2.5A2.12 2.12 0 0 1 15.5 5.5L7 14L3 15Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /** icon/search — Figma 4859:277 */
 export function SearchIcon({ width = 18, height = 18, ...props }: IconProps) {

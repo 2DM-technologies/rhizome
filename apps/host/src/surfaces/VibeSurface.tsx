@@ -1,8 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { rnetUriPattern } from "@rnet/types/patterns";
 
 import {
-  useAddVibeObjects,
   useDeleteVibe,
   useRemoveVibeObjects,
   useUpdateVibe,
@@ -13,7 +11,8 @@ import { mediaObjectDisplayName } from "../mediaObjectDisplayName.ts";
 import { useSession } from "../session/session.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
 import { uuidOf } from "../api/uris.ts";
-import { Button, InlineError, TextInput } from "../ui/index.ts";
+import { Button, IconButton } from "../ui/index.ts";
+import { CheckIcon, EditIcon } from "../ui/icons.tsx";
 import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
@@ -21,8 +20,6 @@ import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 import { InferredVibeView, inferredVibeView } from "./InferredVibeView.tsx";
 import { PushControl } from "./PushControl.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
-
-const OBJECT_URI = new RegExp(rnetUriPattern("object"));
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const sourceConnectionReturn = useSourceConnectionReturn({
@@ -33,16 +30,12 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   const objects = useVibeObjects(uuid);
   const update = useUpdateVibe();
   const remove = useRemoveVibeObjects();
-  const add = useAddVibeObjects();
   const deleteVibe = useDeleteVibe();
   const session = useSession();
   const { open, close } = useSurfaceNavigation();
-  const objectUriErrorId = useId();
   const importPanelId = useId();
   const [importExpanded, setImportExpanded] = useState(false);
   const [titleDraft, setTitleDraft] = useState<string | null>(null);
-  const [objectUri, setObjectUri] = useState("");
-  const [objectUriError, setObjectUriError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const title = titleDraft ?? vibe.data?.title ?? "";
@@ -57,25 +50,14 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   function rename(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextTitle = title.trim();
-    if (!nextTitle || !vibe.data) return;
+    if (!nextTitle || !vibe.data || !isOwner || titleDraft === null || update.isPending) return;
+    if (nextTitle === vibe.data.title) {
+      setTitleDraft(null);
+      return;
+    }
     update.mutate(
       { params: { path: { id: uuid } }, body: { title: nextTitle } },
       { onSuccess: () => setTitleDraft(null) },
-    );
-  }
-
-  function addObject(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const uri = objectUri.trim();
-    if (!uri) return;
-    if (!OBJECT_URI.test(uri)) {
-      setObjectUriError("Enter a canonical rnet://object/{uuidv7} URI.");
-      return;
-    }
-    setObjectUriError(null);
-    add.mutate(
-      { params: { path: { id: uuid } }, body: { objects: [uri] } },
-      { onSuccess: () => setObjectUri("") },
     );
   }
 
@@ -89,6 +71,63 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   return (
     <StoreSurface
       title={vibe.data?.title ?? "Vibe"}
+      heading={
+        vibe.data && isOwner ? (
+          <form onSubmit={rename} className="group/title relative min-w-0">
+            {titleDraft === null ? (
+              <>
+                <h1 className="text-heading text-primary">{vibe.data.title}</h1>
+                <IconButton
+                  aria-label="Edit Vibe title"
+                  title="Edit title"
+                  size="sm"
+                  tone="ghost"
+                  className="absolute -left-8 top-0 opacity-0 group-hover/title:opacity-100 group-focus-within/title:opacity-100 [@media(hover:none)]:opacity-100"
+                  onClick={(event) => {
+                    // This DOM button becomes the submit control when editing starts.
+                    event.preventDefault();
+                    update.reset();
+                    setTitleDraft(vibe.data!.title);
+                  }}
+                >
+                  <EditIcon />
+                </IconButton>
+              </>
+            ) : (
+              <>
+                <input
+                  autoFocus
+                  aria-label="Vibe title"
+                  className="block w-full min-w-0 rounded-none border-0 bg-transparent p-0 text-heading text-primary outline-none"
+                  value={title}
+                  maxLength={256}
+                  readOnly={update.isPending}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && !update.isPending) {
+                      event.preventDefault();
+                      setTitleDraft(null);
+                      update.reset();
+                    }
+                  }}
+                />
+                <IconButton
+                  type="submit"
+                  aria-label="Save Vibe title"
+                  title="Save title (Enter)"
+                  size="sm"
+                  tone="ghost"
+                  className="absolute -left-8 top-0"
+                  disabled={!title.trim() || update.isPending}
+                >
+                  <CheckIcon />
+                </IconButton>
+              </>
+            )}
+          </form>
+        ) : undefined
+      }
       detail={vibe.data?.uri}
       actions={
         vibe.data && isOwner ? (
@@ -119,53 +158,10 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       {vibe.isPending ? <Pending label="vibe" /> : null}
       {vibe.isError ? <Failed error={vibe.error} /> : null}
       {deleteVibe.isError ? <Failed error={deleteVibe.error} /> : null}
+      {update.isError ? <Failed error={update.error} /> : null}
 
       {vibe.data && isOwner ? (
         <div className="mb-7 flex flex-col gap-4 border-b border-hairline pb-7">
-          <form onSubmit={rename} className="flex max-w-[42rem] items-center gap-3">
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">Vibe title</span>
-              <TextInput
-                aria-label="Vibe title"
-                value={title}
-                onChange={(event) => setTitleDraft(event.target.value)}
-                maxLength={256}
-              />
-            </label>
-            <Button
-              type="submit"
-              variant="secondary"
-              disabled={!title.trim() || titleDraft === null || update.isPending}
-            >
-              {update.isPending ? "Renaming…" : "Rename Vibe"}
-            </Button>
-          </form>
-          {update.isError ? <Failed error={update.error} /> : null}
-
-          <form onSubmit={addObject} className="flex max-w-[42rem] items-center gap-3">
-            <label className="min-w-0 flex-1">
-              <span className="sr-only">Object URI</span>
-              <TextInput
-                aria-label="Object URI"
-                aria-invalid={objectUriError ? true : undefined}
-                aria-describedby={objectUriError ? objectUriErrorId : undefined}
-                value={objectUri}
-                onChange={(event) => {
-                  setObjectUri(event.target.value);
-                  setObjectUriError(null);
-                }}
-                placeholder="rnet://object/…"
-                typography="mono"
-              />
-            </label>
-            <Button type="submit" variant="secondary" disabled={!objectUri.trim() || add.isPending}>
-              {add.isPending ? "Adding…" : "Add object"}
-            </Button>
-          </form>
-          {objectUriError ? (
-            <InlineError id={objectUriErrorId}>{objectUriError}</InlineError>
-          ) : null}
-          {add.isError ? <Failed error={add.error} /> : null}
           {remove.isError ? <Failed error={remove.error} /> : null}
           <Button
             variant="secondary"
