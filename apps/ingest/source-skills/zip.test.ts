@@ -12,6 +12,28 @@ const NUL = String.fromCharCode(0);
  * server produced but no longer trusts. These cases were previously carried by the archive suite.
  */
 describe("validated ZIP replay boundary", () => {
+  test("shares an expanded-byte budget across independent and repeated reads", async () => {
+    const opened = await openValidatedZip(
+      await archive([
+        ["a.bin", new Uint8Array(40)],
+        ["b.bin", new Uint8Array(40)],
+      ]),
+      2,
+      60,
+    );
+    try {
+      await readZipBytes(opened.byPath.get("a.bin")!, 40);
+      await expect(readZipBytes(opened.byPath.get("b.bin")!, 40)).rejects.toThrow(
+        "total expanded-byte limit",
+      );
+      await expect(readZipBytes(opened.byPath.get("a.bin")!, 40)).rejects.toThrow(
+        "total expanded-byte limit",
+      );
+    } finally {
+      await opened.close();
+    }
+  });
+
   test("reads declared text and binary entries within their limits", async () => {
     const media = new Uint8Array([1, 2, 3, 4]);
     const opened = await openValidatedZip(

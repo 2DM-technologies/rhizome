@@ -89,6 +89,7 @@ import {
 import type { ServiceContext } from "./types.ts";
 
 interface ImportPreviewResult {
+  reconciliation?: ImportReconciliation;
   action_evidence?: ConnectedSourceActionEvidence;
   candidates: MediaObject[];
   candidate_metadata: StagedCandidateMetadata[];
@@ -98,6 +99,25 @@ interface ImportPreviewResult {
   staged_origin: string;
   review_digest: string;
   destination?: { title: string };
+}
+
+interface ImportReconciliation {
+  baseline: {
+    identity: string;
+    object_uri: string;
+    candidate_digest: string;
+    user_rev: number;
+    positions: number[];
+  }[];
+  counts: { unchanged: number; added: number; changed: number; absent: number };
+  changes: {
+    previous_object_uri: string;
+    next_object_uri: string;
+    previous_properties: Record<string, unknown>;
+    next_properties: Record<string, unknown>;
+    preserve_user_annotations: boolean;
+    user_annotations?: Record<string, unknown>;
+  }[];
 }
 
 interface StagedCandidate {
@@ -263,6 +283,7 @@ export class ImportService {
       invokedBy: this.actor.subject,
       sourceReference: input.source,
       continuationToken: input.continuation_token,
+      replacementOrigin: input.replacement_origin,
       pendingDestination: false,
     });
   }
@@ -294,6 +315,7 @@ export class ImportService {
   }
 
   private async startPreviewForVibe(input: {
+    replacementOrigin?: string | undefined;
     continuationToken: string | undefined;
     invokedBy: string;
     operationVibeUuid: string | null;
@@ -303,6 +325,19 @@ export class ImportService {
   }): Promise<DbOperation> {
     const sourceUuid = sourceUuidOf(input.sourceReference);
     const source = await this.snapshotSource(sourceUuid, input.vibe.ownerUuid);
+    if (input.replacementOrigin) {
+      if (source.kind !== "origin" || input.pendingDestination || input.continuationToken) {
+        throw invalidReview("Only an existing file import can review a replacement export");
+      }
+      await this.db.transaction(async (transaction) => {
+        await this.assertExclusiveFileSource(transaction, sourceUuid, input.vibe.uuid);
+        await this.lockStagedOrigin(
+          transaction,
+          originUuidOf(input.replacementOrigin!),
+          input.vibe.ownerUuid,
+        );
+      });
+    }
     const continuation = input.continuationToken
       ? await this.openSourceContinuation(
           input.continuationToken,
@@ -335,6 +370,7 @@ export class ImportService {
         request: {
           mode: "import_preview",
           source: input.sourceReference,
+          ...(input.replacementOrigin ? { replacement_origin: input.replacementOrigin } : {}),
           ...(input.pendingDestination
             ? { pending_destination: { vibe_uuid: input.vibe.uuid } }
             : {}),
@@ -345,19 +381,23 @@ export class ImportService {
     if (!operation) throw new Error("Import preview operation insert did not return a row");
 
     queueMicrotask(() => {
-      void this.runPreview(operationUuid, sourceUuid, input.vibe, continuation).catch(
-        async (error: unknown) => {
-          await this.db
-            .update(operations)
-            .set({
-              status: "failed",
-              result: connectedSourceOperationResult(error),
-              error: error instanceof Error ? error.message : "Import preview failed",
-              finishedAt: new Date(),
-            })
-            .where(eq(operations.uuid, operationUuid));
-        },
-      );
+      void this.runPreview(
+        operationUuid,
+        sourceUuid,
+        input.vibe,
+        continuation,
+        input.replacementOrigin,
+      ).catch(async (error: unknown) => {
+        await this.db
+          .update(operations)
+          .set({
+            status: "failed",
+            result: connectedSourceOperationResult(error),
+            error: error instanceof Error ? error.message : "Import preview failed",
+            finishedAt: new Date(),
+          })
+          .where(eq(operations.uuid, operationUuid));
+      });
     });
     return operation;
   }
@@ -442,6 +482,7 @@ export class ImportService {
     const actor = this.actor;
     let committedVibeUuid = existingVibeUuid;
     const addedObjectUris: string[] = [];
+    const removedObjectUris: string[] = [];
 
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
       let operation: DbOperation | undefined;
@@ -536,6 +577,21 @@ export class ImportService {
         originUuidOf(result.staged_origin),
         lockedVibe.ownerUuid,
       );
+      const replacementOrigin = operation.request.replacement_origin;
+      if (replacementOrigin !== undefined) {
+        if (
+          typeof replacementOrigin !== "string" ||
+          replacementOrigin !== result.staged_origin ||
+          resolved.kind !== "origin" ||
+          !existingVibeUuid ||
+          !result.reconciliation
+        ) {
+          throw invalidReview("The replacement export does not match its review");
+        }
+        await this.assertExclusiveFileSource(transaction, resolved.source.uuid, vibeUuid);
+      } else if (result.reconciliation) {
+        throw invalidReview("The preview has unexpected replacement evidence");
+      }
       const stagedFetch =
         resolved.kind !== "origin"
           ? await this.lockVerifiedFetch(
@@ -546,10 +602,15 @@ export class ImportService {
               result.source_digest,
             )
           : undefined;
-      if (resolved.kind === "origin" && resolved.origin.uuid !== stagedOrigin.uuid) {
+      if (
+        resolved.kind === "origin" &&
+        !replacementOrigin &&
+        resolved.origin.uuid !== stagedOrigin.uuid
+      ) {
         throw invalidReview("The staged origin does not match the file source");
       }
       const expectedReviewDigest = await digest({
+        ...(result.reconciliation ? { reconciliation: result.reconciliation } : {}),
         ...(result.action_evidence ? { action_evidence: result.action_evidence } : {}),
         ...(result.destination ? { destination: result.destination } : {}),
         candidates: result.candidates,
@@ -598,6 +659,21 @@ export class ImportService {
         throw invalidReview("The preview repeats a source identity");
       }
 
+      if (result.reconciliation) {
+        const current = await this.captureReconciliation(
+          transaction,
+          resolved.source.uuid,
+          vibeUuid,
+          stagedCandidates,
+          "update",
+        );
+        if (canonicalJson(current) !== canonicalJson(result.reconciliation)) {
+          throw invalidReview(
+            "Imported runs, membership, or annotations changed after review; create a fresh preview",
+          );
+        }
+      }
+
       const [existingBindings, memberships] = await Promise.all([
         transaction
           .select()
@@ -615,13 +691,61 @@ export class ImportService {
       for (const entry of stagedCandidates) {
         const existing = bindingByIdentity.get(entry.identity);
         let mediaObjectUuid = existing?.mediaObjectUuid;
+        let replacementPositions: number[] | undefined;
         if (existing) {
           if (existing.candidateDigest !== entry.candidate_digest) {
-            throw invalidReview("A previously imported source identity changed unexpectedly");
+            if (!result.reconciliation)
+              throw invalidReview("A previously imported source identity changed unexpectedly");
+            const [previous] = await transaction
+              .select()
+              .from(mediaObjects)
+              .where(eq(mediaObjects.uuid, existing.mediaObjectUuid));
+            if (!previous) throw invalidReview("The previous imported object is missing");
+            mediaObjectUuid = await this.persistCandidate(transaction, operationUuid, entry);
+            // Confirmation authorizes a fresh user-block write on the replacement. Ingest
+            // candidates remain source-only; the previous object and its revisions remain intact.
+            if (previous.user) {
+              const user = {
+                properties: previous.user.properties,
+                updated_at: new Date().toISOString(),
+              };
+              await transaction
+                .update(mediaObjects)
+                .set({ user, userRev: 1 })
+                .where(eq(mediaObjects.uuid, mediaObjectUuid));
+              await transaction.insert(mediaObjectRevisions).values({
+                mediaObjectUuid,
+                block: "user",
+                rev: 1,
+                snapshot: user,
+                actor: actor.subject,
+                operationUuid,
+              });
+            }
+            const previousMemberships = memberships.filter(
+              (item) => item.mediaObjectUuid === existing.mediaObjectUuid,
+            );
+            if (previousMemberships.length) {
+              replacementPositions = previousMemberships.map((item) => item.position);
+              await transaction
+                .delete(vibeMediaObjects)
+                .where(
+                  and(
+                    eq(vibeMediaObjects.vibeUuid, vibeUuid),
+                    eq(vibeMediaObjects.mediaObjectUuid, existing.mediaObjectUuid),
+                  ),
+                );
+              currentMembers.delete(existing.mediaObjectUuid);
+              removedObjectUris.push("rnet://object/" + existing.mediaObjectUuid);
+            }
           }
           await transaction
             .update(ingestionSourceObjects)
-            .set({ lastSeenAt: new Date() })
+            .set({
+              lastSeenAt: new Date(),
+              mediaObjectUuid,
+              candidateDigest: entry.candidate_digest,
+            })
             .where(
               and(
                 eq(ingestionSourceObjects.sourceUuid, resolved.source.uuid),
@@ -638,15 +762,32 @@ export class ImportService {
           });
         }
         if (!mediaObjectUuid) throw new Error("Import candidate has no MediaObject identity");
+        // Updating a snapshot preserves deliberate removals as well as duplicate placements.
+        // A fresh source still follows the normal append behavior.
+        if (
+          result.reconciliation &&
+          existing &&
+          !memberships.some((membership) => membership.mediaObjectUuid === existing.mediaObjectUuid)
+        )
+          continue;
         if (!currentMembers.has(mediaObjectUuid)) {
-          await transaction.insert(vibeMediaObjects).values({
-            vibeUuid,
-            mediaObjectUuid,
-            position: nextPosition++,
-          });
+          await transaction.insert(vibeMediaObjects).values(
+            (replacementPositions ?? [nextPosition++]).map((position) => ({
+              vibeUuid,
+              mediaObjectUuid: mediaObjectUuid!,
+              position,
+            })),
+          );
           currentMembers.add(mediaObjectUuid);
           addedObjectUris.push("rnet://object/" + mediaObjectUuid);
         }
+      }
+
+      if (replacementOrigin) {
+        await transaction
+          .update(ingestionSources)
+          .set({ originUuid: stagedOrigin.uuid })
+          .where(eq(ingestionSources.uuid, resolved.source.uuid));
       }
 
       const sourceId = "source:" + resolved.source.uuid;
@@ -679,7 +820,7 @@ export class ImportService {
         },
         membershipDelta: {
           added: addedObjectUris,
-          removed: [],
+          removed: removedObjectUris,
         },
       });
       await transaction
@@ -717,12 +858,21 @@ export class ImportService {
     sourceUuid: string,
     vibe: DbVibe,
     continuation?: ConnectedSourceContinuation,
+    replacementOrigin?: string,
   ): Promise<void> {
     await this.db
       .update(operations)
       .set({ status: "running" })
       .where(and(eq(operations.uuid, operationUuid), eq(operations.status, "queued")));
-    const resolved = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
+    let resolved = await this.snapshotSource(sourceUuid, vibe.ownerUuid);
+    if (replacementOrigin) {
+      if (resolved.kind !== "origin")
+        throw invalidReview("Only file sources support replacement exports");
+      const origin = await this.db.transaction((transaction) =>
+        this.lockStagedOrigin(transaction, originUuidOf(replacementOrigin), vibe.ownerUuid),
+      );
+      resolved = { ...resolved, origin };
+    }
     if (continuation && continuation.expectedSourceStateDigest !== resolved.sourceStateDigest) {
       throw invalidContinuation();
     }
@@ -746,7 +896,20 @@ export class ImportService {
     );
     const elements = staged.candidates.flatMap(({ elements }) => elements);
     const stagedOrigin = "rnet://origin/" + staged.origin.uuid;
+    const reconciliation = replacementOrigin
+      ? await this.db.transaction(async (transaction) => {
+          await this.assertExclusiveFileSource(transaction, sourceUuid, vibe.uuid);
+          return this.captureReconciliation(
+            transaction,
+            sourceUuid,
+            vibe.uuid,
+            staged.candidates,
+            "share",
+          );
+        })
+      : undefined;
     const reviewDigest = await digest({
+      ...(reconciliation ? { reconciliation } : {}),
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
       ...(staged.destination ? { destination: staged.destination } : {}),
       candidates,
@@ -757,6 +920,7 @@ export class ImportService {
       staged_origin: stagedOrigin,
     });
     const result: ImportPreviewResult = {
+      ...(reconciliation ? { reconciliation } : {}),
       ...(staged.actionEvidence ? { action_evidence: staged.actionEvidence } : {}),
       ...(staged.destination ? { destination: staged.destination } : {}),
       candidates,
@@ -1970,6 +2134,100 @@ export class ImportService {
       operationUuid,
     });
     return mediaObjectUuid;
+  }
+
+  private async assertExclusiveFileSource(
+    transaction: DatabaseTransaction,
+    sourceUuid: string,
+    vibeUuid: string,
+  ): Promise<void> {
+    const configured = await transaction
+      .select({ uuid: vibes.uuid })
+      .from(vibes)
+      .where(
+        sql`${vibes.pullConfig}->'sources' @> ${JSON.stringify(["source:" + sourceUuid])}::jsonb`,
+      );
+    if (configured.length !== 1 || configured[0]?.uuid !== vibeUuid) {
+      throw invalidReview(
+        "Update requires a file source configured only in this Vibe; import separately for another Vibe",
+      );
+    }
+  }
+
+  private async captureReconciliation(
+    transaction: DatabaseTransaction,
+    sourceUuid: string,
+    vibeUuid: string,
+    candidates: readonly StagedCandidate[],
+    lock: "share" | "update",
+  ): Promise<ImportReconciliation> {
+    const bindings = await transaction
+      .select()
+      .from(ingestionSourceObjects)
+      .where(eq(ingestionSourceObjects.sourceUuid, sourceUuid))
+      .orderBy(ingestionSourceObjects.identity);
+    const objects = bindings.length
+      ? await transaction
+          .select()
+          .from(mediaObjects)
+          .where(
+            inArray(
+              mediaObjects.uuid,
+              bindings.map((binding) => binding.mediaObjectUuid),
+            ),
+          )
+          .orderBy(mediaObjects.uuid)
+          .for(lock)
+      : [];
+    const memberships = await transaction
+      .select()
+      .from(vibeMediaObjects)
+      .where(eq(vibeMediaObjects.vibeUuid, vibeUuid));
+    const byUuid = new Map(objects.map((object) => [object.uuid, object]));
+    const byIdentity = new Map(bindings.map((binding) => [binding.identity, binding]));
+    const result: ImportReconciliation = {
+      baseline: bindings.map((binding) => {
+        const object = byUuid.get(binding.mediaObjectUuid);
+        if (!object) throw invalidReview("A previous imported object is missing");
+        return {
+          identity: binding.identity,
+          object_uri: "rnet://object/" + object.uuid,
+          candidate_digest: binding.candidateDigest,
+          user_rev: object.userRev,
+          positions: memberships
+            .filter((membership) => membership.mediaObjectUuid === object.uuid)
+            .map((membership) => membership.position)
+            .sort((left, right) => left - right),
+        };
+      }),
+      counts: { unchanged: 0, added: 0, changed: 0, absent: 0 },
+      changes: [],
+    };
+    const seen = new Set<string>();
+    for (const entry of candidates) {
+      seen.add(entry.identity);
+      const binding = byIdentity.get(entry.identity);
+      if (!binding) {
+        result.counts.added++;
+        continue;
+      }
+      if (binding.candidateDigest === entry.candidate_digest) {
+        result.counts.unchanged++;
+        continue;
+      }
+      const previous = byUuid.get(binding.mediaObjectUuid)!;
+      result.counts.changed++;
+      result.changes.push({
+        previous_object_uri: "rnet://object/" + previous.uuid,
+        next_object_uri: entry.candidate.uri,
+        previous_properties: previous.source.properties,
+        next_properties: entry.candidate.source.properties,
+        preserve_user_annotations: Boolean(previous.user),
+        ...(previous.user ? { user_annotations: previous.user.properties } : {}),
+      });
+    }
+    result.counts.absent = bindings.filter((binding) => !seen.has(binding.identity)).length;
+    return result;
   }
 
   private snapshotSource(sourceUuid: string, ownerUuid: string): Promise<ResolvedSource> {

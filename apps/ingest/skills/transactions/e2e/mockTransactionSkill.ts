@@ -1,20 +1,14 @@
 import type { MediaObject } from "@rnet/types";
-import type { SourceSkillManifest } from "@rhizome/store-contract";
+import type { SourceSkillManifest } from "../../../../../packages/store-contract/src/index.ts";
 
-import type {
-  ParsedTransactions,
-  TransactionParser,
-} from "../../../ingest/skills/transactions/contracts.ts";
-import {
-  verifyTransactions,
-  type VerifyTransactionsOptions,
-} from "../../../ingest/skills/transactions/verify.ts";
+import type { ParsedTransactions, TransactionParser } from "../contracts.ts";
+import { verifyTransactions, type VerifyTransactionsOptions } from "../verify.ts";
 import {
   OWNER_ID,
   type MockOriginUpload,
   type MockSourceSkillAdapter,
   type MockStagedImport,
-} from "./mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 
 export interface MockTransactionStageOptions {
   readonly actionResumed?: boolean;

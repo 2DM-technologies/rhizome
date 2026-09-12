@@ -49,22 +49,27 @@ suites.
 
 ## S1 — Strava export ingestion
 
-- Register the provider-independent `activity` vocabulary in rNet: canonical schema/spec,
-  generated `ActivityProperties` and schema exports, standalone and full-MediaObject runtime
-  validation, and positive/negative fixtures including a non-Strava activity. The Strava skill
-  must consume this canonical vocabulary; it is not registered yet.
-- Add the planned `apps/ingest/skills/strava/` file source described in
-  [Strava import](./concepts/strava-import.md): recognized activity CSV and supported original
-  files, running summaries, recorded laps and calculated mile splits with explicit timing bases,
-  VERIFY coverage, and the existing reviewed candidate-bundle commit path. Summary-only import
-  is an intermediate slice; the skill is not yet installed.
-- Bring forward the shared ZIP reader and reviewed-file E2E support extraction described under
-  M7 before the Strava skill consumes them. Enforce total expanded bytes as well as per-entry
-  limits, and establish upload budgets against the representative export and API transport.
-- Add reviewed reconciliation for successive exports. Current semantic deduplication is scoped
-  to one source binding; uploading another export creates a new source and can duplicate activity
-  objects. S1 must recognize unchanged runs and preserve owner annotations while reviewing new
-  or changed runs, with immutable source lineage and owner-only reuse enforced by the platform.
+- Registers `fitness_activity` in rNet with canonical schema/spec, generated
+  `FitnessActivityProperties` exports, standalone and full-object validation, and non-Strava
+  fixtures. Rhizome’s OpenAPI inventory and CI dependency pin consume the same vocabulary.
+- Installs `apps/ingest/skills/strava/`: the recognized English summary CSV, archive-referenced
+  FIT/TCX/GPX originals and one gzip layer, source race labels, recorded laps, and calculated
+  mile splits with explicit timing/distance provenance. VERIFY reports inventory, date coverage,
+  excluded sports, and unavailable detail. Raw archives remain owner-only origins.
+- Extracts shared ZIP safety and `@rhizome/test-support` browser helpers. Capture is bounded to
+  48 MiB, consumed expansion to 256 MiB, each original to 16 MiB, and each object’s facts to
+  64 KiB. Unsupported CSV dialects and inconsistent supported evidence fail closed.
+- Adds owner-reviewed file reselection through `replacement_origin`. Confirmation preserves
+  unchanged/absent records and all existing placements, retains immutable prior objects, and
+  carries reviewed owner annotations to changed replacements through fresh user-block history.
+  Stale annotations, memberships, or source state reject confirmation atomically. A source must
+  be configured only in the target Vibe; another Vibe’s objects are never replaced implicitly.
+- Adds `fitness_log` for nonempty `fitness_activity`-only Vibes: chronological sessions, weekly
+  mileage, pace by timing basis, expandable laps/splits, and separate owner-entered race results.
+  Mixed or empty Vibes use a generic view. No model calculates the numerical measurements.
+- Synthetic parser, protocol, review-boundary, real-store, and browser tests cover the supported
+  behavior. **Still pending:** validation of the runner’s actual export dialect, measurement
+  accuracy against known activities, and total archive size. See [Strava import](./concepts/strava-import.md).
 
 ## M5
 

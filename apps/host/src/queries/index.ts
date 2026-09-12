@@ -34,3 +34,4 @@ export {
   useSourceSkills,
   useStartSourceOAuthConnection,
 } from "./imports.ts";
+export { useIngestionSource } from "./imports.ts";

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { installMockStore, OBJECT_ID, VIBE_ID } from "./support/mockStore.ts";
+import { installMockStore, OBJECT_ID, VIBE_ID } from "@rhizome/test-support/mockStore";
 
 test("summary polls task state and shares a row with inferred above the view", async ({ page }) => {
   const store = await installMockStore(page);

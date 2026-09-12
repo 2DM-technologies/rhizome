@@ -15,6 +15,7 @@ type JsonObject = Record<string, unknown>;
 type OpenApiSchema = boolean | JsonObject;
 
 const COMPONENT_NAMES = {
+  fitness_activity: "FitnessActivityProperties",
   grant: "Grant",
   "ingest-record": "IngestRecord",
   "media-element": "MediaElement",

@@ -17,6 +17,10 @@ export function useCreateIngestionSource() {
   return api.useMutation("post", "/rnet/v0/ingestion-sources");
 }
 
+export function useIngestionSource(id: string) {
+  return api.useQuery("get", "/rnet/v0/ingestion-sources/{id}", { params: { path: { id } } });
+}
+
 /** The serializable capabilities used to render provider-neutral source forms. */
 export function useSourceSkills() {
   return api.useQuery("get", sourceSkillsPath, undefined, {

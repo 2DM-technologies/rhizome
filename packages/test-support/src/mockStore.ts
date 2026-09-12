@@ -13,7 +13,7 @@ import type {
   PushVibeRequest,
 } from "@rhizome/store-contract";
 import { storeTaskKey } from "@rhizome/store-contract";
-import { PUSH_TASKS } from "../../src/api/generated/push-tasks.ts";
+import { PUSH_TASKS } from "./generated/push-tasks.ts";
 
 export const OWNER_ID = "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 export const VIBE_ID = "0198f2a1-a09b-76aa-95d8-fc5b55b41fd2";
@@ -219,7 +219,7 @@ export interface MockImportVerification {
   ok: boolean;
   source_record_count: number;
   candidate_count: number;
-  totals_by_currency: Record<string, string>;
+  totals_by_currency?: Record<string, string>;
   checks: Array<{ name: string; ok: boolean; detail: string }>;
   readonly [key: string]: unknown;
 }
@@ -908,6 +908,14 @@ export async function installMockStore(
       } satisfies SourceCredentialDocument;
       store.sourceCredentials.set(document.credential, document);
       return json(route, document, 201);
+    }
+
+    const sourceLookup = path.match(/^\/rnet\/v0\/ingestion-sources\/([^/]+)$/);
+    if (method === "GET" && sourceLookup) {
+      const source = store.ingestionSources.get("source:" + sourceLookup[1]);
+      return source
+        ? json(route, source)
+        : problem(route, 404, "not_found", "The source does not exist");
     }
 
     if (method === "POST" && path === "/rnet/v0/ingestion-sources") {

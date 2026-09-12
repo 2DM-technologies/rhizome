@@ -10,6 +10,7 @@ import {
 import { installedPushTasks } from "../apps/server/src/push/installed-tasks.ts";
 
 const RNET_COMPONENT_TYPES = {
+  FitnessActivityProperties: "RnetFitnessActivityProperties",
   Grant: "RnetGrant",
   IngestRecord: "RnetIngestRecord",
   MediaElement: "RnetMediaElement",
@@ -61,6 +62,7 @@ const KNOWN_COMPONENT_TYPES: Readonly<Record<string, string>> = {
 
 const TYPE_IMPORTS = `
 import type {
+  FitnessActivityProperties as RnetFitnessActivityProperties,
   Grant as RnetGrant,
   IngestRecord as RnetIngestRecord,
   MediaElement as RnetMediaElement,
@@ -214,6 +216,10 @@ const contents = await format(astToString(types), {
 });
 const output = new URL("../apps/host/src/api/generated/openapi.ts", import.meta.url);
 const pushTasksOutput = new URL("../apps/host/src/api/generated/push-tasks.ts", import.meta.url);
+const testPushTasksOutput = new URL(
+  "../packages/test-support/src/generated/push-tasks.ts",
+  import.meta.url,
+);
 const pushTasks = Object.fromEntries(
   PUSH_TASK_LEVELS.map((level) => [
     level,
@@ -239,8 +245,14 @@ if (process.argv.includes("--check")) {
     (await Bun.file(pushTasksOutput).text()) !== pushTasksContents
   )
     stale.push(pushTasksOutput.pathname);
+  if (
+    !(await Bun.file(testPushTasksOutput).exists()) ||
+    (await Bun.file(testPushTasksOutput).text()) !== pushTasksContents
+  )
+    stale.push(testPushTasksOutput.pathname);
   if (stale.length > 0) throw new Error(`Generated host files are stale: ${stale.join(", ")}`);
 } else {
   await Bun.write(output, contents);
   await Bun.write(pushTasksOutput, pushTasksContents);
+  await Bun.write(testPushTasksOutput, pushTasksContents);
 }

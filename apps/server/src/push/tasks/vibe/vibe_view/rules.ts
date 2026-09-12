@@ -2,7 +2,7 @@ import type { VibeContext } from "../../../context.ts";
 import type { TaskOutput } from "../../../task-catalog.ts";
 
 type VibeViewOutput = {
-  view: "datatable" | "mediaboard" | "simplelist" | "tweetfeed";
+  view: "datatable" | "mediaboard" | "simplelist" | "tweetfeed" | "fitness_log";
   config:
     | { columns: string[]; sort: { pointer: string; direction: "asc" | "desc" } | null }
     | { caption_pointer: string | null }
@@ -23,6 +23,8 @@ export function observedPointers(context: VibeContext): Set<string> {
 
 export function chooseVibeView(context: VibeContext): TaskOutput | undefined {
   if (isTweetOnly(context)) return { view: "tweetfeed", config: {} } satisfies VibeViewOutput;
+
+  if (isActivityOnly(context)) return { view: "fitness_log", config: {} } satisfies VibeViewOutput;
 
   const observed = observedPointers(context);
   if (observed.size === 0)
@@ -73,6 +75,7 @@ export function validateVibeViewOutput(output: TaskOutput, context: VibeContext)
   if (!config || typeof config !== "object" || Array.isArray(config)) return false;
   const value = config as Record<string, unknown>;
   if (view === "tweetfeed") return isTweetOnly(context) && Object.keys(value).length === 0;
+  if (view === "fitness_log") return isActivityOnly(context) && Object.keys(value).length === 0;
   let pointers: unknown[];
   if (view === "datatable") {
     if (!Array.isArray(value.columns)) return false;
@@ -95,6 +98,15 @@ function isTweetOnly(context: VibeContext): boolean {
     context.objects > 0 &&
     context.types.length > 0 &&
     context.types.every(({ type }) => type === "tweet") &&
+    context.types.reduce((total, { count }) => total + count, 0) === context.objects
+  );
+}
+
+function isActivityOnly(context: VibeContext): boolean {
+  return (
+    context.objects > 0 &&
+    context.types.length > 0 &&
+    context.types.every(({ type }) => type === "fitness_activity") &&
     context.types.reduce((total, { count }) => total + count, 0) === context.objects
   );
 }

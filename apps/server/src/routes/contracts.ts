@@ -1,4 +1,5 @@
 import {
+  fitnessActivityPropertiesSchema,
   grantSchema,
   ingestRecordSchema,
   mediaElementSchema,
@@ -129,6 +130,7 @@ export type RhizomeRouteHandler<
 > = Handler<RouteEnvironment<Auth>, Path, ContractInput<Request>>;
 
 type RnetSchemaReferences = [
+  typeof fitnessActivityPropertiesSchema,
   typeof grantSchema,
   typeof ingestRecordSchema,
   typeof mediaElementSchema,
@@ -154,6 +156,7 @@ const ajv = new Ajv2020({
 addFormats(ajv);
 
 export const RNET_DOCUMENTS = {
+  fitness_activity: fitnessActivityPropertiesSchema,
   grant: grantSchema,
   "ingest-record": ingestRecordSchema,
   "media-element": mediaElementSchema,

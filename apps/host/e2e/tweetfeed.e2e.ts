@@ -8,7 +8,7 @@ import {
   VIBE_ID,
   installMockStore,
   type MockStore,
-} from "./support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 
 const uuid = (index: number) => `0198f2a1-7c3d-7e4b-9f21-${String(index).padStart(12, "0")}`;
 const bodyText =

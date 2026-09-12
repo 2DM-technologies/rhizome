@@ -3,11 +3,8 @@ import providerErrorsFixture from "../../fixtures/provider-errors-v2.json";
 import { simpleFinSourceSkillManifest } from "../../manifest.ts";
 import { filterSimpleFinTransactions } from "../../source.ts";
 import { simpleFinParser } from "../../parser.ts";
-import { stageMockTransactions } from "../../../../../../host/e2e/support/mockTransactionSkill.ts";
-import type {
-  MockSourceSkillAdapter,
-  MockStagedImport,
-} from "../../../../../../host/e2e/support/mockStore.ts";
+import { stageMockTransactions } from "../../../e2e/mockTransactionSkill.ts";
+import type { MockSourceSkillAdapter, MockStagedImport } from "@rhizome/test-support/mockStore";
 
 export const SIMPLEFIN_CREDENTIAL_ID = "0198f2a1-0601-7e01-8e01-000000000001";
 export const SIMPLEFIN_IMPORT_SOURCE_ID = "0198f2a1-0701-7f01-8f01-000000000001";

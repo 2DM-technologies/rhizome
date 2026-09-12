@@ -1,4 +1,5 @@
 import type {
+  FitnessActivityProperties as RnetFitnessActivityProperties,
   Grant as RnetGrant,
   IngestRecord as RnetIngestRecord,
   MediaElement as RnetMediaElement,
@@ -195,6 +196,22 @@ export interface paths {
     get?: never;
     put?: never;
     post: operations["pullVibe"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rnet/v0/ingestion-sources/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getIngestionSource"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -541,6 +558,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * activity — source.properties vocabulary
+     * @description Registered core type for one recorded physical exercise session. Provider-neutral source facts; normally zero elements. External identifiers, such as strava_activity_id, belong in keys. Official owner-entered race results belong in user.properties.
+     */
+    FitnessActivityProperties: RnetFitnessActivityProperties;
     /**
      * Grant
      * @description The read-edge conformance unit: {subject, scope[]} attached to a Vibe. Scope semantics are store-enforced, always — never client-honor-system. Grants are owner-set; delegation is not specified. Stores MUST deny grants whose subject namespace they do not understand.
@@ -1801,6 +1823,82 @@ export interface operations {
       };
       /** @description Problem response */
       429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
+  getIngestionSource: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["IngestionSource"];
+        };
+      };
+      /** @description Problem response */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      413: {
         headers: {
           [name: string]: unknown;
         };

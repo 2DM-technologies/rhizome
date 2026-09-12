@@ -4,6 +4,7 @@ import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { uuidOf } from "../api/uris.ts";
 import { pathOf } from "../shell/surfaces.ts";
 import { TextLink } from "../ui/index.ts";
+import { FitnessActivityLog } from "./FitnessActivityLog.tsx";
 import { TweetFeed } from "./TweetFeed.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 
@@ -34,8 +35,12 @@ export function inferredObjectLabel(object: MediaObject): string {
 }
 export function resolveVibeView(vibe: Vibe, objects: MediaObject[]): View | undefined {
   if (objects.length > 0 && objects.every((object) => object.type === "tweet")) return "tweetfeed";
+  if (objects.length > 0 && objects.every((object) => object.type === "fitness_activity"))
+    return "fitness_log";
   const view = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)])?.view;
-  return VIBE_VIEWS.find((candidate) => candidate === view && candidate !== "tweetfeed");
+  return VIBE_VIEWS.find(
+    (candidate) => candidate === view && candidate !== "tweetfeed" && candidate !== "fitness_log",
+  );
 }
 function displayValue(value: unknown): string {
   if (value == null) return "—";
@@ -78,7 +83,7 @@ export function InferredVibeView({ objects, vibe, ...actions }: Props) {
   const view = resolveVibeView(vibe, objects);
   const raw = entry?.config;
   const config =
-    view === "tweetfeed"
+    view === "tweetfeed" || view === "fitness_log"
       ? {}
       : raw && typeof raw === "object" && !Array.isArray(raw)
         ? (raw as Config)
@@ -87,6 +92,7 @@ export function InferredVibeView({ objects, vibe, ...actions }: Props) {
     <>
       {view && config ? (
         <section aria-label="Inferred Vibe view" data-vibe-view={view} className="mb-8">
+          {view === "fitness_log" ? <FitnessActivityLog objects={objects} {...actions} /> : null}
           {view === "tweetfeed" ? <TweetFeed objects={objects} {...actions} /> : null}
           {view === "simplelist" ? (
             <SimpleList objects={objects} config={config} {...actions} />

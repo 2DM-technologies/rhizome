@@ -3,9 +3,10 @@ import { FileSourceCatalog } from "../file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../public-sources/types.ts";
 import { SourceSkillManifestCatalog } from "../source-skills/manifest-catalog.ts";
 import { ofxSourceSkill } from "../skills/transactions/ofx/source.ts";
+import { stravaSourceSkill } from "../skills/strava/source.ts";
 
 /** Canonical installed file capabilities. Package discovery can replace only this bootstrap seam. */
-export const installedFileSourceSkills = new FileSourceCatalog([ofxSourceSkill]);
+export const installedFileSourceSkills = new FileSourceCatalog([ofxSourceSkill, stravaSourceSkill]);
 
 /** This installation list can become generated package discovery without changing consumers. */
 export function createSourceSkillManifestCatalog(

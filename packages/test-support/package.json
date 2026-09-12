@@ -1,0 +1,16 @@
+{
+  "name": "@rhizome/test-support",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./mockStore": "./src/mockStore.ts",
+    "./playwright": "./src/playwright.ts",
+    "./reviewedFileSkillConformance": "./src/reviewedFileSkillConformance.ts"
+  },
+  "dependencies": {
+    "@playwright/test": "1.62.1",
+    "@rhizome/store-contract": "workspace:*",
+    "@rnet/types": "file:../../../rnet/packages/types"
+  }
+}
