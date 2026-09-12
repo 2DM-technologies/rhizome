@@ -91,7 +91,11 @@ test("object and Vibe pushes poll, refresh inferred data, and render the inferre
   await page.getByLabel("Push task").selectOption(`vibe:${PUSH_TASKS.vibe.summarize.name}`);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Summary" })).toBeVisible();
-  await expect(page.getByText("A focused collection of monthly planning notes.")).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Summary", exact: true })
+      .getByText("A focused collection of monthly planning notes."),
+  ).toBeVisible();
 });
 
 test("describe_media offers rerun all and refreshes a cached element's inferred data", async ({
@@ -237,17 +241,17 @@ test("datatable rows open objects from values and title links without intercepti
   await expect(objectLink).toHaveAttribute("href", `/objects/${OBJECT_ID}`);
 
   await board.getByRole("cell", { name: "Monthly plan", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await expect(page.getByLabel("User properties, as JSON")).toBeVisible();
   await page.getByRole("button", { name: "Back" }).click();
   await expect(board).toBeVisible();
 
   await objectLink.focus();
   await objectLink.press("Enter");
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await page.getByRole("button", { name: "Back" }).click();
   await board.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await page.getByRole("button", { name: "Back" }).click();
 
   await board.getByRole("button", { name: `Remove rnet://object/${OBJECT_ID} from Vibe` }).click();

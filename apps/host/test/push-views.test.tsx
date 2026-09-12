@@ -8,6 +8,8 @@ import { api } from "../src/api/client.ts";
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
 import { InferredVibeView, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
 
+import { VibeOverview } from "../src/surfaces/VibeOverview.tsx";
+
 const owner = "rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 const id = (index: number) => `0198f2a1-7c3d-7e4b-9f21-${String(index).padStart(12, "0")}`;
 function object(index: number, amount: number): MediaObject {
@@ -117,7 +119,7 @@ describe("inferred Vibe surfaces", () => {
         properties: { summary: "A collection of garden plans.", tags: ["garden"], confidence: 0.8 },
       },
     };
-    const markup = render(document, []);
+    const markup = renderToStaticMarkup(<VibeOverview vibe={document} />);
     expect(markup).toContain("A collection of garden plans.");
     expect(markup).not.toContain("data-vibe-view");
   });

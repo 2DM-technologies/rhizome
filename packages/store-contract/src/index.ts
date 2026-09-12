@@ -7,6 +7,8 @@ import {
 export * from "./push.ts";
 import { objectInferenceStatusSchema } from "./inference-status.ts";
 export * from "./inference-status.ts";
+import { taskInferenceStatusSchema } from "./task-inference-status.ts";
+export * from "./task-inference-status.ts";
 import {
   grantSchema,
   ingestRecordSchema,
@@ -692,6 +694,7 @@ export type MediaObjectsResponse = ContractValue<typeof mediaObjectsResponseSche
 /** Stable names used when registering these schemas as OpenAPI components. */
 export const STORE_SCHEMA_COMPONENTS = {
   ObjectInferenceStatus: objectInferenceStatusSchema,
+  TaskInferenceStatus: taskInferenceStatusSchema,
   PushVibeRequest: pushVibeRequestSchema,
   PushOperationResult: pushOperationResultSchema,
   PushTaskManifest: pushTaskManifestSchema,

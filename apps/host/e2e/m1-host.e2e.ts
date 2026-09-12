@@ -227,7 +227,7 @@ test("the window back button only traverses prior in-app navigation", async ({ p
   expect(backBox!.y).toBe(maximizeBox!.y);
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(back).toBeEnabled();
 
   const paintedSurfaceIds = await page.evaluate(async (objectId) => {
@@ -501,7 +501,7 @@ test("standard and maximized windows preserve breathing room above the dock", as
 
   await expect(dock).toBeVisible();
   await expect(dock).toBeInViewport();
-  await expect(surface).toHaveCSS("background-color", "rgb(255, 255, 250)");
+  await expect(surface).toHaveCSS("background-color", "rgb(255, 255, 255)");
   const windowBox = await window.boundingBox();
   const dockBox = await dockTray.boundingBox();
   expect(windowBox).not.toBeNull();
@@ -529,23 +529,21 @@ test("standard and maximized windows preserve breathing room above the dock", as
     });
 });
 
-test("window mode is inherited until a window is restored", async ({ page }) => {
+test("window mode follows history without automatic URL rewriting", async ({ page }) => {
   await page.goto("/m/Geometry");
   const activeSurface = page.locator("[data-view-mode]:not([hidden])");
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
-  await page.getByRole("button", { name: "Maximize window" }).click();
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   // The previous window was closed, but returning to its history entry reopens it in the
-  // inherited mode without retaining the Vibes tree in the background.
+  // mode recorded in that URL, without changing the inherited choice for future opens.
   await page.goBack();
-  await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
+  await expect(page).toHaveURL(/\/m\/Geometry$/);
   await expect(activeSurface).toHaveAttribute("data-surface-id", "m:Geometry");
-  await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
+  await expect(activeSurface).toHaveAttribute("data-view-mode", "standard");
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   await page.goForward();
@@ -657,8 +655,9 @@ test("closing a Vibe moves it from the active slot into the recent rail", async 
   const motion = await sampleLauncherXWhileClicking(page, "Close surface");
 
   await expect(page).toHaveURL(/\/$/);
-  expectMonotonicMotion(motion, "decreasing");
-  expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(-36, 0);
+  // Closing releases the 80px active slot and adds a 44px rail, a 1px divider, and two 20px gaps.
+  expectMonotonicMotion(motion, "increasing");
+  expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(5, 0);
   await expect(slot).toHaveAttribute("data-present", "false");
   await expect(traySlot).toHaveAttribute("data-test-transition-property", "margin-left");
   await expect(content).toHaveCSS("opacity", "0");
@@ -694,28 +693,23 @@ test("opening and traversing to a new surface replaces the previous window", asy
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   await page.goForward();
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await expect(editor).toBeVisible();
   await expect(editor).toHaveValue(JSON.stringify({ reviewed: false }, null, 2));
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 });
 
 test("Vibe titles edit in place and update the existing Store object", async ({ page }) => {
+  mockStore.vibes.push({
+    ...mockStore.vibes[0]!,
+    uri: `rnet://vibe/${NEW_VIBE_ID}`,
+    title: "Trip planning",
+    objects: [],
+  });
   await page.goto("/vibes");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
-
-  const newVibeTitle = page.getByLabel("New Vibe title");
-  const createVibe = page.getByRole("button", { name: "Create Vibe" });
-  const titleBox = await newVibeTitle.boundingBox();
-  const createBox = await createVibe.boundingBox();
-  expect(titleBox).not.toBeNull();
-  expect(createBox).not.toBeNull();
-  expect(titleBox!.width).toBeGreaterThan(200);
-  expect(titleBox!.x + titleBox!.width).toBeLessThan(createBox!.x);
-
-  await newVibeTitle.fill("Trip planning");
-  await createVibe.click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await page.getByRole("button", { name: "Open Vibe Trip planning" }).click();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(
     page.locator("[data-dock-recent-vibes]").getByRole("button", { name: "Vibes", exact: true }),
@@ -963,7 +957,7 @@ test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
   await expect
     .poll(() => tray.boundingBox())
     .toMatchObject({ y: trayBox!.y, height: trayBox!.height });
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(
     page.getByRole("button", { name: "Vibes", exact: true }).locator("[data-dock-app-label]"),
   ).toHaveText("Vibes");
@@ -984,14 +978,14 @@ test("opening a Vibe keeps the Vibes index available as the previous dock window
   await page.goto("/vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`));
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   const rail = page.locator("[data-dock-recent-vibes]");
   await expect(rail).toHaveAttribute("data-count", "1");
   await rail.getByRole("button", { name: "Vibes", exact: true }).click();
 
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(rail.getByRole("button", { name: "Spending", exact: true })).toBeVisible();
 });
@@ -1023,10 +1017,10 @@ test("the Vibes index participates in the same three-item MRU rail as individual
     );
   }
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(page.locator("[data-surface-window]")).toHaveAttribute("data-surface-id", "vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`));
   await expect(page.locator("[data-surface-window]")).toHaveAttribute(
     "data-surface-id",
     `vibe:${VIBE_ID}`,
@@ -1075,7 +1069,7 @@ test("opening a surface grows its dock icon into the window", async ({ page }) =
   const sourceRect = await home.boundingBox();
   expect(sourceRect).not.toBeNull();
   await home.click();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect
     .poll(async () => (await readDockOpenAnimationProbe(page)).length)
     .toBeGreaterThanOrEqual(2);
@@ -1103,7 +1097,7 @@ test("opening a surface grows its dock icon into the window", async ({ page }) =
   });
   expect(surface?.keyframes[0]?.transform).toMatch(/^translate3d\(.+\) scale\(.+\)$/);
   expect(surface?.keyframes[1]).toEqual({
-    clipPath: "inset(0 round 20px)",
+    clipPath: "inset(0 round 0px)",
     offset: null,
     opacity: null,
     transform: "translate3d(0, 0, 0) scale(1, 1)",
@@ -1137,7 +1131,7 @@ test("opening a surface grows its dock icon into the window", async ({ page }) =
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('[data-surface-id="vibes"][data-view-mode]')).toBeHidden();
   await page.goForward();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(page.locator('[data-surface-id="vibes"][data-view-mode]')).toBeVisible();
   expect(await readDockOpenAnimationProbe(page)).toHaveLength(animationCount);
 });
@@ -1148,7 +1142,7 @@ test("dock opening skips shared motion when reduced motion is requested", async 
   await page.goto("/");
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(page.locator('[data-surface-id="vibes"][data-view-mode]')).toBeVisible();
   await expect(page.locator("[data-surface-opening]")).toHaveCount(0);
   expect(await readDockOpenAnimationProbe(page)).toEqual([]);
@@ -1160,14 +1154,14 @@ for (const launcherCase of [
     query: "",
     section: "Commands",
     surfaceId: "vibes",
-    url: /\/vibes$/,
+    url: /\/vibes\?mode=maximized$/,
   },
   {
     label: "Spending",
     query: "spend",
     section: "Vibes",
     surfaceId: `vibe:${VIBE_ID}`,
-    url: new RegExp(`/vibes/${VIBE_ID}$`),
+    url: new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`),
   },
 ] as const) {
   test(`${launcherCase.label} grows from the launcher into its window`, async ({ page }) => {
@@ -1221,7 +1215,7 @@ test("selecting the already-focused window does not animate", async ({ page }) =
     .getByRole("button", { name: "Spending", exact: true })
     .click();
 
-  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`));
   await expect(page.getByRole("dialog", { name: /start something new/i })).toHaveCount(0);
   expect(await readDockOpenAnimationProbe(page)).toEqual([]);
 });
@@ -1230,7 +1224,7 @@ test("a running surface becomes active without reversing the dock motion", async
   await installDockOpenAnimationProbe(page);
   await page.goto("/");
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect
     .poll(async () => (await readDockOpenAnimationProbe(page)).length)
@@ -1245,7 +1239,7 @@ test("a running surface becomes active without reversing the dock motion", async
   const runningApps = page.locator("[data-dock-running-apps]");
   await expect(runningApps).toHaveAttribute("data-count", "1");
   await expect(runningApps).toHaveCSS("width", "44px");
-  await expect(runningApps).toHaveCSS("transition-property", "width");
+  await expect(runningApps).toHaveCSS("transition-property", "width, margin-right");
   await expect(runningApps).toHaveCSS("transition-duration", "0.1s");
   await expect(runningApps).toHaveCSS("transition-timing-function", "cubic-bezier(0, 0, 0.2, 1)");
   const runningApp = runningApps.getByRole("button", { name: "Vibes", exact: true });
@@ -1261,7 +1255,7 @@ test("a running surface becomes active without reversing the dock motion", async
 
   const motion = await sampleLauncherXWhileClicking(page, "Vibes");
 
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect
     .poll(async () => (await readDockOpenAnimationProbe(page)).length)
     .toBeGreaterThan(initialAnimationCount);
@@ -1275,8 +1269,8 @@ test("a running surface becomes active without reversing the dock motion", async
     timing: { duration: 200 },
   });
   if (sourceRect) expectOriginToMatch(runningSurface?.origin ?? null, sourceRect);
-  expectMonotonicMotion(motion, "increasing");
-  expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(36, 0);
+  expectMonotonicMotion(motion, "decreasing");
+  expect((motion.at(-1) as number) - (motion[0] as number)).toBeCloseTo(-5, 0);
   await expect(runningApps).toHaveAttribute("data-count", "0");
   await expect(runningApps).toHaveCSS("width", "0px");
   const activeLabel = page.locator("[data-dock-app-slot] [data-dock-app-label]");
@@ -1306,7 +1300,7 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
   const openedVibes = [[VIBE_ID, "Spending"], ...extraVibes] as const;
   await page.goto("/vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`));
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
   for (const [uuid, title] of openedVibes.slice(1)) {
@@ -1317,7 +1311,7 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
       .locator('[data-launcher-section="Vibes"]')
       .getByRole("button", { name: title, exact: true })
       .click();
-    await expect(page).toHaveURL(new RegExp(`/vibes/${uuid}$`));
+    await expect(page).toHaveURL(new RegExp(`/vibes/${uuid}\\?mode=maximized$`));
     await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   }
 
@@ -1365,7 +1359,7 @@ test("the dock keeps an MRU Vibe rail with three scrollbar-free visible items", 
   await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 
   await rail.getByRole("button", { name: "Spending", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`));
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect.poll(() => rail.evaluate((element) => element.scrollLeft)).toBe(0);
   await expect(items.first()).toHaveAccessibleName("Recipes");
@@ -1666,5 +1660,5 @@ test("launcher search opens a loaded Vibe by title", async ({ page }) => {
   await expect(container).toHaveCSS("width", "240px");
   await expect(slot).toHaveCSS("width", "240px");
   await expect(launcher).not.toBeFocused();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?mode=maximized$`));
 });

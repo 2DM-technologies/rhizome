@@ -74,7 +74,6 @@ function Actions({
   );
 }
 export function InferredVibeView({ objects, vibe, ...actions }: Props) {
-  const summary = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.summarize.name)]);
   const entry = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]);
   const view = resolveVibeView(vibe, objects);
   const raw = entry?.config;
@@ -86,14 +85,6 @@ export function InferredVibeView({ objects, vibe, ...actions }: Props) {
         : undefined;
   return (
     <>
-      {typeof summary?.summary === "string" ? (
-        <section aria-labelledby="vibe-summary-heading" className="mb-7">
-          <h2 id="vibe-summary-heading" className="mb-2 text-label text-primary">
-            Summary
-          </h2>
-          <p className="text-body text-secondary">{summary.summary}</p>
-        </section>
-      ) : null}
       {view && config ? (
         <section aria-label="Inferred Vibe view" data-vibe-view={view} className="mb-8">
           {view === "tweetfeed" ? <TweetFeed objects={objects} {...actions} /> : null}
@@ -240,7 +231,7 @@ function DataTable({ objects, config, ...actions }: RowsProps) {
 function MediaBoard({ objects, config, ...actions }: RowsProps) {
   const caption = typeof config.caption_pointer === "string" ? config.caption_pointer : undefined;
   return (
-    <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <ul className="grid grid-cols-1 gap-x-5 gap-y-12 sm:grid-cols-2 xl:grid-cols-3">
       {objects.map((object, index) => (
         <MediaObjectEntry
           key={`${object.uri}:${index}`}

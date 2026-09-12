@@ -15,7 +15,7 @@
 
 :root,
 [data-tier="light"] {
-  --rz-bg-canvas: #fffffa;
+  --rz-bg-canvas: #ffffff;
   --rz-bg-surface: #f2f2ed;
   --rz-bg-pill: #212227;
   --rz-text-primary: #14151a;

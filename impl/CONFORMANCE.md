@@ -37,13 +37,34 @@ suites.
   tasks write only their own `rhizome:{task}` entry, preserve same-key durable entries, and keep
   other writers' entries intact under row locks. Each run has one cost row; owner-visible results
   report recorded usage while read grantees receive the same outcomes with usage omitted.
-- Confirming an import that creates a new Vibe runs the installed tasks in element, object, and
-  Vibe order after commit, using the same push operations and meters. Automatic imports retain the
+- Confirming a reviewed import runs the installed tasks in element, object, and Vibe order after
+  commit, using the same push operations and meters. Imports into existing Vibes process only newly
+  added objects and their eligible elements, then refresh the Vibe summary/view without renaming it.
+  Existing-Vibe imports adding no members trigger no additional runs. Automatic imports retain the
   owner's transaction exclusion; keyless imports remain available. This sequence is in-process
   under the existing M7 durable-execution deferral.
 - The host consumes generated task manifests, runs and polls push operations, renders inferred
   Vibe views, and refreshes every object or element named by a terminal result. The fake connector,
   provider boundary tests, and stubbed OpenAI tests make the full gate independent of provider spend.
+
+## S1 — Strava export ingestion
+
+- Register the provider-independent `activity` vocabulary in rNet: canonical schema/spec,
+  generated `ActivityProperties` and schema exports, standalone and full-MediaObject runtime
+  validation, and positive/negative fixtures including a non-Strava activity. The Strava skill
+  must consume this canonical vocabulary; it is not registered yet.
+- Add the planned `apps/ingest/skills/strava/` file source described in
+  [Strava import](./concepts/strava-import.md): recognized activity CSV and supported original
+  files, running summaries, recorded laps and calculated mile splits with explicit timing bases,
+  VERIFY coverage, and the existing reviewed candidate-bundle commit path. Summary-only import
+  is an intermediate slice; the skill is not yet installed.
+- Bring forward the shared ZIP reader and reviewed-file E2E support extraction described under
+  M7 before the Strava skill consumes them. Enforce total expanded bytes as well as per-entry
+  limits, and establish upload budgets against the representative export and API transport.
+- Add reviewed reconciliation for successive exports. Current semantic deduplication is scoped
+  to one source binding; uploading another export creates a new source and can duplicate activity
+  objects. S1 must recognize unchanged runs and preserve owner annotations while reviewing new
+  or changed runs, with immutable source lineage and owner-only reuse enforced by the platform.
 
 ## M5
 
@@ -54,9 +75,9 @@ suites.
   reproducible `agent` records, but current execution and object-creation paths make only
   `parser`/reproducible and `authored`/non-reproducible stamps reachable. Add executable `agent` and
   `generated_parser` paths and accept their conformant ingest records.
-- No committed CSV parser ships. “CSV” is a convention rather than a format, so a hand-written CSV
-  skill is a registry of bank dialects that is never complete; file-based bank import is QFX/OFX-only
-  until this path lands, and every CSV dialect reaches the store through it.
+- A generic CSV importer does not ship. Unsupported bank CSV dialects use the M5 generated-parser
+  path; file-based bank import remains QFX/OFX-only until then. A committed parser for a bounded,
+  identified provider export is allowed and is owned by that source skill, including S1 Strava.
 
 ## M7
 
@@ -99,8 +120,8 @@ These become required only when the associated source or product scope expands:
   chip instead of reporting that it is unsupported. Before adding element kinds or media types
   beyond the currently rendered set, replace this with an explicit capability registry and a
   distinct unsupported state.
-- Define file refresh and reselection semantics for replacing the origin bytes bound to an existing
-  file source.
+- Define general file refresh and reselection semantics beyond S1's reviewed successive-export
+  use case. Existing file sources continue to pin immutable origin bytes.
 
 ## M8
 

@@ -32,6 +32,8 @@ import {
 } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
+import { registerTaskInferenceStatusRoute } from "./task-inference-status.ts";
+
 export const CreateVibeRequestSchema = jsonSchema(createVibeRequestSchema);
 export const UpdateVibeRequestSchema = jsonSchema(updateVibeRequestSchema);
 export const MediaObjectRefsRequestSchema = jsonSchema(mediaObjectRefsRequestSchema);
@@ -70,6 +72,7 @@ export function createVibeRoutes(
   pushService: PushService,
 ) {
   const router = createRhizomeRouter();
+  registerTaskInferenceStatusRoute(router, pushService);
 
   router.get(
     "/",
@@ -250,6 +253,19 @@ export function createVibeRoutes(
         ...connectedSources,
       });
       const vibe = await service.confirm(parameters.id, parameters.operation_id);
+      const actor = context.get("actor");
+      if (vibe.addedObjectUris.length) {
+        queueMicrotask(() => {
+          void pushService
+            .runImportedVibeTasks(
+              parameters.id,
+              actor,
+              parameters.operation_id,
+              vibe.addedObjectUris,
+            )
+            .catch(() => console.error("Automatic import push failed", parameters.id));
+        });
+      }
       return context.json(serializeVibe(vibe));
     },
   );

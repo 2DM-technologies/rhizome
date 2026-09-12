@@ -1358,6 +1358,18 @@ export async function installMockStore(
         : problem(route, 404, "not_found", "The element does not exist");
     }
 
+    const taskStatus = path.match(/^\/rnet\/v0\/vibes\/([^/]+)\/inference-status$/);
+    if (method === "GET" && taskStatus) {
+      const requested = new URL(route.request().url());
+      return json(route, {
+        level: requested.searchParams.get("level"),
+        task: requested.searchParams.get("task"),
+        status: "idle",
+        message: null,
+        revision: 1,
+      });
+    }
+
     const inferenceStatus = path.match(/^\/rnet\/v0\/objects\/([^/]+)\/inference-status$/);
     if (method === "GET" && inferenceStatus) {
       const object = store.objects.get(inferenceStatus[1] ?? "");

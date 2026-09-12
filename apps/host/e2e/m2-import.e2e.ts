@@ -132,7 +132,7 @@ for (const fixture of cases) {
 
     await page.getByRole("button", { name: "Confirm import" }).click();
 
-    await expect(page.getByRole("status")).toContainText(
+    await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
       `Imported ${fixture.candidateCount} objects from ${fixture.filename}.`,
     );
     await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
@@ -163,7 +163,9 @@ test("cancel abandons a staged generic file review without deleting its raw reco
 
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Review canceled. Nothing was imported.");
+  await expect(page.getByRole("status").filter({ hasText: "Review canceled" })).toHaveText(
+    "Review canceled. Nothing was imported.",
+  );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toEqual(initialMembership);
   expect(mockStore.objects.size).toBe(initialObjectCount);

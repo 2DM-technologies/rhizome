@@ -4,6 +4,7 @@ import {
   type PushOperationResult,
   type PushVibeRequest,
   type SkipReason,
+  type TaskInferenceStatusQuery,
 } from "@rhizome/store-contract";
 import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
@@ -58,6 +59,8 @@ import type { PushTaskCatalog, PushTaskDefinition, TaskOutput } from "./task-cat
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
 import { PushActivity, readObjectInferenceStatus } from "./inference-status.ts";
 
+import { readTaskInferenceStatus } from "./task-inference-status.ts";
+
 type StoredPushRequest = PushVibeRequest & {
   mode: "push";
   vibe: string;
@@ -87,6 +90,17 @@ export class PushService {
     return readObjectInferenceStatus(this.dependencies.db, this.activity, uuid, actor);
   }
 
+  getTaskInferenceStatus(uuid: string, input: TaskInferenceStatusQuery, actor: Actor) {
+    return readTaskInferenceStatus(
+      this.dependencies.db,
+      this.activity,
+      this.dependencies.pushTasks,
+      uuid,
+      input,
+      actor,
+    );
+  }
+
   constructor(
     private readonly dependencies: {
       db: Database;
@@ -108,18 +122,35 @@ export class PushService {
   }
 
   /** Run after import commit; each task accepts fresh context only when its turn begins. */
-  async runAllTasks(vibeUuid: string, actor: Actor): Promise<void> {
+  async runAllTasks(vibeUuid: string, actor: Actor, objectUris?: readonly string[]): Promise<void> {
     if (!this.dependencies.modelConnectors) return;
     const tasks = this.dependencies.pushTasks
       .manifests()
       .map((task) => this.dependencies.pushTasks.get(task.level, task.name)!);
-    this.activity.begin(vibeUuid, tasks);
+    this.activity.begin(vibeUuid, tasks, objectUris?.map(uriId));
     try {
       // Preserve catalog order within each level (including summary before view).
       for (const level of ["element", "object", "vibe"] as const) {
         for (const task of tasks.filter((task) => task.level === level)) {
           try {
-            const operation = await this.acceptPush(vibeUuid, { level, task: task.name }, actor);
+            let input: PushVibeRequest = { level, task: task.name };
+            if (objectUris && level !== "vibe") {
+              const selection =
+                level === "object"
+                  ? [...objectUris]
+                  : (await loadContextObjects(this.dependencies.db, objectUris.map(uriId))).flatMap(
+                      ({ elements }) =>
+                        elements
+                          .filter(({ element }) => task.elementKinds?.includes(element.kind))
+                          .map(({ element }) => `rnet://element/${element.uuid}`),
+                    );
+              if (!selection.length) {
+                this.activity.accepted(vibeUuid, task);
+                continue;
+              }
+              input = { level, task: task.name, selection: [...new Set(selection)] };
+            }
+            const operation = await this.acceptPush(vibeUuid, input, actor);
             this.activity.accepted(vibeUuid, task);
             await this.runPush(operation.uuid);
           } catch (error) {
@@ -144,6 +175,7 @@ export class PushService {
     vibeUuid: string,
     actor: Actor,
     importOperationUuid: string,
+    addedObjectUris?: readonly string[],
   ): Promise<void> {
     if (!this.dependencies.modelConnectors) return;
     // The owner's automatic-ingest policy excludes any Vibe containing transactions.
@@ -155,7 +187,10 @@ export class PushService {
       .where(and(eq(vibeMediaObjects.vibeUuid, vibeUuid), eq(mediaObjects.type, "transaction")))
       .limit(1);
     if (transaction) return;
-    await this.runAllTasks(vibeUuid, actor);
+    if (addedObjectUris?.length === 0) return;
+    await this.runAllTasks(vibeUuid, actor, addedObjectUris);
+    // Existing Vibe imports enrich their additions without changing the owner's title.
+    if (addedObjectUris) return;
 
     const { db } = this.dependencies;
     const imported = await db.query.operations.findFirst({
@@ -421,7 +456,7 @@ export class PushService {
                 });
                 continue;
               }
-              const payload = await blobs.get("elements", element.contentHash);
+              const payload = await blobs.get("elements", element.contentHash, controller.signal);
               if (!payload) throw new Error("Push image payload disappeared");
               if (
                 payload.bytes.byteLength > limits.maxAttachmentBytes ||
@@ -522,9 +557,12 @@ export class PushService {
         }
       }
     } catch {
-      state.status = "failed";
-      state.abortReason = null;
-      state.error = "The push operation could not complete.";
+      if (controller.signal.aborted) stopForCeiling();
+      else {
+        state.status = "failed";
+        state.abortReason = null;
+        state.error = "The push operation could not complete.";
+      }
     } finally {
       clearTimeout(wallTimer);
       this.activity.calls.delete(operationUuid);

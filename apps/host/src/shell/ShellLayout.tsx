@@ -50,7 +50,7 @@ function markFor(surface: Surface): string {
  */
 export function ShellLayout() {
   const { surface: focused, mode } = useFocusedSurface();
-  useEnsureSurfaceOpen(focused, mode);
+  useEnsureSurfaceOpen(focused);
 
   const open = useOpenSurfaces();
   const recentVibeSurfaces = useShellStore((state) => state.recentVibeSurfaces);
@@ -221,8 +221,12 @@ export function ShellLayout() {
                 data-dock-recent-vibes
                 data-dock-running-apps
                 data-count={dockRailSurfaces.length}
-                style={{ width: dockRailWidth }}
-                className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden transition-[width] duration-100 ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                style={{
+                  width: dockRailWidth,
+                  // The empty rail stays mounted for its width transition but needs no tray gap.
+                  marginRight: dockRailSurfaces.length === 0 ? -DOCK_RAIL_GAP : 0,
+                }}
+                className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden transition-[width,margin-right] duration-100 ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 <div className="flex w-max items-center gap-5">
                   {dockRailSurfaces.map((surface) => (
@@ -240,7 +244,16 @@ export function ShellLayout() {
                   ))}
                 </div>
               </div>
-              <DockDivider />
+              <div
+                aria-hidden
+                style={{
+                  width: dockRailSurfaces.length === 0 ? 0 : 1,
+                  marginRight: dockRailSurfaces.length === 0 ? -DOCK_RAIL_GAP : 0,
+                }}
+                className="flex shrink-0 overflow-hidden transition-[width,margin-right] duration-100 ease-out"
+              >
+                <DockDivider />
+              </div>
               <div
                 ref={launcherContainer}
                 data-launcher-slot

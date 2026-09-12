@@ -71,6 +71,102 @@
   will-change: transform, clip-path;
 }
 
+.start-vibe-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: var(--rz-accent-primary);
+  background: #ffffff;
+  color: var(--rz-accent-primary);
+  transition:
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.start-vibe-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.start-vibe-glow::before,
+.start-vibe-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat-x;
+  background-size: 160px 100%;
+  animation: start-vibe-current 3s linear infinite paused;
+}
+
+.start-vibe-glow::before {
+  background-image: radial-gradient(
+    ellipse 48% 135% at 50% 110%,
+    color-mix(in srgb, var(--rz-accent-primary) 3%, transparent),
+    color-mix(in srgb, var(--rz-accent-primary) 3%, transparent) 40%,
+    transparent 100%
+  );
+}
+
+.start-vibe-glow::after {
+  background-image: radial-gradient(
+    ellipse 48% 135% at 50% -10%,
+    color-mix(in srgb, var(--rz-accent-secondary) 3%, transparent),
+    color-mix(in srgb, var(--rz-accent-secondary) 3%, transparent) 40%,
+    transparent 100%
+  );
+  animation-direction: reverse;
+  animation-delay: -1.5s;
+}
+
+.start-vibe-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0.12;
+  mix-blend-mode: multiply;
+}
+
+.start-vibe-button > svg {
+  transition: transform 220ms ease;
+}
+
+.start-vibe-button:is(:hover, :focus-visible) {
+  cursor: pointer;
+  color: var(--rz-accent-primary);
+  opacity: 1;
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--rz-accent-primary) 16%, transparent);
+}
+
+.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow {
+  opacity: 1;
+  transition-duration: 900ms;
+}
+
+.start-vibe-button:is(:hover, :focus-visible) > svg {
+  transform: scale(1.12);
+}
+
+.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow::before,
+.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow::after {
+  animation-play-state: running;
+}
+
+/* Move one complete tile per cycle: both edges match without a reset or reversal. */
+@keyframes start-vibe-current {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 160px 0;
+  }
+}
+
 .inferred-block {
   position: relative;
   overflow: hidden;
@@ -128,6 +224,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .start-vibe-button,
+  .start-vibe-button > svg,
+  .start-vibe-glow {
+    transition: none;
+  }
+  .start-vibe-glow::before,
+  .start-vibe-glow::after {
+    animation: none;
+  }
+  .start-vibe-glow::after {
+    background-position: 80px 0;
+  }
   .inferred-block::after {
     animation: none !important;
   }

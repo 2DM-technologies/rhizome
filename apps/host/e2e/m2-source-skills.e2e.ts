@@ -68,7 +68,7 @@ async function configureSyntheticCredentialedSource(page: Page): Promise<string>
   if (!source) throw new Error("Missing synthetic credentialed source");
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
     `Imported 2 objects from ${SYNTHETIC_CREDENTIAL_SKILL_LABEL}.`,
   );
   return source.source;
@@ -138,7 +138,7 @@ test("a synthetic public source normalizes config and commits only after review"
   expect(mockStore.objects.size).toBe(initialObjectCount);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
     `Imported 2 objects from ${SYNTHETIC_PUBLIC_SKILL_LABEL}.`,
   );
   expect(mockStore.objects.size).toBe(initialObjectCount + 2);
@@ -189,7 +189,7 @@ test("credentialed-source conformance clears the secret and resumes an opaque ac
   if (!source) throw new Error("Missing synthetic credentialed source");
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
     `Imported 2 objects from ${SYNTHETIC_CREDENTIAL_SKILL_LABEL}.`,
   );
   await expect(page.getByRole("button", { name: "Refresh sources" })).toBeVisible();

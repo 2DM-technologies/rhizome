@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { NEW_VIBE_ID, VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
+import { NEW_VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
 import {
   mockSyntheticFileSourceSkill,
   SYNTHETIC_FILE_FIXTURE,
@@ -26,28 +26,25 @@ async function openImportFromLauncher(page: Page): Promise<void> {
 test("the start-something-new launcher opens a retained import surface", async ({ page }) => {
   await openImportFromLauncher(page);
 
-  await expect(page).toHaveURL(/\/imports$/);
+  await expect(page).toHaveURL(/\/imports\?mode=maximized$/);
   await expect(page.locator('[data-surface-id="import"][data-view-mode]')).toBeVisible();
   await expect(page.getByRole("heading", { name: "Import", exact: true, level: 1 })).toBeVisible();
-  await expect(page.getByRole("list", { name: "Owned Vibes" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Import into Spending" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Import into a new Vibe" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Owned Vibes" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose another Vibe" })).toHaveCount(0);
+  await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
 });
 
-test("an existing owner Vibe hands off to the shared review and survives surface history", async ({
-  page,
-}) => {
+test("the new-Vibe import flow survives surface history", async ({ page }) => {
   await openImportFromLauncher(page);
-  await page.getByRole("button", { name: "Import into Spending" }).click();
 
-  await expect(page.getByText("Target Vibe: Spending", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
   await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
 
   await page.getByRole("button", { name: "Home" }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
+  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await page.goBack();
-  await expect(page).toHaveURL(/\/imports$/);
-  await expect(page.getByText("Target Vibe: Spending", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/imports\?mode=maximized$/);
+  await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
 
   await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
   await page
@@ -59,8 +56,7 @@ test("an existing owner Vibe hands off to the shared review and survives surface
   expect(
     mockStore.requests.some(
       (request) =>
-        request.method() === "POST" &&
-        new URL(request.url()).pathname === `/rnet/v0/vibes/${VIBE_ID}/imports`,
+        request.method() === "POST" && new URL(request.url()).pathname === "/rnet/v0/imports",
     ),
   ).toBe(true);
 });
@@ -69,7 +65,6 @@ test("a new destination is created only when its reviewed import is confirmed", 
   page,
 }) => {
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
 
   await expect(page).toHaveURL(/\/imports$/);
   await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
@@ -92,7 +87,7 @@ test("a new destination is created only when its reviewed import is confirmed", 
   expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "Imported objects", exact: true, level: 1 }),
   ).toBeVisible();
@@ -109,7 +104,6 @@ test("a new destination is created only when its reviewed import is confirmed", 
 
 test("canceling a pending destination leaves no Vibe or committed import", async ({ page }) => {
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
   await page
     .getByRole("button", { name: `Review ${syntheticFileSourceSkillManifest.label}` })
@@ -125,6 +119,22 @@ test("canceling a pending destination leaves no Vibe or committed import", async
     mockStore.requests.some(
       (request) =>
         request.method() === "POST" && new URL(request.url()).pathname.endsWith("/confirm"),
+    ),
+  ).toBe(false);
+});
+
+test("Start a Vibe opens the import flow directly from Vibes", async ({ page }) => {
+  await page.goto("/vibes?mode=maximized");
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Create Vibe", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Start a Vibe", exact: true }).click();
+  await expect(page).toHaveURL(/\/imports\?mode=maximized$/);
+  await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
+  await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
+  expect(
+    mockStore.requests.some(
+      (request) =>
+        request.method() === "POST" && new URL(request.url()).pathname === "/rnet/v0/vibes",
     ),
   ).toBe(false);
 });

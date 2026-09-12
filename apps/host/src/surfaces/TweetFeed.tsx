@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState, type SyntheticEvent } from "react";
+import { createPortal } from "react-dom";
 import { useQueries } from "@tanstack/react-query";
 import type { MediaElement, MediaObject } from "@rnet/types";
 
@@ -7,6 +8,7 @@ import { uuidOf } from "../api/uris.ts";
 import { usePayloadUrl } from "../queries/index.ts";
 import { pathOf } from "../shell/surfaces.ts";
 import { ElementPreview } from "../ui/index.ts";
+import { OpenObjectIcon, OriginalPostIcon } from "../ui/icons.tsx";
 import { useNearViewport } from "../ui/useNearViewport.ts";
 import { httpLink, newestTweets, tweetTextParts } from "./tweetfeed.ts";
 
@@ -19,6 +21,10 @@ interface Props {
 
 const linkStyle =
   "text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent";
+const actionStyle =
+  "grid size-7 shrink-0 place-items-center rounded-pill bg-surface text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+const actionTooltipStyle =
+  "pointer-events-none fixed z-50 w-max -translate-y-1/2 rounded-sm border border-gray-50 bg-gray-800 px-2 py-1 text-caption text-white shadow-sm";
 const dateFormat = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -46,6 +52,42 @@ function Tweet({
   date: Date | undefined;
 }) {
   const viewport = useNearViewport();
+  const tooltipId = useId();
+  const [tooltip, setTooltip] = useState<{
+    label: string;
+    id: string;
+    left: number;
+    top: number;
+    maxWidth: number;
+  } | null>(null);
+
+  function showTooltip(event: SyntheticEvent<HTMLAnchorElement>, label: string, id: string) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const roomOnRight = window.innerWidth - rect.right - 16;
+    setTooltip({
+      label,
+      id,
+      left: roomOnRight >= 64 ? rect.right + 8 : Math.max(8, rect.left - 128),
+      top: rect.top + rect.height / 2,
+      maxWidth: roomOnRight >= 64 ? roomOnRight : 120,
+    });
+  }
+
+  useEffect(() => {
+    if (!tooltip) return;
+    const hide = () => setTooltip(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hide();
+    };
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [tooltip]);
   const properties = object.source.properties;
   const handle =
     typeof properties.author_handle === "string" ? properties.author_handle : undefined;
@@ -99,46 +141,75 @@ function Tweet({
               View quoted post ↗
             </a>
           ) : null}
-          <footer className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-caption">
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1 text-caption">
+          <a
+            href={pathOf({ kind: "object", uuid: uuidOf(object.uri) })}
+            className={actionStyle}
+            aria-label={`Open object ${object.uri}`}
+            aria-describedby={`${tooltipId}-object`}
+            onMouseEnter={(event) => showTooltip(event, "Open object", `${tooltipId}-object`)}
+            onMouseLeave={() => setTooltip(null)}
+            onFocus={(event) => showTooltip(event, "Open object", `${tooltipId}-object`)}
+            onBlur={() => setTooltip(null)}
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              openObject(object);
+            }}
+          >
+            <OpenObjectIcon />
+          </a>
+          {original ? (
             <a
-              href={pathOf({ kind: "object", uuid: uuidOf(object.uri) })}
-              className={linkStyle}
-              aria-label={`Open object ${object.uri}`}
-              onClick={(event) => {
-                if (
-                  event.defaultPrevented ||
-                  event.button !== 0 ||
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                )
-                  return;
-                event.preventDefault();
-                openObject(object);
-              }}
+              href={original}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={actionStyle}
+              aria-label="Original post"
+              aria-describedby={`${tooltipId}-original`}
+              onMouseEnter={(event) => showTooltip(event, "Original post", `${tooltipId}-original`)}
+              onMouseLeave={() => setTooltip(null)}
+              onFocus={(event) => showTooltip(event, "Original post", `${tooltipId}-original`)}
+              onBlur={() => setTooltip(null)}
             >
-              Open object
+              <OriginalPostIcon />
             </a>
-            {original ? (
-              <a href={original} target="_blank" rel="noopener noreferrer" className={linkStyle}>
-                Original post ↗
-              </a>
-            ) : null}
-            {removeObject && object.source.ingest.method === "authored" ? (
-              <button
-                type="button"
-                className={linkStyle}
-                aria-label={`Remove ${object.uri} from Vibe`}
-                disabled={removePending}
-                onClick={() => removeObject(object)}
-              >
-                Remove
-              </button>
-            ) : null}
-          </footer>
+          ) : null}
+          {removeObject && object.source.ingest.method === "authored" ? (
+            <button
+              type="button"
+              className={linkStyle}
+              aria-label={`Remove ${object.uri} from Vibe`}
+              disabled={removePending}
+              onClick={() => removeObject(object)}
+            >
+              Remove
+            </button>
+          ) : null}
         </div>
       </article>
+      {tooltip
+        ? createPortal(
+            <span
+              id={tooltip.id}
+              role="tooltip"
+              className={actionTooltipStyle}
+              style={{ left: tooltip.left, top: tooltip.top, maxWidth: tooltip.maxWidth }}
+            >
+              {tooltip.label}
+            </span>,
+            document.body,
+          )
+        : null}
     </li>
   );
 }

@@ -12,6 +12,7 @@ import type {
 import type {
   PushVibeRequest as StorePushVibeRequest,
   ObjectInferenceStatus as StoreObjectInferenceStatus,
+  TaskInferenceStatus as StoreTaskInferenceStatus,
   PushOperationResult as StorePushOperationResult,
   PushTaskManifest as StorePushTaskManifest,
   PushTaskManifestsResponse as StorePushTaskManifestsResponse,
@@ -66,6 +67,22 @@ export interface paths {
     get?: never;
     put?: never;
     post: operations["confirmPendingVibeImportPreview"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/rnet/v0/vibes/{id}/inference-status": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getTaskInferenceStatus"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -570,6 +587,7 @@ export interface components {
      */
     Vibe: RnetVibe;
     ObjectInferenceStatus: StoreObjectInferenceStatus;
+    TaskInferenceStatus: StoreTaskInferenceStatus;
     PushVibeRequest: StorePushVibeRequest;
     PushOperationResult: StorePushOperationResult;
     PushTaskManifest: StorePushTaskManifest;
@@ -733,6 +751,85 @@ export interface operations {
         };
         content: {
           "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
+  getTaskInferenceStatus: {
+    parameters: {
+      query: {
+        level: "element" | "object" | "vibe";
+        task: string;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TaskInferenceStatus"];
         };
       };
       /** @description Problem response */

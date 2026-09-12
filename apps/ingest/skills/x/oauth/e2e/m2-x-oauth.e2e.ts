@@ -34,7 +34,6 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   const initialElements = mockStore.elements.size;
 
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await selectAndConnect(page);
 
   const reconciliation = page.getByLabel("VERIFY reconciliation");
@@ -87,7 +86,7 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "@example_user Tweets", exact: true, level: 1 }),
   ).toBeVisible();
@@ -116,7 +115,6 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   );
 
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await expect(page.getByRole("button", { name: "Sign in with X", exact: true })).toBeVisible();
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expectExactlyOnceConnectionAndPreview();
@@ -128,7 +126,6 @@ test("X provider denial is recoverable and leaves no credential, source, or capt
 }) => {
   mockStore.rejectNextOAuthConnection();
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await selectAndConnect(page);
 
   await expect(page.getByRole("alert")).toHaveText(

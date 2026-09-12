@@ -18,6 +18,7 @@ import type { PushTaskDefinition } from "./task-catalog.ts";
 
 type PendingTask = Pick<PushTaskDefinition, "level" | "name" | "elementKinds"> & {
   message: string | null;
+  objectUuids?: readonly string[];
   failedAt?: Date;
 };
 
@@ -27,16 +28,20 @@ export class PushActivity {
   readonly calls = new Map<string, ReadonlySet<string>>();
   readonly settled = new Map<string, ReadonlyMap<string, unknown>>();
 
-  begin(vibeUuid: string, tasks: readonly PushTaskDefinition[]) {
+  begin(vibeUuid: string, tasks: readonly PushTaskDefinition[], objectUuids?: readonly string[]) {
     this.pending.set(
       vibeUuid,
       new Map(
-        tasks
-          .filter(({ level }) => level !== "vibe")
-          .map((task) => [
-            `${task.level}:${task.name}`,
-            { level: task.level, name: task.name, elementKinds: task.elementKinds, message: null },
-          ]),
+        tasks.map((task) => [
+          `${task.level}:${task.name}`,
+          {
+            level: task.level,
+            name: task.name,
+            elementKinds: task.elementKinds,
+            message: null,
+            objectUuids,
+          },
+        ]),
       ),
     );
   }
@@ -118,7 +123,11 @@ export async function readObjectInferenceStatus(
   const pending: PendingTask[] = [];
   for (const { vibeUuid } of memberships) {
     if (!activity.pending.has(vibeUuid) || !(await canRead(vibeUuid, object.ownerUuid))) continue;
-    pending.push(...activity.pending.get(vibeUuid)!.values());
+    pending.push(
+      ...[...activity.pending.get(vibeUuid)!.values()].filter(
+        (task) => !task.objectUuids || task.objectUuids.includes(uuid),
+      ),
+    );
   }
   return {
     records: records.map((record) => {

@@ -33,7 +33,6 @@ test.beforeEach(async ({ page }) => {
 
 test("a new Vibe uses the Are.na board title without entering a name", async ({ page }) => {
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
   await page.getByLabel("Are.na channel URL").fill(CHANNEL_URL);
   await page.getByRole("button", { name: "Review Are.na channel" }).click();
@@ -45,7 +44,7 @@ test("a new Vibe uses the Are.na board title without entering a name", async ({ 
 
   await page.getByRole("button", { name: "Confirm import" }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "Synthetic Media Study", exact: true, level: 1 }),
   ).toBeVisible();
@@ -137,7 +136,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
 
   await page.getByRole("button", { name: "Confirm import" }).click();
 
-  await expect(page.getByRole("status")).toContainText("Imported 5 objects from Are.na channel.");
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
+    "Imported 5 objects from Are.na channel.",
+  );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   const importedCards = page.locator("[data-media-object-card]");
   await expect(importedCards).toHaveCount(6);

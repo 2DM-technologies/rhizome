@@ -50,16 +50,42 @@ export class R2BlobStore implements BlobStore {
     );
   }
 
-  async get(namespace: BlobNamespace, key: string): Promise<StoredBlob | null> {
+  async get(
+    namespace: BlobNamespace,
+    key: string,
+    signal?: AbortSignal,
+  ): Promise<StoredBlob | null> {
+    signal?.throwIfAborted();
     try {
       const response = await this.#client.send(
         new GetObjectCommand({ Bucket: this.#buckets[namespace], Key: key }),
+        { abortSignal: signal },
       );
       if (!response.Body) return null;
-      return {
-        bytes: await response.Body.transformToByteArray(),
-        contentType: response.ContentType,
-      };
+      const body = response.Body;
+      // The SDK request can finish before its body does. Keep cancellation attached until
+      // the Node/Bun response stream has been fully consumed, including a stalled body.
+      let abort: (() => void) | undefined;
+      try {
+        const reading = body.transformToByteArray();
+        const bytes = signal
+          ? await Promise.race([
+              reading,
+              new Promise<never>((_resolve, reject) => {
+                abort = () => {
+                  reject(signal.reason);
+                  if ("destroy" in body) body.destroy();
+                };
+                signal.addEventListener("abort", abort, { once: true });
+                if (signal.aborted) abort();
+              }),
+            ])
+          : await reading;
+        signal?.throwIfAborted();
+        return { bytes, contentType: response.ContentType };
+      } finally {
+        if (abort) signal?.removeEventListener("abort", abort);
+      }
     } catch (error) {
       const status = (error as { $metadata?: { httpStatusCode?: number } }).$metadata
         ?.httpStatusCode;

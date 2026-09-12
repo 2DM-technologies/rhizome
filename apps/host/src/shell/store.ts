@@ -153,7 +153,7 @@ export const useShellStore = create<ShellState>()(
     (set) => ({
       open: [],
       recentVibeSurfaces: [],
-      defaultViewMode: "standard",
+      defaultViewMode: "maximized",
       agentOpen: false,
       launcherOpen: false,
 

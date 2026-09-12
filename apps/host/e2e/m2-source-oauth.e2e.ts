@@ -115,7 +115,6 @@ test("generic OAuth resumes a new destination exactly once after a full-page pro
   page,
 }) => {
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await selectAndConnect(page);
 
   await expectSyntheticReview(page);
@@ -138,7 +137,7 @@ test("generic OAuth resumes a new destination exactly once after a full-page pro
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "Imported objects", exact: true, level: 1 }),
   ).toBeVisible();
@@ -147,7 +146,6 @@ test("generic OAuth resumes a new destination exactly once after a full-page pro
   // React mount. Otherwise the retained attempt would stage a duplicate on remount.
   await page.goBack();
   await expect(page).toHaveURL(/\/imports$/);
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await expect(
     page.getByRole("button", { name: SYNTHETIC_OAUTH_BUTTON_LABEL, exact: true }),
   ).toBeVisible();
@@ -185,13 +183,11 @@ test("a consumed OAuth return cannot replay after the new-destination panel remo
   page,
 }) => {
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await selectAndConnect(page);
   await expectSyntheticReview(page);
   expectExactlyOnceConnectionAndPreview("/rnet/v0/imports");
 
-  await page.getByRole("button", { name: "Choose another Vibe" }).click();
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
+  await page.reload();
   await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
   await page.waitForTimeout(100);
 
@@ -234,8 +230,7 @@ test("a sanitized callback failure is recoverable and its URL marker is consumed
     "The source connection could not be completed. Start the connection again.",
   );
   await expect(page).toHaveURL(/\/imports$/);
-  await expect(page.getByRole("button", { name: "Import into a new Vibe" })).toBeVisible();
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
+  await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: SYNTHETIC_OAUTH_BUTTON_LABEL, exact: true }),
   ).toBeVisible();
@@ -252,11 +247,10 @@ test("a stale connection attempt is recoverable and its URL marker is consumed",
     "The source connection could not be loaded. Start the connection again.",
   );
   await expect(page).toHaveURL(/\/imports$/);
-  await expect(page.getByRole("button", { name: "Import into a new Vibe" })).toBeVisible();
+  await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
   expect(requestsTo(`/rnet/v0/source-connections/${staleAttemptId}`, "GET").length).toBeGreaterThan(
     0,
   );
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await expect(
     page.getByRole("button", { name: SYNTHETIC_OAUTH_BUTTON_LABEL, exact: true }),
   ).toBeVisible();

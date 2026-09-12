@@ -20,7 +20,7 @@ Core objects (defined fully in the spec + schemas):
 
 - **MediaElement** — immutable, UUIDv7-identified atomic content record: an immutable `owner`, a payload, and contextual metadata. Five kinds (`text|image|audio|video|document`), closed set, rule: _a kind exists iff a human consumes that thing directly_. URI: `rnet://element/{uuid}`; the payload is independently identified by required `content_hash`.
 - **OriginArtifact** — immutable, UUIDv7-identified provenance record around raw uploaded bytes (bank export, data dump), with an immutable `owner`. URI: `rnet://origin/{uuid}`; the payload is independently identified by required `content_hash`. Ontologically inert: not media, never inside a Vibe, never model-consumed. **Every raw upload is an origin, never an element.** Exists so ingestion can always re-run against ground truth.
-- **MediaObject** — owned unit of meaning. Fields: immutable `owner`, `type` (open vocabulary; registered: `transaction`, `track`; reserved: `post`, `photo`, `note`, `contact`, `event`, `book`, `article`, `receipt`), zero-or-more element refs, `keys` (global identifiers: fitid, isrc…), and three property blocks:
+- **MediaObject** — owned unit of meaning. Fields: immutable `owner`, `type` (open vocabulary; registered: `transaction`, `track`, `tweet`; S1 adds `activity`; reserved: `post`, `photo`, `note`, `contact`, `event`, `book`, `article`, `receipt`), zero-or-more element refs, `keys` (global identifiers: fitid, isrc…), and three property blocks:
   - `source` — written by ingestion only, immutable; contains the `ingest` record, `origins` refs, and properties.
   - `user` — owner-mutable and last-write-wins. The store records every accepted version
     internally for history, undo, and revert; revisions are not write preconditions.
@@ -608,7 +608,9 @@ Only the first step differs. Same origins table, same endpoint, same conformance
 
 **Monthly pull actually works** — a re-fetch rather than asking the user to re-upload, which was hand-wavy when files were the only path.
 
-Keep the QFX/OFX upload path alive as the fallback: it exercises user-supplied origins, and some banks will never be reachable any other way. **CSV is deliberately not a committed skill.** OFX is a published format and SimpleFIN is a published API, so a hand-written parser for either is a bounded artifact that can be finished. “CSV” is a convention, not a format, so a committed CSV parser is really a registry of bank dialects that grows one entry per user and is never done. Every CSV export therefore fails closed at M2 and belongs to the M5 `generated_parser` path, which exists precisely to produce a reviewed, fixture-backed parser per dialect.
+Keep the QFX/OFX upload path alive as the fallback: it exercises user-supplied origins, and some banks will never be reachable any other way. **A generic CSV ingestion skill is deliberately out of scope.** An open-ended collection of unrelated bank CSV dialects belongs to the M5 `generated_parser` path, which produces a reviewed, fixture-backed parser per dialect. This does not prohibit a committed parser for an identified provider export with a bounded, validated format. The Strava export skill in S1 owns its recognized activity CSV dialect alongside its activity-file parsers; it is not a generic CSV importer.
+
+**S1 Strava export flow:** add `apps/ingest/skills/strava/` as a deterministic file source using the same `candidate_bundle@1`, VERIFY, preview, and atomic-confirmation boundary. Its first user is a runner training for a second marathon who wants her running history, mile times, performance trends, and race results. Parse the recognized activity summary CSV and supported original activity files from a user-supplied export; CSV-only history is an intermediate slice because mile splits need distance/time evidence. Preserve measured facts and explicit race labels, distinguish recorded laps from calculated mile splits, and keep owner-entered official results in `user`. The full scope, export-contract discovery, archive limits, repeated-export reconciliation, and exit evidence are defined in [Strava import](./concepts/strava-import.md). S1 uses exports and requires no Strava API connection.
 
 **M2 host file flow:** from “start something new” or an existing Vibe, choose or create the target Vibe → select a QFX/OFX file → store its bytes as an owner-only OriginArtifact → create its source binding → run schema validation and VERIFY through an import-preview operation → show the candidate transactions and reconciliation → cancel or confirm the staged review. Before confirmation, no derived objects, Vibe membership, or pull configuration are committed. Confirmation atomically commits the reviewed result and adds the source to the target Vibe; cancellation or failed validation commits neither. The owner-only source and origin remain retained for audit, retry, or re-ingestion. Later refreshes of that configured source use ordinary `pull`.
 
@@ -840,7 +842,7 @@ Notes for implementers:
 2. A stranger with an unsupported, weird credit-union CSV gets the same result via the generated-parser path.
 3. **The next level:** a stranger describes an app and the Maker generates a working dMachine against their Vibe, sandboxed and scope-limited.
 
-**Current status:** M0 through M3 are complete. M4 is the next implementation milestone.
+**Current status:** M0 through M3 are complete. M4 is the next core implementation milestone. S1 (Strava export ingestion, §8.1) is an additional source milestone that can proceed alongside the core roadmap using the M2/M3 foundation.
 
 | #    | Milestone                   | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Exit test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -856,6 +858,35 @@ Notes for implementers:
 | M8   | Productionizing             | provision the production Railway project for the API and website plus managed Postgres; run migrations and seed deploy-time records; configure database backups and prove a restore; provision the four Cloudflare R2 buckets and their production access, CORS, lifecycle, and backup policies; provision the AWS KMS encryption key, immutable HMAC keys, and least-privilege workload role, then run the deferred live seal/open/fingerprint smoke test; deploy `PublicAssetFetcher` behind a separately isolated, least-privilege public-egress worker with no database/provider credentials or private-network route and keep arbitrary-domain fetching out of the API process; provision Twilio Verify with production credentials, Fraud Guard, send limits, and launch geo-fencing; install all runtime secrets, custom domains, TLS, health checks, logs, alerts, and deploy/rollback runbooks | from the public production URL, a new user signs in through Twilio, connects SimpleFIN or imports a file, completes review, and reopens the resulting Vibe after a fresh deploy; Postgres and R2 durability are verified, credential rows use KMS v3 envelopes, no secret reaches the browser or logs, and a rollback plus database restore drill succeeds; the isolated egress smoke test proves an allowed bounded public HTTPS/443 fetch succeeds while database, loopback, link-local, private, and special destinations remain unreachable and the API has no direct arbitrary-domain fetch path |
 
 **Ordering doctrine:** deterministic before generative, and generated _parsers_ (M5) before generated _dMachines_ (M6) — rBudget must exist as a hand-built template before the Maker can generate variations of it. _Variation before invention._ Nothing is thrown away: M1.5's shell hosts every later product flow; M2's import/review is reused by rBudget at M4; M2's committed parser and VERIFY assets are reused by M5's skill-guided and generated-parser promotion pipeline; M4's rBudget becomes M6's template #1. M8 adds production infrastructure and live-provider proof to the completed application; it does not introduce a new protocol or product behavior milestone.
+
+---
+
+### 8.1 S1 — Strava export ingestion
+
+**Status:** Planned; implementation has not started. This source milestone extends M2 ingestion
+and integrates with M3 without renumbering or replacing M4–M8.
+
+**Deliverables:** a registered, provider-independent rNet `activity` source-properties vocabulary
+and `apps/ingest/skills/strava/`, a committed parser for recognized Strava exports that emits it.
+The type covers exercise sessions, with running summaries and original-file lap/mile-split
+evidence in S1. Include the canonical schema/spec, generated `ActivityProperties` exports,
+runtime vocabulary registration, source VERIFY, and reviewed imports. Follow
+[Strava import](./concepts/strava-import.md) for the detailed contract.
+
+**Delivery order:** establish the actual export contract and synthetic fixtures → register and
+validate the rNet `activity` vocabulary and generated exports → reviewed
+activity summaries → bounded archive/original-file parsing and mile splits → reviewed newer
+exports with owner-scoped reconciliation. Bring forward the shared ZIP and E2E support work
+required by this source from M7. Establish real upload budgets from the representative archive.
+
+**Exit test:** the `activity` vocabulary passes standalone and full-MediaObject validation,
+including provider-independent fixtures; then import a representative supported running archive,
+account for every activity,
+verify summary values and supported mile splits including pauses/partial miles, report unavailable
+detail explicitly, preserve race facts and owner annotations, and review a newer export without
+duplicating unchanged runs. Preview/cancel isolation, atomic confirmation, replay, owner isolation,
+and bounded failure tests pass with no provider network access. A dedicated running dMachine is
+a later consumer, not part of this source milestone.
 
 ---
 

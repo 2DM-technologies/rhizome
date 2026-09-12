@@ -20,6 +20,9 @@ import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 import { InferredVibeView, resolveVibeView } from "./InferredVibeView.tsx";
 import { PushControl } from "./PushControl.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
+import { VibeOverview } from "./VibeOverview.tsx";
+import { useTaskInferenceStatus } from "../queries/taskInferenceStatus.ts";
+import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const sourceConnectionReturn = useSourceConnectionReturn({
@@ -28,6 +31,16 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   });
   const vibe = useVibe(uuid);
   const objects = useVibeObjects(uuid);
+  const summaryStatus = useTaskInferenceStatus(
+    uuid,
+    { level: "vibe", task: PUSH_TASKS.vibe.summarize.name },
+    Boolean(vibe.data),
+  );
+  const viewStatus = useTaskInferenceStatus(
+    uuid,
+    { level: "vibe", task: PUSH_TASKS.vibe.vibe_view.name },
+    Boolean(vibe.data),
+  );
   const update = useUpdateVibe();
   const remove = useRemoveVibeObjects();
   const deleteVibe = useDeleteVibe();
@@ -71,6 +84,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   return (
     <StoreSurface
       title={vibe.data?.title ?? "Vibe"}
+      headerDivider
       heading={
         vibe.data && isOwner ? (
           <form onSubmit={rename} className="group/title relative min-w-0">
@@ -160,26 +174,36 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       {deleteVibe.isError ? <Failed error={deleteVibe.error} /> : null}
       {update.isError ? <Failed error={update.error} /> : null}
 
-      {vibe.data && isOwner ? (
-        <div className="mb-7 flex flex-col gap-4 border-b border-hairline pb-7">
-          {remove.isError ? <Failed error={remove.error} /> : null}
-          <Button
-            variant="secondary"
-            className="self-start"
-            aria-expanded={importExpanded}
-            aria-controls={importPanelId}
-            onClick={() => setImportExpanded((expanded) => !expanded)}
-          >
-            Import into this Vibe
-          </Button>
-          <div id={importPanelId} hidden={!importExpanded}>
-            <ImportPanel
-              vibeUuid={uuid}
-              configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
-              sourceConnectionReturn={sourceConnectionReturn}
-            />
-          </div>
-        </div>
+      {vibe.data ? (
+        <VibeOverview
+          vibe={vibe.data}
+          status={summaryStatus.data}
+          viewStatus={viewStatus.data}
+          inferredError={viewStatus.isError ? "Could not load Vibe view task status." : undefined}
+          error={summaryStatus.isError ? "Could not load summary task status." : undefined}
+        >
+          {isOwner ? (
+            <div className="flex flex-col gap-4">
+              {remove.isError ? <Failed error={remove.error} /> : null}
+              <Button
+                variant="secondary"
+                className="self-start"
+                aria-expanded={importExpanded}
+                aria-controls={importPanelId}
+                onClick={() => setImportExpanded((expanded) => !expanded)}
+              >
+                Import into this Vibe
+              </Button>
+              <div id={importPanelId} hidden={!importExpanded}>
+                <ImportPanel
+                  vibeUuid={uuid}
+                  configuredSources={vibe.data.pull?.enabled ? (vibe.data.pull.sources ?? []) : []}
+                  sourceConnectionReturn={sourceConnectionReturn}
+                />
+              </div>
+            </div>
+          ) : null}
+        </VibeOverview>
       ) : null}
 
       {vibe.data && objects.data ? (
@@ -191,7 +215,10 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           removeObject={
             isOwner
               ? (object) =>
-                  remove.mutate({ params: { path: { id: uuid } }, body: { objects: [object.uri] } })
+                  remove.mutate({
+                    params: { path: { id: uuid } },
+                    body: { objects: [object.uri] },
+                  })
               : undefined
           }
         />
@@ -234,6 +261,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           </ul>
         </section>
       ) : null}
+
       {vibe.data && objects.data && isOwner ? (
         <PushControl objects={objects.data} vibeUuid={uuid} />
       ) : null}
