@@ -89,6 +89,58 @@ export class PushService {
   ) {}
 
   async startPush(vibeUuid: string, input: PushVibeRequest, actor: Actor): Promise<DbOperation> {
+    const operation = await this.acceptPush(vibeUuid, input, actor);
+    queueMicrotask(() => {
+      void this.runPush(operation.uuid).catch(() =>
+        console.error("Push finalization failed", operation.uuid),
+      );
+    });
+    return operation;
+  }
+
+  /** Run after import commit; each task accepts fresh context only when its turn begins. */
+  async runAllTasks(vibeUuid: string, actor: Actor): Promise<void> {
+    if (!this.dependencies.modelConnectors) return;
+    const tasks = this.dependencies.pushTasks.manifests();
+    // Preserve catalog order within each level (including summary before view).
+    for (const level of ["element", "object", "vibe"] as const) {
+      for (const task of tasks.filter((task) => task.level === level)) {
+        try {
+          const operation = await this.acceptPush(vibeUuid, { level, task: task.name }, actor);
+          await this.runPush(operation.uuid);
+        } catch (error) {
+          // A task's acceptance/finalization failure must not prevent the other tasks from running.
+          console.error(
+            "Automatic push failed",
+            vibeUuid,
+            level,
+            task.name,
+            error instanceof Problem ? error.code : "internal_error",
+          );
+        }
+      }
+    }
+  }
+
+  async runImportedVibeTasks(vibeUuid: string, actor: Actor): Promise<void> {
+    if (!this.dependencies.modelConnectors) return;
+    // The owner's automatic-ingest policy excludes any Vibe containing transactions.
+    // Manual pushes retain the task catalog's shape-based applicability rules.
+    const [transaction] = await this.dependencies.db
+      .select({ uuid: mediaObjects.uuid })
+      .from(vibeMediaObjects)
+      .innerJoin(mediaObjects, eq(mediaObjects.uuid, vibeMediaObjects.mediaObjectUuid))
+      .where(and(eq(vibeMediaObjects.vibeUuid, vibeUuid), eq(mediaObjects.type, "transaction")))
+      .limit(1);
+    if (transaction) return;
+    await this.runAllTasks(vibeUuid, actor);
+  }
+
+  private async acceptPush(
+    vibeUuid: string,
+    input: PushVibeRequest,
+    actor: Actor,
+  ): Promise<DbOperation> {
     const { db, modelConnectors: registry, pushTasks, pushLimits: limits } = this.dependencies;
     const vibe = await new AccessService({ db, actor }).assertVibeScope(vibeUuid, GRANT_SCOPE.PUSH);
     const task = pushTasks.get(input.level, input.task);
@@ -198,11 +250,6 @@ export class PushService {
         .returning();
       await MeterLedger.open(transaction, registry, operationUuid, task.name, actor.subject);
       return created!;
-    });
-    queueMicrotask(() => {
-      void this.runPush(operationUuid).catch(() =>
-        console.error("Push finalization failed", operationUuid),
-      );
     });
     return operation;
   }

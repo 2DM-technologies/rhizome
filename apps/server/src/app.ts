@@ -174,14 +174,19 @@ export function createApp({
   const routeGroups = [
     {
       basePath: "/rnet/v0/imports",
-      router: createPendingImportRoutes(db, blobs, {
-        baseUrl: config.baseUrl,
-        credentialCrypto,
-        credentialedSources: resolvedCredentialedSources,
-        fileSources: resolvedFileSources,
-        providerLeasePool,
-        publicRemoteSources: resolvedPublicRemoteSources,
-      }),
+      router: createPendingImportRoutes(
+        db,
+        blobs,
+        {
+          baseUrl: config.baseUrl,
+          credentialCrypto,
+          credentialedSources: resolvedCredentialedSources,
+          fileSources: resolvedFileSources,
+          providerLeasePool,
+          publicRemoteSources: resolvedPublicRemoteSources,
+        },
+        pushService,
+      ),
     },
     {
       basePath: "/rnet/v0/vibes",

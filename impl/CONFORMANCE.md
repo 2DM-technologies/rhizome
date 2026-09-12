@@ -37,6 +37,10 @@ suites.
   tasks write only their own `rhizome:{task}` entry, preserve same-key durable entries, and keep
   other writers' entries intact under row locks. Each run has one cost row; owner-visible results
   report recorded usage while read grantees receive the same outcomes with usage omitted.
+- Confirming an import that creates a new Vibe runs the installed tasks in element, object, and
+  Vibe order after commit, using the same push operations and meters. Automatic imports retain the
+  owner's transaction exclusion; keyless imports remain available. This sequence is in-process
+  under the existing M7 durable-execution deferral.
 - The host consumes generated task manifests, runs and polls push operations, renders inferred
   Vibe views, and refreshes every object or element named by a terminal result. The fake connector,
   provider boundary tests, and stubbed OpenAI tests make the full gate independent of provider spend.
