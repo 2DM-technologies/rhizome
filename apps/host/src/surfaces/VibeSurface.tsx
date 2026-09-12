@@ -17,7 +17,7 @@ import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
-import { InferredVibeView, inferredVibeView } from "./InferredVibeView.tsx";
+import { InferredVibeView, resolveVibeView } from "./InferredVibeView.tsx";
 import { PushControl } from "./PushControl.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 
@@ -202,7 +202,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       {objects.data?.length === 0 ? (
         <span className="text-body text-tertiary">This Vibe has no objects yet.</span>
       ) : null}
-      {objects.data?.length && (!vibe.data || !inferredVibeView(vibe.data)) ? (
+      {objects.data?.length && (!vibe.data || !resolveVibeView(vibe.data, objects.data)) ? (
         <section aria-labelledby="media-objects-heading" className="mb-8 flex flex-col gap-4">
           <div className="flex items-baseline justify-between gap-4">
             <h2 id="media-objects-heading" className="text-label text-primary">

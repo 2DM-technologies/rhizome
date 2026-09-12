@@ -29,6 +29,51 @@ function expectValid(output: Record<string, unknown>, input: VibeContext) {
 }
 
 describe("vibe_view", () => {
+  test("tweet-only Vibes choose tweetfeed before pointer and media rules", () => {
+    for (const input of [
+      context([type("tweet", [])]),
+      context([type("tweet", ["/source/properties/published_at"])]),
+      context(
+        [
+          type("tweet", [], 2, [
+            { kind: "text", objects: 2 },
+            { kind: "image", objects: 1 },
+          ]),
+        ],
+        [
+          { kind: "text", count: 2 },
+          { kind: "image", count: 1 },
+        ],
+      ),
+    ]) {
+      const output = chooseVibeView(input)!;
+      expect(output).toEqual({ view: "tweetfeed", config: {} });
+      expectValid(output, input);
+    }
+  });
+
+  test("tweetfeed requires a nonempty, complete tweet-only context and empty config", () => {
+    const output = { view: "tweetfeed", config: {} };
+    for (const input of [
+      context([]),
+      context([type("tweet", [], 0)]),
+      context([type("tweet", []), type("note", [])]),
+      { ...context([type("tweet", [])]), objects: 2 },
+    ]) {
+      expect(chooseVibeView(input)?.view).not.toBe("tweetfeed");
+      expect(validateVibeViewOutput(output, input)).toBe(false);
+    }
+    const tweets = context([type("tweet", [])]);
+    for (const config of [
+      null,
+      [],
+      { subtitle_pointer: null },
+      { caption_pointer: null },
+      { extra: true },
+    ])
+      expect(validateVibeViewOutput({ view: "tweetfeed", config }, tweets)).toBe(false);
+  });
+
   test("schema discriminator stays aligned with the contract views", () => {
     const schema = vibeView.outputSchema as {
       properties: { view: { enum: string[] } };

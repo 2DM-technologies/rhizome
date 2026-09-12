@@ -3,7 +3,7 @@
   "additionalProperties": false,
   "required": ["view", "config"],
   "properties": {
-    "view": { "type": "string", "enum": ["datatable", "mediaboard", "simplelist"] },
+    "view": { "type": "string", "enum": ["datatable", "mediaboard", "simplelist", "tweetfeed"] },
     "config": {
       "anyOf": [
         {
@@ -58,6 +58,12 @@
               ]
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {}
         }
       ]
     }

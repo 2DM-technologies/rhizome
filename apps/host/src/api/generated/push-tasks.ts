@@ -128,7 +128,7 @@ export const PUSH_TASKS = {
         properties: {
           view: {
             type: "string",
-            enum: ["datatable", "mediaboard", "simplelist"],
+            enum: ["datatable", "mediaboard", "simplelist", "tweetfeed"],
           },
           config: {
             anyOf: [
@@ -205,6 +205,12 @@ export const PUSH_TASKS = {
                     ],
                   },
                 },
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: [],
+                properties: {},
               },
             ],
           },

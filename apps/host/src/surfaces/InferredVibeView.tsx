@@ -4,6 +4,7 @@ import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { uuidOf } from "../api/uris.ts";
 import { pathOf } from "../shell/surfaces.ts";
 import { TextLink } from "../ui/index.ts";
+import { TweetFeed } from "./TweetFeed.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 
 type View = (typeof VIBE_VIEWS)[number];
@@ -31,9 +32,10 @@ export function inferredObjectLabel(object: MediaObject): string {
     ? display.trim()
     : `${object.type} ${object.uri.split("/").at(-1) ?? object.uri}`;
 }
-export function inferredVibeView(vibe: Vibe): View | undefined {
+export function resolveVibeView(vibe: Vibe, objects: MediaObject[]): View | undefined {
+  if (objects.length > 0 && objects.every((object) => object.type === "tweet")) return "tweetfeed";
   const view = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)])?.view;
-  return VIBE_VIEWS.find((candidate) => candidate === view);
+  return VIBE_VIEWS.find((candidate) => candidate === view && candidate !== "tweetfeed");
 }
 function displayValue(value: unknown): string {
   if (value == null) return "—";
@@ -74,10 +76,14 @@ function Actions({
 export function InferredVibeView({ objects, vibe, ...actions }: Props) {
   const summary = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.summarize.name)]);
   const entry = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]);
-  const view = inferredVibeView(vibe);
+  const view = resolveVibeView(vibe, objects);
   const raw = entry?.config;
   const config =
-    raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Config) : undefined;
+    view === "tweetfeed"
+      ? {}
+      : raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Config)
+        : undefined;
   return (
     <>
       {typeof summary?.summary === "string" ? (
@@ -90,6 +96,7 @@ export function InferredVibeView({ objects, vibe, ...actions }: Props) {
       ) : null}
       {view && config ? (
         <section aria-label="Inferred Vibe view" data-vibe-view={view} className="mb-8">
+          {view === "tweetfeed" ? <TweetFeed objects={objects} {...actions} /> : null}
           {view === "simplelist" ? (
             <SimpleList objects={objects} config={config} {...actions} />
           ) : null}

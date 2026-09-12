@@ -6,7 +6,7 @@ import { storeTaskKey, type VIBE_VIEWS } from "@rhizome/store-contract";
 
 import { api } from "../src/api/client.ts";
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
-import { InferredVibeView } from "../src/surfaces/InferredVibeView.tsx";
+import { InferredVibeView, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
 
 const owner = "rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47";
 const id = (index: number) => `0198f2a1-7c3d-7e4b-9f21-${String(index).padStart(12, "0")}`;
@@ -80,6 +80,35 @@ function render(
 }
 
 describe("inferred Vibe surfaces", () => {
+  test("tweet-only Vibes default to the feed; mixed and empty collections keep other views", () => {
+    const tweet = { ...object(1, 2), type: "tweet" };
+    for (const document of [
+      vibe(),
+      vibe("tweetfeed"),
+      vibe("datatable", { columns: [], sort: null }),
+    ]) {
+      expect(resolveVibeView(document, [tweet])).toBe("tweetfeed");
+      const markup = render(document, [tweet, tweet], [], true);
+      expect(markup.match(/data-tweet-object=/g)).toHaveLength(2);
+      expect(markup).toContain('data-vibe-view="tweetfeed"');
+      expect(markup).toContain(`href="/objects/${id(1)}"`);
+      expect(markup).toContain('disabled=""');
+    }
+    expect(resolveVibeView(vibe("tweetfeed"), [])).toBeUndefined();
+    expect(resolveVibeView(vibe("tweetfeed"), [tweet, object(2, 3)])).toBeUndefined();
+    expect(
+      resolveVibeView(vibe("simplelist", { subtitle_pointer: null }), [tweet, object(2, 3)]),
+    ).toBe("simplelist");
+    const imported = {
+      ...tweet,
+      source: {
+        ...tweet.source,
+        ingest: { method: "parser" as const, reproducible: true, skill: "test@1" },
+      },
+    };
+    expect(render(vibe(), [imported], [], true)).not.toContain(">Remove</button>");
+  });
+
   test("summarize renders independently of an inferred view", () => {
     const document = vibe();
     document.inferred = {

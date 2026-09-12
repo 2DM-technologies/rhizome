@@ -6,7 +6,7 @@ import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 import type { OperationDocument } from "./index.ts";
 
 export const PUSH_TASK_LEVELS = ["element", "object", "vibe"] as const;
-export const VIBE_VIEWS = ["datatable", "mediaboard", "simplelist"] as const;
+export const VIBE_VIEWS = ["datatable", "mediaboard", "simplelist", "tweetfeed"] as const;
 export const STORE_WRITER = "rhizome" as const;
 export type StoreTaskKey = `${typeof STORE_WRITER}:${string}`;
 

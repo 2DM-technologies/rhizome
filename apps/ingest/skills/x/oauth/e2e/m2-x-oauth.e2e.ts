@@ -103,10 +103,15 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   expect(tweets[0]?.source.properties).not.toHaveProperty("text");
 
   await page.goto(`/vibes/${NEW_VIBE_ID}`);
-  await expect(page.locator("[data-media-object-card]")).toHaveCount(2);
-  for (const displayName of X_DISPLAY_NAMES) {
-    await expect(page.getByText(displayName, { exact: true })).toBeVisible();
-  }
+  const feed = page.getByRole("list", { name: "Tweet feed" });
+  await expect(feed.locator("[data-tweet-object]")).toHaveCount(2);
+  await expect(feed.getByText("Example User", { exact: true })).toHaveCount(2);
+  await expect(feed.getByText("Newest post with a mocked image", { exact: true })).toBeVisible();
+  await expect(feed.getByRole("img", { name: "A mocked horizon" })).toBeVisible();
+  await expect(feed.getByRole("link", { name: "View quoted post" })).toHaveAttribute(
+    "href",
+    "https://x.com/quoted/status/170",
+  );
 
   await page.goto("/imports");
   await page.getByRole("button", { name: "Import into a new Vibe" }).click();
