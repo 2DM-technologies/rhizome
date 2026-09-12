@@ -104,8 +104,7 @@
   inset: 0;
   pointer-events: none;
   background: var(--inferred-wave);
-  background-size: 220% 100%;
-  animation: inferred-shimmer 2.4s ease-in-out infinite;
+  animation: inferred-shimmer 2.4s linear infinite;
 }
 
 .inferred-block:not([data-inference-state="idle"]) pre {
@@ -121,17 +120,16 @@
 
 @keyframes inferred-shimmer {
   from {
-    background-position: 160% 0;
+    transform: translateX(-100%);
   }
   to {
-    background-position: -60% 0;
+    transform: translateX(100%);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .inferred-block::after {
     animation: none !important;
-    background-position: 50% 0;
   }
   .inferred-skeleton-line {
     transition: none;
