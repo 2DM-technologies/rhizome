@@ -15,7 +15,7 @@ import {
 export const xOAuthSourceManifest = {
   skill_id: X_OAUTH_SKILL_ID,
   label: "X account",
-  description: "Connect an X account and import up to 100 most recent eligible posts.",
+  description: "Connect an X account and import up to 25 most recent eligible posts.",
   source_kind: "credentialed_remote",
   connector_version: X_OAUTH_CONNECTOR_VERSION,
   parser: { name: X_POST_PARSER_NAME, version: X_POST_PARSER_VERSION },

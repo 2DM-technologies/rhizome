@@ -147,7 +147,7 @@ async function selectAndConnect(page: Page): Promise<void> {
   await page
     .getByLabel("Import source", { exact: true })
     .selectOption({ label: xOAuthSourceManifest.label });
-  await expect(page.getByText("Up to 100 objects · capture limit 50 MB")).toBeVisible();
+  await expect(page.getByText("Up to 25 objects · capture limit 50 MB")).toBeVisible();
   await page
     .getByRole("button", { name: xOAuthSourceManifest.connection.button_label, exact: true })
     .click();
