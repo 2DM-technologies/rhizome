@@ -40,6 +40,7 @@ import {
 } from "../services/inferred-writer.ts";
 import { schemaProblem } from "../services/problems.ts";
 import { uriId } from "../services/uris.ts";
+import { VibesService } from "../services/vibe-service.ts";
 import { batchEnvelope, packChunks, unpackResults } from "./chunking.ts";
 import {
   assembleObjectContext,
@@ -54,6 +55,7 @@ import {
 import type { PushLimits } from "./limits.ts";
 import { validateInstalledTaskOutput } from "./installed-tasks.ts";
 import type { PushTaskCatalog, PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
+import { summarize } from "./tasks/vibe/summarize/manifest.ts";
 
 type StoredPushRequest = PushVibeRequest & {
   mode: "push";
@@ -122,7 +124,11 @@ export class PushService {
     }
   }
 
-  async runImportedVibeTasks(vibeUuid: string, actor: Actor): Promise<void> {
+  async runImportedVibeTasks(
+    vibeUuid: string,
+    actor: Actor,
+    importOperationUuid: string,
+  ): Promise<void> {
     if (!this.dependencies.modelConnectors) return;
     // The owner's automatic-ingest policy excludes any Vibe containing transactions.
     // Manual pushes retain the task catalog's shape-based applicability rules.
@@ -134,6 +140,19 @@ export class PushService {
       .limit(1);
     if (transaction) return;
     await this.runAllTasks(vibeUuid, actor);
+
+    const { db } = this.dependencies;
+    const imported = await db.query.operations.findFirst({
+      where: eq(operations.uuid, importOperationUuid),
+    });
+    if (!imported?.result || imported.result.destination) return;
+
+    const service = new VibesService({ db, actor });
+    const vibe = await service.getVibe(vibeUuid);
+    const title = vibe.vibe.inferred[storeTaskKey(summarize.name)]?.properties.title;
+    if (typeof title !== "string") return;
+    // Import naming is an owner action; the push writer still changes only inferred data.
+    await service.updateVibe(vibeUuid, { title });
   }
 
   private async acceptPush(

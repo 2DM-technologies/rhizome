@@ -126,6 +126,7 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
     const taskProperties =
       operation.input.task === PUSH_TASKS.vibe.summarize.name
         ? {
+            title: "Monthly planning",
             summary: "A focused collection of monthly planning notes.",
             tags: ["planning"],
             confidence: 0.9,

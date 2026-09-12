@@ -34,6 +34,7 @@ export const transactionImportCandidate: SourceCandidateDraft = {
 export function importPushSource(
   candidates: readonly SourceCandidateDraft[] = [gardenImportCandidate],
   verifyOk = true,
+  destination?: { title: string },
 ): FileSourceSkill {
   const parser = {
     name: "push-import-fixture",
@@ -74,10 +75,13 @@ export function importPushSource(
     compiledSource: {
       kind: CANDIDATE_BUNDLE_CAPABILITY,
       async compile({ bytes }) {
-        return candidateBundle(await parser.parse(bytes), {
-          ok: verifyOk,
-          checks: [{ name: "fixture", ok: verifyOk, detail: "Synthetic import verification" }],
-        });
+        return {
+          ...candidateBundle(await parser.parse(bytes), {
+            ok: verifyOk,
+            checks: [{ name: "fixture", ok: verifyOk, detail: "Synthetic import verification" }],
+          }),
+          ...(destination ? { destination } : {}),
+        };
       },
     },
   };

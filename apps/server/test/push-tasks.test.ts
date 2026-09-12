@@ -142,7 +142,7 @@ describe("push task catalog and static schemas", () => {
     }
   });
   test("batch validation checks exact ref equality before exposing records and preserves null", () => {
-    const output = { summary: "a", tags: ["a"], confidence: 0.5 };
+    const output = { title: "A", summary: "a", tags: ["a"], confidence: 0.5 };
     const item = (ref: string, result: unknown = output) => ({ ref, result });
     expect(
       unpackResults(summarize.outputSchema, ["o1", "o2"], {
@@ -159,6 +159,24 @@ describe("push task catalog and static schemas", () => {
       expect(() => unpackResults(summarize.outputSchema, ["o1", "o2"], { results })).toThrow();
     expect(() => batchEnvelope(summarize.outputSchema, [])).toThrow();
     expect(() => batchEnvelope(summarize.outputSchema, ["o1", "o1"])).toThrow();
+  });
+  test("summarize requires a usable single-line title within the Vibe title limit", () => {
+    const output = { summary: "A fern collection.", tags: ["garden"], confidence: 0.9 };
+    const schema = jsonSchema(summarize.outputSchema);
+    expect(schema.validate(output).ok).toBe(false);
+    for (const title of ["A", "Fern collection", "É".repeat(256)])
+      expect(schema.validate({ ...output, title }).ok).toBe(true);
+    for (const title of [
+      null,
+      "",
+      "   ",
+      " Fern",
+      "Fern ",
+      "Fern\n",
+      "Fern\ncollection",
+      "a".repeat(257),
+    ])
+      expect(schema.validate({ ...output, title }).ok).toBe(false);
   });
 });
 

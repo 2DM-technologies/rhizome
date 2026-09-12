@@ -95,16 +95,13 @@ export function createPendingImportRoutes(
         actor: context.get("actor"),
         ...connectedSources,
       });
-      const vibe = await service.confirm(
-        undefined,
-        context.req.valid("param").operation_id,
-        context.req.valid("json"),
-      );
+      const operationUuid = context.req.valid("param").operation_id;
+      const vibe = await service.confirm(undefined, operationUuid, context.req.valid("json"));
       const vibeUuid = vibe.vibe.uuid;
       const actor = context.get("actor");
       queueMicrotask(() => {
         void pushService
-          .runImportedVibeTasks(vibeUuid, actor)
+          .runImportedVibeTasks(vibeUuid, actor, operationUuid)
           .catch(() => console.error("Automatic import push failed", vibeUuid));
       });
       return context.json(serializeVibe(vibe));

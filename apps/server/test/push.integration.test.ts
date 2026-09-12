@@ -363,7 +363,12 @@ function installedTaskResponse(request: CompletionRequest): CompletionResult {
       return responseFor(request, { keywords: ["fern", "garden"] });
     case `rhizome_${summarize.name}`:
       return {
-        output: { summary: "A fern collection.", tags: ["garden"], confidence: 0.9 },
+        output: {
+          title: "Fern collection",
+          summary: "A fern collection.",
+          tags: ["garden"],
+          confidence: 0.9,
+        },
         usage,
       };
     case `rhizome_${vibeView.name}`:
@@ -440,7 +445,132 @@ async function waitForAutomaticPushes(vibeUuid: string) {
   throw new Error("Automatic push sequence did not finish");
 }
 
+async function confirmAndWaitForEnrichment(
+  app: App,
+  operationUuid: string,
+  title = "Imported objects",
+) {
+  const completed = gate();
+  const original = PushService.prototype.runImportedVibeTasks;
+  const runTasks = spyOn(PushService.prototype, "runImportedVibeTasks").mockImplementation(
+    async function (this: PushService, ...args) {
+      try {
+        await original.apply(this, args);
+      } finally {
+        completed.resolve();
+      }
+    },
+  );
+  try {
+    const confirmed = await api(app, `/imports/${operationUuid}/confirm`, { title });
+    expect(confirmed.status).toBe(200);
+    const initial = await confirmed.json();
+    expect(initial.title).toBe(title);
+    await completed.promise;
+    const response = await api(app, `/vibes/${initial.uri.split("/").at(-1)}`);
+    expect(response.status).toBe(200);
+    return response.json();
+  } finally {
+    runTasks.mockRestore();
+  }
+}
+
 describe("new Vibe import enrichment", () => {
+  test("an unnamed import uses the metered summary title without an extra model call", async () => {
+    const connector = new FakeModelConnector({ respond: installedTaskResponse });
+    const app = application(connector, {
+      pushTasks: installedPushTasks,
+      fileSources: new FileSourceCatalog([importPushSource()]),
+    });
+    const { operation } = await importPreview(app);
+    const enriched = await confirmAndWaitForEnrichment(app, operation.operation_id);
+    const vibeUuid = enriched.uri.split("/").at(-1);
+    expect(enriched.title).toBe("Fern collection");
+    expect(enriched.inferred[storeTaskKey(summarize.name)].properties).toEqual({
+      title: "Fern collection",
+      summary: "A fern collection.",
+      tags: ["garden"],
+    });
+    expect(validateSchema("vibe", enriched).ok).toBe(true);
+    expect(connector.requests.map(({ schemaName }) => schemaName)).toEqual(
+      [describeMedia, displayName, searchKeywords, summarize, vibeView].map(
+        ({ name }) => `rhizome_${name}`,
+      ),
+    );
+    const pushes = await pushesFor(vibeUuid);
+    const summary = pushes.find(({ request }) => request.task === summarize.name)!;
+    const meter = await db.query.meterEntries.findFirst({
+      where: eq(meterEntries.operationUuid, summary.uuid),
+    });
+    expect(meter).toMatchObject({
+      turns: 1,
+      tokensIn: usage.tokensIn,
+      tokensOut: usage.tokensOut,
+      breakdown: { status: "done" },
+    });
+    const revisions = await db
+      .select()
+      .from(vibeRevisions)
+      .where(eq(vibeRevisions.vibeUuid, vibeUuid))
+      .orderBy(vibeRevisions.rev);
+    expect(revisions.at(-1)).toMatchObject({
+      actor: ownerActor.subject,
+      snapshot: { title: "Fern collection" },
+    });
+    expect(revisions.at(-2)?.snapshot.title).toBe("Imported objects");
+  });
+
+  test("source-provided names win even when they match the temporary fallback", async () => {
+    for (const title of ["Source garden", "Imported objects"]) {
+      const connector = new FakeModelConnector({ respond: installedTaskResponse });
+      const app = application(connector, {
+        pushTasks: installedPushTasks,
+        fileSources: new FileSourceCatalog([importPushSource(undefined, true, { title })]),
+      });
+      const { operation } = await importPreview(app);
+      const enriched = await confirmAndWaitForEnrichment(app, operation.operation_id, title);
+      expect(enriched.title).toBe(title);
+      expect(enriched.inferred[storeTaskKey(summarize.name)].properties.title).toBe(
+        "Fern collection",
+      );
+    }
+  });
+
+  test("failed or invalid summaries leave the fallback title and the import intact", async () => {
+    for (const failure of ["auth", "invalid_title"] as const) {
+      const connector = new FakeModelConnector({
+        respond: (request) => {
+          if (request.schemaName !== `rhizome_${summarize.name}`)
+            return installedTaskResponse(request);
+          return failure === "auth"
+            ? new ModelConnectorError("auth", { retryable: false, usage })
+            : {
+                usage,
+                output: { title: "   ", summary: "A fern.", tags: ["garden"], confidence: 0.9 },
+              };
+        },
+      });
+      const app = application(connector, {
+        pushTasks: installedPushTasks,
+        fileSources: new FileSourceCatalog([importPushSource()]),
+      });
+      const { operation } = await importPreview(app);
+      const enriched = await confirmAndWaitForEnrichment(app, operation.operation_id);
+      expect(enriched.title).toBe("Imported objects");
+      expect(enriched.objects).toHaveLength(1);
+      expect(enriched.inferred).not.toHaveProperty(storeTaskKey(summarize.name));
+      expect(enriched.inferred[storeTaskKey(vibeView.name)].properties.view).toBe("simplelist");
+      const pushes = await pushesFor(enriched.uri.split("/").at(-1));
+      const summary = pushes.find(({ request }) => request.task === summarize.name)!;
+      expect(summary.result).toMatchObject({ vibe: { outcome: "skipped" } });
+      const meter = await db.query.meterEntries.findFirst({
+        where: eq(meterEntries.operationUuid, summary.uuid),
+      });
+      expect(meter?.tokensIn).toBe(usage.tokensIn);
+      expect(meter?.durationMs).not.toBeNull();
+    }
+  });
+
   test("confirmation commits before inference, returns while tasks run, and starts the sequence only once", async () => {
     const started = gate(),
       release = gate();
@@ -552,10 +682,11 @@ describe("new Vibe import enrichment", () => {
     const app = application(null, { fileSources: new FileSourceCatalog([importPushSource()]) });
     const { operation } = await importPreview(app);
     const confirmed = await api(app, `/imports/${operation.operation_id}/confirm`, {
-      title: "Keyless garden",
+      title: "Imported objects",
     });
     expect(confirmed.status).toBe(200);
     const vibe = await confirmed.json();
+    expect(vibe.title).toBe("Imported objects");
     expect(vibe.objects).toHaveLength(1);
     expect(await pushesFor(vibe.uri.split("/").at(-1))).toEqual([]);
   });
@@ -1153,7 +1284,10 @@ describe("push lifecycle and inferred writes", () => {
     const fake = new FakeModelConnector({
       respond: async () => {
         await db.delete(vibes).where(eq(vibes.uuid, vibeUuid));
-        return { usage, output: { summary: "new", tags: ["new"], confidence: 0.5 } };
+        return {
+          usage,
+          output: { title: "New collection", summary: "new", tags: ["new"], confidence: 0.5 },
+        };
       },
     });
     const app = application(fake);
@@ -1303,7 +1437,10 @@ describe("push lifecycle and inferred writes", () => {
           entered.resolve();
           await released.promise;
           return level === "vibe"
-            ? { usage, output: { summary: "new", tags: ["new"], confidence: 0.5 } }
+            ? {
+                usage,
+                output: { title: "New collection", summary: "new", tags: ["new"], confidence: 0.5 },
+              }
             : responseFor(request);
         },
       });
@@ -1750,6 +1887,8 @@ describe("push lifecycle and inferred writes", () => {
     expect(data.vibe).not.toHaveProperty("summary");
     const document = await (await api(app, `/vibes/${vibeUuid}`)).json();
     expect(validateSchema("vibe", document).ok).toBe(true);
+    expect(document.title).toBe("Push test");
+    expect(document.inferred[storeTaskKey(summarize.name)].properties.title).toBe("fake");
     expect(document.inferred[storeTaskKey(summarize.name)]).not.toHaveProperty(
       "properties.confidence",
     );

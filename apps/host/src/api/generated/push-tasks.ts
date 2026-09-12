@@ -89,8 +89,12 @@ export const PUSH_TASKS = {
       output_schema: {
         type: "object",
         additionalProperties: false,
-        required: ["summary", "tags", "confidence"],
+        required: ["title", "summary", "tags", "confidence"],
         properties: {
+          title: {
+            type: "string",
+            pattern: "^\\S(?:[^\\r\\n]{0,254}\\S)?$(?![\\s\\S])",
+          },
           summary: {
             type: "string",
             pattern: "^[\\s\\S]{1,600}$",
