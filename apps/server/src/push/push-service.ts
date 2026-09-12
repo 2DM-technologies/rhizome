@@ -56,6 +56,7 @@ import type { PushLimits } from "./limits.ts";
 import { validateInstalledTaskOutput } from "./installed-tasks.ts";
 import type { PushTaskCatalog, PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
+import { PushActivity, readObjectInferenceStatus } from "./inference-status.ts";
 
 type StoredPushRequest = PushVibeRequest & {
   mode: "push";
@@ -80,6 +81,12 @@ interface RunState {
 }
 
 export class PushService {
+  private readonly activity = new PushActivity();
+
+  getObjectInferenceStatus(uuid: string, actor: Actor) {
+    return readObjectInferenceStatus(this.dependencies.db, this.activity, uuid, actor);
+  }
+
   constructor(
     private readonly dependencies: {
       db: Database;
@@ -103,24 +110,33 @@ export class PushService {
   /** Run after import commit; each task accepts fresh context only when its turn begins. */
   async runAllTasks(vibeUuid: string, actor: Actor): Promise<void> {
     if (!this.dependencies.modelConnectors) return;
-    const tasks = this.dependencies.pushTasks.manifests();
-    // Preserve catalog order within each level (including summary before view).
-    for (const level of ["element", "object", "vibe"] as const) {
-      for (const task of tasks.filter((task) => task.level === level)) {
-        try {
-          const operation = await this.acceptPush(vibeUuid, { level, task: task.name }, actor);
-          await this.runPush(operation.uuid);
-        } catch (error) {
-          // A task's acceptance/finalization failure must not prevent the other tasks from running.
-          console.error(
-            "Automatic push failed",
-            vibeUuid,
-            level,
-            task.name,
-            error instanceof Problem ? error.code : "internal_error",
-          );
+    const tasks = this.dependencies.pushTasks
+      .manifests()
+      .map((task) => this.dependencies.pushTasks.get(task.level, task.name)!);
+    this.activity.begin(vibeUuid, tasks);
+    try {
+      // Preserve catalog order within each level (including summary before view).
+      for (const level of ["element", "object", "vibe"] as const) {
+        for (const task of tasks.filter((task) => task.level === level)) {
+          try {
+            const operation = await this.acceptPush(vibeUuid, { level, task: task.name }, actor);
+            this.activity.accepted(vibeUuid, task);
+            await this.runPush(operation.uuid);
+          } catch (error) {
+            this.activity.rejected(vibeUuid, task, error);
+            // A task's acceptance/finalization failure must not prevent the other tasks from running.
+            console.error(
+              "Automatic push failed",
+              vibeUuid,
+              level,
+              task.name,
+              error instanceof Problem ? error.code : "internal_error",
+            );
+          }
         }
       }
+    } finally {
+      this.activity.end(vibeUuid);
     }
   }
 
@@ -297,6 +313,7 @@ export class PushService {
       committed: false,
     };
     const key = storeTaskKey(request.task);
+    this.activity.settled.set(operationUuid, state.outcomes);
     for (const uuid of request.resolved.outcomes_before_run.preserved_durable)
       state.outcomes.set(uuid, { outcome: "preserved_durable" });
     if (request.level === "vibe" && state.outcomes.size)
@@ -510,6 +527,8 @@ export class PushService {
       state.error = "The push operation could not complete.";
     } finally {
       clearTimeout(wallTimer);
+      this.activity.calls.delete(operationUuid);
+      this.activity.settled.delete(operationUuid);
       await finalizePush(db, {
         operationUuid,
         ledger,
@@ -540,6 +559,7 @@ export class PushService {
     state.producer = registry.identity;
     let result: CompletionResult | undefined;
     let failure: unknown;
+    this.activity.calls.set(operationUuid, new Set(uuids));
     // The boundary only captures a result/error. Its usage is the first thing handled afterward.
     try {
       result = await registry.connector.complete({
@@ -566,6 +586,7 @@ export class PushService {
         objects: count,
         outcome: failure instanceof ModelConnectorError ? failure.kind : "completed",
       });
+    this.activity.calls.delete(operationUuid);
     if (result) return result;
     if (!(failure instanceof ModelConnectorError)) throw failure;
     if (failure.kind === "aborted") {

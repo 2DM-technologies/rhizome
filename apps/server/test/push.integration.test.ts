@@ -7,6 +7,7 @@ import S3rver from "s3rver";
 import { v7 as uuidv7 } from "uuid";
 import {
   isPushOperation,
+  objectInferenceStatusSchema,
   pushOperationResultSchema,
   storeTaskKey,
   type OperationDocument,
@@ -616,6 +617,25 @@ describe("new Vibe import enrichment", () => {
         .from(mediaObjects)
         .where(eq(mediaObjects.uuid, vibe.objects[0].split("/").at(-1)));
       expect(object).toBeDefined();
+      const statusResponse = await api(app, `/objects/${object!.uuid}/inference-status`);
+      expect(statusResponse.status).toBe(200);
+      const activity = await statusResponse.json();
+      expect(jsonSchema(objectInferenceStatusSchema).validate(activity).ok).toBe(true);
+      expect(activity.records).toMatchObject([
+        {
+          uri: `rnet://object/${object!.uuid}`,
+          revision: 0,
+          tasks: [
+            { task: displayName.name, status: "waiting", message: null },
+            { task: searchKeywords.name, status: "waiting", message: null },
+          ],
+        },
+        { revision: 0, tasks: [{ task: describeMedia.name, status: "running", message: null }] },
+      ]);
+      expect(
+        (await api(app, `/objects/${object!.uuid}/inference-status`, undefined, "dev:user:other"))
+          .status,
+      ).toBe(403);
       expect(await pushesFor(vibeUuid)).toMatchObject([
         { status: "running", request: { level: "element" } },
       ]);
@@ -645,6 +665,13 @@ describe("new Vibe import enrichment", () => {
       await api(app, `/elements/${object.elements[0].uri.split("/").at(-1)}`)
     ).json();
     expect(element.inferred[storeTaskKey(describeMedia.name)].properties.caption).toBe("A fern");
+    const activity = await (
+      await api(app, `/objects/${object.uri.split("/").at(-1)}/inference-status`)
+    ).json();
+    expect(activity.records).toMatchObject([
+      { uri: object.uri, revision: 2, tasks: [] },
+      { uri: element.uri, revision: 1, tasks: [] },
+    ]);
 
     const repeatResponse = await api(app, `/vibes/${vibeUuid}/imports`, { source });
     const repeat = await waitForImport(app, (await repeatResponse.json()).operation_id);
@@ -817,26 +844,49 @@ describe("automatic task sequence", () => {
   });
 
   test("a workset rejected for one level does not stop the other levels", async () => {
-    const { vibeUuid } = await fixture(2);
+    const { vibeUuid, ids } = await fixture(2);
     const connector = new FakeModelConnector({ respond: installedTaskResponse });
     const log = spyOn(console, "error").mockImplementation(() => {});
     try {
-      await pushService(connector, {
+      const service = pushService(connector, {
         pushLimits: { ...DEFAULT_PUSH_LIMITS, maxObjects: 1 },
-      }).runAllTasks(vibeUuid, ownerActor);
+      });
+      await service.runAllTasks(vibeUuid, ownerActor);
       const pushes = await pushesFor(vibeUuid);
       expect(pushes.map(({ request }) => request.level)).toEqual(["element", "vibe", "vibe"]);
       expect(pushes.every(({ status }) => status === "done")).toBe(true);
       expect(log).toHaveBeenCalledTimes(2);
+      expect(
+        (await service.getObjectInferenceStatus(ids[0]!, ownerActor)).records[0]!.tasks,
+      ).toMatchObject([
+        { task: displayName.name, status: "error", message: "The request does not conform" },
+        { task: searchKeywords.name, status: "error", message: "The request does not conform" },
+      ]);
+      const retry = await service.startPush(
+        vibeUuid,
+        { level: "object", task: displayName.name, selection: [`rnet://object/${ids[0]}`] },
+        ownerActor,
+      );
+      await poll(application(connector), retry.uuid);
+      expect(
+        (await service.getObjectInferenceStatus(ids[0]!, ownerActor)).records[0]!.tasks,
+      ).toMatchObject([{ task: searchKeywords.name, status: "error" }]);
+      expect(
+        (await service.getObjectInferenceStatus(ids[1]!, ownerActor)).records[0]!.tasks,
+      ).toHaveLength(2);
     } finally {
       log.mockRestore();
     }
   });
 
   test("a keyless store leaves imports available without creating push operations", async () => {
-    const { vibeUuid } = await fixture(1);
-    await pushService().runAllTasks(vibeUuid, ownerActor);
+    const { vibeUuid, ids } = await fixture(1);
+    const service = pushService();
+    await service.runAllTasks(vibeUuid, ownerActor);
     expect(await pushesFor(vibeUuid)).toEqual([]);
+    expect((await service.getObjectInferenceStatus(ids[0]!, ownerActor)).records[0]!.tasks).toEqual(
+      [],
+    );
   });
 });
 
@@ -2114,5 +2164,135 @@ describe("installed image push", () => {
     });
     expect(meter?.turns).toBe(0);
     expect(meter?.durationMs).not.toBeNull();
+  });
+});
+
+describe("object inference status", () => {
+  test("reports per-chunk activity, durable preservation, errors, and successful retries without private operation fields", async () => {
+    const { vibeUuid, ids } = await fixture(3);
+    const firstStarted = gate(),
+      secondStarted = gate(),
+      releaseFirst = gate(),
+      releaseSecond = gate();
+    await db
+      .update(mediaObjects)
+      .set({
+        inferred: {
+          [storeTaskKey(objectTask.name)]: {
+            model: "manual",
+            inferred_at: new Date().toISOString(),
+            properties: { label: "Keep" },
+            durable: true,
+          },
+        },
+      })
+      .where(eq(mediaObjects.uuid, ids[2]!));
+    let call = 0;
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        call++;
+        if (call === 1) {
+          firstStarted.resolve();
+          await releaseFirst.promise;
+        } else {
+          secondStarted.resolve();
+          await releaseSecond.promise;
+          return new ModelConnectorError("invalid_request", { retryable: false });
+        }
+        return { output: { results: [{ ref: "o1", result: { label: "Updated" } }] }, usage };
+      },
+    });
+    const app = application(connector, {
+      pushLimits: { ...DEFAULT_PUSH_LIMITS, maxObjectsPerCall: 1 },
+    });
+    const status = async (id: string, token = owner) => {
+      const response = await api(app, `/objects/${id}/inference-status`, undefined, token);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(jsonSchema(objectInferenceStatusSchema).validate(body).ok).toBe(true);
+      return body.records[0];
+    };
+    let operation: OperationDocument;
+    try {
+      operation = await accept(app, vibeUuid);
+      await firstStarted.promise;
+      expect(await status(ids[0]!)).toMatchObject({
+        revision: 0,
+        tasks: [{ task: objectTask.name, status: "running" }],
+      });
+      expect(await status(ids[1]!)).toMatchObject({ tasks: [{ status: "waiting" }] });
+      expect(await status(ids[2]!)).toMatchObject({ tasks: [] });
+      await db.insert(grants).values({ vibeUuid, subject: "client:rbudget", scopes: ["read"] });
+      expect(await status(ids[0]!, "dev:client:rbudget")).toEqual(await status(ids[0]!));
+      releaseFirst.resolve();
+      await secondStarted.promise;
+      expect(await status(ids[0]!)).toMatchObject({ revision: 1, tasks: [] });
+      expect(await status(ids[1]!)).toMatchObject({ tasks: [{ status: "running" }] });
+    } finally {
+      releaseFirst.resolve();
+      releaseSecond.resolve();
+    }
+    await poll(app, operation!.operation_id);
+    expect(await status(ids[0]!)).toMatchObject({ revision: 1, tasks: [] });
+    expect(await status(ids[1]!)).toMatchObject({
+      revision: 0,
+      tasks: [{ status: "error", message: "The push operation could not complete." }],
+    });
+    const retryApp = application();
+    await run(retryApp, vibeUuid, {
+      level: "object",
+      task: objectTask.name,
+      selection: [`rnet://object/${ids[1]}`],
+    });
+    expect(await status(ids[1]!)).toMatchObject({ revision: 1, tasks: [] });
+    expect(await status(ids[2]!)).toMatchObject({ tasks: [] });
+  });
+
+  test("deduplicates shared elements and hides work from an unreadable Vibe", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const shared = await imageFor(ids[0]!);
+    await db
+      .insert(mediaObjectElements)
+      .values({ mediaObjectUuid: ids[0]!, mediaElementUuid: shared, position: 1 });
+    await db
+      .insert(mediaObjectElements)
+      .values({ mediaObjectUuid: ids[1]!, mediaElementUuid: shared, position: 0 });
+    const otherVibe = (await fixture(0)).vibeUuid;
+    await db
+      .insert(vibeMediaObjects)
+      .values({ vibeUuid: otherVibe, mediaObjectUuid: ids[0]!, position: 0 });
+    await db
+      .insert(grants)
+      .values({ vibeUuid: otherVibe, subject: "client:rbudget", scopes: ["read"] });
+    const started = gate(),
+      release = gate();
+    const app = application(
+      new FakeModelConnector({
+        respond: async (request) => {
+          started.resolve();
+          await release.promise;
+          return installedTaskResponse(request);
+        },
+      }),
+      { pushTasks: installedPushTasks },
+    );
+    let operation: OperationDocument;
+    try {
+      operation = await accept(app, vibeUuid, { level: "element", task: describeMedia.name });
+      await started.promise;
+      const read = async (id: string, token = owner) =>
+        (await api(app, `/objects/${id}/inference-status`, undefined, token)).json();
+      const own = await read(ids[0]!);
+      expect(own.records).toHaveLength(2);
+      expect(own.records[1]).toMatchObject({
+        uri: `rnet://element/${shared}`,
+        tasks: [{ status: "running" }],
+      });
+      expect((await read(ids[1]!)).records[1]).toEqual(own.records[1]);
+      expect((await read(ids[0]!, "dev:client:rbudget")).records[1].tasks).toEqual([]);
+    } finally {
+      release.resolve();
+    }
+    await poll(app, operation!.operation_id);
   });
 });

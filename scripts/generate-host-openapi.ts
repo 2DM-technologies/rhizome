@@ -22,6 +22,7 @@ const RNET_COMPONENT_TYPES = {
 } as const;
 
 const STORE_COMPONENT_TYPES = {
+  ObjectInferenceStatus: "StoreObjectInferenceStatus",
   PushVibeRequest: "StorePushVibeRequest",
   PushOperationResult: "StorePushOperationResult",
   PushTaskManifest: "StorePushTaskManifest",
@@ -71,6 +72,7 @@ import type {
 } from "@rnet/types";
 import type {
   PushVibeRequest as StorePushVibeRequest,
+  ObjectInferenceStatus as StoreObjectInferenceStatus,
   PushOperationResult as StorePushOperationResult,
   PushTaskManifest as StorePushTaskManifest,
   PushTaskManifestsResponse as StorePushTaskManifestsResponse,

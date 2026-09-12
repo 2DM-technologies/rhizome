@@ -70,3 +70,70 @@
   transform-origin: top left;
   will-change: transform, clip-path;
 }
+
+.inferred-block {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--rz-bg-canvas);
+}
+
+.inferred-block[data-inference-state="waiting"],
+.inferred-block[data-inference-state="running"] {
+  --inferred-base: var(--rz-gray-200);
+  --inferred-wave: linear-gradient(110deg, transparent 20%, #ffffff99 45%, transparent 70%);
+  background: color-mix(in srgb, var(--inferred-base) 25%, var(--rz-bg-canvas));
+}
+
+.inferred-block[data-inference-state="running"] {
+  --inferred-base: var(--rz-accent-primary);
+  --inferred-wave: linear-gradient(
+    110deg,
+    transparent 10%,
+    #7d59ff33 25%,
+    #b844fe66 42%,
+    #b844fe44 58%,
+    #7d59ff33 72%,
+    transparent 90%
+  );
+}
+
+.inferred-block:not([data-inference-state="idle"])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--inferred-wave);
+  background-size: 220% 100%;
+  animation: inferred-shimmer 2.4s ease-in-out infinite;
+}
+
+.inferred-block:not([data-inference-state="idle"]) pre {
+  background: transparent;
+}
+
+.inferred-skeleton-line {
+  height: 0.8rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--inferred-base) 45%, var(--rz-bg-canvas));
+  transition: background-color 300ms ease;
+}
+
+@keyframes inferred-shimmer {
+  from {
+    background-position: 160% 0;
+  }
+  to {
+    background-position: -60% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inferred-block::after {
+    animation: none !important;
+    background-position: 50% 0;
+  }
+  .inferred-skeleton-line {
+    transition: none;
+  }
+}

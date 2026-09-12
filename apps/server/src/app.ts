@@ -234,7 +234,7 @@ export function createApp({
       router: createSourceSkillRoutes(sourceSkillManifests),
     },
     { basePath: "/rnet/v0/push-tasks", router: createPushTaskRoutes(resolvedPushTasks) },
-    { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
+    { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs, pushService) },
     {
       basePath: "/rnet/v0/elements",
       router: createMediaElementRoutes(db, blobs, config.baseUrl),

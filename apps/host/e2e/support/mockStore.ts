@@ -1358,6 +1358,19 @@ export async function installMockStore(
         : problem(route, 404, "not_found", "The element does not exist");
     }
 
+    const inferenceStatus = path.match(/^\/rnet\/v0\/objects\/([^/]+)\/inference-status$/);
+    if (method === "GET" && inferenceStatus) {
+      const object = store.objects.get(inferenceStatus[1] ?? "");
+      if (!object) return problem(route, 404, "not_found", "The object does not exist");
+      return json(route, {
+        records: [object.uri, ...new Set(object.elements.map(({ uri }) => uri))].map((uri) => ({
+          uri,
+          revision: 0,
+          tasks: [],
+        })),
+      });
+    }
+
     const objectDocument = path.match(/^\/rnet\/v0\/objects\/([^/]+)$/);
     if (method === "GET" && objectDocument) {
       const object = store.objects.get(objectDocument[1] ?? "");

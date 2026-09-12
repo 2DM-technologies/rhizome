@@ -1,4 +1,5 @@
 import type { MediaObjectElementRef } from "@rnet/types";
+import type { InferenceTaskStatus } from "@rhizome/store-contract";
 import { useState } from "react";
 
 import { uuidOf } from "../api/uris.ts";
@@ -10,6 +11,8 @@ import {
   useSetMediaObjectUser,
 } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
+import { useObjectInferenceStatus } from "../queries/inferenceStatus.ts";
+import { InferredBlock } from "./InferredBlock.tsx";
 import {
   Button,
   CodeBlock,
@@ -100,9 +103,11 @@ function RenderedPayload({
 function MediaElementReference({
   reference,
   position,
+  tasks,
 }: {
   reference: MediaObjectElementRef;
   position: number;
+  tasks?: InferenceTaskStatus[];
 }) {
   const { uri } = reference;
   const uuid = uuidOf(uri);
@@ -133,7 +138,11 @@ function MediaElementReference({
           />
           <div className="flex min-w-0 flex-col gap-3">
             <h3 className="text-label text-primary">Inferred</h3>
-            <JsonBlock value={element.data.inferred ?? {}} />
+            <InferredBlock
+              value={element.data.inferred ?? {}}
+              tasks={tasks}
+              label={`Element ${position + 1} inferred`}
+            />
           </div>
         </>
       ) : null}
@@ -144,6 +153,7 @@ function MediaElementReference({
 /** Store-backed object graph and last-write-wins user-property editor. */
 export function ObjectSurface({ uuid }: { uuid: string }) {
   const object = useMediaObject(uuid);
+  const inference = useObjectInferenceStatus(uuid, Boolean(object.data));
   const save = useSetMediaObjectUser();
   const session = useSession();
   const [draft, setDraft] = useState<string | null>(null);
@@ -192,7 +202,14 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
         <div className="grid gap-5 lg:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-5">
             <SectionCard title="Inferred">
-              <JsonBlock value={object.data.inferred ?? {}} />
+              <InferredBlock
+                value={object.data.inferred ?? {}}
+                tasks={
+                  inference.data?.records.find((record) => record.uri === object.data?.uri)?.tasks
+                }
+                label="Object inferred"
+              />
+              {inference.isError ? <Failed error={inference.error} /> : null}
             </SectionCard>
 
             <SectionCard title="User">
@@ -258,6 +275,10 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                       key={`${reference.uri}:${position}`}
                       reference={reference}
                       position={position}
+                      tasks={
+                        inference.data?.records.find((record) => record.uri === reference.uri)
+                          ?.tasks
+                      }
                     />
                   ))}
                 </ol>
