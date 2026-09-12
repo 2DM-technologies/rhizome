@@ -20,6 +20,7 @@ export function assertStructuredOutputSchema(schema: JSONSchema): void {
     }
     if (value.format !== undefined && !formats.has(value.format))
       throw new Error(`Unsupported format at ${path}`);
+    if (typeof value.pattern === "string") assertNoLookaround(value.pattern, path);
     const types = Array.isArray(value.type) ? value.type : [value.type];
     if (types.includes("object") || value.properties !== undefined) {
       if (
@@ -51,4 +52,23 @@ export function assertStructuredOutputSchema(schema: JSONSchema): void {
       visit(branch, `${path}/anyOf/${index}`);
   }
   visit(schema, "");
+}
+
+function assertNoLookaround(pattern: string, path: string): void {
+  let inCharacterClass = false;
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === "\\") {
+      index++;
+      continue;
+    }
+    if (character === "[") inCharacterClass = true;
+    else if (character === "]") inCharacterClass = false;
+    else if (
+      !inCharacterClass &&
+      character === "(" &&
+      /^\(\?(?:[=!]|<[=!])/.test(pattern.slice(index))
+    )
+      throw new Error(`Unsupported structured-output regex lookaround at ${path}`);
+  }
 }

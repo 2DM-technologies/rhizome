@@ -106,6 +106,22 @@ describe("inference boundary primitives", () => {
     ])
       expect(() => assertStructuredOutputSchema(schema as JSONSchema)).toThrow();
   });
+  test("strict-subset rejects regex lookaround while allowing literal lookaround text", () => {
+    const schema = (pattern: string): JSONSchema => ({
+      ...output,
+      properties: { name: { type: "string", pattern } },
+    });
+    for (const pattern of [
+      "(?=a)a",
+      "(?!a)b",
+      "(?<=a)b",
+      "(?<!a)b",
+      "^\\S(?:[^\\r\\n]{0,254}\\S)?$(?![\\s\\S])",
+    ])
+      expect(() => assertStructuredOutputSchema(schema(pattern))).toThrow("regex lookaround");
+    for (const pattern of ["^\\S(?:[^\\r\\n]{0,254}\\S)?$", "\\(\\?!a\\)", "[(?!]"])
+      expect(() => assertStructuredOutputSchema(schema(pattern))).not.toThrow();
+  });
   test("fake samples patterns and returns every batch ref once", async () => {
     const refs = Array.from({ length: 25 }, (_, index) => `o${index + 1}`);
     const schema = {

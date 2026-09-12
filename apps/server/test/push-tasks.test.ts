@@ -13,7 +13,7 @@ import {
   serializedBytes,
   type ContextObject,
 } from "../src/push/context.ts";
-import { installedPushTasks } from "../src/push/installed-tasks.ts";
+import { installedPushTasks, validateInstalledTaskOutput } from "../src/push/installed-tasks.ts";
 import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
@@ -163,9 +163,12 @@ describe("push task catalog and static schemas", () => {
   test("summarize requires a usable single-line title within the Vibe title limit", () => {
     const output = { summary: "A fern collection.", tags: ["garden"], confidence: 0.9 };
     const schema = jsonSchema(summarize.outputSchema);
+    const context = assembleVibeContext([], { title: "Garden" }, summarize).vibe;
+    const valid = (title: unknown) =>
+      schema.validate({ ...output, title }).ok &&
+      validateInstalledTaskOutput(summarize, { ...output, title }, context);
     expect(schema.validate(output).ok).toBe(false);
-    for (const title of ["A", "Fern collection", "É".repeat(256)])
-      expect(schema.validate({ ...output, title }).ok).toBe(true);
+    for (const title of ["A", "Fern collection", "É".repeat(256)]) expect(valid(title)).toBe(true);
     for (const title of [
       null,
       "",
@@ -173,10 +176,12 @@ describe("push task catalog and static schemas", () => {
       " Fern",
       "Fern ",
       "Fern\n",
+      "Fern\r",
+      "Fern\r\n",
       "Fern\ncollection",
       "a".repeat(257),
     ])
-      expect(schema.validate({ ...output, title }).ok).toBe(false);
+      expect(valid(title)).toBe(false);
   });
 });
 

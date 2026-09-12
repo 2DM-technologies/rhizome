@@ -93,7 +93,7 @@ export const PUSH_TASKS = {
         properties: {
           title: {
             type: "string",
-            pattern: "^\\S(?:[^\\r\\n]{0,254}\\S)?$(?![\\s\\S])",
+            pattern: "^\\S(?:[^\\r\\n]{0,254}\\S)?$",
           },
           summary: {
             type: "string",

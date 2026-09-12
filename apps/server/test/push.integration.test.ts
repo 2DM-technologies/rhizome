@@ -537,7 +537,7 @@ describe("new Vibe import enrichment", () => {
   });
 
   test("failed or invalid summaries leave the fallback title and the import intact", async () => {
-    for (const failure of ["auth", "invalid_title"] as const) {
+    for (const failure of ["auth", "invalid_title", "trailing_newline"] as const) {
       const connector = new FakeModelConnector({
         respond: (request) => {
           if (request.schemaName !== `rhizome_${summarize.name}`)
@@ -546,7 +546,12 @@ describe("new Vibe import enrichment", () => {
             ? new ModelConnectorError("auth", { retryable: false, usage })
             : {
                 usage,
-                output: { title: "   ", summary: "A fern.", tags: ["garden"], confidence: 0.9 },
+                output: {
+                  title: failure === "trailing_newline" ? "Fern\n" : "   ",
+                  summary: "A fern.",
+                  tags: ["garden"],
+                  confidence: 0.9,
+                },
               };
         },
       });
