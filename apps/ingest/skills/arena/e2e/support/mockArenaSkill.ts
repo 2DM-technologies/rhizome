@@ -4,7 +4,7 @@ import {
   OWNER_ID,
   type MockSourceSkillAdapter,
   type MockStagedElement,
-} from "../../../../../host/e2e/support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 import { parseArenaSourceConfig } from "../../contracts.ts";
 import arenaCaptureFixture from "../../fixtures/mixed-channel-capture.json";
 import { arenaSourceSkillManifest } from "../../manifest.ts";

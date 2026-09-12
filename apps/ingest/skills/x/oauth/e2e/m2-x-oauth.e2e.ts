@@ -1,9 +1,5 @@
-import { expect, test, type Page } from "../../../../../host/e2e/support/playwright.ts";
-import {
-  NEW_VIBE_ID,
-  installMockStore,
-  type MockStore,
-} from "../../../../../host/e2e/support/mockStore.ts";
+import { expect, test, type Page } from "@rhizome/test-support/playwright";
+import { NEW_VIBE_ID, installMockStore, type MockStore } from "@rhizome/test-support/mockStore";
 import { xOAuthSourceManifest } from "../manifest.ts";
 import {
   X_OAUTH_ACCESS_TOKEN,

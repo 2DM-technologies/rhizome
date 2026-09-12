@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { NEW_VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
+import { NEW_VIBE_ID, installMockStore, type MockStore } from "@rhizome/test-support/mockStore";
 import {
   mockSyntheticFileSourceSkill,
   SYNTHETIC_FILE_FIXTURE,

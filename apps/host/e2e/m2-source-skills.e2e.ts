@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 
-import { VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
+import { VIBE_ID, installMockStore, type MockStore } from "@rhizome/test-support/mockStore";
 import {
   SYNTHETIC_COLLECTION,
   SYNTHETIC_COLLECTION_INPUT_LABEL,

@@ -11,7 +11,7 @@ import {
   IngestionSourcesService,
   serializeIngestionSource,
 } from "../services/ingestion-source-service.ts";
-import { ProblemSchema, jsonSchema } from "./contracts.ts";
+import { ProblemSchema, RecordIdParamsSchema, jsonSchema } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
 const CreateIngestionSourceRequestSchema = jsonSchema(createIngestionSourceRequestSchema);
@@ -24,6 +24,33 @@ export function createIngestionSourceRoutes(
   publicRemoteSources: PublicRemoteSourceCatalog,
 ) {
   const router = createRhizomeRouter();
+  router.get(
+    "/:id",
+    {
+      operationId: "getIngestionSource",
+      auth: "user",
+      request: { param: RecordIdParamsSchema },
+      responses: {
+        200: IngestionSourceDocumentSchema,
+        401: ProblemSchema,
+        403: ProblemSchema,
+        404: ProblemSchema,
+      },
+    },
+    async (context) => {
+      const service = new IngestionSourcesService({
+        db,
+        actor: context.get("actor"),
+        fileSources,
+        credentialedSources,
+        publicRemoteSources,
+      });
+      return context.json(
+        serializeIngestionSource(await service.getActiveOwned(context.req.valid("param").id)),
+        200,
+      );
+    },
+  );
   router.post(
     "/",
     {

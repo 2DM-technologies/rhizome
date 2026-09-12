@@ -11,7 +11,7 @@ import {
   PAYLOAD_TEXT,
   VIBE_ID,
   type MockStore,
-} from "./support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 
 let mockStore: MockStore;
 

@@ -9,7 +9,7 @@ import {
   OBJECT_ID,
   VIBE_ID,
   type MockStore,
-} from "./support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 
 let store: MockStore;
 test.beforeEach(async ({ page }) => {

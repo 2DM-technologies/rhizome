@@ -11,9 +11,11 @@ import {
 export interface ReviewedFileSkillConformanceCase {
   adapter: MockSourceSkillAdapter;
   candidateCount: number;
+  sourceRecordCount?: number;
   fixtureFilename: string;
   fixturePath: string;
   total: string;
+  candidateLabel: string;
   verifyCheckCount: number;
 }
 
@@ -24,6 +26,8 @@ export interface ReviewedFileSkillConformanceCase {
 export function createReviewedFileSkillConformance({
   adapter,
   candidateCount,
+  sourceRecordCount = candidateCount,
+  candidateLabel,
   fixtureFilename,
   fixturePath,
   total,
@@ -52,9 +56,9 @@ export function createReviewedFileSkillConformance({
 
     const reconciliation = page.getByLabel("VERIFY reconciliation");
     await expect(reconciliation).toBeVisible();
-    await expect(reconciliation).toContainText(`${candidateCount} transactions passed VERIFY`);
+    await expect(reconciliation).toContainText(`${candidateCount} ${candidateLabel} passed VERIFY`);
     await expect(reconciliation).toContainText(
-      `${candidateCount} source records → ${candidateCount} candidates`,
+      `${sourceRecordCount} source records → ${candidateCount} candidates`,
     );
     await expect(reconciliation).toContainText(total);
     await expect(
@@ -108,10 +112,10 @@ export function createReviewedFileSkillConformance({
       await page.getByRole("button", { name: "Confirm import" }).click();
 
       await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
-        `Imported ${candidateCount} transactions from ${fixtureFilename}.`,
+        `Imported ${candidateCount} ${candidateLabel} from ${fixtureFilename}.`,
       );
       await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
-      await expect(page.getByRole("button", { name: /^Open object rnet:/ })).toHaveCount(
+      await expect(page.getByLabel(/^Open object rnet:/)).toHaveCount(
         initialMembership.length + candidateCount,
       );
       await expect(page.getByRole("button", { name: "Refresh sources" })).toBeVisible();
@@ -154,9 +158,9 @@ export function createReviewedFileSkillConformance({
         .getByLabel("Import source", { exact: true })
         .selectOption({ label: adapter.manifest.label });
       await page.getByLabel(fileField.label, { exact: true }).setInputFiles({
-        name: "transactions.txt",
+        name: "unsupported.txt",
         mimeType: "text/plain",
-        buffer: Buffer.from("not a supported transaction export"),
+        buffer: Buffer.from("not a supported export"),
       });
       await page
         .getByRole("button", { name: `Review ${adapter.manifest.label}`, exact: true })

@@ -9,7 +9,7 @@ import {
   type MockSourceCaptureContext,
   type MockSourceSkillAdapter,
   type MockStagedImport,
-} from "./mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 
 export const SYNTHETIC_FILE_SOURCE_ID = "0198f2a1-1001-7101-8101-000000000001";
 export const SYNTHETIC_FILE_OPERATION_ID = "0198f2a1-1002-7102-8102-000000000001";

@@ -407,15 +407,21 @@ export const createImportPreviewRequestSchema = {
   properties: {
     source: { type: "string", pattern: SOURCE_ID_PATTERN },
     continuation_token: reviewImportContinuationRequestSchema.properties.continuation_token,
+    replacement_origin: originArtifactSchema.properties.uri,
   },
   additionalProperties: false,
+  not: {
+    properties: { continuation_token: {}, replacement_origin: {} },
+    required: ["continuation_token", "replacement_origin"],
+  },
 } as const satisfies JSONSchema;
 
 /** Stages an import for a server-allocated Vibe that does not exist until confirmation. */
 export const createPendingVibeImportRequestSchema = {
   ...createImportPreviewRequestSchema,
   properties: {
-    ...createImportPreviewRequestSchema.properties,
+    source: createImportPreviewRequestSchema.properties.source,
+    continuation_token: createImportPreviewRequestSchema.properties.continuation_token,
     destination: pendingVibeDestinationSchema,
   },
 } as const satisfies JSONSchema;

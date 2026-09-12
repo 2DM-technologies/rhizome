@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { ObjectInferenceStatus } from "@rhizome/store-contract";
-import { installMockStore, OBJECT_ID, ELEMENT_ID } from "./support/mockStore.ts";
+import { installMockStore, OBJECT_ID, ELEMENT_ID } from "@rhizome/test-support/mockStore";
 
 test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and retain content on errors", async ({
   page,

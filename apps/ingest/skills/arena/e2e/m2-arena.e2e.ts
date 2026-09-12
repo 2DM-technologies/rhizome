@@ -1,11 +1,11 @@
-import { expect, test } from "../../../../host/e2e/support/playwright.ts";
+import { expect, test } from "@rhizome/test-support/playwright";
 
 import {
   NEW_VIBE_ID,
   VIBE_ID,
   installMockStore,
   type MockStore,
-} from "../../../../host/e2e/support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 import {
   ARENA_CHANNEL_URL,
   ARENA_IMPORT_OPERATION_ID,

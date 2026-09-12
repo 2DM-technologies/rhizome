@@ -111,6 +111,34 @@ describe("inferred Vibe surfaces", () => {
     expect(render(vibe(), [imported], [], true)).not.toContain(">Remove</button>");
   });
 
+  test("activity-only Vibes use the fitness log before inference and mixed Vibes cannot reuse it", () => {
+    const activity = {
+      ...object(1, 2),
+      type: "fitness_activity",
+      source: {
+        ...object(1, 2).source,
+        properties: { sport: "run", started_local: "2026-09-12T06:30:00" },
+      },
+    };
+    for (const document of [
+      vibe(),
+      vibe("fitness_log"),
+      vibe("datatable", { columns: [], sort: null }),
+    ]) {
+      expect(resolveVibeView(document, [activity])).toBe("fitness_log");
+      const markup = render(document, [activity, activity], [], true);
+      expect(markup.match(/data-activity-object=/g)).toHaveLength(2);
+      expect(markup).toContain('data-vibe-view="fitness_log"');
+      expect(markup).toContain(`href="/objects/${id(1)}"`);
+      expect(markup).toContain('disabled=""');
+    }
+    expect(resolveVibeView(vibe("fitness_log"), [])).toBeUndefined();
+    expect(resolveVibeView(vibe("fitness_log"), [activity, object(2, 3)])).toBeUndefined();
+    expect(
+      resolveVibeView(vibe("simplelist", { subtitle_pointer: null }), [activity, object(2, 3)]),
+    ).toBe("simplelist");
+  });
+
   test("summarize renders independently of an inferred view", () => {
     const document = vibe();
     document.inferred = {

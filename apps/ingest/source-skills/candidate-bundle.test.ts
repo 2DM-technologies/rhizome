@@ -95,7 +95,7 @@ describe("candidate_bundle@1 compiled-source contract", () => {
     });
   });
 
-  test("registers OFX and SimpleFIN independently with their parser pins", () => {
+  test("registers installed file and credentialed sources with their parser pins", () => {
     expect(
       installedFileSourceSkills.all().map(({ manifest, compiledSource }) => ({
         skillId: manifest.skill_id,
@@ -106,6 +106,11 @@ describe("candidate_bundle@1 compiled-source contract", () => {
       {
         skillId: "ofx",
         parser: { name: "ofx", version: "ofx@1.1.0" },
+        capability: "candidate_bundle@1",
+      },
+      {
+        skillId: "strava",
+        parser: { name: "strava-export", version: "strava-export@1.0.0" },
         capability: "candidate_bundle@1",
       },
     ]);

@@ -1,8 +1,8 @@
 # Strava export ingestion
 
-**Status:** Approved roadmap addition, milestone **S1**. Implementation has not started.
-The product scope and source boundary below guide the build; exact export dialects, numeric
-field names, and file-size budgets must be established from representative exports first.
+**Status:** Implemented on the S1 feature branch, with synthetic export and browser coverage.
+Acceptance against the runner’s actual export remains pending until a representative file is available.
+The installed dialect and limits below are explicit; unsupported dialects fail rather than guessing.
 
 **Companion docs:** [implementation plan](../IMPLEMENTATION_PLAN.md),
 [conformance status](../CONFORMANCE.md), and [push pipeline](./push-pipeline.md).
@@ -13,7 +13,7 @@ The first user is a runner training for her second marathon. She wants to revisi
 compare mile times, follow performance over time, and keep track of race results. This source
 should provide the factual records that those experiences need.
 
-S1 adds a registered rNet **`activity`** vocabulary and a committed, deterministic **Strava export
+S1 adds a registered rNet **`fitness_activity`** vocabulary and a committed, deterministic **Strava export
 skill** at `apps/ingest/skills/strava/` that produces it.
 Strava's recognized CSV export dialect is part of that skill. The earlier restriction on generic
 CSV ingestion concerned an unbounded collection of unrelated bank dialects; it does not prohibit
@@ -33,11 +33,12 @@ The summary file supplies the activity inventory and available per-activity fact
 files supply recorded laps and the distance/time evidence needed for mile splits. **CSV-only
 import is an intermediate delivery, not completion of the mile-split requirement.**
 
-Before implementation, inspect representative export headers, units, time representations,
-archive paths, file formats, and compressed/expanded sizes. Begin original-file support with
-the formats present in the runner's export; FIT, TCX, and GPX are the relevant candidates.
-Record the supported format set in the skill rather than claiming to parse every original
-format that Strava can retain. Include any nested compression in the same bounded contract.
+The initial parser supports the English account-export dialect identified by the standard
+12-column prefix and repeated detailed `Distance` / `Elapsed Time` columns. Detailed distances
+are meters; display-distance units are never guessed. It accepts ZIP archives, CSV-only summaries,
+and referenced FIT, TCX, or GPX originals, optionally wrapped in one gzip layer. Other original
+formats remain visible as unsupported detail. A real export is still needed to validate that
+this exact dialect and the 48 MiB capture ceiling fit the runner’s data.
 
 Bind each original file unambiguously to its summary row using the recognized export's path or
 identity metadata. Define consistency checks and documented tolerances for identifiers, start
@@ -57,19 +58,19 @@ including entries the parser does not consume. No referenced URL is fetched duri
 
 ## 3. Records and measurements
 
-Use one `activity` MediaObject per recorded physical exercise session, with the Strava activity
+Use one `fitness_activity` MediaObject per recorded physical exercise session, with the Strava activity
 identifier retained as a string in `keys.strava_activity_id`. The store assigns Rhizome identity
-and ownership. Register `activity` in rNet alongside `transaction`, `track`, and `tweet`.
+and ownership. Register `fitness_activity` in rNet alongside `transaction`, `track`, and `tweet`.
 Running is the first supported sport in this importer; the vocabulary is independent of the
 provider and can also describe a ride, walk, or another recorded exercise session. A race run
 is an activity with race facts, not a separate activity type.
 
 ### 3.1 Registered vocabulary and responsibility
 
-The canonical `activity` definition belongs in `rnet/schemas/0.1/types/activity.json`, documented
+The canonical `fitness_activity` definition belongs in `rnet/schemas/0.1/types/fitness_activity.json`, documented
 in the rNet specification's registered core types section. It validates `source.properties` for
-`type: "activity"`; it does not add a sixth MediaElement kind or change the MediaObject envelope.
-The Strava skill imports the generated `ActivityProperties` type and canonical validator from
+`type: "fitness_activity"`; it does not add a sixth MediaElement kind or change the MediaObject envelope.
+The Strava skill imports the generated `FitnessActivityProperties` type and canonical validator from
 `@rnet/types` rather than maintaining a second definition of the common activity shape.
 
 The shared vocabulary covers:
@@ -96,9 +97,9 @@ Registration is a complete rNet change, not just a new JSON file:
 
 1. Add the vocabulary schema and spec entry, and update the core schema's vocabulary description
    and current documentation inventories where applicable.
-2. Add the `activityPropertiesSchema` / `ActivityProperties` public names in
+2. Add the `fitnessActivityPropertiesSchema` / `FitnessActivityProperties` public names in
    `packages/types/codegen/generate.ts`, then regenerate the committed schema/type exports.
-3. Add `activity` to `SchemaTypes`, exported validators, and `OBJECT_TYPES_REGISTRY` in
+3. Add `fitness_activity` to `SchemaTypes`, exported validators, and `OBJECT_TYPES_REGISTRY` in
    `packages/types/src/validators.ts`. Both standalone properties validation and full MediaObject
    validation must enforce the vocabulary.
 4. Add valid/invalid vocabulary and full-object fixtures, including a non-Strava activity,
@@ -197,9 +198,10 @@ budget. If it exceeds the supported end-to-end transport, scope a generic upload
 with explicit memory bounds and tests. Do not claim all-history support while truncating the
 archive, silently skipping detail files, or requiring a removed provider-specific browser parser.
 
-**Repeated exports.** Current deduplication is per ingestion source, and a new upload creates a
-new source. Matching origin hashes only deduplicates bytes. Consequently the current platform
-cannot promise that a later export adds only new runs.
+**Repeated exports.** `POST /rnet/v0/vibes/{id}/imports` accepts `replacement_origin`
+alongside the existing `source` ID. The host’s “Update … import” form uploads the newer export
+and stages a review against that source. Starting a fresh independent import still creates
+a separate source; an origin hash alone does not match activities.
 
 S1 includes a reviewed repeated-export slice after the first snapshot works. Its user-visible
 contract is: unchanged runs are recognized, new runs can be added, changed runs are shown for
@@ -213,7 +215,8 @@ output onto changed measurements. Use a generic owner-controlled file-reselectio
   Failed, canceled, or stale reviews leave the existing source binding and memberships unchanged.
   Earlier origins and every existing object's source block remain immutable.
 - Unchanged activities retain their object identity, annotations, and inferred entries. Accepted
-  changed activities create replacements, preserving position in the selected Vibe. One explicit
+  changed activities create replacements, preserving every placement in the selected Vibe.
+  Previously removed source-bound objects stay detached; unchanged and absent records are retained. One explicit
   confirmation may authorize the complete displayed update; per-run selection is not required
   initially, and cancel preserves the existing snapshot. Carry annotations only through an
   explicit owner-authorized store user-block
@@ -231,7 +234,21 @@ External IDs are matching evidence, never permission to reuse another owner's ob
 independent source remains a separate import; the host must make updating an existing import
 discoverable. General file reselection beyond this contract remains M7.
 
-## 6. Delivery order and exit evidence
+## 6. Fitness log
+
+The host registers `fitness_log` with an empty configuration and selects it deterministically
+for a nonempty Vibe containing only `fitness_activity` objects. Empty or mixed Vibes keep a
+generic view. This is a host view; it requires no new dMachine or model-generated calculations.
+
+The view shows sessions chronologically, weekly recorded distance, and run pace history.
+Distance can be shown in miles or kilometers; elapsed, timer, and moving timing bases remain
+separate, and unavailable measurements stay unavailable. Recorded laps and calculated splits
+expand independently. Totals count a repeated object once while retaining each visible placement.
+Source race labels stay separate from owner `event_name`, `official_chip_time_s`,
+`official_gun_time_s`, and `result_url` annotations. Dates preserve source wall time/offset
+rather than assigning the browser’s timezone to unzoned exports.
+
+## 7. Delivery order and exit evidence
 
 1. **Export contract and fixtures.** Inspect a representative archive and capture its shape in
    synthetic fixtures: an ordinary run, a paused run, a long run with a partial mile, a race,
@@ -249,7 +266,7 @@ discoverable. General file reselection beyond this contract remains M7.
 5. **Reviewed newer exports.** Implement and test the reconciliation contract above. The same
    logical activity across successive exports must not silently become duplicate history.
 
-S1 is complete when the registered `activity` vocabulary passes standalone and full-object
+S1 is complete when the registered `fitness_activity` vocabulary passes standalone and full-object
 validation (including non-Strava fixtures), and a representative supported export yields every
 expected run with accurate summary facts, available laps/mile splits, explicit coverage for
 unavailable detail, and grounded

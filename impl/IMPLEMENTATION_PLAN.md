@@ -20,7 +20,7 @@ Core objects (defined fully in the spec + schemas):
 
 - **MediaElement** — immutable, UUIDv7-identified atomic content record: an immutable `owner`, a payload, and contextual metadata. Five kinds (`text|image|audio|video|document`), closed set, rule: _a kind exists iff a human consumes that thing directly_. URI: `rnet://element/{uuid}`; the payload is independently identified by required `content_hash`.
 - **OriginArtifact** — immutable, UUIDv7-identified provenance record around raw uploaded bytes (bank export, data dump), with an immutable `owner`. URI: `rnet://origin/{uuid}`; the payload is independently identified by required `content_hash`. Ontologically inert: not media, never inside a Vibe, never model-consumed. **Every raw upload is an origin, never an element.** Exists so ingestion can always re-run against ground truth.
-- **MediaObject** — owned unit of meaning. Fields: immutable `owner`, `type` (open vocabulary; registered: `transaction`, `track`, `tweet`; S1 adds `activity`; reserved: `post`, `photo`, `note`, `contact`, `event`, `book`, `article`, `receipt`), zero-or-more element refs, `keys` (global identifiers: fitid, isrc…), and three property blocks:
+- **MediaObject** — owned unit of meaning. Fields: immutable `owner`, `type` (open vocabulary; registered: `transaction`, `track`, `tweet`; S1 adds `fitness_activity`; reserved: `post`, `photo`, `note`, `contact`, `event`, `book`, `article`, `receipt`), zero-or-more element refs, `keys` (global identifiers: fitid, isrc…), and three property blocks:
   - `source` — written by ingestion only, immutable; contains the `ingest` record, `origins` refs, and properties.
   - `user` — owner-mutable and last-write-wins. The store records every accepted version
     internally for history, undo, and revert; revisions are not write preconditions.
@@ -863,23 +863,25 @@ Notes for implementers:
 
 ### 8.1 S1 — Strava export ingestion
 
-**Status:** Planned; implementation has not started. This source milestone extends M2 ingestion
+**Status:** Implemented on the S1 feature branch; representative real-export acceptance remains
+pending. This source milestone extends M2 ingestion
 and integrates with M3 without renumbering or replacing M4–M8.
 
-**Deliverables:** a registered, provider-independent rNet `activity` source-properties vocabulary
+**Deliverables:** a registered, provider-independent rNet `fitness_activity` source-properties vocabulary
 and `apps/ingest/skills/strava/`, a committed parser for recognized Strava exports that emits it.
 The type covers exercise sessions, with running summaries and original-file lap/mile-split
-evidence in S1. Include the canonical schema/spec, generated `ActivityProperties` exports,
-runtime vocabulary registration, source VERIFY, and reviewed imports. Follow
+evidence in S1. Include the canonical schema/spec, generated `FitnessActivityProperties` exports,
+runtime vocabulary registration, source VERIFY, reviewed repeated-export reconciliation, and
+the deterministic `fitness_log` host view for activity-only Vibes. Follow
 [Strava import](./concepts/strava-import.md) for the detailed contract.
 
 **Delivery order:** establish the actual export contract and synthetic fixtures → register and
-validate the rNet `activity` vocabulary and generated exports → reviewed
+validate the rNet `fitness_activity` vocabulary and generated exports → reviewed
 activity summaries → bounded archive/original-file parsing and mile splits → reviewed newer
 exports with owner-scoped reconciliation. Bring forward the shared ZIP and E2E support work
 required by this source from M7. Establish real upload budgets from the representative archive.
 
-**Exit test:** the `activity` vocabulary passes standalone and full-MediaObject validation,
+**Exit test:** the `fitness_activity` vocabulary passes standalone and full-MediaObject validation,
 including provider-independent fixtures; then import a representative supported running archive,
 account for every activity,
 verify summary values and supported mile splits including pauses/partial miles, report unavailable

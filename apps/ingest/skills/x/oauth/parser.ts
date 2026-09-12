@@ -1,7 +1,7 @@
 import type { SourceExecutionLimits } from "../../../../../packages/store-contract/src/source-skills.ts";
 
 import type { SourceParser } from "../../../source-skills/candidate-bundle.ts";
-import { openValidatedZip, readZipBytes, readZipText } from "../zip.ts";
+import { openValidatedZip, readZipBytes, readZipText } from "../../../source-skills/zip.ts";
 import {
   isXAccountName,
   isXHandle,

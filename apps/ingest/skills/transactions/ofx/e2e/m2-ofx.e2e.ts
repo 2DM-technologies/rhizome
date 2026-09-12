@@ -1,12 +1,13 @@
 import { fileURLToPath } from "node:url";
 
-import { test } from "../../../../../host/e2e/support/playwright.ts";
-import { createReviewedFileSkillConformance } from "../../../../../host/e2e/support/reviewedFileSkillConformance.ts";
+import { test } from "@rhizome/test-support/playwright";
+import { createReviewedFileSkillConformance } from "@rhizome/test-support/reviewedFileSkillConformance";
 
 import { mockOfxSourceSkill } from "./support/mockOfxSkill.ts";
 
 const conformance = createReviewedFileSkillConformance({
   adapter: mockOfxSourceSkill,
+  candidateLabel: "transactions",
   candidateCount: 2,
   fixtureFilename: "checking.qfx",
   fixturePath: fileURLToPath(new URL("../fixtures/checking.qfx", import.meta.url)),

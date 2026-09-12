@@ -27,14 +27,17 @@
     "check": "bun run openapi:check && bun run format:check && bun run typecheck && bun test && bun run build"
   },
   "dependencies": {
+    "@garmin/fitsdk": "21.214.0",
     "@rnet/types": "file:../rnet/packages/types",
-    "@zip.js/zip.js": "2.8.61"
+    "@zip.js/zip.js": "2.8.61",
+    "fast-xml-parser": "5.11.1"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",
     "@types/node": "26.2.0",
     "openapi-typescript": "7.13.0",
     "prettier": "3.9.6",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "@rhizome/test-support": "workspace:*"
   }
 }

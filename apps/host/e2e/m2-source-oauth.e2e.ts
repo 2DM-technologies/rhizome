@@ -1,6 +1,11 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 
-import { NEW_VIBE_ID, VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
+import {
+  NEW_VIBE_ID,
+  VIBE_ID,
+  installMockStore,
+  type MockStore,
+} from "@rhizome/test-support/mockStore";
 import {
   SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
   SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT,

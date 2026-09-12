@@ -74,6 +74,44 @@ describe("vibe_view", () => {
       expect(validateVibeViewOutput({ view: "tweetfeed", config }, tweets)).toBe(false);
   });
 
+  test("activity-only Vibes choose the fitness log without a model or property configuration", () => {
+    for (const input of [
+      context([type("fitness_activity", [])]),
+      context([
+        type(
+          "fitness_activity",
+          ["/source/properties/started_local", "/source/properties/distance_m"],
+          4,
+        ),
+      ]),
+      context(
+        [type("fitness_activity", [], 1, [{ kind: "image", objects: 1 }])],
+        [{ kind: "image", count: 1 }],
+      ),
+    ]) {
+      const output = chooseVibeView(input)!;
+      expect(output).toEqual({ view: "fitness_log", config: {} });
+      expectValid(output, input);
+    }
+    const output = { view: "fitness_log", config: {} };
+    for (const input of [
+      context([]),
+      context([type("fitness_activity", [], 0)]),
+      context([type("fitness_activity", []), type("note", [])]),
+      { ...context([type("fitness_activity", [])]), objects: 2 },
+    ]) {
+      expect(chooseVibeView(input)?.view).not.toBe("fitness_log");
+      expect(validateVibeViewOutput(output, input)).toBe(false);
+    }
+    for (const config of [null, [], { columns: [] }, { unit: "mi" }])
+      expect(
+        validateVibeViewOutput(
+          { view: "fitness_log", config },
+          context([type("fitness_activity", [])]),
+        ),
+      ).toBe(false);
+  });
+
   test("schema discriminator stays aligned with the contract views", () => {
     const schema = vibeView.outputSchema as {
       properties: { view: { enum: string[] } };

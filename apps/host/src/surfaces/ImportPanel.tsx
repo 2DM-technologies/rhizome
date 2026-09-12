@@ -14,6 +14,7 @@ import {
   useCreateOriginArtifact,
   useForgetOperation,
   useImportPreviewPayloadUrl,
+  useIngestionSource,
   useOperation,
   usePullVibe,
   useStartSourceOAuthConnection,
@@ -70,6 +71,16 @@ interface VerifyCheckSummary {
 }
 
 interface ImportPreview {
+  reconciliation?: {
+    counts: Record<"unchanged" | "added" | "changed" | "absent", number>;
+    changes: {
+      previous_object_uri: string;
+      previous_properties: Record<string, unknown>;
+      next_properties: Record<string, unknown>;
+      preserve_user_annotations: boolean;
+      user_annotations?: Record<string, unknown>;
+    }[];
+  };
   verify: {
     ok: boolean;
     sourceRecordCount: number;
@@ -476,9 +487,11 @@ export function ImportPanel({
     const onSuccess = (createdVibe?: { uri: string }) => {
       clearReview();
       setOutcome(
-        `Imported ${importedCount} ${importedObjects}${
-          importedSource ? ` from ${importedSource}` : ""
-        }.`,
+        preview.reconciliation
+          ? `Updated import: ${preview.reconciliation.counts.added} new, ${preview.reconciliation.counts.changed} changed, ${preview.reconciliation.counts.unchanged} unchanged, ${preview.reconciliation.counts.absent} absent records kept.`
+          : `Imported ${importedCount} ${importedObjects}${
+              importedSource ? ` from ${importedSource}` : ""
+            }.`,
       );
       if (createdVibe) onPendingVibeConfirmed?.(uuidOf(createdVibe.uri));
     };
@@ -516,6 +529,32 @@ export function ImportPanel({
           </Button>
         ) : null}
       </div>
+
+      {vibeUuid && configuredSources.length > 0 ? (
+        <section
+          aria-label="Update an existing file import"
+          className="border-t border-hairline pt-4"
+        >
+          {configuredSources.map((source) => (
+            <FileSourceUpdate
+              key={source}
+              source={source}
+              vibeUuid={vibeUuid}
+              manifests={importSkills}
+              busy={busy}
+              onPreview={(id, label, skillId) => {
+                clearReview();
+                resetMutationErrors();
+                setOutcome(undefined);
+                setOperationMode("import");
+                setOperationId(id);
+                setSourceLabel(label);
+                setActiveSkillId(skillId);
+              }}
+            />
+          ))}
+        </section>
+      ) : null}
 
       <section aria-labelledby="source-skill-heading" className="border-t border-hairline pt-4">
         <h3 id="source-skill-heading" className="text-label text-primary">
@@ -661,6 +700,91 @@ export function ImportPanel({
       {confirm.isError ? <Failed error={confirm.error} /> : null}
       {confirmPending.isError ? <Failed error={confirmPending.error} /> : null}
     </Card>
+  );
+}
+
+function FileSourceUpdate({
+  source,
+  vibeUuid,
+  manifests,
+  busy,
+  onPreview,
+}: {
+  source: string;
+  vibeUuid: string;
+  manifests: readonly SourceSkillManifest[];
+  busy: boolean;
+  onPreview: (id: string, label: string, skillId: string) => void;
+}) {
+  const configured = useIngestionSource(source.replace(/^source:/, ""));
+  const upload = useCreateOriginArtifact();
+  const preview = useCreateImportPreview();
+  const [error, setError] = useState<string>();
+  const [preparing, setPreparing] = useState(false);
+  const manifest = manifests.find(
+    (item) => item.skill_id === configured.data?.skill_id && item.source_kind === "file",
+  );
+  if (configured.isError) return <Failed error={configured.error} />;
+  if (!manifest || configured.data?.kind !== "origin") return null;
+  const field = manifest.input_fields.find((item) => item.control === "file");
+  const inputId = `replacement-${source}`;
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!manifest) return;
+    const file = new FormData(event.currentTarget).get("replacement");
+    if (!(file instanceof File)) return;
+    setError(undefined);
+    setPreparing(true);
+    try {
+      if (field?.accept?.length && !fileMatchesAccept(file, field.accept))
+        throw new Error(`Choose a file accepted by ${manifest.label}.`);
+      const capture = await prepareSourceCapture(manifest, file);
+      const origin = await upload.mutateAsync({
+        body: capture.blob,
+        params: { header: { "x-rnet-label": capture.label } },
+      });
+      const operation = await preview.mutateAsync({
+        params: { path: { id: vibeUuid } },
+        body: { source, replacement_origin: origin.uri },
+      });
+      onPreview(operation.operation_id, capture.label, manifest.skill_id);
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      setPreparing(false);
+    }
+  }
+  return (
+    <details className="mb-3">
+      <summary className="cursor-pointer text-label text-primary">
+        Update {manifest.label} import · {source.slice(-8)}
+      </summary>
+      <p className="my-2 text-caption text-secondary">
+        Choose a newer export from the same account. Review new and changed records before updating
+        this import. Records absent from the export stay in the Vibe.
+      </p>
+      <form className="flex flex-col gap-3" onSubmit={(event) => void submit(event)}>
+        <label htmlFor={inputId} className="text-caption text-primary">
+          New export for {manifest.label}
+        </label>
+        <input
+          id={inputId}
+          name="replacement"
+          type="file"
+          accept={field?.accept?.join(",")}
+          required
+          disabled={busy || preparing}
+        />
+        <Button type="submit" disabled={busy || preparing}>
+          {preparing ? "Preparing update…" : "Review export update"}
+        </Button>
+        {error ? (
+          <span role="alert" className="text-caption text-error">
+            {error}
+          </span>
+        ) : null}
+      </form>
+    </details>
   );
 }
 
@@ -819,6 +943,60 @@ function ImportReview({
   const totals = Object.entries(preview.verify.totalsByCurrency);
   return (
     <div className="flex flex-col gap-4">
+      {preview.reconciliation ? (
+        <section aria-label="Export update review" className="rounded border border-hairline p-3">
+          <h3 className="text-label text-primary">Review export update</h3>
+          <p className="mt-2 text-body text-secondary">
+            {preview.reconciliation.counts.added} new · {preview.reconciliation.counts.changed}{" "}
+            changed · {preview.reconciliation.counts.unchanged} unchanged ·{" "}
+            {preview.reconciliation.counts.absent} absent (kept)
+          </p>
+          <p className="mt-2 text-caption text-secondary">
+            Confirming replaces changed records in this Vibe and copies your annotations to the
+            replacements. Previous records and their history remain saved.
+          </p>
+          {preview.reconciliation.changes.map((change) => (
+            <details key={change.previous_object_uri} className="mt-3">
+              <summary className="cursor-pointer text-label text-primary">
+                {String(
+                  change.next_properties.title ??
+                    change.previous_properties.title ??
+                    "Changed record",
+                )}
+                {change.preserve_user_annotations ? " · annotations preserved" : ""}
+              </summary>
+              <dl className="mt-2 text-caption text-secondary">
+                {[
+                  ...new Set([
+                    ...Object.keys(change.previous_properties),
+                    ...Object.keys(change.next_properties),
+                  ]),
+                ]
+                  .filter(
+                    (key) =>
+                      JSON.stringify(change.previous_properties[key]) !==
+                      JSON.stringify(change.next_properties[key]),
+                  )
+                  .map((key) => (
+                    <div key={key} className="mb-2 break-words">
+                      <dt className="font-medium">{key.replaceAll("_", " ")}</dt>
+                      <dd>Before: {JSON.stringify(change.previous_properties[key]) ?? "absent"}</dd>
+                      <dd>After: {JSON.stringify(change.next_properties[key]) ?? "absent"}</dd>
+                    </div>
+                  ))}
+              </dl>
+              {change.user_annotations ? (
+                <div className="mt-2 text-caption text-secondary">
+                  <span className="font-medium">Your annotations to carry forward</span>
+                  <pre className="whitespace-pre-wrap break-words">
+                    {JSON.stringify(change.user_annotations, null, 2)}
+                  </pre>
+                </div>
+              ) : null}
+            </details>
+          ))}
+        </section>
+      ) : null}
       <Callout aria-label="VERIFY reconciliation" tone={preview.verify.ok ? "success" : "error"}>
         <StatusChip status={preview.verify.ok ? "success" : "error"}>
           {preview.verify.ok ? "passed" : "failed"}
@@ -1149,6 +1327,8 @@ function candidateCountLabel(candidates: readonly CandidateSummary[], count: num
   const transactionOnly =
     candidates.length > 0 && candidates.every(({ type }) => type === "transaction");
   if (transactionOnly) return count === 1 ? "transaction" : "transactions";
+  if (candidates.length > 0 && candidates.every(({ type }) => type === "fitness_activity"))
+    return count === 1 ? "activity" : "activities";
   return count === 1 ? "object" : "objects";
 }
 
@@ -1276,6 +1456,13 @@ function previewResult(value: unknown): ImportPreview | undefined {
       checks,
     },
     candidates,
+    ...(result.reconciliation &&
+    typeof result.reconciliation === "object" &&
+    "counts" in result.reconciliation &&
+    "changes" in result.reconciliation &&
+    Array.isArray(result.reconciliation.changes)
+      ? { reconciliation: result.reconciliation as ImportPreview["reconciliation"] }
+      : {}),
     ...(result.destination &&
     typeof result.destination === "object" &&
     typeof (result.destination as Record<string, unknown>).title === "string"

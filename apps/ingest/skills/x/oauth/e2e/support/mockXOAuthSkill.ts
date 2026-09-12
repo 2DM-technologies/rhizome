@@ -4,7 +4,7 @@ import {
   OWNER_ID,
   type MockSourceSkillAdapter,
   type MockStagedElement,
-} from "../../../../../../host/e2e/support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 import type { XVerifyReport } from "../../../contracts.ts";
 import type { XFetchLike } from "../../client.ts";
 import { serializeXOAuthSecret } from "../../oauth.ts";

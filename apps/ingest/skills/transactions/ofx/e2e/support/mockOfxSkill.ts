@@ -1,4 +1,4 @@
-import { createTransactionFileMockAdapter } from "../../../../../../host/e2e/support/mockTransactionSkill.ts";
+import { createTransactionFileMockAdapter } from "../../../e2e/mockTransactionSkill.ts";
 import { ofxSourceSkillManifest } from "../../manifest.ts";
 import { ofxParser } from "../../parser.ts";
 

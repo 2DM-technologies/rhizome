@@ -1,11 +1,11 @@
-import { expect, test, type Page } from "../../../../../host/e2e/support/playwright.ts";
+import { expect, test, type Page } from "@rhizome/test-support/playwright";
 
 import {
   VIBE_ID,
   installMockStore,
   runCredentialedSkillMockConformance,
   type MockStore,
-} from "../../../../../host/e2e/support/mockStore.ts";
+} from "@rhizome/test-support/mockStore";
 import {
   COMPROMISED_SIMPLEFIN_TOKEN,
   SIMPLEFIN_CREDENTIAL_ID,
