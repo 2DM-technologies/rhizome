@@ -1,12 +1,14 @@
 import { expect, test } from "../../../../host/e2e/support/playwright.ts";
 
 import {
+  NEW_VIBE_ID,
   VIBE_ID,
   installMockStore,
   type MockStore,
 } from "../../../../host/e2e/support/mockStore.ts";
 import {
   ARENA_CHANNEL_URL,
+  ARENA_IMPORT_OPERATION_ID,
   ARENA_IMPORT_SOURCE_ID,
   mockArenaSourceSkill,
 } from "./support/mockArenaSkill.ts";
@@ -29,6 +31,32 @@ test.beforeEach(async ({ page }) => {
   delete target.pull;
 });
 
+test("a new Vibe uses the Are.na board title without entering a name", async ({ page }) => {
+  await page.goto("/imports");
+  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
+  await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
+  await page.getByLabel("Are.na channel URL").fill(CHANNEL_URL);
+  await page.getByRole("button", { name: "Review Are.na channel" }).click();
+
+  await expect(page.getByLabel("VERIFY reconciliation")).toBeVisible();
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Confirm import" })).toBeEnabled();
+  expect(mockStore.vibes.some(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
+
+  await page.getByRole("button", { name: "Confirm import" }).click();
+
+  await expect(page.getByText("Target Vibe: Synthetic Media Study", { exact: true })).toBeVisible();
+  const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
+  expect(created?.title).toBe("Synthetic Media Study");
+  expect(created?.objects).toHaveLength(5);
+  const confirmation = mockStore.requests.find(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/rnet/v0/imports/${ARENA_IMPORT_OPERATION_ID}/confirm`,
+  );
+  expect(confirmation?.postDataJSON()).toEqual({ title: "Synthetic Media Study" });
+});
+
 test("a public Are.na channel follows element-aware review and commits atomically", async ({
   page,
 }) => {
@@ -47,6 +75,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(reconciliation).toContainText("5 objects passed VERIFY");
   await expect(reconciliation).toContainText("5 source records → 5 candidates");
   await expect(reconciliation).toContainText("9 elements staged");
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
   await expect(page.getByRole("list", { name: "VERIFY checks" }).getByRole("listitem")).toHaveCount(
     8,
   );

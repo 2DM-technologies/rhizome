@@ -111,6 +111,7 @@ describe("Are.na public-remote source skill", () => {
     expect(apiUrls.every((url) => new URL(url).origin === "https://api.are.na")).toBe(true);
     expect(assetUrls).toEqual(fixture.assets.map(({ requested_url }) => requested_url));
     expect(bundle.verify).toMatchObject({ ok: true, candidate_count: 5 });
+    expect(bundle.destination).toEqual({ title: "Synthetic Media Study" });
     expect(bundle.candidates.map(({ keys }) => keys)).toEqual([
       { arena_block_id: "1101", arena_channel_id: "7001" },
       { arena_block_id: "1102", arena_channel_id: "7001" },

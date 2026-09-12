@@ -41,7 +41,7 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await expect(reconciliation).toContainText("2 objects passed VERIFY");
   await expect(reconciliation).toContainText("4 source records → 2 candidates");
   await expect(reconciliation).toContainText("4 elements staged");
-  await expect(page.getByLabel("New Vibe title")).toHaveValue("@example_user Tweets");
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
   const candidateList = page.getByRole("list", { name: "Candidate media objects" });
   await expect(candidateList.locator("[data-import-candidate]")).toHaveCount(2);
   for (const displayName of X_DISPLAY_NAMES) {
@@ -89,6 +89,7 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await page.getByRole("button", { name: "Confirm import" }).click();
   await expect(page.getByText("Target Vibe: @example_user Tweets", { exact: true })).toBeVisible();
   const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
+  expect(created?.title).toBe("@example_user Tweets");
   expect(created?.objects).toHaveLength(2);
   expect(mockStore.objects.size).toBe(initialObjects + 2);
   expect(mockStore.elements.size).toBe(initialElements + 4);

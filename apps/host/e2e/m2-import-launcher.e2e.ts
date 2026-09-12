@@ -82,8 +82,7 @@ test("a new destination is created only when its reviewed import is confirmed", 
   await expect(page.getByLabel("VERIFY reconciliation")).toContainText(
     "2 source records → 2 candidates",
   );
-  await expect(page.getByLabel("New Vibe title")).toHaveValue("Imported objects");
-  await page.getByLabel("New Vibe title").fill("Quarterly taxes");
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
   expect(
     mockStore.requests.some(
       (request) =>
@@ -93,8 +92,8 @@ test("a new destination is created only when its reviewed import is confirmed", 
   expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByText("Target Vibe: Quarterly taxes", { exact: true })).toBeVisible();
-  expect(mockStore.vibes.some((vibe) => vibe.title === "Quarterly taxes")).toBe(true);
+  await expect(page.getByText("Target Vibe: Imported objects", { exact: true })).toBeVisible();
+  expect(mockStore.vibes.some((vibe) => vibe.title === "Imported objects")).toBe(true);
   expect(
     mockStore.requests.some(
       (request) =>
@@ -112,7 +111,8 @@ test("canceling a pending destination leaves no Vibe or committed import", async
   await page
     .getByRole("button", { name: `Review ${syntheticFileSourceSkillManifest.label}` })
     .click();
-  await expect(page.getByLabel("New Vibe title")).toBeVisible();
+  await expect(page.getByLabel("VERIFY reconciliation")).toBeVisible();
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Cancel" }).click();
 

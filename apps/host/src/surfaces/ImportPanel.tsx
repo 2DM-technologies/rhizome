@@ -111,7 +111,6 @@ export function ImportPanel({
   const [sourceLabel, setSourceLabel] = useState<string>();
   const [localError, setLocalError] = useState<string>();
   const [outcome, setOutcome] = useState<string>();
-  const [pendingVibeTitle, setPendingVibeTitle] = useState("");
   const [resumedOAuthCredential, setResumedOAuthCredential] = useState<{
     attemptId: string;
     skillId: string;
@@ -158,11 +157,6 @@ export function ImportPanel({
     !vibeUuid,
   );
   const activeSkill = importSkills.find((skill) => skill.skill_id === activeSkillId);
-
-  useEffect(() => {
-    if (vibeUuid || !preview || pendingVibeTitle) return;
-    setPendingVibeTitle(preview.destinationTitle ?? "Imported objects");
-  }, [pendingVibeTitle, preview, vibeUuid]);
 
   useEffect(() => {
     if (!sourceConnectionReturn) return;
@@ -247,7 +241,6 @@ export function ImportPanel({
     setSourceLabel(undefined);
     setActiveSkillId(undefined);
     setLocalError(undefined);
-    setPendingVibeTitle("");
     setResumedOAuthCredential(undefined);
   }
 
@@ -490,8 +483,7 @@ export function ImportPanel({
       if (createdVibe) onPendingVibeConfirmed?.(uuidOf(createdVibe.uri));
     };
     if (!vibeUuid) {
-      const title = pendingVibeTitle.trim();
-      if (!title) return;
+      const title = preview.destinationTitle?.trim() || "Imported objects";
       confirmPending.mutate(
         { params: { path: { operation_id: operationId } }, body: { title } },
         { onSuccess },
@@ -642,8 +634,6 @@ export function ImportPanel({
           preview={preview}
           operationId={operationId}
           confirming={confirm.isPending || confirmPending.isPending}
-          pendingVibeTitle={vibeUuid ? undefined : pendingVibeTitle}
-          onPendingVibeTitleChange={setPendingVibeTitle}
           onCancel={cancelReview}
           onConfirm={confirmReview}
         />
@@ -815,16 +805,12 @@ function ImportReview({
   confirming,
   onCancel,
   onConfirm,
-  pendingVibeTitle,
-  onPendingVibeTitleChange,
 }: {
   preview: ImportPreview;
   operationId: string | undefined;
   confirming: boolean;
   onCancel: () => void;
   onConfirm: () => void;
-  pendingVibeTitle?: string;
-  onPendingVibeTitleChange: (title: string) => void;
 }) {
   const elementCount = preview.candidates.reduce(
     (total, candidate) => total + candidate.elementCount,
@@ -879,32 +865,11 @@ function ImportReview({
           <CandidateReview key={candidate.uri} candidate={candidate} operationId={operationId} />
         ))}
       </ul>
-      {pendingVibeTitle !== undefined ? (
-        <label>
-          <span className="text-caption text-secondary">New Vibe title</span>
-          <TextInput
-            className="mt-1"
-            aria-label="New Vibe title"
-            value={pendingVibeTitle}
-            maxLength={256}
-            required
-            onChange={(event) => onPendingVibeTitleChange(event.target.value)}
-          />
-        </label>
-      ) : null}
       <div className="flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel} disabled={confirming}>
           Cancel
         </Button>
-        <Button
-          disabled={
-            confirming ||
-            !operationId ||
-            !preview.verify.ok ||
-            (pendingVibeTitle !== undefined && !pendingVibeTitle.trim())
-          }
-          onClick={onConfirm}
-        >
+        <Button disabled={confirming || !operationId || !preview.verify.ok} onClick={onConfirm}>
           {confirming ? "Importing…" : "Confirm import"}
         </Button>
       </div>
