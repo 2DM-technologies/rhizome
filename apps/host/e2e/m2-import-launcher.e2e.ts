@@ -92,7 +92,10 @@ test("a new destination is created only when its reviewed import is confirmed", 
   expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByText("Target Vibe: Imported objects", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(
+    page.getByRole("heading", { name: "Imported objects", exact: true, level: 1 }),
+  ).toBeVisible();
   expect(mockStore.vibes.some((vibe) => vibe.title === "Imported objects")).toBe(true);
   expect(
     mockStore.requests.some(

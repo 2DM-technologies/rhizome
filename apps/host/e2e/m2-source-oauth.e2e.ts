@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 
-import { VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
+import { NEW_VIBE_ID, VIBE_ID, installMockStore, type MockStore } from "./support/mockStore.ts";
 import {
   SYNTHETIC_OAUTH_AUTHORIZATION_CODE,
   SYNTHETIC_OAUTH_AUTHORIZATION_ENDPOINT,
@@ -138,11 +138,15 @@ test("generic OAuth resumes a new destination exactly once after a full-page pro
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByText("Target Vibe: Imported objects", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(
+    page.getByRole("heading", { name: "Imported objects", exact: true, level: 1 }),
+  ).toBeVisible();
 
   // Consuming the return marker must survive an ImportPanel lifecycle, not merely its first
   // React mount. Otherwise the retained attempt would stage a duplicate on remount.
-  await page.getByRole("button", { name: "Choose another Vibe" }).click();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/imports$/);
   await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await expect(
     page.getByRole("button", { name: SYNTHETIC_OAUTH_BUTTON_LABEL, exact: true }),

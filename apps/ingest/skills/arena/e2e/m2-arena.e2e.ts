@@ -45,7 +45,10 @@ test("a new Vibe uses the Are.na board title without entering a name", async ({ 
 
   await page.getByRole("button", { name: "Confirm import" }).click();
 
-  await expect(page.getByText("Target Vibe: Synthetic Media Study", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(
+    page.getByRole("heading", { name: "Synthetic Media Study", exact: true, level: 1 }),
+  ).toBeVisible();
   const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
   expect(created?.title).toBe("Synthetic Media Study");
   expect(created?.objects).toHaveLength(5);

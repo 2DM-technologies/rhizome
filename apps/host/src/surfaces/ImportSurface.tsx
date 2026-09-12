@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { uuidOf } from "../api/uris.ts";
 import { useVibe, useVibes } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
+import { useSurfaceNavigation } from "../shell/focus.ts";
 import { Button, EntityRow, InlineError } from "../ui/index.ts";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
@@ -18,6 +19,7 @@ import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
 export function ImportSurface() {
   const session = useSession();
   const vibes = useVibes();
+  const { open } = useSurfaceNavigation();
   const [targetUuid, setTargetUuid] = useState<string | "pending">();
   const [connectionReturnError, setConnectionReturnError] = useState<string>();
   const target = useVibe(targetUuid === "pending" ? undefined : targetUuid);
@@ -80,7 +82,7 @@ export function ImportSurface() {
             <ImportPanel
               configuredSources={[]}
               sourceConnectionReturn={sourceConnectionReturn}
-              onPendingVibeConfirmed={(vibeUuid) => setTargetUuid(vibeUuid)}
+              onPendingVibeConfirmed={(vibeUuid) => open({ kind: "vibe", uuid: vibeUuid })}
             />
           ) : target.data && targetIsOwned ? (
             <ImportPanel

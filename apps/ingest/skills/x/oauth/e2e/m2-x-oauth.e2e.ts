@@ -87,7 +87,10 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByText("Target Vibe: @example_user Tweets", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(
+    page.getByRole("heading", { name: "@example_user Tweets", exact: true, level: 1 }),
+  ).toBeVisible();
   const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
   expect(created?.title).toBe("@example_user Tweets");
   expect(created?.objects).toHaveLength(2);
@@ -102,7 +105,6 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   );
   expect(tweets[0]?.source.properties).not.toHaveProperty("text");
 
-  await page.goto(`/vibes/${NEW_VIBE_ID}`);
   const feed = page.getByRole("list", { name: "Tweet feed" });
   await expect(feed.locator("[data-tweet-object]")).toHaveCount(2);
   await expect(feed.getByText("Example User", { exact: true })).toHaveCount(2);
