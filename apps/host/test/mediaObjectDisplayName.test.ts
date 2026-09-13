@@ -11,7 +11,7 @@ describe("media object display names", () => {
     expect(
       mediaObjectDisplayName({
         ...objectWithProperties({ title: "Source title" }),
-        inferred: { "rhizome:display_name": { properties: { display_name: "Inferred title" } } },
+        inferred: { "rhizome:display-name": { properties: { display_name: "Inferred title" } } },
       }),
     ).toBe("Inferred title");
   });

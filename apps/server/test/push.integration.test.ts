@@ -54,11 +54,11 @@ import {
   importPushSource,
   transactionImportCandidate,
 } from "./fixtures/import-push.ts";
-import { describeMedia } from "../src/push/tasks/element/describe_media/manifest.ts";
+import { describeMedia } from "../src/push/tasks/element/describe-media/manifest.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
-import { displayName } from "../src/push/tasks/object/display_name/manifest.ts";
-import { searchKeywords } from "../src/push/tasks/object/search_keywords/manifest.ts";
-import { vibeView } from "../src/push/tasks/vibe/vibe_view/manifest.ts";
+import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
+import { searchKeywords } from "../src/push/tasks/object/search-keywords/manifest.ts";
+import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
 import { RNET_SCHEMA_VERSION } from "../src/rnet.ts";
 import { jsonSchema } from "../src/routes/contracts.ts";
 import * as writer from "../src/services/inferred-writer.ts";
@@ -85,7 +85,7 @@ const usage: ModelUsage = {
 };
 // Fixture tasks exercise each pipeline level before the remaining installed tasks land in steps 7/10.
 const objectTask: PushTaskDefinition = {
-  name: "label_record",
+  name: "label-record",
   level: "object",
   label: "Label",
   description: "Test record task",
@@ -99,10 +99,10 @@ const objectTask: PushTaskDefinition = {
   effort: "low",
   outputTokens: { base: 128, perObject: 64 },
 };
-const otherTask = { ...objectTask, name: "other_label" };
+const otherTask = { ...objectTask, name: "other-label" };
 const elementTask: PushTaskDefinition = {
   ...objectTask,
-  name: "label_element",
+  name: "label-element",
   level: "element",
   elementKinds: ["image"],
 };
@@ -1359,7 +1359,7 @@ describe("push lifecycle and inferred writes", () => {
   test("rule-decided and preserved Vibe runs report the producer table's zero-call variants", async () => {
     const ruleTask: PushTaskDefinition = {
       ...objectTask,
-      name: "rule_fixture",
+      name: "rule-fixture",
       level: "vibe",
       rules: () => ({ label: "rule label" }),
     };
@@ -1368,7 +1368,7 @@ describe("push lifecycle and inferred writes", () => {
     const { vibeUuid } = await fixture();
     const rule = await run(app, vibeUuid, { level: "vibe", task: ruleTask.name });
     expect(rule.result).toMatchObject({
-      model: "rhizome/rule_fixture-rules@1",
+      model: "rhizome/rule-fixture-rules@1",
       llm_calls: 0,
       vibe: { outcome: "written" },
       usage: { usd: "0.000000" },
@@ -1377,7 +1377,7 @@ describe("push lifecycle and inferred writes", () => {
       (await db.query.vibes.findFirst({ where: eq(vibes.uuid, vibeUuid) }))?.inferred[
         storeTaskKey(ruleTask.name)
       ]?.model,
-    ).toBe("rhizome/rule_fixture-rules@1");
+    ).toBe("rhizome/rule-fixture-rules@1");
     expect(
       (
         await db.query.meterEntries.findFirst({
@@ -1399,7 +1399,7 @@ describe("push lifecycle and inferred writes", () => {
     expect(preserved.result).not.toHaveProperty("vibe.rev");
     expect(fake.requests).toHaveLength(0);
   });
-  test("the installed vibe_view rule path records the rule producer and makes no model call", async () => {
+  test("the installed vibe-view rule path records the rule producer and makes no model call", async () => {
     const fake = new FakeModelConnector();
     const { vibeUuid } = await fixture();
     const operation = await run(application(fake), vibeUuid, {
@@ -1407,7 +1407,7 @@ describe("push lifecycle and inferred writes", () => {
       task: vibeView.name,
     });
     expect(operation.result).toMatchObject({
-      model: "rhizome/vibe_view-rules@1",
+      model: "rhizome/vibe-view-rules@1",
       llm_calls: 0,
       vibe: { outcome: "written" },
       usage: { usd: "0.000000" },
@@ -1417,7 +1417,7 @@ describe("push lifecycle and inferred writes", () => {
         storeTaskKey(vibeView.name)
       ],
     ).toMatchObject({
-      model: "rhizome/vibe_view-rules@1",
+      model: "rhizome/vibe-view-rules@1",
       properties: { view: "datatable" },
     });
     expect(fake.requests).toHaveLength(0);
@@ -1429,7 +1429,7 @@ describe("push lifecycle and inferred writes", () => {
       )?.model,
     ).toBe(registry(fake).identity);
   });
-  test("the installed mixed-Vibe vibe_view model path accepts an observed pointer", async () => {
+  test("the installed mixed-Vibe vibe-view model path accepts an observed pointer", async () => {
     const { vibeUuid, ids } = await fixture(2);
     await db
       .update(mediaObjects)
@@ -1464,7 +1464,7 @@ describe("push lifecycle and inferred writes", () => {
     });
     expect(fake.requests).toHaveLength(1);
   });
-  test("vibe_view rejects model pointers and config branches that fail its context post-check", async () => {
+  test("vibe-view rejects model pointers and config branches that fail its context post-check", async () => {
     for (const output of [
       {
         view: "simplelist",
@@ -1498,7 +1498,7 @@ describe("push lifecycle and inferred writes", () => {
       ).toBeUndefined();
     }
   });
-  test("installed search_keywords evaluates an image-only object by observed shape", async () => {
+  test("installed search-keywords evaluates an image-only object by observed shape", async () => {
     const { vibeUuid, ids } = await fixture(2);
     await db
       .update(mediaObjects)
@@ -1994,7 +1994,7 @@ describe("push lifecycle and inferred writes", () => {
       { level: "vibe", task: summarize.name, selection: [`rnet://object/${ids[0]}`] },
       { level: "element", task: elementTask.name, selection: [`rnet://object/${ids[0]}`] },
       { level: "object", task: objectTask.name, selection: [`rnet://object/${foreign.ids[0]}`] },
-      { level: "object", task: "not_installed" },
+      { level: "object", task: "not-installed" },
     ])
       expect((await api(enabled, `/vibes/${vibeUuid}/push`, body)).status).toBe(422);
     const image = await imageFor(ids[0]!);
@@ -2260,7 +2260,7 @@ describe("push lifecycle and inferred writes", () => {
 });
 
 describe("installed image push", () => {
-  test("describe_media attaches each reachable image once, writes valid element revisions, and meters its usage", async () => {
+  test("describe-media attaches each reachable image once, writes valid element revisions, and meters its usage", async () => {
     const { vibeUuid, ids } = await fixture(2);
     const image = await imageFor(ids[0]!);
     await imageFor(ids[1]!, "text");

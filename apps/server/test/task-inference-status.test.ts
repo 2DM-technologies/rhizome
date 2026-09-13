@@ -125,7 +125,7 @@ describe("task inference status", () => {
       level: "object",
       skipped: [{ reason: "call_failed", code: "refusal" }],
     };
-    expect((await f.read(owner, { level: "object", task: "display_name" })).message).toContain(
+    expect((await f.read(owner, { level: "object", task: "display-name" })).message).toContain(
       "refusal",
     );
     f.state.operation.result = {

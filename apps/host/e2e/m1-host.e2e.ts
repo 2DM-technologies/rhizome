@@ -226,7 +226,11 @@ test("the window back button only traverses prior in-app navigation", async ({ p
   expect(backBox!.x).toBeLessThan(maximizeBox!.x);
   expect(backBox!.y).toBe(maximizeBox!.y);
 
-  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Search everything" }).click();
+  await page
+    .locator('[data-launcher-section="Commands"]')
+    .getByRole("button", { name: "Open Vibes", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(back).toBeEnabled();
 
@@ -308,7 +312,7 @@ test("legacy saved sessions discard accumulated windows during hydration", async
     .toEqual({
       open: [{ kind: "object", uuid: OBJECT_ID }],
       recentVibeSurfaces: [{ kind: "vibes" }],
-      version: 3,
+      version: 4,
     });
 });
 
@@ -529,39 +533,33 @@ test("standard and maximized windows preserve breathing room above the dock", as
     });
 });
 
-test("window mode follows history without automatic URL rewriting", async ({ page }) => {
+test("Home preserves a hidden window's exact mode across reload", async ({ page }) => {
   await page.goto("/m/Geometry");
-  const activeSurface = page.locator("[data-view-mode]:not([hidden])");
+  const surface = page.locator('[data-surface-id="m:Geometry"][data-view-mode]');
 
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
-  await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(surface).toBeHidden();
+  await expect(surface).toHaveAttribute("data-view-mode", "standard");
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 
-  // The previous window was closed, but returning to its history entry reopens it in the
-  // mode recorded in that URL, without changing the inherited choice for future opens.
-  await page.goBack();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/\/m\/Geometry$/);
-  await expect(activeSurface).toHaveAttribute("data-surface-id", "m:Geometry");
-  await expect(activeSurface).toHaveAttribute("data-view-mode", "standard");
-  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+  await expect(surface).toBeVisible();
 
-  await page.goForward();
-  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
-  await expect(activeSurface).toHaveAttribute("data-surface-id", "vibes");
-  await expect(page.locator("[data-surface-window]")).toHaveCount(1);
+  await surface.getByRole("button", { name: "Maximize window" }).click();
+  await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
 
-  // Closing and reloading the bare desktop do not implicitly reset the persisted mode.
-  await activeSurface.getByRole("button", { name: "Close surface" }).click();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.reload();
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
-  await expect(activeSurface).toHaveAttribute("data-view-mode", "maximized");
+  await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
+  await expect(surface).toHaveAttribute("data-view-mode", "maximized");
 
-  await activeSurface.getByRole("button", { name: "Restore window" }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
-  await expect(activeSurface).toHaveAttribute("data-view-mode", "standard");
+  await surface.getByRole("button", { name: "Restore window" }).click();
+  await expect(page).toHaveURL(/\/m\/Geometry$/);
+  await expect(surface).toHaveAttribute("data-view-mode", "standard");
 });
 
 test("a maximized host surface scrolls at the browser edge behind the dock", async ({ page }) => {
@@ -934,7 +932,7 @@ test("an image payload remains decodable when its previewing surface is replaced
   const image = page.getByRole("img", { name: "Monthly plan" });
   await expect(image).toBeVisible();
   await expect(image).toHaveCSS("border-top-width", "1px");
-  await expect(image).toHaveCSS("border-top-color", "oklab(0 0 0 / 0.1)");
+  await expect(image).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0.1)");
   await expect(image).toHaveCSS("border-top-left-radius", "0px");
   await expect
     .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
@@ -1016,7 +1014,11 @@ test("the Vibes index participates in the same three-item MRU rail as individual
       `vibe:${uuid}`,
     );
   }
-  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Search everything" }).click();
+  await page
+    .locator('[data-launcher-section="Commands"]')
+    .getByRole("button", { name: "Open Vibes", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
   await expect(page.locator("[data-surface-window]")).toHaveAttribute("data-surface-id", "vibes");
   await page.getByRole("button", { name: "Open Vibe Spending" }).click();

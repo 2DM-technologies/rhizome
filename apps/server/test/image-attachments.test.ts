@@ -4,7 +4,7 @@ import { lunaImageTokens } from "../src/inference/openai/image-tokens.ts";
 import { OpenAIConnector } from "../src/inference/openai/connector.ts";
 import { FakeModelConnector } from "../src/inference/fake-connector.ts";
 import { batchEnvelope, packChunks } from "../src/push/chunking.ts";
-import { describeMedia } from "../src/push/tasks/element/describe_media/manifest.ts";
+import { describeMedia } from "../src/push/tasks/element/describe-media/manifest.ts";
 import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import type { CompletionRequest } from "../src/inference/model-connector.ts";
 import type { OpenAIResponsesRequest } from "../src/inference/openai/responses-api.ts";

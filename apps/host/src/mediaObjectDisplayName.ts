@@ -20,7 +20,7 @@ export interface MediaObjectDisplayNameSource {
 
 export function mediaObjectDisplayName(object: MediaObjectDisplayNameSource): string {
   if (isRecord(object.inferred)) {
-    const entry = object.inferred[storeTaskKey(PUSH_TASKS.object.display_name.name)];
+    const entry = object.inferred[storeTaskKey(PUSH_TASKS.object["display-name"].name)];
     if (isRecord(entry) && isRecord(entry.properties)) {
       const inferred = normalizedDisplayName(entry.properties.display_name);
       if (inferred) return inferred;

@@ -21,7 +21,7 @@ export function LauncherItem({ label, icon, onSelect, className }: LauncherItemP
       onClick={onSelect}
       className={cn(
         "flex w-18 shrink-0 flex-col items-center gap-1.5 rounded-sm bg-surface p-2",
-        "transition-colors hover:bg-[#e7e7e2]",
+        "transition-colors hover:bg-surface-hover",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         className,
       )}

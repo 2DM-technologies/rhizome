@@ -14,7 +14,7 @@ export interface DockAppProps {
 
 /**
  * Figma 4902:188 — app presence in the dock.
- * active  — white 64 card with an accent glow; overhangs the 64 tray.
+ * active  — content-tier 64 card with an accent glow; overhangs the 64 tray.
  * running — a compact orb that lives inside the tray; only the active window shows its label.
  */
 export function DockApp({ name, src, state = "running", onOpen, style, className }: DockAppProps) {

@@ -40,8 +40,8 @@ export function useEnsureSurfaceOpen(surface: Surface | null): void {
 }
 
 export interface SurfaceNavigation {
-  /** Return to the bare desktop. */
-  home: () => void;
+  /** Toggle between the bare desktop and the most recently focused open window. */
+  home: (options?: { origin?: Element | null; source?: DockTransitionSource }) => void;
   /** Focus a surface, opening it if it is not already open. */
   open: (surface: Surface, options?: ViewMode | SurfaceOpenOptions) => void;
   /** Focus a surface with a shared-element transition from its dock control. */
@@ -63,41 +63,73 @@ export interface SurfaceNavigation {
 
 export interface SurfaceOpenOptions {
   mode?: ViewMode;
+  /** Surface-specific search parameters. Presentation mode is merged in by the shell. */
+  search?: Readonly<Record<string, string>>;
   /** Preserve the current window instead of replacing it with this surface. */
   keepCurrentOpen?: boolean;
+}
+
+interface ResolvedSurfaceOpenOptions {
+  mode: ViewMode;
+  keepCurrentOpen: boolean;
+  search?: Readonly<Record<string, string>>;
 }
 
 function resolveOpenOptions(
   options: ViewMode | SurfaceOpenOptions | undefined,
   defaultMode: ViewMode,
-): Required<SurfaceOpenOptions> {
+): ResolvedSurfaceOpenOptions {
   if (typeof options === "string") return { mode: options, keepCurrentOpen: false };
   return {
     mode: options?.mode ?? defaultMode,
     keepCurrentOpen: options?.keepCurrentOpen ?? false,
+    ...(options?.search ? { search: options.search } : {}),
   };
 }
 
 export function useSurfaceNavigation(): SurfaceNavigation {
   const navigate = useNavigate();
+  const location = useLocation();
   const openSurface = useShellStore((state) => state.openSurface);
   const closeSurface = useShellStore((state) => state.closeSurface);
   const setDefaultViewMode = useShellStore((state) => state.setDefaultViewMode);
   const { surface: focused, mode } = useFocusedSurface();
 
   return {
-    home: () => navigate("/"),
+    home: ({ origin = null, source = "home" } = {}) => {
+      if (focused) {
+        // Showing the desktop hides this mounted window; preserve its exact presentation for
+        // the next Home click instead of applying the default from some earlier surface.
+        setDefaultViewMode(mode);
+        navigate("/");
+        return;
+      }
+
+      const state = useShellStore.getState();
+      const remembered = state.lastFocusedSurface;
+      const target =
+        remembered && state.open.some((surface) => surfaceId(surface) === surfaceId(remembered))
+          ? remembered
+          : ({ kind: "vibes" } satisfies Surface);
+      const nextMode = state.defaultViewMode;
+      const animate =
+        origin !== null && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (animate) setDockTransitionTarget(target, source, origin.getBoundingClientRect());
+      openSurface(target);
+      void navigate(locationOf(target, nextMode), animate ? { flushSync: true } : undefined);
+    },
 
     open: (surface, options) => {
       // Async callbacks may outlive a maximize/restore click. Inherit the current choice
       // when navigation happens, not the mode captured when the callback was created.
-      const { mode: nextMode, keepCurrentOpen } = resolveOpenOptions(
-        options,
-        useShellStore.getState().defaultViewMode,
-      );
+      const {
+        mode: nextMode,
+        keepCurrentOpen,
+        search,
+      } = resolveOpenOptions(options, useShellStore.getState().defaultViewMode);
       openSurface(surface, { keepCurrentOpen });
       setDefaultViewMode(nextMode);
-      navigate(locationOf(surface, nextMode));
+      navigate(locationOf(surface, nextMode, search));
     },
 
     openFromDock: (surface, { origin, source, mode: requestedMode, keepCurrentOpen = false }) => {
@@ -124,7 +156,7 @@ export function useSurfaceNavigation(): SurfaceNavigation {
       if (!focused) return;
       const next: ViewMode = mode === "maximized" ? "standard" : "maximized";
       setDefaultViewMode(next);
-      navigate(locationOf(focused, next), { replace: true });
+      navigate(locationOf(focused, next, new URLSearchParams(location.search)), { replace: true });
     },
   };
 }

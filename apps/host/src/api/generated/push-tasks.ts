@@ -2,9 +2,9 @@
 
 export const PUSH_TASKS = {
   element: {
-    describe_media: {
+    "describe-media": {
       level: "element",
-      name: "describe_media",
+      name: "describe-media",
       label: "Describe media",
       description: "Describe each image and transcribe its legible text.",
       output_schema: {
@@ -40,9 +40,9 @@ export const PUSH_TASKS = {
     },
   },
   object: {
-    display_name: {
+    "display-name": {
       level: "object",
-      name: "display_name",
+      name: "display-name",
       label: "Display name",
       description: "Generate a short human-readable name for each object.",
       output_schema: {
@@ -57,9 +57,9 @@ export const PUSH_TASKS = {
         },
       },
     },
-    search_keywords: {
+    "search-keywords": {
       level: "object",
-      name: "search_keywords",
+      name: "search-keywords",
       label: "Search keywords",
       description: "Generate grounded terms for lexical search.",
       output_schema: {
@@ -116,9 +116,9 @@ export const PUSH_TASKS = {
         },
       },
     },
-    vibe_view: {
+    "vibe-view": {
       level: "vibe",
-      name: "vibe_view",
+      name: "vibe-view",
       label: "Choose view",
       description: "Choose a display surface and configuration for the Vibe.",
       output_schema: {

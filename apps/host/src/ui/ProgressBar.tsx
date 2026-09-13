@@ -18,7 +18,7 @@ export function ProgressBar({ value, label, className }: ProgressBarProps) {
       aria-valuenow={clamped}
       aria-label={label}
       className={cn(
-        "flex h-3 items-start overflow-hidden rounded-pill bg-surface border border-black/6 w-80",
+        "flex h-3 items-start overflow-hidden rounded-pill bg-surface border border-neutral-border w-80",
         className,
       )}
     >

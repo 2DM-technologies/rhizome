@@ -54,6 +54,7 @@ test("version 0 windows seed Vibe recents before collapsing to the latest surfac
   ).toEqual({
     open: [OBJECT],
     recentVibeSurfaces: [VIBE_B, VIBES, VIBE_A],
+    lastFocusedSurface: OBJECT,
     defaultViewMode: "maximized",
   });
 });
@@ -70,6 +71,7 @@ test("version 1 preserves explicitly retained windows and seeds Vibe recents", (
   ).toEqual({
     open: [VIBE_A, OBJECT, VIBE_B],
     recentVibeSurfaces: [VIBE_B, VIBE_A],
+    lastFocusedSurface: VIBE_B,
     defaultViewMode: "standard",
   });
 });
@@ -87,6 +89,7 @@ test("version 2 migrates UUID recents and an open Vibes index into one MRU list"
   ).toEqual({
     open: [VIBES, VIBE_B],
     recentVibeSurfaces: [VIBE_B, VIBES, VIBE_A],
+    lastFocusedSurface: VIBE_B,
     defaultViewMode: "standard",
   });
 });
@@ -95,6 +98,7 @@ test("current persisted state preserves explicitly retained windows", () => {
   const persisted = {
     open: [VIBES, OBJECT],
     recentVibeSurfaces: [VIBES, VIBE_A],
+    lastFocusedSurface: OBJECT,
     defaultViewMode: "standard",
   };
 
@@ -105,6 +109,25 @@ test("malformed legacy state migrates to safe defaults", () => {
   expect(migrateShellPersistedState({ open: "many", defaultViewMode: "huge" }, 0)).toEqual({
     open: [],
     recentVibeSurfaces: [],
+    lastFocusedSurface: null,
     defaultViewMode: "standard",
+  });
+});
+
+test("version 3 seeds the desktop return target from the newest open window", () => {
+  expect(
+    migrateShellPersistedState(
+      {
+        open: [VIBES, OBJECT],
+        recentVibeSurfaces: [VIBES],
+        defaultViewMode: "maximized",
+      },
+      3,
+    ),
+  ).toEqual({
+    open: [VIBES, OBJECT],
+    recentVibeSurfaces: [VIBES],
+    lastFocusedSurface: OBJECT,
+    defaultViewMode: "maximized",
   });
 });

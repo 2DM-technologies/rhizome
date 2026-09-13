@@ -86,7 +86,7 @@ function RenderedPayload({
         mime={mime}
         src={payload.data}
         variant="detail"
-        className="!rounded-none !border-black/10"
+        className="!rounded-none !border-neutral-border"
       />
       <TextLink
         href={payload.data}

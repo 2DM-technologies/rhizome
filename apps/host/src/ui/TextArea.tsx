@@ -19,7 +19,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function 
       className={cn(
         "w-full rounded-sm p-3 text-primary outline-none",
         bordered && "border border-hairline",
-        "placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent",
+        "placeholder:text-tertiary focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent",
         "disabled:pointer-events-none disabled:opacity-40",
         tone === "canvas" ? "bg-canvas" : "bg-surface",
         typography === "mono"

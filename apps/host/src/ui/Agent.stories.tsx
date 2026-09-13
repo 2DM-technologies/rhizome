@@ -92,8 +92,8 @@ export const ToolCall: Story = {
 };
 
 /**
- * The whole stream. Everything inside inherits the sidebar's dark tier — none of these
- * children ask for dark colours, they just read tokens.
+ * The whole stream. Its children inherit the sidebar's content polarity in either theme;
+ * the composer re-enters control. No child needs to know the system preference.
  */
 export const Sidebar: Story = {
   name: "Agent Sidebar",

@@ -25,11 +25,13 @@ function operation(result: unknown, committed_at?: string): OperationDocument {
 
 describe("push host integration", () => {
   test("missing selection is unique and excludes inferred objects", () => {
-    expect(missingObjectUris([object, object], PUSH_TASKS.object.display_name.name)).toEqual([URI]);
+    expect(missingObjectUris([object, object], PUSH_TASKS.object["display-name"].name)).toEqual([
+      URI,
+    ]);
     expect(
       missingObjectUris(
-        [{ ...object, inferred: { "rhizome:display_name": { model: "mock", properties: {} } } }],
-        PUSH_TASKS.object.display_name.name,
+        [{ ...object, inferred: { "rhizome:display-name": { model: "mock", properties: {} } } }],
+        PUSH_TASKS.object["display-name"].name,
       ),
     ).toEqual([]);
   });
@@ -39,14 +41,14 @@ describe("push host integration", () => {
       inferredObjectLabel({
         ...object,
         inferred: {
-          "rhizome:display_name": { model: "mock", properties: { display_name: "Plan" } },
+          "rhizome:display-name": { model: "mock", properties: { display_name: "Plan" } },
         },
       }),
     ).toBe("Plan");
     expect(
       resolveVibeView(
         {
-          inferred: { "rhizome:vibe_view": { properties: { view: "datatable", config: {} } } },
+          inferred: { "rhizome:vibe-view": { properties: { view: "datatable", config: {} } } },
         } as unknown as Vibe,
         [object],
       ),
@@ -73,7 +75,7 @@ describe("push host integration", () => {
       client,
       operation({
         level: "object",
-        task: "display_name",
+        task: "display-name",
         model: null,
         llm_calls: 0,
         context: { truncated_objects: 0, truncated_pointers: 0, clipped_objects: 0 },
@@ -122,7 +124,7 @@ describe("push host integration", () => {
       client,
       operation({
         level: "element",
-        task: "element_task",
+        task: "element-task",
         model: null,
         llm_calls: 0,
         context: { truncated_objects: 0, truncated_pointers: 0, clipped_objects: 0 },
@@ -136,7 +138,7 @@ describe("push host integration", () => {
           skipped: 1,
           failed: 0,
         },
-        written: [{ uri: `rnet://element/${ids[0]}`, key: "rhizome:element_task", rev: 1 }],
+        written: [{ uri: `rnet://element/${ids[0]}`, key: "rhizome:element-task", rev: 1 }],
         preserved: [`rnet://element/${ids[1]}`],
         skipped: [{ uri: `rnet://element/${ids[2]}`, reason: "unsupported_media" }],
       }),

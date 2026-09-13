@@ -26,7 +26,7 @@ function properties(value: unknown): Record<string, unknown> | undefined {
 }
 export function inferredObjectLabel(object: MediaObject): string {
   const display = properties(
-    object.inferred?.[storeTaskKey(PUSH_TASKS.object.display_name.name)],
+    object.inferred?.[storeTaskKey(PUSH_TASKS.object["display-name"].name)],
   )?.display_name;
   return typeof display === "string" && display.trim()
     ? display.trim()
@@ -34,7 +34,7 @@ export function inferredObjectLabel(object: MediaObject): string {
 }
 export function resolveVibeView(vibe: Vibe, objects: MediaObject[]): View | undefined {
   if (objects.length > 0 && objects.every((object) => object.type === "tweet")) return "tweetfeed";
-  const view = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)])?.view;
+  const view = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe["vibe-view"].name)])?.view;
   return VIBE_VIEWS.find((candidate) => candidate === view && candidate !== "tweetfeed");
 }
 function displayValue(value: unknown): string {
@@ -74,7 +74,7 @@ function Actions({
   );
 }
 export function InferredVibeView({ objects, vibe, ...actions }: Props) {
-  const entry = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]);
+  const entry = properties(vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe["vibe-view"].name)]);
   const view = resolveVibeView(vibe, objects);
   const raw = entry?.config;
   const config =

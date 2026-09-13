@@ -17,6 +17,12 @@
   }
 }
 
+.desktop-wallpaper {
+  background-image: var(--rz-wallpaper);
+  background-size: cover;
+  background-position: center;
+}
+
 @property --rz-launcher-expanded-alpha {
   syntax: "<number>";
   inherits: false;
@@ -76,7 +82,7 @@
   isolation: isolate;
   overflow: hidden;
   border-color: var(--rz-accent-primary);
-  background: #ffffff;
+  background: var(--rz-bg-canvas);
   color: var(--rz-accent-primary);
   transition:
     color 180ms ease,
@@ -176,8 +182,13 @@
 
 .inferred-block[data-inference-state="waiting"],
 .inferred-block[data-inference-state="running"] {
-  --inferred-base: var(--rz-gray-200);
-  --inferred-wave: linear-gradient(110deg, transparent 20%, #ffffff99 45%, transparent 70%);
+  --inferred-base: var(--rz-skeleton-base);
+  --inferred-wave: linear-gradient(
+    110deg,
+    transparent 20%,
+    var(--rz-skeleton-shine) 45%,
+    transparent 70%
+  );
   background: color-mix(in srgb, var(--inferred-base) 25%, var(--rz-bg-canvas));
 }
 

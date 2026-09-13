@@ -5,7 +5,7 @@ import output from "./output.json";
 import { chooseVibeView } from "./rules.ts";
 
 export const vibeView: PushTaskDefinition = {
-  name: "vibe_view",
+  name: "vibe-view",
   level: "vibe",
   label: "Choose view",
   description: "Choose a display surface and configuration for the Vibe.",

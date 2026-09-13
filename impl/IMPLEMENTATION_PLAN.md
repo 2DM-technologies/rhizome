@@ -69,8 +69,9 @@ rhizome/                            # PRODUCT (closed).
 ├── impl/
 │   ├── IMPLEMENTATION_PLAN.md      # this file; sole implementation plan
 │   ├── CONFORMANCE.md              # living list of intentional spec gaps
-│   └── concepts/                   # settled design notes not tied to one milestone
-│       └── sandboxing.md           # alpha isolation + bridge decision
+│   ├── concepts/                   # settled design notes not tied to one milestone
+│   └── speculative/                # exploratory notes, not implementation requirements
+│       └── sandboxing.md           # sandbox isolation + bridge proposals
 ├── apps/                           # what Rhizome deploys
 │   ├── server/                     # the rNet store — Bun + Hono
 │   │   └── src/

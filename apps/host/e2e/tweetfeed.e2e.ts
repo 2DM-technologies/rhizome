@@ -218,7 +218,7 @@ test("a mixed collection keeps its inferred view and offscreen posts defer paylo
 }) => {
   store.vibes[0]!.objects.push(`rnet://object/${OBJECT_ID}`);
   store.vibes[0]!.inferred = {
-    "rhizome:vibe_view": {
+    "rhizome:vibe-view": {
       model: "mock/rhizome",
       properties: { view: "simplelist", config: { subtitle_pointer: null } },
     },

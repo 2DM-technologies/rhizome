@@ -10,6 +10,7 @@ import type {
   Vibe as RnetVibe,
 } from "@rnet/types";
 import type {
+  DashboardStats as StoreDashboardStats,
   PushVibeRequest as StorePushVibeRequest,
   ObjectInferenceStatus as StoreObjectInferenceStatus,
   TaskInferenceStatus as StoreTaskInferenceStatus,
@@ -41,6 +42,22 @@ import type {
   MediaObjectsResponse as StoreMediaObjectsResponse,
 } from "@rhizome/store-contract";
 export interface paths {
+  "/rnet/v0/me/stats": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["getDashboardStats"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/rnet/v0/imports": {
     parameters: {
       query?: never;
@@ -586,6 +603,7 @@ export interface components {
      * @description A dynamic, owned collection of MediaObjects, plus the state that makes it living: its pull configuration and its inferred block. Vibes contain object references, not copies. Vibes carry no source block — they are authored, not ingested; the omission is the ontology.
      */
     Vibe: RnetVibe;
+    DashboardStats: StoreDashboardStats;
     ObjectInferenceStatus: StoreObjectInferenceStatus;
     TaskInferenceStatus: StoreTaskInferenceStatus;
     PushVibeRequest: StorePushVibeRequest;
@@ -624,6 +642,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  getDashboardStats: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DashboardStats"];
+        };
+      };
+      /** @description Problem response */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Problem response */
+      default: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+    };
+  };
   createPendingVibeImportPreview: {
     parameters: {
       query?: never;

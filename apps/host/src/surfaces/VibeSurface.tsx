@@ -38,7 +38,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   );
   const viewStatus = useTaskInferenceStatus(
     uuid,
-    { level: "vibe", task: PUSH_TASKS.vibe.vibe_view.name },
+    { level: "vibe", task: PUSH_TASKS.vibe["vibe-view"].name },
     Boolean(vibe.data),
   );
   const update = useUpdateVibe();

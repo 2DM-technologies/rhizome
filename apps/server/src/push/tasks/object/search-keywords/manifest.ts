@@ -4,7 +4,7 @@ import prompt from "./PROMPT.md" with { type: "text" };
 import output from "./output.json";
 
 export const searchKeywords: PushTaskDefinition = {
-  name: "search_keywords",
+  name: "search-keywords",
   level: "object",
   label: "Search keywords",
   description: "Generate grounded terms for lexical search.",

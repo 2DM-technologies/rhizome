@@ -3,7 +3,7 @@
 **Status:** M2 implementation plan, revised after M2 to remove the X archive source and the
 browser file-capture preprocessor. No implementation is included in this document.
 
-**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [sandboxing](./sandboxing.md), and [design tiers](./design-tiers.md).
+**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [sandboxing exploration](../speculative/sandboxing.md), and [design tiers](./design-tiers.md).
 
 ## 1. Purpose
 

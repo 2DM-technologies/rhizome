@@ -25,7 +25,7 @@ function object(index: number, amount: number): MediaObject {
       properties: { title: `Source ${index}`, amount, nested: { "a/b~c": "Escaped pointer" } },
     },
     inferred: {
-      [storeTaskKey(PUSH_TASKS.object.display_name.name)]: {
+      [storeTaskKey(PUSH_TASKS.object["display-name"].name)]: {
         model: "mock/rhizome",
         properties: { display_name: `Object ${index}` },
       },
@@ -43,7 +43,7 @@ function vibe(view?: (typeof VIBE_VIEWS)[number], config: object = {}): Vibe {
     grants: [],
     inferred: view
       ? {
-          [storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]: {
+          [storeTaskKey(PUSH_TASKS.vibe["vibe-view"].name)]: {
             model: "mock/rhizome",
             properties: { view, config },
           },

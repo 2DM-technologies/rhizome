@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { VIBE_VIEWS } from "@rhizome/store-contract";
 import { jsonSchema } from "../src/routes/contracts.ts";
 import type { VibeContext } from "../src/push/context.ts";
-import { vibeView } from "../src/push/tasks/vibe/vibe_view/manifest.ts";
-import { chooseVibeView, validateVibeViewOutput } from "../src/push/tasks/vibe/vibe_view/rules.ts";
+import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
+import { chooseVibeView, validateVibeViewOutput } from "../src/push/tasks/vibe/vibe-view/rules.ts";
 
 const pointer = (value: string) => ({ pointer: value, kind: "string" as const });
 const context = (
@@ -28,7 +28,7 @@ function expectValid(output: Record<string, unknown>, input: VibeContext) {
   expect(validateVibeViewOutput(output, input)).toBe(true);
 }
 
-describe("vibe_view", () => {
+describe("vibe-view", () => {
   test("tweet-only Vibes choose tweetfeed before pointer and media rules", () => {
     for (const input of [
       context([type("tweet", [])]),

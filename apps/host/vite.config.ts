@@ -6,6 +6,8 @@ const DEV_HOST = "127.0.0.1";
 const DEV_PORT = 5173;
 const DEV_ORIGIN = `http://${DEV_HOST}:${DEV_PORT}`;
 
+export const HOST_CSS_TARGET = ["chrome123", "edge123", "firefox120", "safari17.5"];
+
 /** Prevents local OAuth cookies from crossing between the localhost and IPv4 loopback sites. */
 export function canonicalDevServerLocation(
   hostHeader: string | undefined,
@@ -48,6 +50,9 @@ function canonicalLoopbackOrigin(): Plugin {
 
 export default defineConfig({
   plugins: [canonicalLoopbackOrigin(), react(), tailwindcss()],
+  // Keep native light-dark() colors: lowering them cannot follow our variable-driven,
+  // per-tier color-scheme and produces invalid colors in production. Baseline 2024 CSS.
+  build: { cssTarget: HOST_CSS_TARGET },
   // One .env, at the repo root, as the README describes. Vite otherwise resolves it relative
   // to this package and silently leaves VITE_* unset — which surfaces as the client calling
   // its own origin and the dev server answering with index.html at 200.

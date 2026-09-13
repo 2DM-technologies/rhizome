@@ -156,7 +156,8 @@ describe("push contracts", () => {
     expect(STORE_SCHEMA_COMPONENTS.PushOperationResult).toBe(pushOperationResultSchema);
     expect(STORE_SCHEMA_COMPONENTS.PushTaskManifest).toBe(pushTaskManifestSchema);
     expect(STORE_SCHEMA_COMPONENTS.PushTaskManifestsResponse).toBe(pushTaskManifestsResponseSchema);
-    expect(storeTaskKey("search_keywords")).toBe("rhizome:search_keywords");
+    expect(storeTaskKey("search-keywords")).toBe("rhizome:search-keywords");
+    expect(() => storeTaskKey("search_keywords")).toThrow();
     expect(() => storeTaskKey("other:task")).toThrow();
   });
 

@@ -2,6 +2,7 @@ import type { Page, Request, Route } from "@playwright/test";
 import type { MediaElement, MediaObject, OriginArtifact, Vibe } from "@rnet/types";
 import type {
   CreateImportPreviewRequest,
+  DashboardStats,
   IngestionSourceDocument,
   OperationDocument,
   SourceActionRequired,
@@ -35,6 +36,7 @@ const fixtureVibe = {
   title: "Spending",
   objects: [OBJECT_URI],
   created_at: "2026-08-27T12:00:00.000Z",
+  "x-rhizome-updated-at": "2026-08-28T12:00:00.000Z",
   grants: [],
   inferred: {},
   pull: {
@@ -189,7 +191,7 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
     const object = store.objects.get(id);
     if (!object) continue;
     const taskProperties =
-      operation.input.task === PUSH_TASKS.object.display_name.name
+      operation.input.task === PUSH_TASKS.object["display-name"].name
         ? { display_name: "Enriched monthly plan" }
         : { keywords: ["monthly", "planning"] };
     store.objects.set(id, {
@@ -294,6 +296,7 @@ export interface MockSourceActionRequest {
 }
 
 export interface MockStoreOptions {
+  readonly dashboardStats?: DashboardStats;
   readonly sourceSkills?: readonly MockSourceSkillAdapter[];
 }
 
@@ -378,6 +381,7 @@ function isRecord(value: unknown): value is JsonObject {
 }
 
 export interface MockStore {
+  dashboardStats: DashboardStats;
   readonly requests: Request[];
   readonly vibes: Vibe[];
   readonly objects: Map<string, MediaObject>;
@@ -473,7 +477,15 @@ function mockOriginDocument({
  */
 export async function installMockStore(
   page: Page,
-  { sourceSkills = [] }: MockStoreOptions = {},
+  {
+    dashboardStats = {
+      account_created_at: "2024-03-14T12:00:00.000Z",
+      objects: 1,
+      elements: 1,
+      tokens: { input: 1_250, output: 750, total: 2_000 },
+    },
+    sourceSkills = [],
+  }: MockStoreOptions = {},
 ): Promise<MockStore> {
   const installedSourceSkillAdapters = [...sourceSkills];
   const installedSourceSkillsById = new Map(
@@ -531,6 +543,7 @@ export async function installMockStore(
     [ELEMENT_ID, Buffer.from(PAYLOAD_TEXT)],
   ]);
   const store: MockStore = {
+    dashboardStats: structuredClone(dashboardStats),
     requests: [],
     vibes: [structuredClone(fixtureVibe)],
     objects: new Map([[OBJECT_ID, structuredClone(fixtureObject)]]),
@@ -666,6 +679,10 @@ export async function installMockStore(
 
     if (method === "GET" && path === "/rnet/v0/vibes") {
       return json(route, { vibes: store.vibes });
+    }
+
+    if (method === "GET" && path === "/rnet/v0/me/stats") {
+      return json(route, store.dashboardStats);
     }
 
     if (method === "POST" && path === "/rnet/v0/vibes") {

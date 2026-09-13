@@ -41,8 +41,9 @@ test("the new-Vibe import flow survives surface history", async ({ page }) => {
   await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
 
   await page.getByRole("button", { name: "Home" }).click();
-  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
-  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("main", { name: "Home" })).toBeVisible();
+  await page.getByRole("button", { name: "Home" }).click();
   await expect(page).toHaveURL(/\/imports\?mode=maximized$/);
   await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
 

@@ -127,7 +127,7 @@ beforeAll(async () => {
   const connector = new FakeModelConnector({
     respond: async (request) => {
       const response = await samples.complete(request);
-      if (request.schemaName === "rhizome_display_name") {
+      if (request.schemaName === "rhizome_display-name") {
         names++;
         for (const item of (response.output as { results: { result: { display_name: string } }[] })
           .results)
@@ -576,10 +576,10 @@ describe("rNet semantics", () => {
       expect(task).toBeDefined();
       return task!;
     };
-    displayTask = find("object", "display_name");
-    keywordsTask = find("object", "search_keywords");
+    displayTask = find("object", "display-name");
+    keywordsTask = find("object", "search-keywords");
     summarizeTask = find("vibe", "summarize");
-    find("vibe", "vibe_view");
+    find("vibe", "vibe-view");
     for (const manifest of manifests.tasks) {
       expect(Object.keys(manifest).sort()).toEqual([
         "description",
@@ -718,8 +718,16 @@ describe("rNet semantics", () => {
       confidence: 0.5,
     });
     expect(after.inferred?.[storeTaskKey(summarizeTask.name)]).not.toHaveProperty("durable");
-    const { inferred: _beforeInferred, ...beforeOther } = before;
-    const { inferred: _afterInferred, ...afterOther } = after;
+    const {
+      inferred: _beforeInferred,
+      "x-rhizome-updated-at": _beforeUpdatedAt,
+      ...beforeOther
+    } = before;
+    const {
+      inferred: _afterInferred,
+      "x-rhizome-updated-at": _afterUpdatedAt,
+      ...afterOther
+    } = after;
     expect(afterOther).toEqual(beforeOther);
   });
 

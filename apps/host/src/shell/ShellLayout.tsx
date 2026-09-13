@@ -1,10 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
-import appMark from "../assets/brand/app-mark.png";
-import orb1 from "../assets/orbs/orb-1-44.png";
-import orb2 from "../assets/orbs/orb-2-44.png";
-import orb3 from "../assets/orbs/orb-3-44.png";
-import orb4 from "../assets/orbs/orb-4-44.png";
 import orbHome from "../assets/orbs/orb-home-48.png";
 import { uuidOf } from "../api/uris.ts";
 import { useVibes } from "../queries/index.ts";
@@ -19,29 +14,16 @@ import {
   OrbButton,
 } from "../ui/index.ts";
 import { SurfaceLayer } from "./SurfaceLayer.tsx";
+import { DesktopHome } from "./DesktopHome.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
 import { useOpenSurfaces, useShellStore } from "./store.ts";
 import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import { markForSurface } from "./surfaceMarks.ts";
 
-/**
- * There is no Figma spec for host surfaces in the dock — the mockups only show dMachine apps —
- * so their marks are stand-ins, picked deterministically per surface so a window keeps the
- * same face across a session.
- */
-const STAND_IN_ORBS = [orb1, orb2, orb3, orb4];
 const DOCK_RAIL_ITEM_SIZE = 44;
 const DOCK_RAIL_GAP = 20;
 const DOCK_RAIL_VISIBLE_VIBE_ITEMS = 3;
-const HOME_SURFACE = { kind: "vibes" } satisfies Surface;
-
-function markFor(surface: Surface): string {
-  if (surface.kind === "dmachine") return appMark;
-  const id = surfaceId(surface);
-  let hash = 0;
-  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) % 997;
-  return STAND_IN_ORBS[hash % STAND_IN_ORBS.length] as string;
-}
 
 /**
  * The persistent shell. The dock and desktop live above the router's control, while the URL
@@ -198,18 +180,20 @@ export function ShellLayout() {
               label="Home"
               src={orbHome}
               onClick={(event) =>
-                navigation.openFromDock(HOME_SURFACE, {
+                navigation.home({
                   origin: event.currentTarget,
                   source: "home",
-                  // Preserve an in-progress review; every ordinary window switch still replaces.
-                  keepCurrentOpen: focused?.kind === "import",
                 })
               }
             />
           }
           apps={
             focused ? (
-              <DockApp name={labelOf(focused, vibeTitles)} src={markFor(focused)} state="active" />
+              <DockApp
+                name={labelOf(focused, vibeTitles)}
+                src={markForSurface(focused)}
+                state="active"
+              />
             ) : null
           }
           tray={
@@ -233,7 +217,7 @@ export function ShellLayout() {
                     <DockApp
                       key={surfaceId(surface)}
                       name={labelOf(surface, vibeTitles)}
-                      src={markFor(surface)}
+                      src={markForSurface(surface)}
                       onOpen={(event) =>
                         navigation.openFromDock(surface, {
                           origin: event.currentTarget,
@@ -289,6 +273,7 @@ export function ShellLayout() {
         />
       }
     >
+      {focused === null ? <DesktopHome /> : null}
       <SurfaceLayer />
     </Desktop>
   );

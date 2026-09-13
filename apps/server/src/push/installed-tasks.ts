@@ -2,12 +2,12 @@ import { storeTaskKey } from "@rhizome/store-contract";
 import type { Vibe } from "@rnet/types";
 import { PushTaskCatalog, type PushTaskDefinition } from "./task-catalog.ts";
 import type { VibeContext } from "./context.ts";
-import { describeMedia } from "./tasks/element/describe_media/manifest.ts";
-import { displayName } from "./tasks/object/display_name/manifest.ts";
-import { searchKeywords } from "./tasks/object/search_keywords/manifest.ts";
+import { describeMedia } from "./tasks/element/describe-media/manifest.ts";
+import { displayName } from "./tasks/object/display-name/manifest.ts";
+import { searchKeywords } from "./tasks/object/search-keywords/manifest.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
-import { vibeView } from "./tasks/vibe/vibe_view/manifest.ts";
-import { validateVibeViewOutput } from "./tasks/vibe/vibe_view/rules.ts";
+import { vibeView } from "./tasks/vibe/vibe-view/manifest.ts";
+import { validateVibeViewOutput } from "./tasks/vibe/vibe-view/rules.ts";
 
 export const installedPushTasks = new PushTaskCatalog([
   summarize,

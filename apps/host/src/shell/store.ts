@@ -23,6 +23,8 @@ interface ShellState {
   open: Surface[];
   /** Vibe routes opened in this browser session, most recently opened first. */
   recentVibeSurfaces: VibeSurface[];
+  /** Last focused window, retained while the bare desktop is showing. */
+  lastFocusedSurface: Surface | null;
   /** Presentation inherited by the next surface; focused presentation itself still lives in the URL. */
   defaultViewMode: ViewMode;
   agentOpen: boolean;
@@ -39,11 +41,12 @@ export interface OpenSurfaceOptions {
   keepCurrentOpen?: boolean;
 }
 
-export const SHELL_STORE_VERSION = 3;
+export const SHELL_STORE_VERSION = 4;
 
 interface PersistedShellState {
   open: Surface[];
   recentVibeSurfaces: VibeSurface[];
+  lastFocusedSurface: Surface | null;
   defaultViewMode: ViewMode;
 }
 
@@ -125,6 +128,9 @@ export function migrateShellPersistedState(
   const persistedRecentVibes = Array.isArray(record.recentVibeSurfaces)
     ? record.recentVibeSurfaces.filter(isSurface)
     : [];
+  const lastFocusedSurface = isSurface(record.lastFocusedSurface)
+    ? record.lastFocusedSurface
+    : (validOpen.at(-1) ?? null);
   return {
     // The legacy store appended new windows, making the final valid entry the best available
     // proxy for the window the user opened most recently. Version 1 already enforced the
@@ -135,6 +141,7 @@ export function migrateShellPersistedState(
       ...persistedRecentVibes,
       ...legacyRecentVibes,
     ]),
+    lastFocusedSurface,
     defaultViewMode: record.defaultViewMode === "maximized" ? "maximized" : "standard",
   } satisfies PersistedShellState;
 }
@@ -153,6 +160,7 @@ export const useShellStore = create<ShellState>()(
     (set) => ({
       open: [],
       recentVibeSurfaces: [],
+      lastFocusedSurface: null,
       defaultViewMode: "maximized",
       agentOpen: false,
       launcherOpen: false,
@@ -164,13 +172,26 @@ export const useShellStore = create<ShellState>()(
         set((state) => {
           const open = nextOpenSurfaces(state.open, surface, { keepCurrentOpen });
           const recentVibeSurfaces = nextRecentVibeSurfaces(state.recentVibeSurfaces, surface);
-          return open === state.open && recentVibeSurfaces === state.recentVibeSurfaces
+          return open === state.open &&
+            recentVibeSurfaces === state.recentVibeSurfaces &&
+            state.lastFocusedSurface &&
+            surfaceId(state.lastFocusedSurface) === surfaceId(surface)
             ? state
-            : { open, recentVibeSurfaces };
+            : { open, recentVibeSurfaces, lastFocusedSurface: surface };
         }),
 
       closeSurface: (id) =>
-        set((state) => ({ open: state.open.filter((surface) => surfaceId(surface) !== id) })),
+        set((state) => {
+          const open = state.open.filter((surface) => surfaceId(surface) !== id);
+          const closingLastFocused =
+            state.lastFocusedSurface && surfaceId(state.lastFocusedSurface) === id;
+          return {
+            open,
+            lastFocusedSurface: closingLastFocused
+              ? (open.at(-1) ?? null)
+              : state.lastFocusedSurface,
+          };
+        }),
 
       setDefaultViewMode: (defaultViewMode) => set({ defaultViewMode }),
       setAgentOpen: (agentOpen) => set({ agentOpen }),
@@ -186,6 +207,7 @@ export const useShellStore = create<ShellState>()(
       partialize: (state) => ({
         open: state.open,
         recentVibeSurfaces: state.recentVibeSurfaces,
+        lastFocusedSurface: state.lastFocusedSurface,
         defaultViewMode: state.defaultViewMode,
       }),
     },

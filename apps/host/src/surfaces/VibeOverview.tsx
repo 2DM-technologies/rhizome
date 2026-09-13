@@ -47,7 +47,7 @@ export function VibeOverview({
           <h2 className="text-label text-primary">Summary</h2>
           {busy ? (
             <div
-              className="flex flex-col gap-3 [--inferred-base:var(--rz-gray-200)]"
+              className="flex flex-col gap-3 [--inferred-base:var(--rz-skeleton-base)]"
               data-inference-state="waiting"
               aria-busy="true"
               aria-label="Summary loading"

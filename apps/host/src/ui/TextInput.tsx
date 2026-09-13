@@ -32,7 +32,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
       type={type}
       className={cn(
         "w-full rounded-pill border border-hairline px-5 py-3 text-primary outline-none",
-        "placeholder:text-tertiary focus-visible:outline-2 focus-visible:outline-accent",
+        "placeholder:text-tertiary focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-accent",
         "disabled:pointer-events-none disabled:opacity-40",
         TONES[tone],
         TYPOGRAPHY[typography],

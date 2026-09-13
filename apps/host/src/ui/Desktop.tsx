@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 
-import wallpaper from "../assets/brand/wallpaper.png";
 import { cn } from "./cn.ts";
 
 export interface DesktopProps {
@@ -18,13 +17,8 @@ export interface DesktopProps {
 export function Desktop({ children, dock, className }: DesktopProps) {
   return (
     <div
-      data-tier="light"
-      style={{
-        backgroundImage: `linear-gradient(rgb(255 255 255 / 75%), rgb(255 255 255 / 75%)), url(${wallpaper})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-      }}
-      className={cn("relative h-full w-full overflow-hidden", className)}
+      data-tier="control"
+      className={cn("desktop-wallpaper relative h-full w-full overflow-hidden", className)}
     >
       {children}
       <div data-shell-dock className="absolute right-12 bottom-6 left-12 z-20">

@@ -24,7 +24,7 @@ const linkStyle =
 const actionStyle =
   "grid size-7 shrink-0 place-items-center rounded-pill bg-surface text-secondary transition-colors hover:text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const actionTooltipStyle =
-  "pointer-events-none fixed z-50 w-max -translate-y-1/2 rounded-sm border border-gray-50 bg-gray-800 px-2 py-1 text-caption text-white shadow-sm";
+  "pointer-events-none fixed z-50 w-max -translate-y-1/2 rounded-sm border border-tooltip-border bg-tooltip px-2 py-1 text-caption text-tooltip-text shadow-sm";
 const dateFormat = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -202,6 +202,7 @@ function Tweet({
             <span
               id={tooltip.id}
               role="tooltip"
+              data-tier="content"
               className={actionTooltipStyle}
               style={{ left: tooltip.left, top: tooltip.top, maxWidth: tooltip.maxWidth }}
             >

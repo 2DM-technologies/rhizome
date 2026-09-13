@@ -15,12 +15,12 @@ test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and re
       {
         uri: object.uri,
         revision: 0,
-        tasks: [{ task: "display_name", status: "waiting", message: null }],
+        tasks: [{ task: "display-name", status: "waiting", message: null }],
       },
       {
         uri: element.uri,
         revision: 0,
-        tasks: [{ task: "describe_media", status: "waiting", message: null }],
+        tasks: [{ task: "describe-media", status: "waiting", message: null }],
       },
     ],
   };
@@ -76,7 +76,7 @@ test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and re
   });
   store.elements.set(ELEMENT_ID, {
     ...element,
-    inferred: { "rhizome:describe_media": envelope({ caption: "A fern in soft light" }) },
+    inferred: { "rhizome:describe-media": envelope({ caption: "A fern in soft light" }) },
   });
   status.records[1]!.revision = 1;
   status.records[1]!.tasks = [];
@@ -88,31 +88,31 @@ test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and re
 
   store.objects.set(OBJECT_ID, {
     ...object,
-    inferred: { "rhizome:display_name": envelope({ display_name: "Garden fern" }) },
+    inferred: { "rhizome:display-name": envelope({ display_name: "Garden fern" }) },
   });
   status.records[0]!.revision = 1;
   status.records[0]!.tasks = [];
   await expect(objectBlock.locator("pre")).toContainText("Garden fern");
   await expect(objectContainer).toHaveAttribute("aria-busy", "false");
 
-  status.records[0]!.tasks = [{ task: "display_name", status: "waiting", message: null }];
+  status.records[0]!.tasks = [{ task: "display-name", status: "waiting", message: null }];
   await expect(objectContainer).toHaveAttribute("data-inference-state", "waiting");
   await expect(objectBlock.locator("pre")).toContainText("Garden fern");
   status.records[0]!.tasks[0]!.status = "running";
   await expect(objectContainer).toHaveAttribute("data-inference-state", "running");
   await expect(objectBlock.locator("pre")).toContainText("Garden fern");
   status.records[0]!.tasks = [
-    { task: "display_name", status: "error", message: "The inference request timed out." },
+    { task: "display-name", status: "error", message: "The inference request timed out." },
   ];
   await expect(objectBlock.getByRole("alert")).toHaveText("The inference request timed out.");
   await expect(objectContainer).toHaveAttribute("aria-busy", "false");
   await expect(objectBlock.locator("pre")).toContainText("Garden fern");
 
-  status.records[0]!.tasks = [{ task: "display_name", status: "running", message: null }];
+  status.records[0]!.tasks = [{ task: "display-name", status: "running", message: null }];
   await expect(objectBlock.getByRole("alert")).toHaveCount(0);
   store.objects.set(OBJECT_ID, {
     ...object,
-    inferred: { "rhizome:display_name": envelope({ display_name: "Refreshed garden fern" }) },
+    inferred: { "rhizome:display-name": envelope({ display_name: "Refreshed garden fern" }) },
   });
   status.records[0]!.revision = 2;
   status.records[0]!.tasks = [];
@@ -131,7 +131,7 @@ test("reduced motion keeps inference colors without shimmer animation", async ({
           {
             uri: `rnet://object/${OBJECT_ID}`,
             revision: 0,
-            tasks: [{ task: "display_name", status: "running", message: null }],
+            tasks: [{ task: "display-name", status: "running", message: null }],
           },
         ],
       },

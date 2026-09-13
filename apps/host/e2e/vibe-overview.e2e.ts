@@ -12,7 +12,7 @@ test("summary polls task state and shares a row with inferred above the view", a
     return object.uri;
   });
   vibe.inferred = {
-    "rhizome:vibe_view": {
+    "rhizome:vibe-view": {
       model: "mock/rhizome",
       properties: { view: "simplelist", config: { subtitle_pointer: null } },
     },
@@ -23,7 +23,7 @@ test("summary polls task state and shares a row with inferred above the view", a
     const url = new URL(route.request().url());
     expect(url.searchParams.get("level")).toBe("vibe");
     const task = url.searchParams.get("task");
-    expect(["summarize", "vibe_view"]).toContain(task);
+    expect(["summarize", "vibe-view"]).toContain(task);
     return route.fulfill({
       json: {
         level: "vibe",
@@ -139,7 +139,7 @@ test("Vibe inferred uses object-page skeleton progression across summary and vie
   const store = await installMockStore(page);
   const vibe = store.vibes.find((item) => item.uri.endsWith(VIBE_ID))!;
   vibe.inferred = {};
-  const statuses: Record<string, string> = { summarize: "waiting", vibe_view: "waiting" };
+  const statuses: Record<string, string> = { summarize: "waiting", "vibe-view": "waiting" };
   let revision = 1;
   await page.route("**/rnet/v0/vibes/*/inference-status?*", (route) => {
     const task = new URL(route.request().url()).searchParams.get("task")!;
@@ -174,16 +174,16 @@ test("Vibe inferred uses object-page skeleton progression across summary and vie
   expect(await block.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(
     runningBackground,
   );
-  statuses.vibe_view = "running";
+  statuses["vibe-view"] = "running";
   await expect(block).toHaveAttribute("data-inference-state", "running");
   await expect(inferred.locator("pre")).toContainText("An updated summary.");
-  statuses.vibe_view = "error";
+  statuses["vibe-view"] = "error";
   await expect(block).toHaveAttribute("data-inference-state", "idle");
   await expect(inferred.getByRole("alert")).toHaveText("View inference failed");
-  statuses.vibe_view = "running";
+  statuses["vibe-view"] = "running";
   await expect(block).toHaveAttribute("data-inference-state", "running");
   await expect(inferred.getByRole("alert")).toHaveCount(0);
-  statuses.vibe_view = "done";
+  statuses["vibe-view"] = "done";
   await expect(block).toHaveAttribute("data-inference-state", "idle");
   await expect(block).toHaveAttribute("aria-busy", "false");
 });
@@ -194,7 +194,7 @@ test("imageboard keeps 48px between rows and 20px between columns", async ({ pag
   const object = store.objects.get(OBJECT_ID)!;
   vibe.objects = Array.from({ length: 6 }, () => object.uri);
   vibe.inferred = {
-    "rhizome:vibe_view": {
+    "rhizome:vibe-view": {
       model: "mock/rhizome",
       properties: { view: "mediaboard", config: { caption_pointer: null } },
     },

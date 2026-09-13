@@ -30,7 +30,9 @@ test("object and Vibe pushes poll, refresh inferred data, and render the inferre
   ).length;
   await page.getByRole("button", { name: "Back" }).click();
 
-  await page.getByLabel("Push task").selectOption(`object:${PUSH_TASKS.object.display_name.name}`);
+  await page
+    .getByLabel("Push task")
+    .selectOption(`object:${PUSH_TASKS.object["display-name"].name}`);
   await page.getByRole("button", { name: "Run on missing" }).click();
   await expect(page.getByText("Push done", { exact: true })).toBeVisible();
   await expect(page.getByText("Enriched monthly plan", { exact: true })).toBeVisible();
@@ -40,7 +42,7 @@ test("object and Vibe pushes poll, refresh inferred data, and render the inferre
   );
   expect(firstPush?.postDataJSON()).toEqual({
     level: "object",
-    task: PUSH_TASKS.object.display_name.name,
+    task: PUSH_TASKS.object["display-name"].name,
     selection: [`rnet://object/${OBJECT_ID}`],
   });
 
@@ -58,13 +60,13 @@ test("object and Vibe pushes poll, refresh inferred data, and render the inferre
     .at(-1);
   expect(rerun?.postDataJSON()).toEqual({
     level: "object",
-    task: PUSH_TASKS.object.display_name.name,
+    task: PUSH_TASKS.object["display-name"].name,
   });
   await expect(page.getByRole("button", { name: "Rerun all" })).toBeEnabled();
 
   await page.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
   await expect(
-    page.locator("pre").filter({ hasText: storeTaskKey(PUSH_TASKS.object.display_name.name) }),
+    page.locator("pre").filter({ hasText: storeTaskKey(PUSH_TASKS.object["display-name"].name) }),
   ).toContainText("Enriched monthly plan");
   await expect
     .poll(
@@ -78,7 +80,7 @@ test("object and Vibe pushes poll, refresh inferred data, and render the inferre
     .toBeGreaterThan(objectReadsBefore);
   await page.getByRole("button", { name: "Back" }).click();
 
-  await page.getByLabel("Push task").selectOption(`vibe:${PUSH_TASKS.vibe.vibe_view.name}`);
+  await page.getByLabel("Push task").selectOption(`vibe:${PUSH_TASKS.vibe["vibe-view"].name}`);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByLabel("Inferred Vibe view")).toHaveAttribute(
     "data-vibe-view",
@@ -98,7 +100,7 @@ test("object and Vibe pushes poll, refresh inferred data, and render the inferre
   ).toBeVisible();
 });
 
-test("describe_media offers rerun all and refreshes a cached element's inferred data", async ({
+test("describe-media offers rerun all and refreshes a cached element's inferred data", async ({
   page,
 }) => {
   const imageId = "0198f2a1-c2ad-78cc-b7fa-1e7d77d63bf4";
@@ -129,7 +131,7 @@ test("describe_media offers rerun all and refreshes a cached element's inferred 
   await page.getByRole("button", { name: "Back" }).click();
   await page
     .getByLabel("Push task")
-    .selectOption(`element:${PUSH_TASKS.element.describe_media.name}`);
+    .selectOption(`element:${PUSH_TASKS.element["describe-media"].name}`);
   await expect(page.getByRole("button", { name: "Run on missing" })).toHaveCount(0);
   const refreshed = page.waitForResponse(
     (response) =>
@@ -143,12 +145,12 @@ test("describe_media offers rerun all and refreshes a cached element's inferred 
     .at(-1)!;
   expect(sent.postDataJSON()).toEqual({
     level: "element",
-    task: PUSH_TASKS.element.describe_media.name,
+    task: PUSH_TASKS.element["describe-media"].name,
   });
   await page.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
   const document = await (await refreshed).json();
   expect(
-    document.inferred[storeTaskKey(PUSH_TASKS.element.describe_media.name)].properties,
+    document.inferred[storeTaskKey(PUSH_TASKS.element["describe-media"].name)].properties,
   ).toEqual({
     caption: "A small monochrome image",
     description: "A single light pixel fills a square frame.",
@@ -186,14 +188,14 @@ test("mediaboard shows an uncropped M2 card and fetches only its primary payload
     record.elements.push({ uri, role: "content" });
   }
   record.inferred = {
-    [storeTaskKey(PUSH_TASKS.object.display_name.name)]: {
+    [storeTaskKey(PUSH_TASKS.object["display-name"].name)]: {
       model: "mock/rhizome",
       properties: { display_name: "An inferred board title" },
     },
   };
   store.vibes[0]!.inferred = {
-    [storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]: {
-      model: "rhizome/vibe_view-rules@1",
+    [storeTaskKey(PUSH_TASKS.vibe["vibe-view"].name)]: {
+      model: "rhizome/vibe-view-rules@1",
       properties: {
         view: "mediaboard",
         config: { caption_pointer: "/source/properties/title" },
@@ -227,7 +229,7 @@ test("datatable rows open objects from values and title links without intercepti
   page,
 }) => {
   store.vibes[0]!.inferred = {
-    [storeTaskKey(PUSH_TASKS.vibe.vibe_view.name)]: {
+    [storeTaskKey(PUSH_TASKS.vibe["vibe-view"].name)]: {
       model: "mock/rhizome",
       properties: {
         view: "datatable",

@@ -196,7 +196,7 @@ export function SurfaceChrome({ surface, active, mode, children }: SurfaceChrome
         <div
           data-surface-window
           data-surface-id={id}
-          data-tier="light"
+          data-tier="control"
           className={cn(
             "relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-canvas transition-[border-radius] duration-200 ease-out",
             maximized ? "rounded-none" : "rounded-lg shadow-[0px_0px_8px_0px_rgba(184,68,254,0.1)]",

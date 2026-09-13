@@ -12,7 +12,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   primary: "bg-accent text-on-accent",
   secondary: "bg-surface border border-hairline text-primary",
   ghost: "text-accent",
-  danger: "bg-error text-white",
+  danger: "bg-error text-on-error",
 };
 
 /** Figma 4859:265 — pill radius, Label type. Primary fills, Secondary is surface + hairline. */

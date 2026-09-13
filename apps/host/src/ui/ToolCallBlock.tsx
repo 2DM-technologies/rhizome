@@ -31,9 +31,9 @@ const TONES: Record<LogTone, string> = {
 /**
  * Agent tool-execution result: command header, status, and the run's output.
  *
- * The card is `bg-surface`, so it takes the polarity of whatever tier it lands in — dark
- * inside the agent sidebar, light on a dMachine window. Wrap it in `data-tier="light"` to
- * force the raised-control reading described on Figma 4732:251.
+ * The card is `bg-surface`, so it takes the polarity of whatever tier it lands in.
+ * Wrap it in `data-tier="control"` for the raised-control reading on Figma 4732:251;
+ * otherwise it follows the surrounding stream as the system theme changes.
  */
 export function ToolCallBlock({
   title,

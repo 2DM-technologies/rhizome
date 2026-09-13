@@ -16,10 +16,10 @@ export interface DmachineWindowProps {
 /**
  * Figma 4916:397 — the frame a dMachine runs inside.
  *
- * The cost tab is host chrome, not window decoration. `impl/concepts/sandboxing.md` §5 and
- * plan §7 both require a cost indicator the dMachine cannot suppress or spoof, so it is
- * drawn here, outside the surface the guest controls, and the guest's content is confined
- * to `children`. The window's top-right corner is squared (2px) because the tab sits in it.
+ * The cost tab is host chrome, not window decoration. Implementation plan §7 requires a cost
+ * indicator the dMachine cannot suppress or spoof, so it is drawn here, outside the surface
+ * the guest controls. The guest's content is confined to `children`. The window's top-right
+ * corner is squared (2px) because the tab sits in it.
  */
 export function DmachineWindow({
   model,
@@ -30,7 +30,7 @@ export function DmachineWindow({
 }: DmachineWindowProps) {
   return (
     <div
-      data-tier="light"
+      data-tier="control"
       className={cn("flex flex-col items-end", fullBleed && "bg-canvas", className)}
     >
       <div className="flex h-5 items-center justify-end rounded-t-sm rounded-b-[2px] bg-accent/90 px-3">

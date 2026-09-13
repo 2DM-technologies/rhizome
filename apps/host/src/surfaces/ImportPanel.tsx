@@ -84,11 +84,13 @@ interface ImportPreview {
 export function ImportPanel({
   vibeUuid,
   configuredSources,
+  initialSkillId,
   sourceConnectionReturn,
   onPendingVibeConfirmed,
 }: {
   vibeUuid?: string;
   configuredSources: readonly string[];
+  initialSkillId?: string;
   sourceConnectionReturn?: SourceConnectionReturn;
   onPendingVibeConfirmed?: (vibeUuid: string) => void;
 }) {
@@ -104,7 +106,8 @@ export function ImportPanel({
   const confirmPending = useConfirmPendingVibeImportPreview();
   const pull = usePullVibe();
   const forgetOperation = useForgetOperation();
-  const [selectedSkillId, setSelectedSkillId] = useState<string>();
+  const [selectedSkillId, setSelectedSkillId] = useState<string | undefined>(initialSkillId);
+  const appliedInitialSkillId = useRef(initialSkillId);
   const [operationId, setOperationId] = useState<string>();
   const [operationMode, setOperationMode] = useState<"import" | "pull">("import");
   const [activeSkillId, setActiveSkillId] = useState<string>();
@@ -157,6 +160,19 @@ export function ImportPanel({
     !vibeUuid,
   );
   const activeSkill = importSkills.find((skill) => skill.skill_id === activeSkillId);
+
+  useEffect(() => {
+    if (
+      !initialSkillId ||
+      appliedInitialSkillId.current === initialSkillId ||
+      busy ||
+      operationId
+    ) {
+      return;
+    }
+    appliedInitialSkillId.current = initialSkillId;
+    setSelectedSkillId(initialSkillId);
+  }, [busy, initialSkillId, operationId]);
 
   useEffect(() => {
     if (!sourceConnectionReturn) return;

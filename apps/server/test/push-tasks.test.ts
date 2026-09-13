@@ -17,14 +17,14 @@ import { installedPushTasks, validateInstalledTaskOutput } from "../src/push/ins
 import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
-import { displayName } from "../src/push/tasks/object/display_name/manifest.ts";
-import { searchKeywords } from "../src/push/tasks/object/search_keywords/manifest.ts";
-import { vibeView } from "../src/push/tasks/vibe/vibe_view/manifest.ts";
+import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
+import { searchKeywords } from "../src/push/tasks/object/search-keywords/manifest.ts";
+import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
 import { jsonSchema } from "../src/routes/contracts.ts";
 
 const target = { provider: "openai", name: "gpt-5.6-luna" };
 const registry = { target, identity: "openai/gpt-5.6-luna", connector: new FakeModelConnector() };
-const objectTask = { ...summarize, level: "object", name: "test_task" } as const;
+const objectTask = { ...summarize, level: "object", name: "test-task" } as const;
 const entry = (properties: Record<string, unknown>) => ({
   model: "test",
   inferred_at: "2026-09-10T00:00:00Z",
@@ -61,17 +61,17 @@ describe("push task catalog and static schemas", () => {
   test("installs all M3 tasks in convention order with approved generation settings", () => {
     expect(installedPushTasks.manifests().map(({ level, name }) => `${level}:${name}`)).toEqual([
       "vibe:summarize",
-      "vibe:vibe_view",
-      "object:display_name",
-      "object:search_keywords",
-      "element:describe_media",
+      "vibe:vibe-view",
+      "object:display-name",
+      "object:search-keywords",
+      "element:describe-media",
     ]);
     expect([vibeView, displayName, searchKeywords].map(({ effort }) => effort)).toEqual([
       "low",
       "low",
       "low",
     ]);
-    expect(installedPushTasks.get("element", "describe_media")).toMatchObject({
+    expect(installedPushTasks.get("element", "describe-media")).toMatchObject({
       effort: "low",
       outputTokens: { base: 128, perObject: 1024 },
     });

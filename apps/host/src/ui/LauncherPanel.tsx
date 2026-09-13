@@ -79,7 +79,7 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
         aria-label={open ? "Start something new" : undefined}
         data-launcher-container
         data-expanded={open ? "true" : "false"}
-        data-tier="light"
+        data-tier="control"
         onKeyDownCapture={(event) => {
           if (!open || event.key !== "Escape") return;
           event.preventDefault();
