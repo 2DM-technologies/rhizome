@@ -7,7 +7,7 @@ export async function seedDb(db: Database): Promise<void> {
   await db
     .insert(users)
     .values([
-      { uuid: DEV_USER_UUID, handle: "noah", name: "Development User" },
+      { uuid: DEV_USER_UUID, handle: "noahp", name: "Development User" },
       { uuid: DEV_OTHER_USER_UUID, handle: "other", name: "Other Development User" },
     ])
     .onConflictDoNothing();

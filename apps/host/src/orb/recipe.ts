@@ -98,7 +98,7 @@ export function normalizeOrbRecipe(recipe: OrbVisualRecipe): OrbVisualRecipe {
   };
 }
 
-/** Four deliberately distant points in one parameter space, not renderer templates. */
+/** Four distinct interiors sharing a polished crystal-ball surface. */
 export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
   bloom: {
     version: ORB_RECIPE_VERSION,
@@ -110,9 +110,9 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#ffb85b", weight: 0.2 },
     ],
     contrast: 0.34,
-    field: { grain: 0.28, roughness: 0.58, warp: 0.78, cellularity: 0.12, anisotropy: 0.2 },
-    surface: { gloss: 0.62, glow: 0.72, rim: 0.38, grainOverlay: 0.16 },
-    motion: { drift: 0.3, turbulence: 0.48, pulseAmplitude: 0.12, pulsePeriod: 0.58, spin: 0.14 },
+    field: { grain: 0.14, roughness: 0.22, warp: 0.58, cellularity: 0.04, anisotropy: 0.2 },
+    surface: { gloss: 0.92, glow: 0.3, rim: 0.82, grainOverlay: 0.025 },
+    motion: { drift: 0.24, turbulence: 0.2, pulseAmplitude: 0.04, pulsePeriod: 0.58, spin: 0.14 },
     response: { viscosity: 0.74, reactivity: 0.48, splash: 0.58, settle: 0.68 },
   },
   ember: {
@@ -125,10 +125,10 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#ffbf4b", weight: 0.14 },
     ],
     contrast: 0.9,
-    field: { grain: 0.54, roughness: 0.82, warp: 0.32, cellularity: 0.48, anisotropy: 0.72 },
-    surface: { gloss: 0.24, glow: 0.42, rim: 0.22, grainOverlay: 0.42 },
-    motion: { drift: 0.18, turbulence: 0.66, pulseAmplitude: 0.04, pulsePeriod: 0.42, spin: 0.08 },
-    response: { viscosity: 0.46, reactivity: 0.72, splash: 0.86, settle: 0.34 },
+    field: { grain: 0.24, roughness: 0.34, warp: 0.42, cellularity: 0.1, anisotropy: 0.72 },
+    surface: { gloss: 0.88, glow: 0.38, rim: 0.72, grainOverlay: 0.04 },
+    motion: { drift: 0.18, turbulence: 0.26, pulseAmplitude: 0.04, pulsePeriod: 0.42, spin: 0.08 },
+    response: { viscosity: 0.72, reactivity: 0.4, splash: 0.4, settle: 0.64 },
   },
   tideglass: {
     version: ORB_RECIPE_VERSION,
@@ -142,7 +142,7 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
     contrast: 0.24,
     field: { grain: 0.12, roughness: 0.28, warp: 0.62, cellularity: 0.08, anisotropy: 0.36 },
     surface: { gloss: 0.92, glow: 0.38, rim: 0.78, grainOverlay: 0.05 },
-    motion: { drift: 0.38, turbulence: 0.24, pulseAmplitude: 0.08, pulsePeriod: 0.76, spin: 0.3 },
+    motion: { drift: 0.28, turbulence: 0.18, pulseAmplitude: 0.03, pulsePeriod: 0.76, spin: 0.2 },
     response: { viscosity: 0.88, reactivity: 0.34, splash: 0.32, settle: 0.84 },
   },
   lichen: {
@@ -155,8 +155,8 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#e1d7b6", weight: 0.2 },
     ],
     contrast: 0.58,
-    field: { grain: 0.72, roughness: 0.9, warp: 0.54, cellularity: 0.78, anisotropy: 0.12 },
-    surface: { gloss: 0.12, glow: 0.2, rim: 0.46, grainOverlay: 0.66 },
+    field: { grain: 0.3, roughness: 0.35, warp: 0.54, cellularity: 0.12, anisotropy: 0.12 },
+    surface: { gloss: 0.84, glow: 0.2, rim: 0.76, grainOverlay: 0.05 },
     motion: { drift: 0.12, turbulence: 0.2, pulseAmplitude: 0.03, pulsePeriod: 0.65, spin: 0.04 },
     response: { viscosity: 0.92, reactivity: 0.2, splash: 0.28, settle: 0.9 },
   },

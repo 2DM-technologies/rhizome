@@ -85,6 +85,7 @@ float value_noise(vec3 point) {
 
 float fbm(vec3 point) {
   float value = 0.0;
+  float total = 0.0;
   float amplitude = 0.52;
   mat3 rotation = mat3(
     0.00, 0.80, 0.60,
@@ -93,10 +94,11 @@ float fbm(vec3 point) {
   );
   for (int octave = 0; octave < 5; octave++) {
     value += amplitude * value_noise(point);
+    total += amplitude;
     point = rotation * point * 2.03 + vec3(7.7, 2.3, 5.1);
-    amplitude *= mix(0.31, 0.64, u_roughness);
+    amplitude *= mix(0.18, 0.52, u_roughness);
   }
-  return value;
+  return value / total;
 }
 
 float cellular(vec3 point) {
@@ -123,7 +125,7 @@ vec3 palette_color(float position) {
   }
 
   float cursor = max(u_weights[0], 0.0001) / total;
-  float softness = mix(0.13, 0.008, u_contrast);
+  float softness = mix(0.24, 0.025, u_contrast);
   vec3 color = u_colors[0];
   for (int index = 1; index < 6; index++) {
     if (index < u_color_count) {
@@ -145,7 +147,7 @@ void main() {
   point.x *= u_resolution.x / max(u_resolution.y, 1.0);
 
   float pulse_speed = mix(0.38, 1.35, u_pulse_period);
-  float pulse = 1.0 + sin(u_time * pulse_speed + u_seed.w * TAU) * u_pulse_amplitude * 0.045;
+  float pulse = 1.0 + sin(u_time * pulse_speed + u_seed.w * TAU) * u_pulse_amplitude * 0.018;
   float radius = 0.91 * pulse;
   float distance_from_center = length(point);
   if (distance_from_center > radius + 0.02) {
@@ -156,53 +158,70 @@ void main() {
   float sphere_z = sqrt(max(0.0, 1.0 - dot(sphere_point, sphere_point)));
   vec3 normal = normalize(vec3(sphere_point, sphere_z));
 
-  float spin_angle = (u_seed.x - 0.5) * 1.8 + u_time * u_spin * 0.22;
-  vec2 spun = rotate_2d(spin_angle) * normal.xy;
-  vec3 field_point = vec3(spun, normal.z);
+  // Bend the view into the sphere; the color lives below a smooth, stationary shell.
+  vec3 view_ray = vec3(0.0, 0.0, -1.0);
+  vec3 transmitted = refract(view_ray, normal, 1.0 / 1.46);
+  vec3 interior = normal + transmitted * sphere_z * mix(0.65, 1.35, u_gloss);
+  float spin_angle = (u_seed.x - 0.5) * 1.8 + u_time * u_spin * 0.1;
+  interior.xz = rotate_2d(spin_angle) * interior.xz;
+  interior.xy = rotate_2d((u_seed.y - 0.5) * 2.4) * interior.xy;
+  vec3 field_point = interior;
   field_point.xy *= vec2(
     mix(0.58, 1.72, u_anisotropy),
     mix(1.58, 0.72, u_anisotropy)
   );
-  field_point *= mix(1.55, 7.2, u_grain);
+  field_point *= mix(1.1, 4.8, u_grain);
   field_point += (u_seed.xyz - 0.5) * 13.0;
 
-  float time = u_time * mix(0.025, 0.23, u_drift);
+  float time = u_time * u_drift * 0.14;
+  float deformation_time = u_time * u_turbulence * 0.12;
   vec3 flow = vec3(
-    fbm(field_point + vec3(time, 0.0, -time * 0.4)),
-    fbm(field_point + vec3(8.3, -time * 0.7, time * 0.5)),
-    fbm(field_point + vec3(-5.1, time * 0.45, 4.7))
+    fbm(field_point + vec3(deformation_time, 0.0, -deformation_time * 0.4)),
+    fbm(field_point + vec3(8.3, -deformation_time * 0.7, deformation_time * 0.5)),
+    fbm(field_point + vec3(-5.1, deformation_time * 0.45, 4.7))
   ) - 0.5;
-  field_point += flow * u_warp * 2.8;
+  field_point += flow * u_warp * 1.8;
 
   vec2 pointer_pull = (u_pointer - sphere_point) * u_reactivity * u_energy;
-  field_point.xy += pointer_pull * 1.9;
-  field_point.z += u_energy * u_turbulence * 0.9;
+  field_point.xy += pointer_pull * 0.8;
+  field_point.z += u_energy * u_turbulence * 0.4;
 
   float cloudy = fbm(field_point + vec3(0.0, 0.0, time));
-  float ridged = 1.0 - abs(2.0 * fbm(field_point * 1.34 - vec3(time)) - 1.0);
+  float back_cloud = fbm(field_point * 0.72 + transmitted * 1.6 + vec3(3.1, 0.0, time));
   float cells = cloudy;
   if (u_cellularity > 0.01) {
     cells = 1.0 - smoothstep(0.08, 0.82, cellular(field_point * 1.16));
   }
-  float texture = mix(mix(cloudy, ridged, u_roughness * 0.42), cells, u_cellularity * 0.72);
-  texture += sin((normal.x + normal.y * 0.7) * 8.0 + flow.z * 5.0) * u_anisotropy * 0.045;
-  texture = clamp(texture * mix(0.92, 1.12, u_contrast) + (u_seed.w - 0.5) * 0.12, 0.0, 1.0);
+  float texture = mix(cloudy, cells, u_cellularity * 0.65);
+  texture += sin((interior.x + interior.y * 0.7) * 3.0 + flow.z * 2.0) * u_anisotropy * 0.08;
+  texture = clamp((texture - 0.5) * 2.25 + 0.5 + (u_seed.w - 0.5) * 0.12, 0.0, 1.0);
 
   vec3 color = palette_color(texture);
-  vec3 light_direction = normalize(vec3(-0.46, 0.62, 0.72));
-  float diffuse = 0.58 + max(dot(normal, light_direction), 0.0) * 0.5;
-  float center_glow = pow(max(sphere_z, 0.0), 2.2) * u_glow;
-  float rim = pow(1.0 - max(sphere_z, 0.0), mix(3.8, 1.25, u_rim)) * u_rim;
-  vec3 reflected = reflect(-light_direction, normal);
-  float specular = pow(max(dot(reflected, vec3(0.0, 0.0, 1.0)), 0.0), mix(8.0, 72.0, u_gloss));
+  vec3 depth_color = palette_color(clamp((back_cloud - 0.5) * 2.0 + 0.5, 0.0, 1.0));
+  color = mix(color, depth_color, sphere_z * u_gloss * 0.24);
 
-  color *= diffuse;
-  color += palette_color(clamp(texture + 0.18, 0.0, 1.0)) * center_glow * 0.22;
-  color += vec3(0.76, 0.84, 1.0) * rim * 0.38;
-  color += vec3(1.0, 0.96, 0.9) * specular * mix(0.05, 0.72, u_gloss);
+  // A darker inner edge and a bright Fresnel lip give the glass visible thickness.
+  float facing = max(sphere_z, 0.0);
+  float fresnel = pow(1.0 - facing, 3.0);
+  float inner_edge = exp(-pow((facing - 0.3) / 0.17, 2.0));
+  color *= 0.78 + 0.22 * facing - inner_edge * u_gloss * 0.18;
+  color += color * pow(facing, 1.8) * u_glow * 0.22;
+  vec3 edge_color = mix(depth_color, vec3(0.94, 0.97, 1.0), 0.72);
+  color = mix(color, edge_color, fresnel * mix(0.18, 0.88, u_rim));
 
-  float pixel_grain = hash31(vec3(gl_FragCoord.xy, floor(u_time * 18.0))) - 0.5;
-  color += pixel_grain * u_grain_overlay * 0.13;
+  // Fixed studio reflections stay coherent as the suspended color slowly moves.
+  vec3 reflected = reflect(view_ray, normal);
+  float key_light = max(dot(reflected, normalize(vec3(-0.55, 0.66, 0.72))), 0.0);
+  float softbox = pow(key_light, mix(5.0, 18.0, u_gloss));
+  float glint = pow(key_light, mix(28.0, 150.0, u_gloss));
+  float fill_light = pow(max(dot(reflected, normalize(vec3(0.7, -0.65, 0.32))), 0.0), 14.0);
+  color = mix(color, vec3(1.0, 0.98, 0.96), softbox * u_gloss * 0.3);
+  color += vec3(1.0, 0.98, 0.96) * glint * u_gloss * 0.42;
+  color += mix(depth_color, vec3(1.0), 0.55) * fill_light * u_gloss * 0.18;
+
+  // Keep optional grain attached to the material instead of sparkling every frame.
+  float pixel_grain = hash31(vec3(sphere_point * 240.0, u_seed.w)) - 0.5;
+  color += pixel_grain * u_grain_overlay * 0.065;
   color = pow(max(color, 0.0), vec3(0.92));
 
   float edge_width = max(fwidth(distance_from_center) * 1.4, 0.002);

@@ -51,7 +51,7 @@ test("the bare desktop renders live account totals and newest Vibes first", asyn
     })
     .toEqual([35, 62]);
   await expect(home.getByRole("heading", { name: "Development User" })).toBeVisible();
-  await expect(home).toContainText("@noah");
+  await expect(home).toContainText("@noahp");
   await expect(home).toContainText("Member since March 2024");
   await expect(home).toContainText("12");
   await expect(home).toContainText("34");

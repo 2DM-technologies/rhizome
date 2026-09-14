@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import orbUser from "../assets/orbs/orb-user-24.png";
+import developmentUserProfile from "../assets/profile/development-user.jpg";
 import { useDashboardStats, useVibes } from "../queries/index.ts";
 import { useSession } from "../session/session.ts";
 import { newestVibesFirst } from "../vibeRecency.ts";
@@ -48,7 +48,7 @@ export function DesktopHome() {
         <section className="flex min-h-80 flex-col rounded-lg border border-dashed border-neutral-border bg-home-panel p-7 xl:min-h-0 2xl:p-[60px]">
           <div className="flex items-center gap-4">
             <img
-              src={orbUser}
+              src={developmentUserProfile}
               alt=""
               aria-hidden
               className="size-12 rounded-full object-cover [image-rendering:auto]"

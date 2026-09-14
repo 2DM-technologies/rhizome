@@ -23,7 +23,7 @@ export type DevToken = "dev:user" | "dev:user:other";
 export const DEV_IDENTITIES: Readonly<Record<DevToken, Identity>> = {
   "dev:user": {
     id: "rnet://id/0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
-    handle: "noah",
+    handle: "noahp",
     name: "Development User",
   },
   "dev:user:other": {

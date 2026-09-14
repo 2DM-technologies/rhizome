@@ -43,6 +43,9 @@ export function orbFallbackBackground(recipeInput: OrbVisualRecipe): string {
   const third = colors[2] ?? first;
   const fourth = colors[3] ?? second;
   return [
+    `radial-gradient(ellipse at 36% 28%, rgb(255 250 245 / ${0.3 + recipe.surface.gloss * 0.4}) 0%, transparent 9%)`,
+    `radial-gradient(ellipse at 33% 25%, rgb(255 255 255 / ${recipe.surface.gloss * 0.24}) 0%, transparent 32%)`,
+    `radial-gradient(circle, transparent 57%, rgb(14 18 28 / 18%) 82%, rgb(235 247 255 / ${0.2 + recipe.surface.rim * 0.55}) 100%)`,
     `radial-gradient(circle at 30% 24%, color-mix(in srgb, ${fourth} 92%, white) 0%, transparent 34%)`,
     `radial-gradient(circle at 68% 72%, ${third} 0%, transparent 48%)`,
     `conic-gradient(from 28deg, ${first}, ${second}, ${third}, ${fourth}, ${first})`,
