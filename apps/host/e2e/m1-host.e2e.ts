@@ -962,6 +962,7 @@ test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
   const activeAppSurface = page
     .getByRole("button", { name: "Vibes", exact: true })
     .locator("[data-dock-app-surface]");
+  await expect(activeAppSurface.locator("img")).toHaveAttribute("src", /orb-vibes-96\.png/);
   await expect(activeAppSurface).toHaveCSS(
     "background-color",
     "color(srgb 0.0666667 0.0666667 0.0666667 / 0.9)",

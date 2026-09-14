@@ -56,6 +56,9 @@ export function invalidatePushResult(
         params: { path: { id: vibeUuid } },
       }).queryKey,
     }),
+    client.invalidateQueries({
+      queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+    }),
     client.invalidateQueries({ queryKey: ["get", "/rnet/v0/vibes/{id}/objects"] }),
   ]);
 }

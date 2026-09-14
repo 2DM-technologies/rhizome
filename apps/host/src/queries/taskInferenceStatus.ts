@@ -29,6 +29,9 @@ export function useTaskInferenceStatus(
         params: { path: { id: uuid } },
       }).queryKey,
     });
+    void client.invalidateQueries({
+      queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
+    });
   }, [client, query.data, uuid]);
   return query;
 }

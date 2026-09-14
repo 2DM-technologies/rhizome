@@ -13,6 +13,7 @@ export function VibeOverview({
   vibe,
   status,
   viewStatus,
+  orbStatus,
   inferredError,
   error,
   children,
@@ -20,13 +21,14 @@ export function VibeOverview({
   vibe: Vibe;
   status?: TaskInferenceStatus;
   viewStatus?: TaskInferenceStatus;
+  orbStatus?: TaskInferenceStatus;
   inferredError?: string;
   error?: string;
   children?: ReactNode;
 }) {
   const summary = vibe.inferred?.[storeTaskKey(PUSH_TASKS.vibe.summarize.name)]?.properties.summary;
   const busy = status?.status === "waiting" || status?.status === "running";
-  const tasks: InferenceTaskStatus[] = [status, viewStatus].flatMap((task) =>
+  const tasks: InferenceTaskStatus[] = [status, viewStatus, orbStatus].flatMap((task) =>
     task && (task.status === "waiting" || task.status === "running" || task.status === "error")
       ? [
           {

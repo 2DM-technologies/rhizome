@@ -1,11 +1,15 @@
 import type { CSSProperties, MouseEventHandler } from "react";
 
+import type { OrbVisualRecipe } from "../orb/recipe.ts";
+import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
 import { cn } from "./cn.ts";
 
 export interface DockAppProps {
   name: string;
   /** App mark (active) or orb artwork (running). */
   src: string;
+  recipe?: OrbVisualRecipe;
+  orbLoading?: boolean;
   state?: "active" | "running";
   onOpen?: MouseEventHandler<HTMLButtonElement>;
   style?: CSSProperties;
@@ -17,8 +21,22 @@ export interface DockAppProps {
  * active  — content-tier 64 card with an accent glow; overhangs the 64 tray.
  * running — a compact orb that lives inside the tray; only the active window shows its label.
  */
-export function DockApp({ name, src, state = "running", onOpen, style, className }: DockAppProps) {
+export function DockApp({
+  name,
+  src,
+  recipe,
+  orbLoading = false,
+  state = "running",
+  onOpen,
+  style,
+  className,
+}: DockAppProps) {
   const active = state === "active";
+  const mark = recipe ? (
+    <ProceduralVibeOrb recipe={recipe} motion="continuous" loading={orbLoading} size={40} />
+  ) : (
+    <img src={src} alt="" aria-hidden className="size-10 shrink-0 object-cover" />
+  );
   return (
     <button
       type="button"
@@ -40,7 +58,7 @@ export function DockApp({ name, src, state = "running", onOpen, style, className
           data-dock-app-surface
           className="flex size-16 flex-col items-center justify-center gap-0.5 overflow-hidden rounded-sm bg-dock-card shadow-[0px_0px_6px_0px_var(--rz-dock-glow)] backdrop-blur-[10px]"
         >
-          <img src={src} alt="" aria-hidden className="size-10 shrink-0 object-cover" />
+          {mark}
           <span
             data-dock-app-label
             aria-hidden
@@ -51,7 +69,7 @@ export function DockApp({ name, src, state = "running", onOpen, style, className
         </span>
       ) : (
         <>
-          <img src={src} alt="" aria-hidden className="size-10 shrink-0 object-cover" />
+          {mark}
           <span
             data-dock-app-label
             aria-hidden

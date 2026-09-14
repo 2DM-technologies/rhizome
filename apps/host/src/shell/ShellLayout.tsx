@@ -20,6 +20,7 @@ import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./sear
 import { useOpenSurfaces, useShellStore } from "./store.ts";
 import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
 import { markForSurface } from "./surfaceMarks.ts";
+import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 
 const DOCK_RAIL_ITEM_SIZE = 44;
 const DOCK_RAIL_GAP = 20;
@@ -57,11 +58,16 @@ export function ShellLayout() {
       (vibes.data ?? []).map((vibe) => ({
         uuid: uuidOf(vibe.uri),
         title: vibe.title,
+        orb: orbVisualForVibe(vibe),
       })),
     [vibes.data],
   );
   const vibeTitles = useMemo(
     () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.title])),
+    [loadedVibes],
+  );
+  const vibeOrbs = useMemo(
+    () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.orb])),
     [loadedVibes],
   );
   const vibeCatalogLoaded = vibes.data !== undefined;
@@ -192,6 +198,8 @@ export function ShellLayout() {
               <DockApp
                 name={labelOf(focused, vibeTitles)}
                 src={markForSurface(focused)}
+                recipe={focused.kind === "vibe" ? vibeOrbs.get(focused.uuid)?.recipe : undefined}
+                orbLoading={focused.kind === "vibe" ? vibeOrbs.get(focused.uuid)?.loading : false}
                 state="active"
               />
             ) : null
@@ -218,6 +226,12 @@ export function ShellLayout() {
                       key={surfaceId(surface)}
                       name={labelOf(surface, vibeTitles)}
                       src={markForSurface(surface)}
+                      recipe={
+                        surface.kind === "vibe" ? vibeOrbs.get(surface.uuid)?.recipe : undefined
+                      }
+                      orbLoading={
+                        surface.kind === "vibe" ? vibeOrbs.get(surface.uuid)?.loading : false
+                      }
                       onOpen={(event) =>
                         navigation.openFromDock(surface, {
                           origin: event.currentTarget,

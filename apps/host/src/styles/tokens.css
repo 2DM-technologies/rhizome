@@ -99,33 +99,6 @@
   --rz-tooltip-text: light-dark(#14151a, #ffffff);
   --rz-tooltip-border: light-dark(#525252, #fafafa);
 
-  /* Stable per-Vibe hues, with separate light/dark surfaces. */
-  --rz-vibe-card-1: linear-gradient(
-    105deg,
-    light-dark(#f8f2f2eb, #282129eb),
-    light-dark(#fae0f7d1, #392139d1)
-  );
-  --rz-vibe-card-2: linear-gradient(
-    105deg,
-    light-dark(#eceef4eb, #22252feb),
-    light-dark(#e2e2f8d1, #282841d1)
-  );
-  --rz-vibe-card-3: linear-gradient(
-    105deg,
-    light-dark(#f1efeceb, #292621eb),
-    light-dark(#f6e2dbd1, #382821d1)
-  );
-  --rz-vibe-card-4: linear-gradient(
-    105deg,
-    light-dark(#f2efedeb, #2b2424eb),
-    light-dark(#f1deded1, #392525d1)
-  );
-  --rz-vibe-card-5: linear-gradient(
-    105deg,
-    light-dark(#e6f3eeeb, #202b27eb),
-    light-dark(#dcf6e3d1, #20392ad1)
-  );
-
   /* UI typeface switch. Change only this alias to return the host to Helvetica Neue. */
   --rz-font-family-abc-areal:
     "ABC Areal", "Helvetica Neue", Helvetica, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial,

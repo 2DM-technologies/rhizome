@@ -133,7 +133,34 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
             tags: ["planning"],
             confidence: 0.9,
           }
-        : { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } };
+        : operation.input.task === PUSH_TASKS.vibe["vibe-orb"].name
+          ? {
+              version: 1,
+              seed: operation.vibeId.replaceAll("-", "").slice(0, 32),
+              palette: [
+                { color: "#174c66", weight: 0.35 },
+                { color: "#33a1a8", weight: 0.4 },
+                { color: "#f4c95d", weight: 0.25 },
+              ],
+              contrast: 0.45,
+              field: {
+                grain: 0.25,
+                roughness: 0.4,
+                warp: 0.62,
+                cellularity: 0.12,
+                anisotropy: 0.3,
+              },
+              surface: { gloss: 0.7, glow: 0.42, rim: 0.65, grainOverlay: 0.12 },
+              motion: {
+                drift: 0.24,
+                turbulence: 0.35,
+                pulseAmplitude: 0.08,
+                pulsePeriod: 0.7,
+                spin: 0.2,
+              },
+              response: { viscosity: 0.78, reactivity: 0.42, splash: 0.5, settle: 0.8 },
+            }
+          : { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } };
     vibe.inferred = { ...(vibe.inferred ?? {}), [key]: envelope(taskProperties) };
     operation.document.result = {
       ...shared,

@@ -5,6 +5,7 @@ import {
   assertCandidateBundleLimits,
   assertCaptureLimit,
 } from "../../source-skills/execution-limits.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../source-skills/import-push-pipelines.ts";
 import type { ArenaApiFetch } from "./client.ts";
 import {
   ARENA_CONNECTOR_VERSION,
@@ -28,6 +29,7 @@ describe("Are.na public-remote source skill", () => {
       parser: { name: ARENA_PARSER_NAME, version: "arena@1.2.0" },
       limits: expect.objectContaining({ maxElementBytes: 16 * 1_024 * 1_024 }),
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: CONTENT_IMPORT_PUSH_PIPELINE,
       input_fields: [
         expect.objectContaining({ name: "url", control: "url", required: true, secret: false }),
       ],

@@ -1,0 +1,81 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "seed",
+    "palette",
+    "contrast",
+    "field",
+    "surface",
+    "motion",
+    "response",
+    "confidence"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "seed": { "type": "string", "pattern": "^[a-f0-9]{32}$" },
+    "palette": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["color", "weight"],
+        "properties": {
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    },
+    "contrast": { "type": "number", "minimum": 0, "maximum": 1 },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["grain", "roughness", "warp", "cellularity", "anisotropy"],
+      "properties": {
+        "grain": { "type": "number", "minimum": 0, "maximum": 1 },
+        "roughness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "warp": { "type": "number", "minimum": 0, "maximum": 1 },
+        "cellularity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "anisotropy": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gloss", "glow", "rim", "grainOverlay"],
+      "properties": {
+        "gloss": { "type": "number", "minimum": 0, "maximum": 1 },
+        "glow": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rim": { "type": "number", "minimum": 0, "maximum": 1 },
+        "grainOverlay": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["drift", "turbulence", "pulseAmplitude", "pulsePeriod", "spin"],
+      "properties": {
+        "drift": { "type": "number", "minimum": 0, "maximum": 1 },
+        "turbulence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pulseAmplitude": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pulsePeriod": { "type": "number", "minimum": 0, "maximum": 1 },
+        "spin": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["viscosity", "reactivity", "splash", "settle"],
+      "properties": {
+        "viscosity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reactivity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "splash": { "type": "number", "minimum": 0, "maximum": 1 },
+        "settle": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  }
+}

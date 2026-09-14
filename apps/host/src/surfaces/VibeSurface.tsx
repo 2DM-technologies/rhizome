@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 
 import {
   useDeleteVibe,
@@ -23,6 +23,8 @@ import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 import { VibeOverview } from "./VibeOverview.tsx";
 import { useTaskInferenceStatus } from "../queries/taskInferenceStatus.ts";
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
+import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
+import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const sourceConnectionReturn = useSourceConnectionReturn({
@@ -41,6 +43,11 @@ export function VibeSurface({ uuid }: { uuid: string }) {
     { level: "vibe", task: PUSH_TASKS.vibe["vibe-view"].name },
     Boolean(vibe.data),
   );
+  const orbStatus = useTaskInferenceStatus(
+    uuid,
+    { level: "vibe", task: PUSH_TASKS.vibe["vibe-orb"].name },
+    Boolean(vibe.data),
+  );
   const update = useUpdateVibe();
   const remove = useRemoveVibeObjects();
   const deleteVibe = useDeleteVibe();
@@ -53,6 +60,10 @@ export function VibeSurface({ uuid }: { uuid: string }) {
 
   const title = titleDraft ?? vibe.data?.title ?? "";
   const isOwner = vibe.data?.owner === session.data?.user.id;
+  const orbVisual = useMemo(
+    () => (vibe.data ? orbVisualForVibe(vibe.data) : undefined),
+    [vibe.data],
+  );
 
   useEffect(() => {
     if (sourceConnectionReturn.attemptId || sourceConnectionReturn.failureMessage) {
@@ -86,60 +97,73 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       title={vibe.data?.title ?? "Vibe"}
       headerDivider
       heading={
-        vibe.data && isOwner ? (
-          <form onSubmit={rename} className="group/title relative min-w-0">
-            {titleDraft === null ? (
-              <>
-                <h1 className="text-heading text-primary">{vibe.data.title}</h1>
-                <IconButton
-                  aria-label="Edit Vibe title"
-                  title="Edit title"
-                  size="sm"
-                  tone="ghost"
-                  className="absolute -left-8 top-0 opacity-0 group-hover/title:opacity-100 group-focus-within/title:opacity-100 [@media(hover:none)]:opacity-100"
-                  onClick={(event) => {
-                    // This DOM button becomes the submit control when editing starts.
-                    event.preventDefault();
-                    update.reset();
-                    setTitleDraft(vibe.data!.title);
-                  }}
-                >
-                  <EditIcon />
-                </IconButton>
-              </>
+        vibe.data && orbVisual ? (
+          <div className="flex min-w-0 items-center gap-4">
+            <ProceduralVibeOrb
+              recipe={orbVisual.recipe}
+              motion="continuous"
+              loading={orbVisual.loading}
+              size={72}
+              label={`${vibe.data.title} Vibe orb`}
+            />
+            {isOwner ? (
+              <form onSubmit={rename} className="group/title relative min-w-0">
+                {titleDraft === null ? (
+                  <>
+                    <h1 className="text-heading text-primary">{vibe.data.title}</h1>
+                    <IconButton
+                      aria-label="Edit Vibe title"
+                      title="Edit title"
+                      size="sm"
+                      tone="ghost"
+                      className="absolute -left-8 top-0 opacity-0 group-hover/title:opacity-100 group-focus-within/title:opacity-100 [@media(hover:none)]:opacity-100"
+                      onClick={(event) => {
+                        // This DOM button becomes the submit control when editing starts.
+                        event.preventDefault();
+                        update.reset();
+                        setTitleDraft(vibe.data!.title);
+                      }}
+                    >
+                      <EditIcon />
+                    </IconButton>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      autoFocus
+                      aria-label="Vibe title"
+                      className="block w-full min-w-0 rounded-none border-0 bg-transparent p-0 text-heading text-primary outline-none"
+                      value={title}
+                      maxLength={256}
+                      readOnly={update.isPending}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onChange={(event) => setTitleDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape" && !update.isPending) {
+                          event.preventDefault();
+                          setTitleDraft(null);
+                          update.reset();
+                        }
+                      }}
+                    />
+                    <IconButton
+                      type="submit"
+                      aria-label="Save Vibe title"
+                      title="Save title (Enter)"
+                      size="sm"
+                      tone="ghost"
+                      className="absolute -left-8 top-0"
+                      disabled={!title.trim() || update.isPending}
+                    >
+                      <CheckIcon />
+                    </IconButton>
+                  </>
+                )}
+              </form>
             ) : (
-              <>
-                <input
-                  autoFocus
-                  aria-label="Vibe title"
-                  className="block w-full min-w-0 rounded-none border-0 bg-transparent p-0 text-heading text-primary outline-none"
-                  value={title}
-                  maxLength={256}
-                  readOnly={update.isPending}
-                  onFocus={(event) => event.currentTarget.select()}
-                  onChange={(event) => setTitleDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape" && !update.isPending) {
-                      event.preventDefault();
-                      setTitleDraft(null);
-                      update.reset();
-                    }
-                  }}
-                />
-                <IconButton
-                  type="submit"
-                  aria-label="Save Vibe title"
-                  title="Save title (Enter)"
-                  size="sm"
-                  tone="ghost"
-                  className="absolute -left-8 top-0"
-                  disabled={!title.trim() || update.isPending}
-                >
-                  <CheckIcon />
-                </IconButton>
-              </>
+              <h1 className="text-heading text-primary">{vibe.data.title}</h1>
             )}
-          </form>
+          </div>
         ) : undefined
       }
       detail={vibe.data?.uri}
@@ -179,6 +203,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           vibe={vibe.data}
           status={summaryStatus.data}
           viewStatus={viewStatus.data}
+          orbStatus={orbStatus.data}
           inferredError={viewStatus.isError ? "Could not load Vibe view task status." : undefined}
           error={summaryStatus.isError ? "Could not load summary task status." : undefined}
         >

@@ -2,6 +2,8 @@ import { UUIDV7_PATTERN } from "@rnet/types/patterns";
 import { ingestRecordSchema } from "@rnet/types/schemas";
 import type { FromSchema, JSONSchema } from "json-schema-to-ts";
 
+import { pushTaskReferenceSchema } from "./push.ts";
+
 /** Stable package/catalog identity. This is intentionally not a database enum. */
 export const SOURCE_SKILL_ID_PATTERN = "^[a-z][a-z0-9_-]{0,63}$";
 /** A parser pin is persisted as rNet `source.ingest.skill`, so it must satisfy that schema. */
@@ -102,6 +104,27 @@ export const sourceSkillInputFieldSchema = {
   additionalProperties: false,
 } as const satisfies JSONSchema;
 
+export const importPushPipelineNodeSchema = {
+  type: "object",
+  required: ["task", "after"],
+  properties: {
+    task: pushTaskReferenceSchema,
+    after: {
+      type: "array",
+      items: pushTaskReferenceSchema,
+      uniqueItems: true,
+    },
+  },
+  additionalProperties: false,
+} as const satisfies JSONSchema;
+
+export const importPushPipelineSchema = {
+  type: "array",
+  items: importPushPipelineNodeSchema,
+  uniqueItems: true,
+} as const satisfies JSONSchema;
+export type ImportPushPipeline = FromSchema<typeof importPushPipelineSchema>;
+
 export const sourceSkillManifestSchema = {
   type: "object",
   required: [
@@ -114,6 +137,7 @@ export const sourceSkillManifestSchema = {
     "limits",
     "input_fields",
     "review_actions",
+    "import_push_pipeline",
   ],
   properties: {
     skill_id: { type: "string", pattern: SOURCE_SKILL_ID_PATTERN },
@@ -146,6 +170,7 @@ export const sourceSkillManifestSchema = {
       items: { enum: SOURCE_SKILL_REVIEW_ACTIONS },
       uniqueItems: true,
     },
+    import_push_pipeline: importPushPipelineSchema,
   },
   additionalProperties: false,
 } as const satisfies JSONSchema;

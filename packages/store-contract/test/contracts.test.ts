@@ -223,6 +223,7 @@ describe("shared store schemas", () => {
       parser: { type: "object" },
       input_fields: { type: "array" },
       review_actions: { type: "array" },
+      import_push_pipeline: { type: "array" },
     });
     expect(SOURCE_PARSER_VERSION_PATTERN).toBe(ingestRecordSchema.properties.skill.pattern);
     expect(sourceSkillManifestSchema.properties.parser.properties.version.pattern).toBe(

@@ -1,4 +1,5 @@
 import type { SourceSkillManifest } from "../../../../../packages/store-contract/src/source-skills.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../../source-skills/import-push-pipelines.ts";
 
 import {
   X_OAUTH_CONNECTOR_VERSION,
@@ -23,4 +24,5 @@ export const xOAuthSourceManifest = {
   connection: { mode: "oauth2_pkce", button_label: "Sign in with X" },
   input_fields: [],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: CONTENT_IMPORT_PUSH_PIPELINE,
 } as const satisfies SourceSkillManifest;

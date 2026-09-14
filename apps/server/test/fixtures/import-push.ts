@@ -1,4 +1,6 @@
 import type { FileSourceSkill } from "../../../ingest/file-sources/types.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../../ingest/source-skills/import-push-pipelines.ts";
+import type { ImportPushPipeline } from "@rhizome/store-contract";
 import {
   candidateBundle,
   CANDIDATE_BUNDLE_CAPABILITY,
@@ -35,6 +37,7 @@ export function importPushSource(
   candidates: readonly SourceCandidateDraft[] = [gardenImportCandidate],
   verifyOk = true,
   destination?: { title: string },
+  importPushPipeline: ImportPushPipeline = CONTENT_IMPORT_PUSH_PIPELINE,
 ): FileSourceSkill {
   const parser = {
     name: "push-import-fixture",
@@ -70,6 +73,7 @@ export function importPushSource(
         },
       ],
       review_actions: ["review_import"],
+      import_push_pipeline: importPushPipeline,
     },
     parser,
     compiledSource: {

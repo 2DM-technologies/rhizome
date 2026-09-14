@@ -530,6 +530,7 @@ function oauthSkill(
       connection: { mode: "oauth2_pkce", button_label: "Connect synthetic source" },
       input_fields: [],
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: [],
     },
     connection: {
       mode: "oauth2_pkce",

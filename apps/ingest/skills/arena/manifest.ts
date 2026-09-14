@@ -1,4 +1,5 @@
 import type { SourceSkillManifest } from "../../../../packages/store-contract/src/source-skills.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../source-skills/import-push-pipelines.ts";
 
 import { ARENA_CONNECTOR_VERSION, ARENA_PARSER_NAME, ARENA_SKILL_ID } from "./contracts.ts";
 import { ARENA_PARSER_VERSION } from "./scripts/parse-arena.ts";
@@ -32,4 +33,5 @@ export const arenaSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: CONTENT_IMPORT_PUSH_PIPELINE,
 } as const satisfies SourceSkillManifest;

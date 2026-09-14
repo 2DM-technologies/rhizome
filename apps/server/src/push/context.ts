@@ -25,12 +25,15 @@ export interface VibeContext {
     elements: Array<{ kind: MediaElement["kind"]; objects: number }>;
   }>;
   elements: Array<{ kind: MediaElement["kind"]; count: number }>;
+  /** Installed-task-owned, bounded context prepared inside this push operation. */
+  task_context?: Record<string, unknown>;
 }
 export type ContextCounts = PushOperationResult["context"];
 export interface ContextObject {
   object: Pick<DbMediaObject, "uuid" | "type" | "source" | "user" | "keys" | "inferred">;
   elements: Array<{
-    element: Pick<DbMediaElement, "uuid" | "kind" | "mime" | "alt" | "inferred">;
+    element: Pick<DbMediaElement, "uuid" | "kind" | "mime" | "alt" | "inferred"> &
+      Partial<Pick<DbMediaElement, "contentHash" | "byteSize">>;
     role?: NonNullable<MediaObjectElementRef["role"]>;
   }>;
 }
@@ -108,6 +111,7 @@ export function assembleVibeContext(
   records: readonly ContextObject[],
   vibe: Pick<Vibe, "title" | "inferred">,
   task: PushTaskDefinition,
+  taskContext?: Record<string, unknown>,
 ): { vibe: VibeContext; context: ContextCounts } {
   const distinct = distinctObjects(records);
   const types = new Map<string, VibeContext["types"][number]>();
@@ -144,6 +148,7 @@ export function assembleVibeContext(
     objects: distinct.length,
     types: [...types.values()],
     elements: elementCounts,
+    ...(taskContext ? { task_context: taskContext } : {}),
   };
   const context = emptyContextCounts();
   const dropType = () => {
@@ -175,8 +180,9 @@ export async function assembleVibeInput(
   task: PushTaskDefinition,
   registry: ModelConnectorRegistry,
   limits: PushLimits,
+  prepared?: ReturnType<typeof assembleVibeContext>,
 ) {
-  const assembled = assembleVibeContext(records, vibe, task);
+  const assembled = prepared ?? assembleVibeContext(records, vibe, task);
   const types = new Set(assembled.vibe.types.map((type) => type.type));
   const members = distinctObjects(records)
     .filter((record) => types.has(record.object.type))

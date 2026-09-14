@@ -396,6 +396,7 @@ function syntheticPublicSkill(): PublicRemoteSourceSkill {
         },
       ],
       review_actions: ["review_import"],
+      import_push_pipeline: [],
     },
     parser,
     compiledSource: {

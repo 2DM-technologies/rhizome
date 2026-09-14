@@ -23,7 +23,7 @@ test("summary polls task state and shares a row with inferred above the view", a
     const url = new URL(route.request().url());
     expect(url.searchParams.get("level")).toBe("vibe");
     const task = url.searchParams.get("task");
-    expect(["summarize", "vibe-view"]).toContain(task);
+    expect(["summarize", "vibe-view", "vibe-orb"]).toContain(task);
     return route.fulfill({
       json: {
         level: "vibe",

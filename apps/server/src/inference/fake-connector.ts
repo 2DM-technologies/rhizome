@@ -98,7 +98,12 @@ function sample(schema: JSONSchema): unknown {
   if (type === "boolean") return false;
   if (type === "null") return null;
   if (type === "string") {
-    for (const candidate of ["fake", "/source/properties/fake"]) {
+    for (const candidate of [
+      "fake",
+      "/source/properties/fake",
+      "0123456789abcdef0123456789abcdef",
+      "#7f5cff",
+    ]) {
       if (!schema.pattern || new RegExp(schema.pattern).test(candidate)) return candidate;
     }
     throw new Error("No fake sample for the schema pattern");

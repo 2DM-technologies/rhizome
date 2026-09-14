@@ -1,26 +1,22 @@
 import type { MediaObject, Vibe } from "@rnet/types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import orbUser from "../assets/orbs/orb-user-24.png";
 import { uuidOf } from "../api/uris.ts";
+import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
+import type { OrbVisualRecipe } from "../orb/recipe.ts";
+import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 import { useMediaElement, usePayloadUrl, useVibeObjects } from "../queries/index.ts";
-import { VibeOrb } from "../ui/index.ts";
 import { vibeUpdatedAt } from "../vibeRecency.ts";
 import { useSurfaceNavigation } from "./focus.ts";
-import { markForSurface } from "./surfaceMarks.ts";
 
-const CARD_BACKGROUNDS = [
-  "var(--rz-vibe-card-1)",
-  "var(--rz-vibe-card-2)",
-  "var(--rz-vibe-card-3)",
-  "var(--rz-vibe-card-4)",
-  "var(--rz-vibe-card-5)",
-] as const;
+const CARD_PREVIEW_LIMIT = 6;
 
-function stableIndex(value: string, length: number): number {
-  let hash = 0;
-  for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) % 997;
-  return hash % length;
+function cardBackgroundColor(recipe: OrbVisualRecipe): string {
+  const dominant = [...recipe.palette].sort(
+    (left, right) => right.weight - left.weight || left.color.localeCompare(right.color),
+  )[0]!;
+  const tint = Math.round(14 + recipe.contrast * 8);
+  return `color-mix(in srgb, ${dominant.color} ${tint}%, var(--rz-bg-canvas))`;
 }
 
 export function relativeAge(isoDate: string, now: number): string {
@@ -103,7 +99,10 @@ function ObjectThumbnail({ object }: { object: MediaObject }) {
   const presentation = payloadKind(element.data?.mime);
 
   return (
-    <span className="block size-[18px] shrink-0 overflow-hidden border border-neutral-border bg-canvas/60">
+    <span
+      data-object-thumbnail
+      className="block size-5 shrink-0 overflow-hidden border border-neutral-border bg-canvas/60"
+    >
       {payload.data && presentation === "image" ? (
         <img
           src={payload.data}
@@ -151,19 +150,34 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
   const uuid = uuidOf(vibe.uri);
   const objects = useVibeObjects(uuid);
   const details = objects.data ?? [];
-  const previews = details.slice(0, 5);
+  const previews = details.slice(0, CARD_PREVIEW_LIMIT);
   const source = details[0] ? objectSource(details[0]) : "Rhizome";
   const type = details[0] ? humanize(details[0].type) : undefined;
   const remaining = Math.max(0, vibe.objects.length - previews.length);
   const objectLabel = `${vibe.objects.length} ${vibe.objects.length === 1 ? "object" : "objects"}`;
-  const background = CARD_BACKGROUNDS[stableIndex(uuid, CARD_BACKGROUNDS.length)];
   const updatedAge = relativeAge(vibeUpdatedAt(vibe), now);
+  const visual = useMemo(() => {
+    const orb = orbVisualForVibe(vibe);
+    return {
+      ...orb,
+      backgroundColor: cardBackgroundColor(orb.recipe),
+      backgroundSource: orb.loading ? "fallback" : "inferred",
+    };
+  }, [vibe]);
+  const [orbActive, setOrbActive] = useState(false);
 
   return (
     <article
       data-desktop-vibe-card
-      style={{ background }}
-      className="group relative grid h-[102px] min-h-0 min-w-0 grid-cols-[minmax(0,1fr)_4.25rem] overflow-hidden rounded-sm shadow-[0_2px_10px_rgb(20_21_26/4%)] transition-transform hover:-translate-y-px"
+      data-vibe-card-background={visual.backgroundSource}
+      style={{ backgroundColor: visual.backgroundColor }}
+      onPointerEnter={() => setOrbActive(true)}
+      onPointerLeave={() => setOrbActive(false)}
+      onFocusCapture={() => setOrbActive(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOrbActive(false);
+      }}
+      className="group relative h-[102px] min-h-0 min-w-0 overflow-hidden rounded-sm shadow-[0_2px_10px_rgb(20_21_26/4%)]"
     >
       <button
         type="button"
@@ -172,13 +186,14 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
         onClick={() => navigation.open({ kind: "vibe", uuid })}
       />
 
-      <div className="flex min-h-0 min-w-0 flex-col p-2 pr-0">
+      <div className="flex h-full min-h-0 min-w-0 flex-col px-2 py-[9px]">
         <div className="flex min-h-0 min-w-0 gap-2">
-          <img
-            src={orbUser}
-            alt=""
-            aria-hidden
-            className="size-11 shrink-0 rounded-full object-cover [image-rendering:auto]"
+          <ProceduralVibeOrb
+            recipe={visual.recipe}
+            motion="interaction"
+            active={orbActive}
+            loading={visual.loading}
+            size={44}
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-baseline gap-1">
@@ -214,10 +229,6 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
             </span>
           ) : null}
         </div>
-      </div>
-
-      <div className="flex min-h-0 items-center justify-center pr-2">
-        <VibeOrb src={markForSurface({ kind: "vibe", uuid })} size="md" />
       </div>
     </article>
   );

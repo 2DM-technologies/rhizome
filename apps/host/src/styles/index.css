@@ -23,6 +23,43 @@
   background-position: center;
 }
 
+.vibe-orb-stage {
+  background:
+    radial-gradient(
+      circle at 50% 44%,
+      color-mix(in srgb, var(--rz-bg-canvas) 82%, transparent),
+      transparent 58%
+    ),
+    linear-gradient(145deg, var(--rz-bg-pill), var(--rz-bg-canvas));
+}
+
+.vibe-orb-stage-grid {
+  background-image:
+    linear-gradient(var(--rz-border-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rz-border-hairline) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black, transparent 72%);
+}
+
+.vibe-orb-range {
+  height: 0.8rem;
+}
+
+.vibe-orb-loading-overlay {
+  opacity: 0.05;
+  animation: vibe-orb-loading-pulse 1.55s ease-in-out infinite;
+}
+
+@keyframes vibe-orb-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.05;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 @property --rz-launcher-expanded-alpha {
   syntax: "<number>";
   inherits: false;
@@ -252,5 +289,9 @@
   }
   .inferred-skeleton-line {
     transition: none;
+  }
+  .vibe-orb-loading-overlay {
+    animation: none;
+    opacity: 0.14;
   }
 }
