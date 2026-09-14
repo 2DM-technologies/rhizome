@@ -6,6 +6,34 @@ import { installMockStore } from "./support/mockStore.ts";
 
 const PLAYGROUND = "/playgrounds/vibe-orb";
 
+test("the shared glass material leaves only interior controls and energy", async ({
+  page,
+}, testInfo) => {
+  await page.goto(PLAYGROUND);
+  await expect(page.locator('[data-vibe-orb-renderer="webgl"]')).toHaveCount(9);
+  await expect(page.getByRole("group", { name: "Surface", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Response", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("group", { name: "Field", exact: true }).getByRole("slider"),
+  ).toHaveCount(3);
+  const energy = page.getByRole("slider", { name: "Energy", exact: true });
+  await expect(
+    page.getByRole("group", { name: "Motion", exact: true }).getByRole("slider"),
+  ).toHaveCount(1);
+  await energy.focus();
+  await energy.press("End");
+  await expect(energy).toHaveValue("1");
+  await expect(
+    page.getByLabel("Large procedural Vibe orb preview").locator("canvas"),
+  ).toHaveAttribute("data-vibe-orb-animating", "true");
+  await energy.press("Home");
+  await expect(energy).toHaveValue("0");
+  await expect(
+    page.getByLabel("Large procedural Vibe orb preview").locator("canvas"),
+  ).toHaveAttribute("data-vibe-orb-animating", "true");
+  await page.screenshot({ path: testInfo.outputPath("shared-glass-controls.png"), fullPage: true });
+});
+
 test("the playground renders one shader across hero and actual icon sizes", async ({ page }) => {
   await page.goto(PLAYGROUND);
   const orbs = page.locator("[data-vibe-orb-renderer]");
@@ -109,7 +137,7 @@ test("persisted Vibe recipes drive card, list, dock, and hero motion policies", 
       model: "mock/rhizome",
       inferred_at: "2026-09-13T12:00:00.000Z",
       properties: {
-        version: 1,
+        version: 2,
         seed: "0123456789abcdef0123456789abcdef",
         palette: [
           { color: "#174c66", weight: 0.35 },
@@ -119,20 +147,10 @@ test("persisted Vibe recipes drive card, list, dock, and hero motion policies", 
         contrast: 0.45,
         field: {
           grain: 0.25,
-          roughness: 0.4,
           warp: 0.62,
-          cellularity: 0.12,
           anisotropy: 0.3,
         },
-        surface: { gloss: 0.7, glow: 0.42, rim: 0.65, grainOverlay: 0.12 },
-        motion: {
-          drift: 0.24,
-          turbulence: 0.35,
-          pulseAmplitude: 0.08,
-          pulsePeriod: 0.7,
-          spin: 0.2,
-        },
-        response: { viscosity: 0.78, reactivity: 0.42, splash: 0.5, settle: 0.8 },
+        energy: 0.55,
       },
     },
   };

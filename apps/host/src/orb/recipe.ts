@@ -1,12 +1,20 @@
-export const ORB_RECIPE_VERSION = 1 as const;
+export const ORB_RECIPE_VERSION = 2 as const;
 export const MAX_ORB_COLORS = 6;
+
+/** Shared art direction: these controls belong to the renderer, not to inference. */
+export const ORB_MATERIAL = {
+  field: { roughness: 0.28, cellularity: 0.08 },
+  surface: { gloss: 0.9, glow: 0.32, rim: 0.8, grainOverlay: 0.03 },
+  motion: { pulseAmplitude: 0.035, pulsePeriod: 0.65 },
+  response: { viscosity: 0.82, reactivity: 0.35, splash: 0.35, settle: 0.8 },
+} as const;
 
 export interface OrbPaletteStop {
   color: `#${string}`;
   weight: number;
 }
 
-/** Version 1 of the host renderer input and the persisted `rhizome:vibe-orb` task properties. */
+/** Version 2 describes the interior of a Vibe's shared crystal-ball material. */
 export interface OrbVisualRecipe {
   version: typeof ORB_RECIPE_VERSION;
   seed: string;
@@ -14,30 +22,10 @@ export interface OrbVisualRecipe {
   contrast: number;
   field: {
     grain: number;
-    roughness: number;
     warp: number;
-    cellularity: number;
     anisotropy: number;
   };
-  surface: {
-    gloss: number;
-    glow: number;
-    rim: number;
-    grainOverlay: number;
-  };
-  motion: {
-    drift: number;
-    turbulence: number;
-    pulseAmplitude: number;
-    pulsePeriod: number;
-    spin: number;
-  };
-  response: {
-    viscosity: number;
-    reactivity: number;
-    splash: number;
-    settle: number;
-  };
+  energy: number;
 }
 
 export type OrbPresetName = "bloom" | "ember" | "tideglass" | "lichen";
@@ -45,6 +33,16 @@ export type OrbPresetName = "bloom" | "ember" | "tideglass" | "lichen";
 export function clampUnit(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
+}
+
+/** Even the liveliest Vibe stays within the same slow, fluid motion envelope. */
+export function orbMotionForEnergy(value: number) {
+  const energy = clampUnit(value);
+  return {
+    drift: 0.12 + energy * 0.18,
+    turbulence: 0.1 + energy * 0.18,
+    spin: 0.08 + energy * 0.14,
+  };
 }
 
 function normalizeColor(value: string): `#${string}` {
@@ -64,37 +62,16 @@ export function normalizeOrbRecipe(recipe: OrbVisualRecipe): OrbVisualRecipe {
   if (palette.every(({ weight }) => weight === 0)) palette[0]!.weight = 1;
 
   return {
-    ...recipe,
     version: ORB_RECIPE_VERSION,
     seed: recipe.seed || "rhizome",
     palette,
     contrast: clampUnit(recipe.contrast),
     field: {
       grain: clampUnit(recipe.field.grain),
-      roughness: clampUnit(recipe.field.roughness),
       warp: clampUnit(recipe.field.warp),
-      cellularity: clampUnit(recipe.field.cellularity),
       anisotropy: clampUnit(recipe.field.anisotropy),
     },
-    surface: {
-      gloss: clampUnit(recipe.surface.gloss),
-      glow: clampUnit(recipe.surface.glow),
-      rim: clampUnit(recipe.surface.rim),
-      grainOverlay: clampUnit(recipe.surface.grainOverlay),
-    },
-    motion: {
-      drift: clampUnit(recipe.motion.drift),
-      turbulence: clampUnit(recipe.motion.turbulence),
-      pulseAmplitude: clampUnit(recipe.motion.pulseAmplitude),
-      pulsePeriod: clampUnit(recipe.motion.pulsePeriod),
-      spin: clampUnit(recipe.motion.spin),
-    },
-    response: {
-      viscosity: clampUnit(recipe.response.viscosity),
-      reactivity: clampUnit(recipe.response.reactivity),
-      splash: clampUnit(recipe.response.splash),
-      settle: clampUnit(recipe.response.settle),
-    },
+    energy: clampUnit(recipe.energy),
   };
 }
 
@@ -110,10 +87,8 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#ffb85b", weight: 0.2 },
     ],
     contrast: 0.34,
-    field: { grain: 0.14, roughness: 0.22, warp: 0.58, cellularity: 0.04, anisotropy: 0.2 },
-    surface: { gloss: 0.92, glow: 0.3, rim: 0.82, grainOverlay: 0.025 },
-    motion: { drift: 0.24, turbulence: 0.2, pulseAmplitude: 0.04, pulsePeriod: 0.58, spin: 0.14 },
-    response: { viscosity: 0.74, reactivity: 0.48, splash: 0.58, settle: 0.68 },
+    field: { grain: 0.14, warp: 0.58, anisotropy: 0.2 },
+    energy: 0.55,
   },
   ember: {
     version: ORB_RECIPE_VERSION,
@@ -125,10 +100,8 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#ffbf4b", weight: 0.14 },
     ],
     contrast: 0.9,
-    field: { grain: 0.24, roughness: 0.34, warp: 0.42, cellularity: 0.1, anisotropy: 0.72 },
-    surface: { gloss: 0.88, glow: 0.38, rim: 0.72, grainOverlay: 0.04 },
-    motion: { drift: 0.18, turbulence: 0.26, pulseAmplitude: 0.04, pulsePeriod: 0.42, spin: 0.08 },
-    response: { viscosity: 0.72, reactivity: 0.4, splash: 0.4, settle: 0.64 },
+    field: { grain: 0.24, warp: 0.42, anisotropy: 0.72 },
+    energy: 0.35,
   },
   tideglass: {
     version: ORB_RECIPE_VERSION,
@@ -140,10 +113,8 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#ffe37c", weight: 0.16 },
     ],
     contrast: 0.24,
-    field: { grain: 0.12, roughness: 0.28, warp: 0.62, cellularity: 0.08, anisotropy: 0.36 },
-    surface: { gloss: 0.92, glow: 0.38, rim: 0.78, grainOverlay: 0.05 },
-    motion: { drift: 0.28, turbulence: 0.18, pulseAmplitude: 0.03, pulsePeriod: 0.76, spin: 0.2 },
-    response: { viscosity: 0.88, reactivity: 0.34, splash: 0.32, settle: 0.84 },
+    field: { grain: 0.12, warp: 0.62, anisotropy: 0.36 },
+    energy: 0.85,
   },
   lichen: {
     version: ORB_RECIPE_VERSION,
@@ -155,10 +126,8 @@ export const ORB_PRESETS: Readonly<Record<OrbPresetName, OrbVisualRecipe>> = {
       { color: "#e1d7b6", weight: 0.2 },
     ],
     contrast: 0.58,
-    field: { grain: 0.3, roughness: 0.35, warp: 0.54, cellularity: 0.12, anisotropy: 0.12 },
-    surface: { gloss: 0.84, glow: 0.2, rim: 0.76, grainOverlay: 0.05 },
-    motion: { drift: 0.12, turbulence: 0.2, pulseAmplitude: 0.03, pulsePeriod: 0.65, spin: 0.04 },
-    response: { viscosity: 0.92, reactivity: 0.2, splash: 0.28, settle: 0.9 },
+    field: { grain: 0.3, warp: 0.54, anisotropy: 0.12 },
+    energy: 0.08,
   },
 };
 

@@ -391,7 +391,7 @@ function installedTaskResponse(request: CompletionRequest): CompletionResult {
       const data = JSON.parse(request.input.slice("<data>".length, -"</data>".length));
       return {
         output: {
-          version: 1,
+          version: 2,
           seed: data.vibe.task_context.seed,
           palette: [
             { color: "#244a37", weight: 0.36 },
@@ -401,20 +401,10 @@ function installedTaskResponse(request: CompletionRequest): CompletionResult {
           contrast: 0.5,
           field: {
             grain: 0.45,
-            roughness: 0.6,
             warp: 0.58,
-            cellularity: 0.35,
             anisotropy: 0.2,
           },
-          surface: { gloss: 0.3, glow: 0.35, rim: 0.55, grainOverlay: 0.4 },
-          motion: {
-            drift: 0.18,
-            turbulence: 0.3,
-            pulseAmplitude: 0.06,
-            pulsePeriod: 0.7,
-            spin: 0.12,
-          },
-          response: { viscosity: 0.8, reactivity: 0.4, splash: 0.5, settle: 0.82 },
+          energy: 0.55,
           confidence: 0.88,
         },
         usage,
@@ -2441,6 +2431,12 @@ describe("installed image push", () => {
     const response = await api(app, `/vibes/${vibeUuid}`);
     const document = await response.json();
     const properties = document.inferred[storeTaskKey(vibeOrb.name)].properties;
+    expect(properties).toMatchObject({ version: 2, energy: 0.55 });
+    expect(properties).not.toHaveProperty("surface");
+    expect(properties).not.toHaveProperty("motion");
+    expect(properties).not.toHaveProperty("response");
+    expect(properties.field).not.toHaveProperty("roughness");
+    expect(properties.field).not.toHaveProperty("cellularity");
     expect(properties.seed).toBe(expectedSeed);
     expect(properties.palette).toEqual(
       expect.arrayContaining([

@@ -2,10 +2,10 @@ import { storeTaskKey } from "@rhizome/store-contract";
 import type { Vibe } from "@rnet/types";
 
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
-import { normalizeOrbRecipe, type OrbVisualRecipe } from "./recipe.ts";
+import { ORB_RECIPE_VERSION, normalizeOrbRecipe, type OrbVisualRecipe } from "./recipe.ts";
 
 const PRE_INFERENCE_ORB_RECIPE: OrbVisualRecipe = {
-  version: 1,
+  version: ORB_RECIPE_VERSION,
   seed: "pre-inference",
   palette: [
     { color: "#aeb3b5", weight: 0.48 },
@@ -13,10 +13,8 @@ const PRE_INFERENCE_ORB_RECIPE: OrbVisualRecipe = {
     { color: "#596164", weight: 0.2 },
   ],
   contrast: 0.2,
-  field: { grain: 0.08, roughness: 0.18, warp: 0.32, cellularity: 0.03, anisotropy: 0.18 },
-  surface: { gloss: 0.98, glow: 0.18, rim: 0.78, grainOverlay: 0.02 },
-  motion: { drift: 0.22, turbulence: 0.24, pulseAmplitude: 0.05, pulsePeriod: 0.68, spin: 0.16 },
-  response: { viscosity: 0.82, reactivity: 0.36, splash: 0.38, settle: 0.86 },
+  field: { grain: 0.08, warp: 0.32, anisotropy: 0.18 },
+  energy: 0.45,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -33,7 +31,8 @@ function scalarGroup(value: unknown, keys: readonly string[]): value is Record<s
 
 /** Strictly decode store-authored inference before it reaches WebGL uniforms. */
 export function parseOrbVisualRecipe(value: unknown): OrbVisualRecipe | undefined {
-  if (!isRecord(value) || value.version !== 1 || typeof value.seed !== "string") return;
+  if (!isRecord(value) || value.version !== ORB_RECIPE_VERSION || typeof value.seed !== "string")
+    return;
   if (
     !Array.isArray(value.palette) ||
     value.palette.length < 2 ||
@@ -46,10 +45,8 @@ export function parseOrbVisualRecipe(value: unknown): OrbVisualRecipe | undefine
         unit(stop.weight),
     ) ||
     !unit(value.contrast) ||
-    !scalarGroup(value.field, ["grain", "roughness", "warp", "cellularity", "anisotropy"]) ||
-    !scalarGroup(value.surface, ["gloss", "glow", "rim", "grainOverlay"]) ||
-    !scalarGroup(value.motion, ["drift", "turbulence", "pulseAmplitude", "pulsePeriod", "spin"]) ||
-    !scalarGroup(value.response, ["viscosity", "reactivity", "splash", "settle"])
+    !scalarGroup(value.field, ["grain", "warp", "anisotropy"]) ||
+    !unit(value.energy)
   )
     return;
   return normalizeOrbRecipe(value as unknown as OrbVisualRecipe);

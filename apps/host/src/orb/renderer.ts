@@ -1,6 +1,8 @@
 import {
   MAX_ORB_COLORS,
+  ORB_MATERIAL,
   normalizeOrbRecipe,
+  orbMotionForEnergy,
   orbSeedVector,
   type OrbVisualRecipe,
 } from "./recipe.ts";
@@ -30,20 +32,21 @@ uniform float u_weights[6];
 uniform int u_color_count;
 uniform float u_contrast;
 uniform float u_grain;
-uniform float u_roughness;
 uniform float u_warp;
-uniform float u_cellularity;
 uniform float u_anisotropy;
-uniform float u_gloss;
-uniform float u_glow;
-uniform float u_rim;
-uniform float u_grain_overlay;
 uniform float u_drift;
 uniform float u_turbulence;
-uniform float u_pulse_amplitude;
-uniform float u_pulse_period;
 uniform float u_spin;
-uniform float u_reactivity;
+
+const float GLASS_ROUGHNESS = ${ORB_MATERIAL.field.roughness};
+const float GLASS_CELLULARITY = ${ORB_MATERIAL.field.cellularity};
+const float GLASS_GLOSS = ${ORB_MATERIAL.surface.gloss};
+const float GLASS_GLOW = ${ORB_MATERIAL.surface.glow};
+const float GLASS_RIM = ${ORB_MATERIAL.surface.rim};
+const float GLASS_GRAIN = ${ORB_MATERIAL.surface.grainOverlay};
+const float PULSE_AMPLITUDE = ${ORB_MATERIAL.motion.pulseAmplitude};
+const float PULSE_PERIOD = ${ORB_MATERIAL.motion.pulsePeriod};
+const float REACTIVITY = ${ORB_MATERIAL.response.reactivity};
 
 const float TAU = 6.28318530718;
 
@@ -96,7 +99,7 @@ float fbm(vec3 point) {
     value += amplitude * value_noise(point);
     total += amplitude;
     point = rotation * point * 2.03 + vec3(7.7, 2.3, 5.1);
-    amplitude *= mix(0.18, 0.52, u_roughness);
+    amplitude *= mix(0.18, 0.52, GLASS_ROUGHNESS);
   }
   return value / total;
 }
@@ -146,8 +149,8 @@ void main() {
   vec2 point = (v_uv - 0.5) * 2.0;
   point.x *= u_resolution.x / max(u_resolution.y, 1.0);
 
-  float pulse_speed = mix(0.38, 1.35, u_pulse_period);
-  float pulse = 1.0 + sin(u_time * pulse_speed + u_seed.w * TAU) * u_pulse_amplitude * 0.018;
+  float pulse_speed = mix(0.38, 1.35, PULSE_PERIOD);
+  float pulse = 1.0 + sin(u_time * pulse_speed + u_seed.w * TAU) * PULSE_AMPLITUDE * 0.018;
   float radius = 0.91 * pulse;
   float distance_from_center = length(point);
   if (distance_from_center > radius + 0.02) {
@@ -161,7 +164,7 @@ void main() {
   // Bend the view into the sphere; the color lives below a smooth, stationary shell.
   vec3 view_ray = vec3(0.0, 0.0, -1.0);
   vec3 transmitted = refract(view_ray, normal, 1.0 / 1.46);
-  vec3 interior = normal + transmitted * sphere_z * mix(0.65, 1.35, u_gloss);
+  vec3 interior = normal + transmitted * sphere_z * mix(0.65, 1.35, GLASS_GLOSS);
   float spin_angle = (u_seed.x - 0.5) * 1.8 + u_time * u_spin * 0.1;
   interior.xz = rotate_2d(spin_angle) * interior.xz;
   interior.xy = rotate_2d((u_seed.y - 0.5) * 2.4) * interior.xy;
@@ -182,46 +185,46 @@ void main() {
   ) - 0.5;
   field_point += flow * u_warp * 1.8;
 
-  vec2 pointer_pull = (u_pointer - sphere_point) * u_reactivity * u_energy;
+  vec2 pointer_pull = (u_pointer - sphere_point) * REACTIVITY * u_energy;
   field_point.xy += pointer_pull * 0.8;
   field_point.z += u_energy * u_turbulence * 0.4;
 
   float cloudy = fbm(field_point + vec3(0.0, 0.0, time));
   float back_cloud = fbm(field_point * 0.72 + transmitted * 1.6 + vec3(3.1, 0.0, time));
   float cells = cloudy;
-  if (u_cellularity > 0.01) {
+  if (GLASS_CELLULARITY > 0.01) {
     cells = 1.0 - smoothstep(0.08, 0.82, cellular(field_point * 1.16));
   }
-  float texture = mix(cloudy, cells, u_cellularity * 0.65);
+  float texture = mix(cloudy, cells, GLASS_CELLULARITY * 0.65);
   texture += sin((interior.x + interior.y * 0.7) * 3.0 + flow.z * 2.0) * u_anisotropy * 0.08;
   texture = clamp((texture - 0.5) * 2.25 + 0.5 + (u_seed.w - 0.5) * 0.12, 0.0, 1.0);
 
   vec3 color = palette_color(texture);
   vec3 depth_color = palette_color(clamp((back_cloud - 0.5) * 2.0 + 0.5, 0.0, 1.0));
-  color = mix(color, depth_color, sphere_z * u_gloss * 0.24);
+  color = mix(color, depth_color, sphere_z * GLASS_GLOSS * 0.24);
 
   // A darker inner edge and a bright Fresnel lip give the glass visible thickness.
   float facing = max(sphere_z, 0.0);
   float fresnel = pow(1.0 - facing, 3.0);
   float inner_edge = exp(-pow((facing - 0.3) / 0.17, 2.0));
-  color *= 0.78 + 0.22 * facing - inner_edge * u_gloss * 0.18;
-  color += color * pow(facing, 1.8) * u_glow * 0.22;
+  color *= 0.78 + 0.22 * facing - inner_edge * GLASS_GLOSS * 0.18;
+  color += color * pow(facing, 1.8) * GLASS_GLOW * 0.22;
   vec3 edge_color = mix(depth_color, vec3(0.94, 0.97, 1.0), 0.72);
-  color = mix(color, edge_color, fresnel * mix(0.18, 0.88, u_rim));
+  color = mix(color, edge_color, fresnel * mix(0.18, 0.88, GLASS_RIM));
 
   // Fixed studio reflections stay coherent as the suspended color slowly moves.
   vec3 reflected = reflect(view_ray, normal);
   float key_light = max(dot(reflected, normalize(vec3(-0.55, 0.66, 0.72))), 0.0);
-  float softbox = pow(key_light, mix(5.0, 18.0, u_gloss));
-  float glint = pow(key_light, mix(28.0, 150.0, u_gloss));
+  float softbox = pow(key_light, mix(5.0, 18.0, GLASS_GLOSS));
+  float glint = pow(key_light, mix(28.0, 150.0, GLASS_GLOSS));
   float fill_light = pow(max(dot(reflected, normalize(vec3(0.7, -0.65, 0.32))), 0.0), 14.0);
-  color = mix(color, vec3(1.0, 0.98, 0.96), softbox * u_gloss * 0.3);
-  color += vec3(1.0, 0.98, 0.96) * glint * u_gloss * 0.42;
-  color += mix(depth_color, vec3(1.0), 0.55) * fill_light * u_gloss * 0.18;
+  color = mix(color, vec3(1.0, 0.98, 0.96), softbox * GLASS_GLOSS * 0.3);
+  color += vec3(1.0, 0.98, 0.96) * glint * GLASS_GLOSS * 0.42;
+  color += mix(depth_color, vec3(1.0), 0.55) * fill_light * GLASS_GLOSS * 0.18;
 
   // Keep optional grain attached to the material instead of sparkling every frame.
   float pixel_grain = hash31(vec3(sphere_point * 240.0, u_seed.w)) - 0.5;
-  color += pixel_grain * u_grain_overlay * 0.065;
+  color += pixel_grain * GLASS_GRAIN * 0.065;
   color = pow(max(color, 0.0), vec3(0.92));
 
   float edge_width = max(fwidth(distance_from_center) * 1.4, 0.002);
@@ -240,20 +243,11 @@ export interface OrbRendererOptions {
 const SCALAR_UNIFORMS = [
   ["u_contrast", 0],
   ["u_grain", 1],
-  ["u_roughness", 2],
-  ["u_warp", 3],
-  ["u_cellularity", 4],
-  ["u_anisotropy", 5],
-  ["u_gloss", 6],
-  ["u_glow", 7],
-  ["u_rim", 8],
-  ["u_grain_overlay", 9],
-  ["u_drift", 10],
-  ["u_turbulence", 11],
-  ["u_pulse_amplitude", 12],
-  ["u_pulse_period", 13],
-  ["u_spin", 14],
-  ["u_reactivity", 16],
+  ["u_warp", 2],
+  ["u_anisotropy", 3],
+  ["u_drift", 4],
+  ["u_turbulence", 5],
+  ["u_spin", 6],
 ] as const;
 
 interface FlatRecipe {
@@ -274,6 +268,7 @@ function rgb(hex: string): readonly [number, number, number] {
 
 function flattenRecipe(input: OrbVisualRecipe): FlatRecipe {
   const recipe = normalizeOrbRecipe(input);
+  const motion = orbMotionForEnergy(recipe.energy);
   const colors = new Float32Array(MAX_ORB_COLORS * 3);
   const weights = new Float32Array(MAX_ORB_COLORS);
   recipe.palette.forEach(({ color, weight }, index) => {
@@ -292,22 +287,11 @@ function flattenRecipe(input: OrbVisualRecipe): FlatRecipe {
     scalars: new Float32Array([
       recipe.contrast,
       recipe.field.grain,
-      recipe.field.roughness,
       recipe.field.warp,
-      recipe.field.cellularity,
       recipe.field.anisotropy,
-      recipe.surface.gloss,
-      recipe.surface.glow,
-      recipe.surface.rim,
-      recipe.surface.grainOverlay,
-      recipe.motion.drift,
-      recipe.motion.turbulence,
-      recipe.motion.pulseAmplitude,
-      recipe.motion.pulsePeriod,
-      recipe.motion.spin,
-      recipe.response.viscosity,
-      recipe.response.reactivity,
-      recipe.response.splash,
+      motion.drift,
+      motion.turbulence,
+      motion.spin,
     ]),
   };
 }
@@ -394,7 +378,6 @@ export class OrbRenderer {
   private lastFrame = this.startedAt;
   private pointer = { x: 0, y: 0, vx: 0, vy: 0, targetX: 0, targetY: 0 };
   private energy = 0;
-  private settle = 0.5;
   private resizeObserver: ResizeObserver;
   private intersectionObserver: IntersectionObserver | undefined;
   private readonly onContextAvailabilityChange?: (available: boolean) => void;
@@ -425,7 +408,6 @@ export class OrbRenderer {
     this.motion = options.motion ?? "continuous";
     this.reducedMotion = options.reducedMotion ?? false;
     this.onContextAvailabilityChange = options.onContextAvailabilityChange;
-    this.settle = normalizeOrbRecipe(recipe).response.settle;
 
     this.initializeGeometry();
     this.resizeObserver = new ResizeObserver(this.handleResize);
@@ -460,22 +442,7 @@ export class OrbRenderer {
       "u_colors[0]",
       "u_weights[0]",
       "u_color_count",
-      "u_contrast",
-      "u_grain",
-      "u_roughness",
-      "u_warp",
-      "u_cellularity",
-      "u_anisotropy",
-      "u_gloss",
-      "u_glow",
-      "u_rim",
-      "u_grain_overlay",
-      "u_drift",
-      "u_turbulence",
-      "u_pulse_amplitude",
-      "u_pulse_period",
-      "u_spin",
-      "u_reactivity",
+      ...SCALAR_UNIFORMS.map(([name]) => name),
     ] as const;
     return Object.fromEntries(names.map((name) => [name, location(this.gl, this.program, name)]));
   }
@@ -504,7 +471,6 @@ export class OrbRenderer {
     this.target = flattenRecipe(recipe);
     this.transitionStarted = now;
     this.transitionDuration = this.reducedMotion ? 0 : Math.max(0, transitionMs);
-    this.settle = normalizeOrbRecipe(recipe).response.settle;
     this.updateSchedule();
   }
 
@@ -575,7 +541,7 @@ export class OrbRenderer {
   };
 
   private readonly handlePointerDown = () => {
-    const splash = this.target.scalars[17] ?? 0;
+    const splash = ORB_MATERIAL.response.splash;
     this.energy = Math.min(1, this.energy + 0.3 + splash * 0.7);
     this.updateSchedule();
   };
@@ -640,7 +606,7 @@ export class OrbRenderer {
     this.frame = undefined;
     const delta = Math.min(0.05, Math.max(0.001, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
-    const viscosity = this.target.scalars[15] ?? 0.5;
+    const viscosity = ORB_MATERIAL.response.viscosity;
     const stiffness = 18 - viscosity * 10;
     const damping = 3.2 + viscosity * 7;
     this.pointer.vx += (this.pointer.targetX - this.pointer.x) * stiffness * delta;
@@ -650,7 +616,7 @@ export class OrbRenderer {
     this.pointer.x += this.pointer.vx * delta;
     this.pointer.y += this.pointer.vy * delta;
     const hoverFloor = this.interacting ? 0.14 : 0;
-    const decay = Math.exp(-delta * (1.4 + (1 - this.settle) * 5.6));
+    const decay = Math.exp(-delta * (1.4 + (1 - ORB_MATERIAL.response.settle) * 5.6));
     this.energy = hoverFloor + (this.energy - hoverFloor) * decay;
     this.render(now);
     if (this.shouldAnimate(now)) this.frame = requestAnimationFrame(this.tick);

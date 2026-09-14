@@ -10,6 +10,16 @@ const MAX_MEASURED_COLORS = 4;
 const SAMPLE_EDGE = 32;
 const SUPPORTED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
+// Paper, UI backgrounds, and shadows should not become the orb's dominant colors.
+// Keep measured hues visibly colored and in a useful lightness range for the glass interior.
+function isChromaticImageColor(red: number, green: number, blue: number): boolean {
+  const maximum = Math.max(red, green, blue);
+  const minimum = Math.min(red, green, blue);
+  const saturation = maximum === 0 ? 0 : (maximum - minimum) / maximum;
+  const lightness = (maximum + minimum) / (2 * 255);
+  return saturation >= 0.3 && lightness >= 0.2 && lightness <= 0.78;
+}
+
 export interface MeasuredColor {
   color: `#${string}`;
   weight: number;
@@ -82,6 +92,7 @@ export async function measureImagePalette(bytes: Uint8Array): Promise<MeasuredCo
     const blue = data[offset + 2] ?? 0;
     const alpha = data[offset + 3] ?? 255;
     if (alpha < 48) continue;
+    if (!isChromaticImageColor(red, green, blue)) continue;
     const maximum = Math.max(red, green, blue);
     const minimum = Math.min(red, green, blue);
     const saturation = maximum === 0 ? 0 : (maximum - minimum) / maximum;
@@ -104,6 +115,7 @@ export function aggregateImagePalettes(palettes: readonly MeasuredColor[][]): Me
       const red = Number.parseInt(stop.color.slice(1, 3), 16);
       const green = Number.parseInt(stop.color.slice(3, 5), 16);
       const blue = Number.parseInt(stop.color.slice(5, 7), 16);
+      if (!isChromaticImageColor(red, green, blue)) continue;
       const score = stop.weight / Math.max(1, palettes.length);
       const key = (red >> 4) * 256 + (green >> 4) * 16 + (blue >> 4);
       const bucket = buckets.get(key) ?? { red: 0, green: 0, blue: 0, score: 0 };
@@ -176,12 +188,20 @@ function isStop(value: unknown): value is MeasuredColor {
   return typeof stop.color === "string" && typeof stop.weight === "number";
 }
 
-/** Guarantee a stable seed and an explicit measured contribution while retaining semantic colors. */
+/** Blend useful image hues with semantic colors, excluding neutral backgrounds and shadows. */
 export function transformVibeOrbOutput(output: TaskOutput, context: VibeContext): TaskOutput {
   const taskContext = context.task_context ?? {};
   const seed = typeof taskContext.seed === "string" ? taskContext.seed : output.seed;
   const measured = Array.isArray(taskContext.image_palette)
-    ? taskContext.image_palette.filter(isStop)
+    ? taskContext.image_palette
+        .filter(isStop)
+        .filter(({ color }) =>
+          isChromaticImageColor(
+            Number.parseInt(color.slice(1, 3), 16),
+            Number.parseInt(color.slice(3, 5), 16),
+            Number.parseInt(color.slice(5, 7), 16),
+          ),
+        )
     : [];
   const semantic = Array.isArray(output.palette) ? output.palette.filter(isStop) : [];
   const combined: MeasuredColor[] = [];

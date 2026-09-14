@@ -22,22 +22,40 @@ async function swatch(colors: Array<[number, number, number, number]>): Promise<
 }
 
 const output = {
-  version: 1,
+  version: 2,
   seed: "ffffffffffffffffffffffffffffffff",
   palette: [
-    { color: "#112233", weight: 0.4 },
-    { color: "#445566", weight: 0.35 },
-    { color: "#778899", weight: 0.25 },
+    { color: "#245c83", weight: 0.4 },
+    { color: "#b94158", weight: 0.35 },
+    { color: "#62976d", weight: 0.25 },
   ],
   contrast: 0.5,
-  field: { grain: 0.5, roughness: 0.5, warp: 0.5, cellularity: 0.5, anisotropy: 0.5 },
-  surface: { gloss: 0.5, glow: 0.5, rim: 0.5, grainOverlay: 0.5 },
-  motion: { drift: 0.2, turbulence: 0.3, pulseAmplitude: 0.1, pulsePeriod: 0.6, spin: 0.2 },
-  response: { viscosity: 0.7, reactivity: 0.4, splash: 0.5, settle: 0.8 },
+  field: { grain: 0.5, warp: 0.5, anisotropy: 0.5 },
+  energy: 0.55,
   confidence: 0.9,
 };
 
 describe("Vibe orb palette preparation", () => {
+  test("accepts every prompt example and rejects generated material overrides", () => {
+    const examples = [...vibeOrb.prompt.matchAll(/```json\n([\s\S]*?)\n```/gu)];
+    expect(examples).toHaveLength(4);
+    const schema = jsonSchema(vibeOrb.outputSchema);
+    for (const [, example] of examples) {
+      const recipe = { ...JSON.parse(example!), version: 2, seed: output.seed, confidence: 0.9 };
+      expect(schema.validate(recipe).ok).toBeTrue();
+      expect(schema.validate({ ...recipe, version: 1 }).ok).toBeFalse();
+      expect(schema.validate({ ...recipe, energy: 1.1 }).ok).toBeFalse();
+      for (const key of ["surface", "motion", "response"]) {
+        expect(schema.validate({ ...recipe, [key]: {} }).ok).toBeFalse();
+      }
+      for (const key of ["roughness", "cellularity"]) {
+        expect(
+          schema.validate({ ...recipe, field: { ...recipe.field, [key]: 0.5 } }).ok,
+        ).toBeFalse();
+      }
+    }
+  });
+
   test("asks the model to derive color from text semantics without constraining source meaning", () => {
     expect(vibeOrb.prompt.replace(/\s+/gu, " ")).toContain(
       "derive color from the subject, tone, and emotional register of text elements and properties",
@@ -57,6 +75,74 @@ describe("Vibe orb palette preparation", () => {
     expect(aggregateImagePalettes([first, [{ color: "#ff0000", weight: 1 }]])[0]?.color).toBe(
       "#ff0000",
     );
+  });
+
+  test("neutral image backgrounds cannot crowd out small areas of useful color", async () => {
+    const image = await swatch([
+      ...Array.from({ length: 8 }, () => [254, 254, 254, 255] as [number, number, number, number]),
+      ...Array.from({ length: 5 }, () => [55, 55, 56, 255] as [number, number, number, number]),
+      [0, 0, 0, 255],
+      [153, 157, 156, 255],
+      [244, 239, 223, 255],
+      [22, 11, 16, 255],
+      [23, 169, 189, 255],
+      [223, 51, 31, 255],
+    ]);
+    const palette = await measureImagePalette(image);
+    expect(palette.map(({ color }) => color).sort()).toEqual(["#17a9bd", "#df331f"]);
+    expect(palette.reduce((sum, stop) => sum + stop.weight, 0)).toBeCloseTo(1, 3);
+    expect(await measureImagePalette(image)).toEqual(palette);
+  });
+
+  test("an entirely neutral image leaves color selection to the semantic palette", async () => {
+    const image = await swatch([
+      [255, 255, 255, 255],
+      [0, 0, 0, 255],
+      [127, 127, 127, 255],
+      [244, 239, 223, 255],
+    ]);
+    expect(await measureImagePalette(image)).toEqual([]);
+    expect(
+      aggregateImagePalettes([
+        [{ color: "#fefefe", weight: 1 }],
+        [{ color: "#373738", weight: 1 }],
+        [{ color: "#17a9bd", weight: 1 }],
+      ]),
+    ).toEqual([{ color: "#17a9bd", weight: 1 }]);
+    const transformed = transformVibeOrbOutput(output, {
+      title: "Monochrome images",
+      objects: 1,
+      types: [],
+      elements: [],
+      task_context: {
+        image_palette: [
+          { color: "#fefefe", weight: 0.8 },
+          { color: "#373738", weight: 0.2 },
+        ],
+      },
+    });
+    expect(transformed.palette).toEqual(output.palette);
+    expect(jsonSchema(vibeOrb.outputSchema).validate(transformed).ok).toBeTrue();
+  });
+
+  test("the final blend excludes neutral measurements while retaining useful image hues", () => {
+    const transformed = transformVibeOrbOutput(output, {
+      title: "Images with paper backgrounds",
+      objects: 1,
+      types: [],
+      elements: [],
+      task_context: {
+        image_palette: [
+          { color: "#fefefe", weight: 0.7 },
+          { color: "#373738", weight: 0.2 },
+          { color: "#17a9bd", weight: 0.1 },
+        ],
+      },
+    });
+    const palette = transformed.palette as Array<{ color: string; weight: number }>;
+    expect(palette.map(({ color }) => color)).toEqual(["#17a9bd", "#245c83", "#b94158", "#62976d"]);
+    expect(palette.reduce((sum, stop) => sum + stop.weight, 0)).toBeCloseTo(1, 3);
+    expect(jsonSchema(vibeOrb.outputSchema).validate(transformed).ok).toBeTrue();
   });
 
   test("deduplicates shared images, skips invalid payloads, and derives a stable opaque seed", async () => {
@@ -126,15 +212,15 @@ describe("Vibe orb palette preparation", () => {
       elements: [],
       task_context: {
         seed: "0123456789abcdef0123456789abcdef",
-        image_palette: [{ color: "#abcdef", weight: 1 }],
+        image_palette: [{ color: "#37a5d1", weight: 1 }],
       },
     } satisfies VibeContext;
     const transformed = transformVibeOrbOutput(output, context);
     expect(transformed.seed).toBe(context.task_context.seed);
     expect(transformed.palette).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ color: "#abcdef" }),
-        expect.objectContaining({ color: "#112233" }),
+        expect.objectContaining({ color: "#37a5d1" }),
+        expect.objectContaining({ color: "#245c83" }),
       ]),
     );
     expect(jsonSchema(vibeOrb.outputSchema).validate(transformed).ok).toBe(true);

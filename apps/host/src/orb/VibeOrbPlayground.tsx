@@ -21,21 +21,13 @@ const FIELD_CONTROLS: ScalarControl[] = [
     read: ({ field }) => field.grain,
     write: (recipe, grain) => ({ ...recipe, field: { ...recipe.field, grain } }),
   },
-  {
-    label: "Roughness",
-    read: ({ field }) => field.roughness,
-    write: (recipe, roughness) => ({ ...recipe, field: { ...recipe.field, roughness } }),
-  },
+
   {
     label: "Warp",
     read: ({ field }) => field.warp,
     write: (recipe, warp) => ({ ...recipe, field: { ...recipe.field, warp } }),
   },
-  {
-    label: "Cellularity",
-    read: ({ field }) => field.cellularity,
-    write: (recipe, cellularity) => ({ ...recipe, field: { ...recipe.field, cellularity } }),
-  },
+
   {
     label: "Anisotropy",
     read: ({ field }) => field.anisotropy,
@@ -43,95 +35,11 @@ const FIELD_CONTROLS: ScalarControl[] = [
   },
 ];
 
-const SURFACE_CONTROLS: ScalarControl[] = [
-  {
-    label: "Gloss",
-    read: ({ surface }) => surface.gloss,
-    write: (recipe, gloss) => ({ ...recipe, surface: { ...recipe.surface, gloss } }),
-  },
-  {
-    label: "Glow",
-    read: ({ surface }) => surface.glow,
-    write: (recipe, glow) => ({ ...recipe, surface: { ...recipe.surface, glow } }),
-  },
-  {
-    label: "Rim",
-    read: ({ surface }) => surface.rim,
-    write: (recipe, rim) => ({ ...recipe, surface: { ...recipe.surface, rim } }),
-  },
-  {
-    label: "Grain overlay",
-    read: ({ surface }) => surface.grainOverlay,
-    write: (recipe, grainOverlay) => ({
-      ...recipe,
-      surface: { ...recipe.surface, grainOverlay },
-    }),
-  },
-];
-
 const MOTION_CONTROLS: ScalarControl[] = [
   {
-    label: "Drift",
-    read: ({ motion }) => motion.drift,
-    write: (recipe, drift) => ({ ...recipe, motion: { ...recipe.motion, drift } }),
-  },
-  {
-    label: "Turbulence",
-    read: ({ motion }) => motion.turbulence,
-    write: (recipe, turbulence) => ({
-      ...recipe,
-      motion: { ...recipe.motion, turbulence },
-    }),
-  },
-  {
-    label: "Pulse amplitude",
-    read: ({ motion }) => motion.pulseAmplitude,
-    write: (recipe, pulseAmplitude) => ({
-      ...recipe,
-      motion: { ...recipe.motion, pulseAmplitude },
-    }),
-  },
-  {
-    label: "Pulse period",
-    read: ({ motion }) => motion.pulsePeriod,
-    write: (recipe, pulsePeriod) => ({
-      ...recipe,
-      motion: { ...recipe.motion, pulsePeriod },
-    }),
-  },
-  {
-    label: "Spin",
-    read: ({ motion }) => motion.spin,
-    write: (recipe, spin) => ({ ...recipe, motion: { ...recipe.motion, spin } }),
-  },
-];
-
-const RESPONSE_CONTROLS: ScalarControl[] = [
-  {
-    label: "Viscosity",
-    read: ({ response }) => response.viscosity,
-    write: (recipe, viscosity) => ({
-      ...recipe,
-      response: { ...recipe.response, viscosity },
-    }),
-  },
-  {
-    label: "Reactivity",
-    read: ({ response }) => response.reactivity,
-    write: (recipe, reactivity) => ({
-      ...recipe,
-      response: { ...recipe.response, reactivity },
-    }),
-  },
-  {
-    label: "Splash",
-    read: ({ response }) => response.splash,
-    write: (recipe, splash) => ({ ...recipe, response: { ...recipe.response, splash } }),
-  },
-  {
-    label: "Settle",
-    read: ({ response }) => response.settle,
-    write: (recipe, settle) => ({ ...recipe, response: { ...recipe.response, settle } }),
+    label: "Energy",
+    read: ({ energy }) => energy,
+    write: (recipe, energy) => ({ ...recipe, energy }),
   },
 ];
 
@@ -147,9 +55,6 @@ function copyRecipe(recipe: OrbVisualRecipe): OrbVisualRecipe {
     ...recipe,
     palette: recipe.palette.map((stop) => ({ ...stop })),
     field: { ...recipe.field },
-    surface: { ...recipe.surface },
-    motion: { ...recipe.motion },
-    response: { ...recipe.response },
   };
 }
 
@@ -260,8 +165,8 @@ export function VibeOrbPlayground() {
           <h1 className="font-serif text-[34px] leading-none tracking-[-0.02em]">Vibe orb</h1>
         </div>
         <p className="w-[28rem] max-w-[50vw] shrink-0 text-right text-[12px] leading-relaxed text-secondary">
-          One shader, four distant personalities. Hover, focus, and click the previews; tune the
-          continuous recipe before it becomes inference output.
+          One glass material, four distinct interiors. Tune the palette, field, and energy; hover,
+          focus, and click to feel their shared response.
         </p>
       </header>
 
@@ -424,6 +329,11 @@ export function VibeOrbPlayground() {
             />
           </fieldset>
 
+          <p className="mt-5 text-[11px] leading-relaxed text-secondary">
+            Every orb shares the same polished glass, fine texture, subtle breathing, and
+            interaction response. Energy controls how quickly the interior drifts, deforms, and
+            turns.
+          </p>
           <div className="mt-5 grid gap-5">
             <ControlGroup
               title="Field"
@@ -432,20 +342,8 @@ export function VibeOrbPlayground() {
               onChange={updateRecipe}
             />
             <ControlGroup
-              title="Surface"
-              controls={SURFACE_CONTROLS}
-              recipe={recipe}
-              onChange={updateRecipe}
-            />
-            <ControlGroup
               title="Motion"
               controls={MOTION_CONTROLS}
-              recipe={recipe}
-              onChange={updateRecipe}
-            />
-            <ControlGroup
-              title="Response"
-              controls={RESPONSE_CONTROLS}
               recipe={recipe}
               onChange={updateRecipe}
             />

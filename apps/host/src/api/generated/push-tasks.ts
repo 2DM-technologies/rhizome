@@ -225,21 +225,11 @@ export const PUSH_TASKS = {
       output_schema: {
         type: "object",
         additionalProperties: false,
-        required: [
-          "version",
-          "seed",
-          "palette",
-          "contrast",
-          "field",
-          "surface",
-          "motion",
-          "response",
-          "confidence",
-        ],
+        required: ["version", "seed", "palette", "contrast", "field", "energy", "confidence"],
         properties: {
           version: {
             type: "integer",
-            const: 1,
+            const: 2,
           },
           seed: {
             type: "string",
@@ -274,24 +264,14 @@ export const PUSH_TASKS = {
           field: {
             type: "object",
             additionalProperties: false,
-            required: ["grain", "roughness", "warp", "cellularity", "anisotropy"],
+            required: ["grain", "warp", "anisotropy"],
             properties: {
               grain: {
                 type: "number",
                 minimum: 0,
                 maximum: 1,
               },
-              roughness: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
               warp: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              cellularity: {
                 type: "number",
                 minimum: 0,
                 maximum: 1,
@@ -303,91 +283,10 @@ export const PUSH_TASKS = {
               },
             },
           },
-          surface: {
-            type: "object",
-            additionalProperties: false,
-            required: ["gloss", "glow", "rim", "grainOverlay"],
-            properties: {
-              gloss: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              glow: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              rim: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              grainOverlay: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-            },
-          },
-          motion: {
-            type: "object",
-            additionalProperties: false,
-            required: ["drift", "turbulence", "pulseAmplitude", "pulsePeriod", "spin"],
-            properties: {
-              drift: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              turbulence: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              pulseAmplitude: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              pulsePeriod: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              spin: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-            },
-          },
-          response: {
-            type: "object",
-            additionalProperties: false,
-            required: ["viscosity", "reactivity", "splash", "settle"],
-            properties: {
-              viscosity: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              reactivity: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              splash: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-              settle: {
-                type: "number",
-                minimum: 0,
-                maximum: 1,
-              },
-            },
+          energy: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
           },
           confidence: {
             type: "number",

@@ -6,6 +6,7 @@ import {
   MAX_ORB_COLORS,
   ORB_PRESETS,
   normalizeOrbRecipe,
+  orbMotionForEnergy,
   orbSeedVector,
 } from "../src/orb/recipe.ts";
 import {
@@ -29,6 +30,7 @@ test("normalizes the draft renderer recipe into bounded inputs", () => {
       })),
     ],
     contrast: Number.POSITIVE_INFINITY,
+    energy: 1.5,
     field: { ...ORB_PRESETS.bloom.field, warp: -0.5, grain: 1.5 },
   });
 
@@ -39,6 +41,24 @@ test("normalizes the draft renderer recipe into bounded inputs", () => {
   expect(normalized.contrast).toBe(0);
   expect(normalized.field.warp).toBe(0);
   expect(normalized.field.grain).toBe(1);
+  expect(normalized.energy).toBe(1);
+});
+
+test("energy keeps all interior motion within a restrained, monotonic range", () => {
+  const low = orbMotionForEnergy(0);
+  const middle = orbMotionForEnergy(0.5);
+  const high = orbMotionForEnergy(1);
+  expect(low).toEqual({ drift: 0.12, turbulence: 0.1, spin: 0.08 });
+  expect(high.drift).toBeCloseTo(0.3);
+  expect(high.turbulence).toBeCloseTo(0.28);
+  expect(high.spin).toBeCloseTo(0.22);
+  for (const key of ["drift", "turbulence", "spin"] as const) {
+    expect(middle[key]).toBeGreaterThan(low[key]);
+    expect(middle[key]).toBeLessThan(high[key]);
+  }
+  expect(orbMotionForEnergy(-1)).toEqual(low);
+  expect(orbMotionForEnergy(2)).toEqual(high);
+  expect(orbMotionForEnergy(Number.NaN)).toEqual(low);
 });
 
 test("fills a short palette and keeps it usable when every weight is zero", () => {
@@ -82,8 +102,6 @@ test("renders a usable CSS still before WebGL initializes", () => {
 
 test("uses one continuous shader program for every visual personality", () => {
   expect(ORB_SHADER_SOURCE.fragment).toContain("uniform vec3 u_colors[6]");
-  expect(ORB_SHADER_SOURCE.fragment).toContain("uniform float u_cellularity");
-  expect(ORB_SHADER_SOURCE.fragment).toContain("uniform float u_reactivity");
   expect(ORB_SHADER_SOURCE.fragment).not.toContain("sampler2D");
   expect(Object.keys(ORB_PRESETS)).toEqual(["bloom", "ember", "tideglass", "lichen"]);
 });
@@ -104,6 +122,11 @@ test("strictly reads persisted recipes and falls back deterministically by Vibe 
   });
   expect(parseOrbVisualRecipe(recipe)).toEqual(recipe);
   expect(parseOrbVisualRecipe({ ...recipe, contrast: 2 })).toBeUndefined();
+  expect(parseOrbVisualRecipe({ ...recipe, version: 1 })).toBeUndefined();
+  expect(parseOrbVisualRecipe({ ...recipe, energy: undefined })).toBeUndefined();
+  expect(parseOrbVisualRecipe({ ...recipe, energy: Number.NaN })).toBeUndefined();
+  expect(parseOrbVisualRecipe({ ...recipe, energy: -0.1 })).toBeUndefined();
+  expect(parseOrbVisualRecipe({ ...recipe, energy: 1.1 })).toBeUndefined();
   expect(
     parseOrbVisualRecipe({ ...recipe, palette: [{ color: "red", weight: 1 }] }),
   ).toBeUndefined();
@@ -115,12 +138,8 @@ test("strictly reads persisted recipes and falls back deterministically by Vibe 
   ]);
   expect(fallbackOrbRecipe("one").seed).not.toBe(fallbackOrbRecipe("two").seed);
   expect(pending.loading).toBeTrue();
-  expect(pending.recipe.surface).toEqual({
-    gloss: 0.98,
-    glow: 0.18,
-    rim: 0.78,
-    grainOverlay: 0.02,
-  });
+  expect(pending.recipe.version).toBe(2);
+  expect(pending.recipe.energy).toBe(0.45);
   expect(inferred).toEqual({ recipe, loading: false });
   expect(orbRecipeForVibe({ uri: "rnet://vibe/one", inferred: {} })).toEqual(
     fallbackOrbRecipe("rnet://vibe/one"),
