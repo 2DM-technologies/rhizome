@@ -23,6 +23,8 @@ export interface PushTaskDefinition {
   elementKinds?: MediaElement["kind"][];
   prompt: string;
   outputSchema: JSONSchema;
+  /** Semantic constraints that the provider's JSON Schema subset cannot express. */
+  validateOutput?: (output: TaskOutput) => boolean;
   rules?: (context: VibeContext) => TaskOutput | undefined;
   /** Bounded deterministic data gathered inside the push operation before a Vibe call. */
   prepareVibeContext?: (input: PrepareVibeContextInput) => Promise<Record<string, unknown>>;
