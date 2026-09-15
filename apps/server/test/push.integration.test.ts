@@ -47,6 +47,9 @@ import {
 import { MeterLedger } from "../src/metering/meter-ledger.ts";
 import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import { finalizePush, PushService } from "../src/push/push-service.ts";
+import { PushActivity, readObjectInferenceStatus } from "../src/push/inference-status.ts";
+import { readTaskInferenceStatus } from "../src/push/task-inference-status.ts";
+import { Problem } from "../src/errors.ts";
 import { installedPushTasks } from "../src/push/installed-tasks.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
 import { PNG, pngHeader } from "./fixtures/push-images.ts";
@@ -242,7 +245,15 @@ async function imageFor(
 ) {
   const uuid = uuidv7();
   const contentHash = `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`;
-  await createBlobStore(config).put("elements", contentHash, bytes, mime);
+  const blobs = createBlobStore(config);
+  await blobs.put("elements", contentHash, bytes, mime);
+  // S3rver acknowledges the transform before its file stream finishes flushing.
+  // Wait for the fixture's full payload before testing the runtime's size checks.
+  const deadline = Date.now() + 5000;
+  while ((await blobs.get("elements", contentHash))?.bytes.byteLength !== bytes.byteLength) {
+    if (Date.now() >= deadline) throw new Error("S3rver fixture did not finish writing");
+    await Bun.sleep(5);
+  }
   await db.insert(mediaElements).values({
     uuid,
     ownerUuid: DEV_USER_UUID,
@@ -1498,6 +1509,198 @@ describe("push lifecycle and inferred writes", () => {
     });
     expect(fake.requests[0]!.input).not.toContain('"vibe"');
     expect(fake.requests[0]!.input).not.toContain("Plant");
+  });
+});
+
+describe("review regressions", () => {
+  test("tombstoned elements are absent from selections, object context, and status", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    const image = await imageFor(ids[0]!);
+    await db
+      .update(mediaElements)
+      .set({ alt: "deleted-private-caption" })
+      .where(eq(mediaElements.uuid, image));
+    const fake = new FakeModelConnector();
+    const app = application(fake);
+    expect((await api(app, `/elements/${image}`, undefined, owner, "DELETE")).status).toBe(204);
+    const implicit = await run(app, vibeUuid, { level: "element", task: elementTask.name });
+    expect(implicit.result).toMatchObject({ llm_calls: 0, elements: { selected: 0 } });
+    expect(
+      (
+        await api(app, `/vibes/${vibeUuid}/push`, {
+          level: "element",
+          task: elementTask.name,
+          selection: [`rnet://element/${image}`],
+        })
+      ).status,
+    ).toBe(422);
+    const status = await (await api(app, `/objects/${ids[0]}/inference-status`)).json();
+    expect(status.records.map((record: { uri: string }) => record.uri)).toEqual([
+      `rnet://object/${ids[0]}`,
+    ]);
+    await run(app, vibeUuid);
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]!.input).not.toContain("deleted-private-caption");
+    expect(fake.requests[0]!.attachments).toBeUndefined();
+  });
+
+  test("an element deleted after acceptance is skipped before payload dispatch", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    const image = await imageFor(ids[0]!);
+    const entered = gate(),
+      release = gate();
+    const original = PushService.prototype.runPush;
+    const held = spyOn(PushService.prototype, "runPush").mockImplementation(async function (
+      this: PushService,
+      ...args
+    ) {
+      entered.resolve();
+      await release.promise;
+      return original.apply(this, args);
+    });
+    const fake = new FakeModelConnector();
+    const app = application(fake);
+    try {
+      const operation = await accept(app, vibeUuid, { level: "element", task: elementTask.name });
+      await entered.promise;
+      expect((await api(app, `/elements/${image}`, undefined, owner, "DELETE")).status).toBe(204);
+      release.resolve();
+      expect((await poll(app, operation.operation_id)).result).toMatchObject({
+        llm_calls: 0,
+        elements: { written: 0, skipped: 1 },
+        skipped: [{ uri: `rnet://element/${image}`, reason: "not_applicable" }],
+      });
+      expect(fake.requests).toHaveLength(0);
+    } finally {
+      release.resolve();
+      held.mockRestore();
+    }
+  });
+
+  test("an in-flight element deletion cannot be rewritten and preserves sibling writes", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const removed = await imageFor(ids[0]!);
+    await imageFor(ids[1]!);
+    const fake = new FakeModelConnector({
+      respond: async (request) => {
+        await db
+          .update(mediaElements)
+          .set({ tombstonedAt: new Date() })
+          .where(eq(mediaElements.uuid, removed));
+        return responseFor(request);
+      },
+    });
+    const result = (
+      await run(application(fake), vibeUuid, { level: "element", task: elementTask.name })
+    ).result;
+    expect(result).toMatchObject({
+      elements: { written: 1, skipped: 1 },
+      usage: { tokens_in: 100 },
+    });
+    expect(
+      (await db.query.mediaElements.findFirst({ where: eq(mediaElements.uuid, removed) }))
+        ?.inferredRev,
+    ).toBe(0);
+  });
+
+  test("invalid jsonb strings skip only their records and retain valid Unicode and later chunks", async () => {
+    const { vibeUuid } = await fixture(5);
+    const labels = ["bad\u0000text", "bad\ud800", "bad\udfff", "valid 🌿", "later"];
+    const fake = new FakeModelConnector({
+      respond: (request) => {
+        const result = responseFor(request);
+        const output = result.output as { results: { result: { label: string } }[] };
+        for (const record of output.results) record.result = { label: labels.shift()! };
+        return result;
+      },
+    });
+    const operation = await run(
+      application(fake, {
+        pushLimits: { ...DEFAULT_PUSH_LIMITS, maxObjectsPerCall: 2 },
+      }),
+      vibeUuid,
+    );
+    expect(operation.status).toBe("done");
+    expect(operation.result).toMatchObject({
+      objects: { written: 2, skipped: 3 },
+      usage: { tokens_in: 300 },
+    });
+    if (operation.result.level === "vibe") throw new Error("Expected object results");
+    expect(operation.result.skipped.map((record) => record.reason)).toEqual([
+      "invalid_output",
+      "invalid_output",
+      "invalid_output",
+    ]);
+    const vibeFake = new FakeModelConnector({
+      respond: () => ({
+        usage,
+        output: {
+          title: "Valid title",
+          summary: "invalid\u0000summary",
+          tags: ["valid"],
+          confidence: 0.5,
+        },
+      }),
+    });
+    expect(
+      (await run(application(vibeFake), vibeUuid, { level: "vibe", task: summarize.name })).result,
+    ).toMatchObject({
+      vibe: { outcome: "skipped", reason: "invalid_output" },
+      usage: { tokens_in: 100 },
+    });
+  });
+
+  test("a conflict does not leave stale errors after the already-running task completes", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    const activity = new PushActivity();
+    activity.begin(vibeUuid, [objectTask]);
+    const fake = new FakeModelConnector({
+      respond: (request) => {
+        activity.rejected(
+          vibeUuid,
+          objectTask,
+          new Problem(409, "operation_in_progress", "Conflict", "Already running"),
+        );
+        return responseFor(request);
+      },
+    });
+    await run(application(fake), vibeUuid);
+    activity.end(vibeUuid);
+    expect(
+      (await readObjectInferenceStatus(db, activity, ids[0]!, ownerActor)).records[0]?.tasks,
+    ).toEqual([]);
+    expect(
+      await readTaskInferenceStatus(
+        db,
+        activity,
+        tasks,
+        vibeUuid,
+        { level: "object", task: objectTask.name },
+        ownerActor,
+      ),
+    ).toMatchObject({ status: "done" });
+  });
+
+  test("deleting a Vibe never gives its push-only invoker access to member lists", async () => {
+    const { vibeUuid } = await fixture(1);
+    await db.insert(grants).values({ vibeUuid, subject: "client:rbudget", scopes: ["push"] });
+    const app = application();
+    const operation = await accept(
+      app,
+      vibeUuid,
+      { level: "object", task: objectTask.name },
+      clientToken,
+    );
+    const completed = await poll(app, operation.operation_id);
+    expect(completed.result).toMatchObject({ objects: { written: 1 } });
+    expect(
+      (await api(app, `/operations/${operation.operation_id}`, undefined, clientToken)).status,
+    ).toBe(403);
+    await db.delete(vibes).where(eq(vibes.uuid, vibeUuid));
+    expect(
+      (await api(app, `/operations/${operation.operation_id}`, undefined, clientToken)).status,
+    ).toBe(403);
+    expect((await api(app, `/operations/${operation.operation_id}`)).status).toBe(200);
   });
 });
 

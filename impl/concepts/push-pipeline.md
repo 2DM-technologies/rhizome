@@ -205,7 +205,7 @@ Plan §3 also names `stream`; it is added in M5 with its first consumer (the har
 - `POST {baseUrl}/v1/responses` with `service_tier: "flex"`, `store: false`, `instructions` = PROMPT.md, `input` = one user turn of assembled context, `text.format = { type: "json_schema", name, strict: true, schema }`, `reasoning.effort`, `max_output_tokens`, `metadata.rhizome_operation`.
 - Retries: ≤ 4 attempts on network errors, 408, 409, 429 (flex capacity shortfall is a 429 and is uncharged), 5xx; exponential backoff honoring `Retry-After`. `timeoutMs` (10 min; the flex guide recommends 15, and the operation wall ceiling bounds the run) is one deadline for the whole `complete` call, attempts and backoff included: a backoff sleep is capped by the remaining deadline and interrupted by the operation's signal, so a `Retry-After` past the deadline ends retrying with the last failure's kind. **Never** escalates to `service_tier: "default"`: that silently doubles the rate the plan budgeted.
 - Mapping: every response or failure becomes exactly one result or error kind, per the table below; a row that reached a billed response carries its usage. There is no other exit, and a unit case covers every row.
-- Usage: `input_tokens`, `input_tokens_details.cached_tokens`, `cache_write_tokens`, `output_tokens`, `output_tokens_details.reasoning_tokens`, the echoed `service_tier`, `x-request-id`.
+- Usage: `input_tokens`, `input_tokens_details.cached_tokens`, `input_tokens_details.cache_write_tokens`, `output_tokens`, `output_tokens_details.reasoning_tokens`, the echoed `service_tier`, `x-request-id`. Cache reads and writes are disjoint portions of input usage; absent or null optional details default to zero, and impossible totals are rejected before pricing. The nested cache-write field was reverified against the [provider prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) on 2026-09-15.
 - Tier: the echoed `service_tier` can differ from the requested one (verified), so usage is priced against it after normalization: `flex` → `flex`, `default` → `standard`; a missing echo is priced at the requested tier with `tierAssumed: true`; any other value is priced at `standard`, the higher known rate, with the raw string kept in `servedTierRaw` and `tierAssumed: true`. `ledger.record` persists tokens before it prices, and `reportCost` throws only on an unknown model, which boot prevents (§4.6).
 - The OpenAI Batch API is a named non-goal: it needs persisted provider job ids and a restart-surviving poller, which is the durable-execution work CONFORMANCE defers to M7. Flex is priced at batch rates.
 - Models: the connector serves `gpt-5.6-luna`, the model the plan budgets for push: it takes text and image input and supports structured outputs on the Responses API. `models` lists it alone; boot rejects a configured default target the connector does not serve (§4.6), so nothing is ever priced at zero.
@@ -714,6 +714,8 @@ The abort vocabulary is the plan's, unchanged. Budgets are out of M3's scope.
 
 ### 7.1 Module (`services/inferred-writer.ts`)
 
+After schema validation, output strings and property names must be valid PostgreSQL JSON: NUL and unpaired UTF-16 surrogates are rejected as `invalid_output` before writing. Object/element validation is per record, so valid siblings and later chunks still write.
+
 Internal, no route. `MediaObjectsService.setInferred` stays the `write:inferred` path for external subjects and keeps deriving the writer from the actor; M3 changes it in one place, to bump `inferred_rev` (§9) instead of querying the revision log for the next number. The store writer fixes the key via `storeTaskKey` and never emits `durable`.
 
 ```ts
@@ -753,11 +755,13 @@ Per object rather than per chunk so a durable preserve never rolls back neighbou
 
 ### 7.3 Element algorithm
 
+Tombstoned elements are excluded from acceptance, runtime context, and status joins. An element deleted after acceptance is skipped as `not_applicable`; the locked writer also checks the tombstone so an in-flight completion cannot revise a deleted element. Deletion does not discard billed usage or valid sibling writes.
+
 `writeElementTaskInferred` follows the object algorithm against `media_elements` (FOR UPDATE, durable guard, whole-block validation against `media-element.json`'s `properties.inferred`, `UPDATE media_elements SET inferred, inferred_rev = inferred_rev + 1`, a `media_element_revisions` row with `block = 'inferred'`, `rev = inferred_rev`, `actor = 'rhizome'`, and `operation_uuid`).
 
 ### 7.4 Vibe algorithm
 
-Same shape on `vibes` with `rev = rev + 1` and a `vibe_revisions` row via `snapshotVibe` (moved to `services/vibe-snapshot.ts` so `VibesService` and the writer share it). Vibe-level output is never `null` (§5.3), so the writer's outcomes are `written` and `preserved_durable`; a run that never reaches the write reports `vibe.outcome = "skipped"` with its reason (§6.5). This is the first write path for `vibes.inferred`; it lives here so push can never touch title, pull, or grants. `vibe_revisions` gains an `operation_uuid` column (§9) so Vibe-level writes link to their run the way object and element revisions do; pull's existing Vibe revisions leave it null. A Vibe deleted mid-run has no row to lock: the write throws, the run finalizes as `failed`, and the operation stays pollable by its owner and invoker because `operations.vibe_uuid` nulls on delete and the operation lookup already handles that case.
+Same shape on `vibes` with `rev = rev + 1` and a `vibe_revisions` row via `snapshotVibe` (moved to `services/vibe-snapshot.ts` so `VibesService` and the writer share it). Vibe-level output is never `null` (§5.3), so the writer's outcomes are `written` and `preserved_durable`; a run that never reaches the write reports `vibe.outcome = "skipped"` with its reason (§6.5). This is the first write path for `vibes.inferred`; it lives here so push can never touch title, pull, or grants. `vibe_revisions` gains an `operation_uuid` column (§9) so Vibe-level writes link to their run the way object and element revisions do; pull's existing Vibe revisions leave it null. A Vibe deleted mid-run has no row to lock: the write throws, the run finalizes as `failed`, and the operation stays pollable by its owner because `operations.vibe_uuid` nulls on delete and the operation lookup already handles that case.
 
 ### 7.5 Concurrency
 

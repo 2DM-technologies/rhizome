@@ -7,7 +7,7 @@ import {
   type SkipReason,
   type TaskInferenceStatusQuery,
 } from "@rhizome/store-contract";
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Actor } from "../auth.ts";
 import type { BlobStore } from "../blobs/types.ts";
@@ -45,6 +45,7 @@ import { schemaProblem } from "../services/problems.ts";
 import { uriId } from "../services/uris.ts";
 import { VibesService } from "../services/vibe-service.ts";
 import { batchEnvelope, packChunks, unpackResults } from "./chunking.ts";
+import { isDatabaseJson } from "./output-json.ts";
 import {
   assembleObjectContext,
   assembleElementContext,
@@ -335,6 +336,7 @@ export class PushService {
             output = task.transformVibeOutput?.(output, context.vibe) ?? output;
             if (
               !jsonSchema(task.outputSchema).validate(output).ok ||
+              !isDatabaseJson(output) ||
               !validateInstalledTaskOutput(task, output, context.vibe)
             )
               state.vibe = { outcome: "skipped", reason: "invalid_output" };
@@ -372,7 +374,11 @@ export class PushService {
               yield { uuid: record.object.uuid, ...context };
             }
           } else {
-            for (const element of await loadElements(db, pending)) {
+            const elements = await loadElements(db, pending);
+            const liveIds = new Set(elements.map((element) => element.uuid));
+            for (const uuid of pending)
+              if (!liveIds.has(uuid)) state.outcomes.set(uuid, { outcome: "not_applicable" });
+            for (const element of elements) {
               if (controller.signal.aborted) {
                 stopForCeiling();
                 return;
@@ -466,6 +472,10 @@ export class PushService {
               break;
             }
             const output = outputs[index]!;
+            if (!isDatabaseJson(output)) {
+              state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
+              continue;
+            }
             const input = {
               task: task.name,
               entry: output === null ? null : toEntry(output, state.producer!),
@@ -487,7 +497,11 @@ export class PushService {
           if (state.status !== "done") break;
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Push execution failed", {
+        operationUuid,
+        kind: error instanceof ModelConnectorError ? error.kind : "internal_error",
+      });
       if (controller.signal.aborted) stopForCeiling();
       else {
         state.status = "failed";
@@ -700,7 +714,13 @@ async function loadContextObjects(
     })
     .from(mediaObjects)
     .leftJoin(mediaObjectElements, eq(mediaObjectElements.mediaObjectUuid, mediaObjects.uuid))
-    .leftJoin(mediaElements, eq(mediaElements.uuid, mediaObjectElements.mediaElementUuid))
+    .leftJoin(
+      mediaElements,
+      and(
+        eq(mediaElements.uuid, mediaObjectElements.mediaElementUuid),
+        isNull(mediaElements.tombstonedAt),
+      ),
+    )
     .where(inArray(mediaObjects.uuid, [...uuids]))
     .groupBy(mediaObjects.uuid);
   const byId = new Map(rows.map((row) => [row.object.uuid, row]));
@@ -715,11 +735,10 @@ async function loadElements(db: Database, uuids: readonly string[]): Promise<DbM
   const rows = await db
     .select()
     .from(mediaElements)
-    .where(inArray(mediaElements.uuid, [...uuids]));
+    .where(and(inArray(mediaElements.uuid, [...uuids]), isNull(mediaElements.tombstonedAt)));
   const byId = new Map(rows.map((row) => [row.uuid, row]));
-  return uuids.map((uuid) => {
+  return uuids.flatMap((uuid) => {
     const record = byId.get(uuid);
-    if (!record) throw new Error("Push element disappeared");
-    return record;
+    return record ? [record] : [];
   });
 }
