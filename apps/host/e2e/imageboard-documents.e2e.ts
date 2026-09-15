@@ -28,8 +28,6 @@ test("imageboard document cards load the full PDF only when opened", async ({ pa
   expect(payloadRequests).toBe(0);
 
   await card.getByRole("button", { name: `Open object ${OBJECT_URI}`, exact: true }).click();
-  await expect(
-    page.getByRole("link", { name: `Download payload rnet://element/${ELEMENT_ID}` }),
-  ).toHaveAttribute("href", /^blob:/);
+  await expect(page.locator('object[type="application/pdf"]')).toBeAttached();
   expect(payloadRequests).toBe(1);
 });

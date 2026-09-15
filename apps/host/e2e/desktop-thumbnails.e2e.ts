@@ -48,7 +48,7 @@ for (const available of [true, false]) {
           }),
         )
         .toEqual([64, 64]);
-      await expect(image).toHaveCSS("width", "18px");
+      await expect(image).toHaveCSS("width", "22px");
       for (let reveal = 0; reveal < 2; reveal++) {
         await page
           .getByRole("region", { name: "Pinned apps" })

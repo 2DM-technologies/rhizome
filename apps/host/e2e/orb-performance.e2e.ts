@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { ORB_PRESETS } from "../src/orb/recipe.ts";
-import { installMockStore } from "./support/mockStore.ts";
+import { installMockStore, VIBE_ID } from "./support/mockStore.ts";
 
 async function probeGraphics(page: Page) {
   await page.addInitScript(() => {
@@ -41,6 +41,28 @@ async function graphics(page: Page) {
       ).__orbPerformance,
   );
 }
+
+test("an idle Vibe stops drawing its header and active dock orbs across status polls", async ({
+  page,
+}) => {
+  const store = await installMockStore(page);
+  store.vibes[0]!.inferred = {
+    "rhizome:vibe-orb": { model: "test", properties: { ...ORB_PRESETS.bloom } },
+  };
+  await probeGraphics(page);
+  await page.goto(`/vibes/${VIBE_ID}`);
+  await page.mouse.move(0, 0);
+  const hero = page.getByLabel("Spending Vibe orb");
+  await expect(hero.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "false");
+  const active = page.locator("[data-dock-app-slot]");
+  await expect(active.locator('[data-vibe-orb-renderer="raster"] img')).toBeVisible();
+  await expect(active.locator("canvas")).toHaveCount(0);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  const idle = await graphics(page);
+  await page.clock.runFor(11_000);
+  expect(await graphics(page)).toEqual(idle);
+});
 
 test("passing over cards skips live renderers, and repeated hover reuses the canvas and program", async ({
   page,
@@ -267,8 +289,9 @@ test("icon draws are capped on fast displays, event bursts coalesce, and settled
   for (const rate of result) {
     expect(rate.draws, `${rate.hz} Hz`).toBeGreaterThanOrEqual(28);
     expect(rate.draws, `${rate.hz} Hz`).toBeLessThanOrEqual(30);
-    expect(rate.elapsed).toBeGreaterThan(0.96);
-    expect(rate.elapsed).toBeLessThanOrEqual(1.01);
+    // Shader time follows the current 1.5× visual playback speed at every refresh rate.
+    expect(rate.elapsed).toBeGreaterThan(0.96 * 1.5);
+    expect(rate.elapsed).toBeLessThanOrEqual(1.01 * 1.5);
     expect(rate.buffer).toEqual([66, 66]);
     expect(rate.uploads).toBe(0);
     expect(rate.allocations).toBe(0);

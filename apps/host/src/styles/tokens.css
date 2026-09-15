@@ -32,16 +32,18 @@
 :root {
   --rz-control-scheme: light;
   --rz-content-scheme: dark;
-  --rz-wallpaper:
+  --rz-wallpaper-light:
     linear-gradient(rgb(255 255 255 / 75%), rgb(255 255 255 / 75%)),
     url("../assets/brand/wallpaper.png");
+  --rz-wallpaper-dark: url("../assets/brand/wallpaper-dark.png");
+  --rz-wallpaper: var(--rz-wallpaper-light);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --rz-control-scheme: dark;
     --rz-content-scheme: light;
-    --rz-wallpaper: url("../assets/brand/wallpaper-dark.png");
+    --rz-wallpaper: var(--rz-wallpaper-dark);
   }
 }
 
@@ -49,15 +51,13 @@
 [data-theme="light"] {
   --rz-control-scheme: light;
   --rz-content-scheme: dark;
-  --rz-wallpaper:
-    linear-gradient(rgb(255 255 255 / 75%), rgb(255 255 255 / 75%)),
-    url("../assets/brand/wallpaper.png");
+  --rz-wallpaper: var(--rz-wallpaper-light);
 }
 
 [data-theme="dark"] {
   --rz-control-scheme: dark;
   --rz-content-scheme: light;
-  --rz-wallpaper: url("../assets/brand/wallpaper-dark.png");
+  --rz-wallpaper: var(--rz-wallpaper-dark);
 }
 
 :root,

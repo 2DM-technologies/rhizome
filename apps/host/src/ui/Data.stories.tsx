@@ -7,7 +7,7 @@ import { EntityRow } from "./EntityRow.tsx";
 import { LegendRow } from "./LegendRow.tsx";
 import { StatCard } from "./StatCard.tsx";
 import { TrackRow } from "./TrackRow.tsx";
-import { orbs, spendRows, spendSlices } from "./fixtures.ts";
+import { marks, spendRows, spendSlices } from "./fixtures.ts";
 
 const meta = { title: "Data" } satisfies Meta;
 export default meta;
@@ -46,7 +46,7 @@ export const Entities: Story = {
 export const MediaPreview: Story = {
   render: () => (
     <div className="flex aspect-[4/3] w-72 items-center justify-center overflow-hidden rounded-card bg-canvas">
-      <ElementPreview title="Vibe orb" kind="image" mime="image/png" src={orbs.a} />
+      <ElementPreview title="App artwork" kind="image" mime="image/png" src={marks.app} />
     </div>
   ),
 };

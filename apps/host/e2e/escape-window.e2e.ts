@@ -38,7 +38,8 @@ test("Escape keeps a pending title save open", async ({ page }) => {
     await route.fallback();
   });
   await page.goto(`/vibes/${VIBE_ID}`);
-  await page.getByRole("button", { name: "Edit Vibe title" }).click();
+  await page.getByRole("button", { name: "Vibe options", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit title", exact: true }).click();
   const title = page.getByRole("textbox", { name: "Vibe title", exact: true });
   await title.fill("Saved after Escape");
   try {
@@ -72,7 +73,8 @@ test("Escape dismisses the launcher before closing the window", async ({ page })
 test("Escape cancels title editing first and leaves remembered routes alone", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
   const surface = page.locator(`[data-surface-id="vibe:${VIBE_ID}"][data-view-mode]`);
-  await page.getByRole("button", { name: "Edit Vibe title" }).click();
+  await page.getByRole("button", { name: "Vibe options", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit title", exact: true }).click();
   const title = page.getByRole("textbox", { name: "Vibe title", exact: true });
   await title.fill("Discard this draft");
   await title.press("Escape");

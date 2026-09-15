@@ -12,12 +12,13 @@ import { useSession } from "../session/session.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
 import { uuidOf } from "../api/uris.ts";
 import { Button, IconButton } from "../ui/index.ts";
-import { CheckIcon, EditIcon } from "../ui/icons.tsx";
+import { CheckIcon } from "../ui/icons.tsx";
 import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
-import { InferredVibeView, resolveVibeView } from "./vibe-view/InferredVibeView.tsx";
+import { InferredVibeView } from "./vibe-view/InferredVibeView.tsx";
+import { resolveVibeView } from "./vibe-view/utils.ts";
 import { PushControl } from "./PushControl.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 import { VibeOverview } from "./VibeOverview.tsx";
@@ -26,6 +27,7 @@ import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 import { VibeActionsMenu } from "./VibeActionsMenu.tsx";
+import { DeleteVibeDialog } from "./DeleteVibeDialog.tsx";
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const sourceConnectionReturn = useSourceConnectionReturn({
@@ -92,6 +94,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   }
 
   function confirmVibeDeletion() {
+    if (!isOwner || deleteVibe.isPending) return;
     deleteVibe.mutate(
       { params: { path: { id: uuid } } },
       { onSuccess: () => close(surfaceId({ kind: "vibe", uuid })) },
@@ -107,7 +110,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
           <div className="flex min-w-0 items-center gap-4">
             <ProceduralVibeOrb
               recipe={orbVisual.recipe}
-              motion="continuous"
+              motion="interaction"
               loading={orbVisual.loading}
               size={72}
               label={`${vibe.data.title} Vibe orb`}
@@ -115,7 +118,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
             {isOwner ? (
               <form
                 onSubmit={rename}
-                className="group/title relative min-w-0"
+                className="relative min-w-0"
                 onKeyDown={(event) => {
                   if (event.key !== "Escape" || titleDraft === null) return;
                   event.preventDefault();
@@ -127,24 +130,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                 }}
               >
                 {titleDraft === null ? (
-                  <>
-                    <h1 className="text-heading text-primary">{vibe.data.title}</h1>
-                    <IconButton
-                      aria-label="Edit Vibe title"
-                      title="Edit title"
-                      size="sm"
-                      tone="ghost"
-                      className="absolute -left-8 top-0 opacity-0 group-hover/title:opacity-100 group-focus-within/title:opacity-100 [@media(hover:none)]:opacity-100"
-                      onClick={(event) => {
-                        // This DOM button becomes the submit control when editing starts.
-                        event.preventDefault();
-                        update.reset();
-                        setTitleDraft(vibe.data!.title);
-                      }}
-                    >
-                      <EditIcon />
-                    </IconButton>
-                  </>
+                  <h1 className="text-heading text-primary">{vibe.data.title}</h1>
                 ) : (
                   <>
                     <input
@@ -163,7 +149,7 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                       title="Save title (Enter)"
                       size="sm"
                       tone="ghost"
-                      className="absolute -left-8 top-0"
+                      className="absolute -right-8 top-0"
                       disabled={!title.trim() || update.isPending}
                     >
                       <CheckIcon />
@@ -181,24 +167,24 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       actions={
         vibe.data ? (
           <div className="flex items-center gap-2">
-            {isOwner && confirmDelete ? (
-              <>
-                <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  aria-label="Confirm delete Vibe"
-                  onClick={confirmVibeDeletion}
-                  disabled={deleteVibe.isPending}
-                >
-                  {deleteVibe.isPending ? "Deleting…" : "Confirm delete"}
-                </Button>
-              </>
-            ) : null}
             <VibeActionsMenu
               uuid={uuid}
-              onDelete={isOwner && !confirmDelete ? () => setConfirmDelete(true) : undefined}
+              onEditTitle={
+                isOwner && titleDraft === null
+                  ? () => {
+                      update.reset();
+                      setTitleDraft(vibe.data!.title);
+                    }
+                  : undefined
+              }
+              onDelete={
+                isOwner
+                  ? () => {
+                      deleteVibe.reset();
+                      setConfirmDelete(true);
+                    }
+                  : undefined
+              }
             />
           </div>
         ) : null
@@ -206,8 +192,16 @@ export function VibeSurface({ uuid }: { uuid: string }) {
     >
       {vibe.isPending ? <Pending label="vibe" /> : null}
       {vibe.isError ? <Failed error={vibe.error} /> : null}
-      {deleteVibe.isError ? <Failed error={deleteVibe.error} /> : null}
       {update.isError ? <Failed error={update.error} /> : null}
+      {isOwner && vibe.data && confirmDelete ? (
+        <DeleteVibeDialog
+          title={vibe.data.title}
+          pending={deleteVibe.isPending}
+          error={deleteVibe.error}
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={confirmVibeDeletion}
+        />
+      ) : null}
 
       {vibe.data ? (
         <VibeOverview

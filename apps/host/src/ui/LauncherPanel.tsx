@@ -145,7 +145,7 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
             open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
           )}
         >
-          <div className="flex max-h-full min-h-0 flex-col gap-6 overflow-y-auto px-6 pt-4 pb-5">
+          <div className="flex max-h-full min-h-0 flex-col gap-3 overflow-y-auto px-6 pt-4 pb-5">
             {displayedSections.map((section) => (
               <div
                 key={section.title}

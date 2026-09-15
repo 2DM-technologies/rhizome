@@ -1,9 +1,6 @@
 /** Sample artwork and data for stories. Nothing here ships in the app. */
 import appMark from "../assets/brand/app-mark.png";
-import orb1 from "../assets/orbs/orb-1-44.png";
-import orb2 from "../assets/orbs/orb-2-44.png";
-import orb3 from "../assets/orbs/orb-3-44.png";
-import orb4 from "../assets/orbs/orb-4-44.png";
+import { ORB_PRESETS } from "../orb/recipe.ts";
 import orbHome from "../assets/orbs/orb-home-48.png";
 import orbSm from "../assets/orbs/orb-sm-20.png";
 import orbUser from "../assets/orbs/orb-user-24.png";
@@ -15,10 +12,12 @@ export const orbs = {
   home: orbHome,
   small: orbSm,
   user: orbUser,
-  a: orb1,
-  b: orb2,
-  c: orb3,
-  d: orb4,
+};
+export const orbRecipes = {
+  a: ORB_PRESETS.bloom,
+  b: ORB_PRESETS.tideglass,
+  c: ORB_PRESETS.ember,
+  d: ORB_PRESETS.lichen,
 };
 export const marks = { app: appMark };
 

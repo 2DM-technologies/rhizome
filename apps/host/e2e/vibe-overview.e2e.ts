@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installMockStore, OBJECT_ID, VIBE_ID } from "./support/mockStore.ts";
 
 test("summary polls task state and shares a row with inferred above the view", async ({ page }) => {
+  await page.clock.install();
   const store = await installMockStore(page);
   const vibe = store.vibes.find((item) => item.uri.endsWith(VIBE_ID))!;
   const original = store.objects.get(OBJECT_ID)!;
@@ -49,6 +50,7 @@ test("summary polls task state and shares a row with inferred above the view", a
   await expect(summary.getByRole("alert")).toHaveText("interrupted");
   await expect(skeleton).toHaveCount(0);
   status = "running";
+  await page.clock.fastForward(10_100);
   await expect(skeleton).toBeVisible();
   vibe.inferred["rhizome:summarize"] = {
     model: "mock/rhizome",
@@ -60,6 +62,7 @@ test("summary polls task state and shares a row with inferred above the view", a
   await expect(skeleton).toHaveCount(0);
   await expect(summary.getByRole("alert")).toHaveCount(0);
   status = "running";
+  await page.clock.fastForward(10_100);
   await expect(
     page.getByLabel("Vibe inferred", { exact: true }).locator(".inferred-block"),
   ).toHaveAttribute("data-inference-state", "running");
@@ -143,6 +146,7 @@ test("tweets retain their original centered reading width below the overview", a
 test("Vibe inferred uses object-page skeleton progression across summary and view tasks", async ({
   page,
 }) => {
+  await page.clock.install();
   const store = await installMockStore(page);
   const vibe = store.vibes.find((item) => item.uri.endsWith(VIBE_ID))!;
   vibe.inferred = {};
@@ -188,6 +192,7 @@ test("Vibe inferred uses object-page skeleton progression across summary and vie
   await expect(block).toHaveAttribute("data-inference-state", "idle");
   await expect(inferred.getByRole("alert")).toHaveText("View inference failed");
   statuses["vibe-view"] = "running";
+  await page.clock.fastForward(10_100);
   await expect(block).toHaveAttribute("data-inference-state", "running");
   await expect(inferred.getByRole("alert")).toHaveCount(0);
   statuses["vibe-view"] = "done";

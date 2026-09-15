@@ -96,6 +96,27 @@ test("renders text payloads as inert UTF-8 text instead of iframe documents", ()
   expect(markup).not.toContain("<iframe");
 });
 
+test("uses the native PDF embed while HTML and unknown documents cannot become embedded pages", () => {
+  const pdf = renderToStaticMarkup(
+    <ElementPreview title="Document" kind="document" mime="application/pdf" src="blob:pdf" />,
+  );
+  expect(pdf).toContain('<object data-element-presentation="document"');
+  expect(pdf).toContain('type="application/pdf"');
+  expect(pdf).toContain('data="blob:pdf"');
+  expect(pdf).not.toContain("<iframe");
+  for (const [kind, mime] of [
+    ["text", "text/html"],
+    ["document", "text/html"],
+    ["document", "application/octet-stream"],
+  ]) {
+    const markup = renderToStaticMarkup(
+      <ElementPreview title="Other content" kind={kind} mime={mime} src="blob:other" />,
+    );
+    expect(markup).not.toContain("<object");
+    expect(markup).not.toContain("<iframe");
+  }
+});
+
 test("frames every detailed native element preview with the shared hairline", () => {
   for (const [kind, mime] of [
     ["image", "image/png"],

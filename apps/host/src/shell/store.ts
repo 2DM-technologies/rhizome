@@ -1,14 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import {
-  isVibeSurface,
-  surfaceId,
-  type Surface,
-  type SurfaceId,
-  type VibeSurface,
-  type ViewMode,
-} from "./surfaces.ts";
+import { surfaceId, type Surface, type SurfaceId, type ViewMode } from "./surfaces.ts";
 
 /**
  * Shell state: what exists, not what is focused.
@@ -21,8 +14,8 @@ import {
 interface ShellState {
   /** Reopenable routes in dock order. Only the URL's focused route is mounted. */
   open: Surface[];
-  /** Vibe routes opened in this browser session, most recently opened first. */
-  recentVibeSurfaces: VibeSurface[];
+  /** All routes opened in this browser session, most recently opened first. */
+  recentSurfaces: Surface[];
   /** Last focused window, retained while the bare desktop is showing. */
   lastFocusedSurface: Surface | null;
   /** Presentation inherited by the next surface; focused presentation itself still lives in the URL. */
@@ -41,109 +34,46 @@ export interface OpenSurfaceOptions {
   keepCurrentOpen?: boolean;
 }
 
-export const SHELL_STORE_VERSION = 4;
+export const SHELL_STORE_VERSION = 5;
 
 interface PersistedShellState {
   open: Surface[];
-  recentVibeSurfaces: VibeSurface[];
+  recentSurfaces: Surface[];
   lastFocusedSurface: Surface | null;
   defaultViewMode: ViewMode;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-function isSurface(value: unknown): value is Surface {
-  if (!isRecord(value)) return false;
-  switch (value.kind) {
-    case "import":
-    case "vibes":
-      return true;
-    case "vibe":
-    case "object":
-      return typeof value.uuid === "string";
-    case "dmachine":
-      return typeof value.name === "string";
-    default:
-      return false;
-  }
-}
-
-function uniqueVibeSurfaces(surfaces: readonly Surface[]): VibeSurface[] {
-  const recent: VibeSurface[] = [];
-  const seen = new Set<SurfaceId>();
-  for (const surface of surfaces) {
-    if (!isVibeSurface(surface)) continue;
-    const id = surfaceId(surface);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    recent.push(surface);
-  }
-  return recent;
-}
-
-function recentVibeSurfacesFrom(surfaces: readonly Surface[]): VibeSurface[] {
-  const newestFirst: Surface[] = [];
-  for (let index = surfaces.length - 1; index >= 0; index -= 1) {
-    const surface = surfaces[index];
-    if (surface) newestFirst.push(surface);
-  }
-  return uniqueVibeSurfaces(newestFirst);
-}
-
-/** Add an opened Vibe route to the front of the MRU list without duplicate entries. */
-export function nextRecentVibeSurfaces(
-  recentVibeSurfaces: VibeSurface[],
-  surface: Surface,
-): VibeSurface[] {
-  if (!isVibeSurface(surface)) return recentVibeSurfaces;
-
+/** Add any opened route to the front of the MRU list without duplicate entries. */
+export function nextRecentSurfaces(recentSurfaces: Surface[], surface: Surface): Surface[] {
   const id = surfaceId(surface);
-  const withoutSurface = recentVibeSurfaces.filter((recent) => surfaceId(recent) !== id);
+  const withoutSurface = recentSurfaces.filter((recent) => surfaceId(recent) !== id);
   if (
-    recentVibeSurfaces[0] &&
-    surfaceId(recentVibeSurfaces[0]) === id &&
-    withoutSurface.length === recentVibeSurfaces.length - 1
+    recentSurfaces[0] &&
+    surfaceId(recentSurfaces[0]) === id &&
+    withoutSurface.length === recentSurfaces.length - 1
   ) {
-    return recentVibeSurfaces;
+    return recentSurfaces;
   }
   return [surface, ...withoutSurface];
 }
 
-/** Collapse pre-policy window accumulation while preserving versioned opt-in window sets. */
+function emptyPersistedShellState(): PersistedShellState {
+  return {
+    open: [],
+    recentSurfaces: [],
+    lastFocusedSurface: null,
+    defaultViewMode: "maximized",
+  };
+}
+
+/** Discard superseded alpha session state; the current URL restores the focused route. */
 export function migrateShellPersistedState(
   persistedState: unknown,
   persistedVersion: number,
 ): unknown {
   if (persistedVersion >= SHELL_STORE_VERSION) return persistedState;
 
-  const record = isRecord(persistedState) ? persistedState : {};
-  const validOpen = Array.isArray(record.open) ? record.open.filter(isSurface) : [];
-  const legacyRecentVibes = Array.isArray(record.recentVibeUuids)
-    ? record.recentVibeUuids.flatMap((uuid): VibeSurface[] =>
-        typeof uuid === "string" ? [{ kind: "vibe", uuid }] : [],
-      )
-    : [];
-  const persistedRecentVibes = Array.isArray(record.recentVibeSurfaces)
-    ? record.recentVibeSurfaces.filter(isSurface)
-    : [];
-  const lastFocusedSurface = isSurface(record.lastFocusedSurface)
-    ? record.lastFocusedSurface
-    : (validOpen.at(-1) ?? null);
-  return {
-    // The legacy store appended new windows, making the final valid entry the best available
-    // proxy for the window the user opened most recently. Version 1 already enforced the
-    // replacement policy, so its deliberately retained window set stays intact.
-    open: persistedVersion < 1 ? validOpen.slice(-1) : validOpen,
-    recentVibeSurfaces: uniqueVibeSurfaces([
-      ...recentVibeSurfacesFrom(validOpen),
-      ...persistedRecentVibes,
-      ...legacyRecentVibes,
-    ]),
-    lastFocusedSurface,
-    defaultViewMode: record.defaultViewMode === "maximized" ? "maximized" : "standard",
-  } satisfies PersistedShellState;
+  return emptyPersistedShellState();
 }
 
 export function nextOpenSurfaces(
@@ -158,10 +88,7 @@ export function nextOpenSurfaces(
 export const useShellStore = create<ShellState>()(
   persist(
     (set) => ({
-      open: [],
-      recentVibeSurfaces: [],
-      lastFocusedSurface: null,
-      defaultViewMode: "maximized",
+      ...emptyPersistedShellState(),
       agentOpen: false,
       launcherOpen: false,
 
@@ -171,13 +98,13 @@ export const useShellStore = create<ShellState>()(
       openSurface: (surface, { keepCurrentOpen = false } = {}) =>
         set((state) => {
           const open = nextOpenSurfaces(state.open, surface, { keepCurrentOpen });
-          const recentVibeSurfaces = nextRecentVibeSurfaces(state.recentVibeSurfaces, surface);
+          const recentSurfaces = nextRecentSurfaces(state.recentSurfaces, surface);
           return open === state.open &&
-            recentVibeSurfaces === state.recentVibeSurfaces &&
+            recentSurfaces === state.recentSurfaces &&
             state.lastFocusedSurface &&
             surfaceId(state.lastFocusedSurface) === surfaceId(surface)
             ? state
-            : { open, recentVibeSurfaces, lastFocusedSurface: surface };
+            : { open, recentSurfaces, lastFocusedSurface: surface };
         }),
 
       closeSurface: (id) =>
@@ -202,11 +129,11 @@ export const useShellStore = create<ShellState>()(
       storage: createJSONStorage(() => sessionStorage),
       version: SHELL_STORE_VERSION,
       migrate: migrateShellPersistedState,
-      // Open windows, recent Vibes, and their shared presentation default are restorable. Bridge
+      // Open windows, recent routes, and their shared presentation default are restorable. Bridge
       // status and panel state would be lies after a reload — nothing is connected or open.
       partialize: (state) => ({
         open: state.open,
-        recentVibeSurfaces: state.recentVibeSurfaces,
+        recentSurfaces: state.recentSurfaces,
         lastFocusedSurface: state.lastFocusedSurface,
         defaultViewMode: state.defaultViewMode,
       }),

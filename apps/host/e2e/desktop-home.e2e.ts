@@ -188,7 +188,8 @@ test("the desktop keeps its DOM while background windows unmount and route short
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(page.locator(`[data-surface-id="object:${OBJECT_ID}"]`)).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Edit Vibe title", exact: true }).click();
+  await page.getByRole("button", { name: "Vibe options", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit title", exact: true }).click();
   await page.getByRole("textbox", { name: "Vibe title", exact: true }).fill("Renamed desktop vibe");
   await page.getByRole("button", { name: "Save Vibe title", exact: true }).click();
   await expect(home).toBeHidden();
