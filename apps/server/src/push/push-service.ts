@@ -285,10 +285,10 @@ export class PushService {
         }
         input = { level, task: task.name, selection: [...new Set(selection)] };
       }
-      let operation: DbOperation;
+      let operation: DbOperation | undefined;
       for (;;) {
         try {
-          operation = await this.acceptPush(vibeUuid, input, actor);
+          operation = await this.acceptPush(vibeUuid, input, actor, true);
           break;
         } catch (error) {
           if (!(error instanceof ActivePushConflict)) throw error;
@@ -299,7 +299,7 @@ export class PushService {
             const previous = completed.request as StoredPushRequest;
             if (
               result?.level === "vibe" &&
-              (result.vibe.outcome !== "skipped" || result.vibe.reason === "not_applicable") &&
+              (result.vibe.outcome !== "skipped" || result.vibe.reason === "preserved_durable") &&
               error.selection.every((uuid) => previous.resolved.selection.includes(uuid))
             ) {
               this.activity.accepted(vibeUuid, task);
@@ -335,6 +335,7 @@ export class PushService {
         }
       }
       this.activity.accepted(vibeUuid, task);
+      if (!operation) return;
       await this.runPush(operation.uuid);
       return operation.uuid;
     } catch (error) {
@@ -357,25 +358,48 @@ export class PushService {
       const current = await this.dependencies.db.query.operations.findFirst({
         where: eq(operations.uuid, operation.uuid),
       });
-      if (!current || current.vibeUuid !== operation.vibeUuid) throw notFound("Vibe");
+      if (!current || current.vibeUuid !== operation.vibeUuid) throw notFound("Operation");
       if (!["queued", "running"].includes(current.status)) return current;
       const remaining = deadline - Date.now();
-      if (remaining <= 0)
+      if (remaining <= 0) {
+        // This process is the sole runner. The wall deadline plus finalization grace has
+        // elapsed; retire the stranded row without overwriting a concurrent terminal result.
+        const [interrupted] = await this.dependencies.db
+          .update(operations)
+          .set({ status: "failed", error: "interrupted", finishedAt: new Date() })
+          .where(
+            and(
+              eq(operations.uuid, operation.uuid),
+              eq(operations.vibeUuid, operation.vibeUuid!),
+              inArray(operations.status, ["queued", "running"]),
+            ),
+          )
+          .returning({ uuid: operations.uuid });
+        if (!interrupted) continue;
         throw new Problem(
           503,
           "push_unavailable",
           "Push unavailable",
           "The running inference task did not finish; automatic enrichment could not continue.",
         );
+      }
       await new Promise((resolve) => setTimeout(resolve, Math.min(250, remaining)));
     }
   }
 
+  private acceptPush(vibeUuid: string, input: PushVibeRequest, actor: Actor): Promise<DbOperation>;
+  private acceptPush(
+    vibeUuid: string,
+    input: PushVibeRequest,
+    actor: Actor,
+    automatic: true,
+  ): Promise<DbOperation | undefined>;
   private async acceptPush(
     vibeUuid: string,
     input: PushVibeRequest,
     actor: Actor,
-  ): Promise<DbOperation> {
+    automatic = false,
+  ): Promise<DbOperation | undefined> {
     const { db, modelConnectors: registry, pushTasks, pushLimits: limits } = this.dependencies;
     const vibe = await new AccessService({ db, actor }).assertVibeScope(vibeUuid, GRANT_SCOPE.PUSH);
     const task = pushTasks.get(input.level, input.task);
@@ -406,18 +430,23 @@ export class PushService {
     const eligible = input.level === "element" ? [...reachableElements.keys()] : memberIds;
     let selection = eligible;
     if (input.level !== "vibe" && input.selection)
-      selection = input.selection.map((uri, index) => {
+      selection = input.selection.flatMap((uri, index) => {
         const uuid = uriId(uri);
-        if (!eligible.includes(uuid))
+        if (!eligible.includes(uuid)) {
+          // Automatic graphs keep their original additions, but membership and liveness may
+          // change while a dependency or another run is in flight. Keep eligible siblings.
+          if (automatic) return [];
           throw schemaProblem([
             {
               instancePath: `/selection/${index}`,
               message: "is not a member at the task's level and kind",
             },
           ]);
-        return uuid;
+        }
+        return [uuid];
       });
     selection = [...new Set(selection)];
+    if (automatic && input.level !== "vibe" && !selection.length) return;
     if (
       (input.level === "object" && selection.length > limits.maxObjects) ||
       (input.level === "element" && selection.length > limits.maxElements)
