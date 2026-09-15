@@ -1,3 +1,7 @@
+import { storeTaskKey } from "@rhizome/store-contract";
+
+import { PUSH_TASKS } from "./api/generated/push-tasks.ts";
+
 const MAX_DISPLAY_NAME_CODE_POINTS = 120;
 
 const SOURCE_DISPLAY_NAME_KEYS = ["title", "name", "raw_description", "description"] as const;
@@ -9,11 +13,19 @@ const DISPLAY_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 });
 
 export interface MediaObjectDisplayNameSource {
+  readonly inferred?: unknown;
   readonly type?: unknown;
   readonly source?: unknown;
 }
 
 export function mediaObjectDisplayName(object: MediaObjectDisplayNameSource): string {
+  if (isRecord(object.inferred)) {
+    const entry = object.inferred[storeTaskKey(PUSH_TASKS.object["display-name"].name)];
+    if (isRecord(entry) && isRecord(entry.properties)) {
+      const inferred = normalizedDisplayName(entry.properties.display_name);
+      if (inferred) return inferred;
+    }
+  }
   const properties = sourceProperties(object.source);
   for (const key of SOURCE_DISPLAY_NAME_KEYS) {
     const displayName = normalizedDisplayName(properties?.[key]);

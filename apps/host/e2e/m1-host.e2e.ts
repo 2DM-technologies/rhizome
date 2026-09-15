@@ -700,53 +700,60 @@ test("opening and traversing to a new surface replaces the previous window", asy
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
 });
 
-test("Vibe CRUD and membership use the existing Store object", async ({ page }) => {
+test("Vibe titles edit in place and update the existing Store object", async ({ page }) => {
+  mockStore.vibes.push({
+    ...mockStore.vibes[0]!,
+    uri: `rnet://vibe/${NEW_VIBE_ID}`,
+    title: "Trip planning",
+    objects: [],
+  });
   await page.goto("/vibes");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
-
-  const newVibeTitle = page.getByLabel("New Vibe title");
-  const createVibe = page.getByRole("button", { name: "Create Vibe" });
-  const titleBox = await newVibeTitle.boundingBox();
-  const createBox = await createVibe.boundingBox();
-  expect(titleBox).not.toBeNull();
-  expect(createBox).not.toBeNull();
-  expect(titleBox!.width).toBeGreaterThan(200);
-  expect(titleBox!.x + titleBox!.width).toBeLessThan(createBox!.x);
-
-  await newVibeTitle.fill("Trip planning");
-  await createVibe.click();
+  await page.getByRole("button", { name: "Open Vibe Trip planning" }).click();
   await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(
     page.locator("[data-dock-recent-vibes]").getByRole("button", { name: "Vibes", exact: true }),
   ).toBeVisible();
 
+  const heading = page.getByRole("heading", { name: "Trip planning", exact: true });
+  const headingBox = await heading.boundingBox();
+  const headingFont = await heading.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return [style.fontSize, style.lineHeight, style.fontWeight, style.letterSpacing];
+  });
+  const edit = page.getByRole("button", { name: "Edit Vibe title" });
+  await expect(edit).toHaveCSS("opacity", "0");
+  await heading.hover();
+  await expect(edit).toHaveCSS("opacity", "1");
+  const editBox = await edit.boundingBox();
+  expect(editBox!.x + editBox!.width).toBeLessThan(headingBox!.x);
+  await edit.click();
   const title = page.getByLabel("Vibe title", { exact: true });
+  await expect(title).toBeFocused();
   await expect(title).toHaveValue("Trip planning");
+  const inputBox = await title.boundingBox();
+  expect(inputBox!.x).toBe(headingBox!.x);
+  expect(inputBox!.y).toBe(headingBox!.y);
+  expect(inputBox!.height).toBe(headingBox!.height);
+  expect(
+    await title.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return [style.fontSize, style.lineHeight, style.fontWeight, style.letterSpacing];
+    }),
+  ).toEqual(headingFont);
   await title.fill("Summer trip");
-  await page.getByRole("button", { name: "Rename Vibe" }).click();
+  await title.press("Enter");
+  await expect(page.getByRole("heading", { name: "Summer trip", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Home" }).click();
   const renamedVibe = page.getByRole("button", { name: "Open Vibe Summer trip" });
   await expect(renamedVibe).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Vibe Trip planning" })).toHaveCount(0);
   await renamedVibe.click();
 
-  await page.getByLabel("Object URI").fill(OBJECT_URI);
-  await page.getByRole("button", { name: "Add object" }).click();
-  const object = page.getByRole("button", { name: `Open object ${OBJECT_URI}` });
-  await expect(object).toBeVisible();
-
-  await page.getByRole("button", { name: `Remove ${OBJECT_URI} from Vibe` }).click();
-  await expect(object).toBeHidden();
-  await expect(page.getByText("This Vibe has no objects yet.")).toBeVisible();
-
-  await page.getByLabel("Object URI").fill(OBJECT_URI);
-  await page.getByRole("button", { name: "Add object" }).click();
-  await expect(object).toBeVisible();
-
-  await page.getByRole("button", { name: "Home" }).click();
-  await expect(renamedVibe).toContainText("1 objects");
-  await renamedVibe.click();
+  await expect(page.getByLabel("Object URI")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add object" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rename Vibe" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Delete Vibe" }).click();
   await page.getByRole("button", { name: "Confirm delete Vibe" }).click();
@@ -761,6 +768,55 @@ test("Vibe CRUD and membership use the existing Store object", async ({ page }) 
   await expect(page.getByRole("button", { name: "Open Vibe Summer trip" })).toHaveCount(0);
 });
 
+test("inline title editing cancels, rejects empty titles, and retains a failed save for retry", async ({
+  page,
+}) => {
+  await page.goto(`/vibes/${VIBE_ID}`);
+  const edit = page.getByRole("button", { name: "Edit Vibe title" });
+  await edit.focus();
+  await expect(edit).toHaveCSS("opacity", "1");
+  await edit.press("Enter");
+  const title = page.getByLabel("Vibe title", { exact: true });
+  await title.fill("   ");
+  await expect(page.getByRole("button", { name: "Save Vibe title" })).toBeDisabled();
+  await title.press("Enter");
+  await title.press("Escape");
+  await expect(page.getByRole("heading", { name: "Spending", exact: true })).toBeVisible();
+  expect(mockStore.requests.filter((request) => request.method() === "PATCH")).toHaveLength(0);
+
+  await edit.click();
+  await title.fill("Updated spending");
+  await page.route(
+    `**/rnet/v0/vibes/${VIBE_ID}`,
+    (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/problem+json",
+        body: JSON.stringify({
+          type: "about:blank",
+          title: "Unavailable",
+          status: 503,
+          code: "unavailable",
+          detail: "Try that title again.",
+        }),
+      }),
+    { times: 1 },
+  );
+  await page.getByRole("button", { name: "Save Vibe title" }).click();
+  await expect(page.getByRole("alert")).toContainText("Try that title again.");
+  await expect(title).toHaveValue("Updated spending");
+  await title.press("Enter");
+  await expect(page.getByRole("heading", { name: "Updated spending", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+test("an owner can still remove existing members without the add-object form", async ({ page }) => {
+  await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: `Remove ${OBJECT_URI} from Vibe` }).click();
+  await expect(page.getByText("This Vibe has no objects yet.")).toBeVisible();
+  expect(mockStore.vibes[0]?.objects).toEqual([]);
+});
+
 test("a granted Vibe is browseable without exposing owner-only controls", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem(
@@ -771,7 +827,7 @@ test("a granted Vibe is browseable without exposing owner-only controls", async 
   await page.goto(`/vibes/${VIBE_ID}`);
 
   await expect(page.getByRole("button", { name: `Open object ${OBJECT_URI}` })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Rename Vibe" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit Vibe title" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Delete Vibe" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Add object" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: `Remove ${OBJECT_URI} from Vibe` })).toHaveCount(0);
@@ -786,6 +842,7 @@ test("an owner can refresh configured sources and see the deduplication result",
 }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
 
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByRole("button", { name: "Refresh sources" }).click();
   const pullSummary = page
     .getByRole("status")

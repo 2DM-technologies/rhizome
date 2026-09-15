@@ -86,7 +86,7 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
   await expect(
     page.getByRole("heading", { name: "@example_user Tweets", exact: true, level: 1 }),
   ).toBeVisible();
