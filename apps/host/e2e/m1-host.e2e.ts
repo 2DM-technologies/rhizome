@@ -983,13 +983,11 @@ test("home opens the Vibes surface from the bare desktop", async ({ page }) => {
     "href",
     (await pinnedVibes.locator("svg use").getAttribute("href"))!,
   );
-  await expect(pinnedVibes.locator("svg use")).toHaveAttribute(
-    "href",
-    (await page
-      .getByRole("button", { name: "Start a Vibe" })
-      .locator("svg use")
-      .getAttribute("href"))!,
-  );
+  const startVibe = page.getByRole("button", { name: "Start a Vibe", exact: true });
+  await expect(startVibe).toBeVisible();
+  await expect(startVibe.locator("svg")).toHaveCount(0);
+  await expect(startVibe).toHaveCSS("color", "rgb(125, 89, 255)");
+  await expect(startVibe).toHaveCSS("border-color", "rgb(125, 89, 255)");
   await expect(page.getByRole("button", { name: "Open Vibe Spending" })).toBeVisible();
 });
 
