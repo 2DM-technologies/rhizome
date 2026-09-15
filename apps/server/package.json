@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun --watch --env-file=../../.env src/index.ts",
     "start": "bun src/index.ts",
-    "build": "bun build src/index.ts --target=bun --outdir=dist",
+    "build": "bun build src/index.ts --target=bun --external sharp --outdir=dist",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

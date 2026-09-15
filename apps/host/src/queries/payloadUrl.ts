@@ -55,6 +55,23 @@ export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undef
   return { ...query, data: useObjectUrl(query.data) };
 }
 
+/** Fetch only the server's cached 64px image, never the original as a thumbnail fallback. */
+export function useElementThumbnailUrl(uuid: string | undefined) {
+  const query = api.useQuery(
+    "get",
+    "/rnet/v0/elements/{id}/thumbnail",
+    { params: { path: { id: uuid ?? "" } }, parseAs: "blob" },
+    {
+      enabled: Boolean(uuid),
+      gcTime: 0,
+      staleTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+      retry: false,
+    },
+  );
+  return { ...query, data: useObjectUrl(query.data) };
+}
+
 /** A short-lived reviewed-import payload; authorization is inherited from the API client. */
 export function useImportPreviewPayloadUrl(
   operationUuid: string | undefined,

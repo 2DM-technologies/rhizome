@@ -6,7 +6,12 @@ import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
 import { ProceduralVibeOrb, useOrbHover, useReducedMotion } from "../orb/ProceduralVibeOrb.tsx";
 import type { OrbVisualRecipe } from "../orb/recipe.ts";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
-import { useMediaElement, usePayloadUrl, useVibeObjects } from "../queries/index.ts";
+import {
+  useElementThumbnailUrl,
+  useMediaElement,
+  usePayloadUrl,
+  useVibeObjects,
+} from "../queries/index.ts";
 import { useNearViewport } from "../ui/useNearViewport.ts";
 import { vibeUpdatedAt } from "../vibeRecency.ts";
 import { useSurfaceNavigation } from "./focus.ts";
@@ -98,16 +103,20 @@ function ObjectThumbnail({ object }: { object: MediaObject }) {
   const elementUuid = reference ? uuidOf(reference.uri) : undefined;
   const element = useMediaElement(elementUuid);
   const presentation = payloadKind(element.data?.mime);
-  const payload = usePayloadUrl("elements", presentation !== "other" ? elementUuid : undefined);
+  const thumbnail = useElementThumbnailUrl(presentation === "image" ? elementUuid : undefined);
+  const payload = usePayloadUrl(
+    "elements",
+    presentation === "video" || presentation === "text" ? elementUuid : undefined,
+  );
 
   return (
     <span
       data-object-thumbnail
       className="block size-5 shrink-0 overflow-hidden border border-neutral-border bg-canvas/60"
     >
-      {payload.data && presentation === "image" ? (
+      {thumbnail.data && presentation === "image" ? (
         <img
-          src={payload.data}
+          src={thumbnail.data}
           alt=""
           aria-hidden
           data-element-presentation="image"

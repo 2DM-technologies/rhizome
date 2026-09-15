@@ -13,6 +13,7 @@ import {
 } from "@rhizome/store-contract";
 import { and, asc, eq, sql } from "drizzle-orm";
 import S3rver from "s3rver";
+import sharp from "sharp";
 import { v7 as uuidv7 } from "uuid";
 
 import {
@@ -2955,6 +2956,45 @@ describe("rNet M1 store", () => {
       },
     });
     expect(attachKnownElement.status).toBe(403);
+  });
+
+  test("cached image thumbnails preserve original bytes and require access even on cache hits", async () => {
+    const original = await sharp({
+      create: { width: 1024, height: 768, channels: 3, background: "#7d59ff" },
+    })
+      .png()
+      .toBuffer();
+    const uploaded = await app.request("http://rhizome.test/rnet/v0/elements", {
+      method: "POST",
+      headers: { ...owner, "Content-Type": "image/png", "X-Rnet-Kind": "image" },
+      body: new Uint8Array(original),
+    });
+    expect(uploaded.status).toBe(201);
+    const element = await uploaded.json();
+    const path = `/rnet/v0/elements/${element.uri.split("/").at(-1)}`;
+    const first = await request(`${path}/thumbnail`, { headers: owner });
+    expect(first.status).toBe(200);
+    expect(first.headers.get("Content-Type")).toBe("image/webp");
+    expect(first.headers.get("Cache-Control")).toBe("private, no-store");
+    const thumbnail = new Uint8Array(await first.arrayBuffer());
+    expect(await sharp(thumbnail).metadata()).toMatchObject({
+      format: "webp",
+      width: 64,
+      height: 64,
+    });
+    expect(thumbnail.byteLength).toBeLessThan(original.byteLength);
+
+    const hit = await request(`${path}/thumbnail`, { headers: owner });
+    expect(hit.status).toBe(200);
+    expect(new Uint8Array(await hit.arrayBuffer())).toEqual(thumbnail);
+    expect((await request(`${path}/thumbnail`, { headers: otherOwner })).status).toBe(403);
+    expect((await request(`${path}/thumbnail`)).status).toBe(403);
+    expect((await request(`${path}/thumbnail`, { headers: dmachine })).status).toBe(403);
+    const source = await request(`${path}/bytes`, { headers: owner });
+    expect(new Uint8Array(await source.arrayBuffer())).toEqual(new Uint8Array(original));
+
+    expect((await request(path, { method: "DELETE", headers: owner })).status).toBe(204);
+    expect((await request(`${path}/thumbnail`, { headers: owner })).status).toBe(404);
   });
 
   test("owner tombstones preserve object references while metadata and bytes disappear", async () => {
