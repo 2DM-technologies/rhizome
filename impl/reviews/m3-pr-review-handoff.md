@@ -54,7 +54,7 @@ Agents may review all eight PRs concurrently. Merge in that order, preserve ance
 - Original feature branch: `m3/01-push-pipeline`, at `f75bd8e443d6fe7ee8cce905508d0e974876c958` when split. Its aggregate branch remains separate. The shared primary checkout now uses local branch `m3/local-latest` at the earlier #42 tip plus unpublished edits from other tasks; it is not a clean PR-review target.
 - Original main: `220e289be5b064b6b5e80803c8a2f5e99698872c`.
 - Repaired seven-PR application head: `17d3a18b928b05feedebf7fee0f3041791a01000`.
-- Combined concurrency application head: `3a00b8af1f71698a7a481401026d56d061b798d5`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
+- Combined concurrency application head: `82cf4446bde2618f6aa491a13bc5cb62bcebadde`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
 - Documentation-only commits updating this packet, and downstream merges carrying those docs, may follow these code pins. Review each pinned base-to-code-head diff and inspect later commits separately. The pinned #41 base for the concurrency review deliberately excludes handoff-only updates.
 - Before repairs, original and split had identical tree `0f05054c92a31e86f928007bf8072bc6dec9acdc`. New repairs intentionally change that tree. Original scope was 44 commits, 262 files, 25,129 insertions and 1,258 deletions plus binary assets.
 - Recovery ref: `refs/backup/pre-split-20260914-220544`, commit `6e71545cc23084ee1ceb0d2efd8e453eb6dd9f59`.
@@ -123,6 +123,17 @@ The final concurrency layer keeps the declared dependency graph, task prompts, b
 The 400k token ceiling measures observed usage, so already-admitted calls can overshoot it. At the default two batches, the crossing call has at most one other admitted batch. The 40-call ceiling is exact and unchanged; orb-identity still covers at most 480 objects at 12 per call. No live-provider latency improvement has been measured. No queue service, distributed scheduler, or restart recovery was added.
 
 ## Validation
+
+### September 15 Claude concurrency follow-up
+
+Claude's independent re-review examined the earlier combined head `78401b3`, before the five P2 follow-up repairs in this packet. Its two remaining P2s (validator lifetime and desktop text/video downloads) are covered by those later repairs. Two additional #42 P3s have now been fixed at `82cf4446bde2618f6aa491a13bc5cb62bcebadde`:
+
+- Always clear per-operation activity in `finally` if the terminal transaction fails. Paid writes and usage already persisted remain intact; database recovery after a failed finalization remains outside this repair.
+- Let the packer classify already-prepared oversized lookahead before declaring a call/token ceiling abort. Call admission still enforces the ceiling, and image preparation checks it before any further payload read. Serial and concurrent object/image probes verify correct completion and no additional downloads past the allowed lookahead.
+
+Both targeted regressions fail against the previous implementation and pass after repair. The complete deterministic gate passed **596 tests**, API freshness, formatting, types, and builds. Logs: `/private/tmp/rhizome-claude-followup-20260915/check.log` and `negative-control.log`. Verify CI on the final published head; this paragraph does not claim a browser rerun on this code yet.
+
+**Owner policy choice remains open (#37):** a manual run on different objects currently makes an additions-only graph treat the task as covered, so the additions can be left unenriched. Recommended behavior is to wait for the conflicting run and then enrich uncovered additions; alternatively show an explicit skip explanation. No policy change is included in these two #42 repairs. Other P3s and explicit deferrals from the original reports remain as documented.
 
 ### September 15 independent re-review follow-up
 
@@ -786,20 +797,20 @@ Defaults to two complete object/element batches per operation and four logical L
 - PR: https://github.com/2DM-technologies/rhizome/pull/42
 - Branch: `m3/parallel-batches`
 - Base: `17d3a18b928b05feedebf7fee0f3041791a01000` (`m3/review-07-desktop-shell`)
-- Code head: `3a00b8af1f71698a7a481401026d56d061b798d5`
-- Incremental scope: 9 files changed, 1122 insertions(+), 130 deletions(-)
+- Code head: `82cf4446bde2618f6aa491a13bc5cb62bcebadde`
+- Incremental scope: 9 files changed, 1240 insertions(+), 139 deletions(-)
 
 ```bash
 git fetch origin m3/parallel-batches
-git diff --stat 17d3a18b928b05feedebf7fee0f3041791a01000...3a00b8af1f71698a7a481401026d56d061b798d5
-git diff 17d3a18b928b05feedebf7fee0f3041791a01000...3a00b8af1f71698a7a481401026d56d061b798d5 -- path/to/assigned/file
+git diff --stat 17d3a18b928b05feedebf7fee0f3041791a01000...82cf4446bde2618f6aa491a13bc5cb62bcebadde
+git diff 17d3a18b928b05feedebf7fee0f3041791a01000...82cf4446bde2618f6aa491a13bc5cb62bcebadde -- path/to/assigned/file
 ```
 
 **Questions to trace:**
 
 - Do call indexes and record refs survive out-of-order completion without lost totals or duplicate writes?
 - Do call/token stops let admitted calls finish, while fatal/wall stops suppress new writes and drain all started work?
-- Does an unbilled or zero-call failure keep a null producer? Does activity remain until the finalizer commits?
+- Does an unbilled or zero-call failure keep a null producer? Is activity cleared even when the finalizer fails?
 - Can a cancelled shared wait leak a permit, exceed maxCalls, or buffer additional image batches?
 - Does a failed pricing/persistence entry prevent a billed sibling from recording? Are both snapshots serialized?
 
