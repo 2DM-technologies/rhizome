@@ -120,12 +120,23 @@ export class PushService {
 
   async startPush(vibeUuid: string, input: PushVibeRequest, actor: Actor): Promise<DbOperation> {
     const operation = await this.acceptPush(vibeUuid, input, actor);
+    const afterCommit =
+      input.level === "object" && input.task === PUSH_TASK_REFS.orbIdentity.name
+        ? () => this.refreshVibeOrb(vibeUuid, actor)
+        : undefined;
     queueMicrotask(() => {
-      void this.runPush(operation.uuid).catch(() =>
+      void this.runPush(operation.uuid, afterCommit).catch(() =>
         console.error("Push finalization failed", operation.uuid),
       );
     });
     return operation;
+  }
+
+  /** Recompose existing object identities after membership changes or a manual identity push. */
+  async refreshVibeOrb(vibeUuid: string, actor: Actor): Promise<void> {
+    const task = this.dependencies.pushTasks.get("vibe", PUSH_TASK_REFS.vibeOrb.name);
+    if (!task || !this.dependencies.modelConnectors) return;
+    await this.runAutomaticTask(vibeUuid, actor, task);
   }
 
   /** Run after import commit; ready tasks accept fresh context after their dependencies settle. */
@@ -609,6 +620,13 @@ export class PushService {
       }
     } finally {
       clearTimeout(wallTimer);
+      if (state.committed && afterCommit) {
+        try {
+          await afterCommit();
+        } catch {
+          console.error("Derived orb refresh failed", operationUuid);
+        }
+      }
       this.activity.calls.delete(operationUuid);
       this.activity.settled.delete(operationUuid);
       await finalizePush(db, {

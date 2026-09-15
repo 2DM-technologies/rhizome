@@ -69,8 +69,9 @@ rhizome/                            # PRODUCT (closed).
 ├── impl/
 │   ├── IMPLEMENTATION_PLAN.md      # this file; sole implementation plan
 │   ├── CONFORMANCE.md              # living list of intentional spec gaps
-│   └── concepts/                   # settled design notes not tied to one milestone
-│       └── sandboxing.md           # alpha isolation + bridge decision
+│   ├── concepts/                   # settled design notes not tied to one milestone
+│   └── speculative/                # exploratory notes, not implementation requirements
+│       └── sandboxing.md           # sandbox isolation + bridge proposals
 ├── apps/                           # what Rhizome deploys
 │   ├── server/                     # the rNet store — Bun + Hono
 │   │   └── src/
@@ -887,6 +888,27 @@ detail explicitly, preserve race facts and owner annotations, and review a newer
 duplicating unchanged runs. Preview/cancel isolation, atomic confirmation, replay, owner isolation,
 and bounded failure tests pass with no provider network access. A dedicated running dMachine is
 a later consumer, not part of this source milestone.
+
+---
+
+### 8.2 Vibe orb — host identity feature
+
+**Status:** implemented after M3. The versioned recipe, deterministic palette preparation,
+whole-Vibe task, and live host placements ship on the M3 push foundation without changing M4–M8
+numbering. Its authoritative design is [Vibe orb](./concepts/vibe-orb.md).
+
+**Delivered:** the raw-WebGL2 playground remains available for tuning; recipe version 1 is the
+`vibe-orb` output schema; a bounded push context hook measures member image colors and the model
+adds semantic colors and controls; the ordinary Vibe inferred writer persists the merged recipe;
+and dock/hero plus hover/focus list/card placements render it live. Do not add proportional drift,
+owner pinning, external raster exports, or pre-confirmation formation. Recipe replacement remains
+an independent re-derivation; the host alone smooths the visual transition.
+
+**Exit test:** the playground demonstrates a continuous range of distinct personalities at actual
+20/44/48px and hero sizes; deterministic seeds reproduce the same field; reduced motion is still;
+WebGL loss retains a palette-derived identity; inactive list/card renderers sleep and respond to
+both hover and keyboard focus; and fake-connector tests prove validated recipe write-back, durable
+preservation, metering, and complete measured/semantic palette aggregation without a live provider.
 
 ---
 

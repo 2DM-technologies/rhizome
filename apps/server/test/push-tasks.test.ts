@@ -25,6 +25,8 @@ import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catal
 import { compileImportPushPipeline } from "../src/push/import-push-pipeline.ts";
 import { describeMedia } from "../src/push/tasks/element/describe-media/manifest.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
+import { orbIdentity } from "../src/push/tasks/object/orb-identity/manifest.ts";
+import { vibeOrb } from "../src/push/tasks/vibe/vibe-orb/manifest.ts";
 import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
 import { searchKeywords } from "../src/push/tasks/object/search-keywords/manifest.ts";
 import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
@@ -70,8 +72,10 @@ describe("push task catalog and static schemas", () => {
     expect(installedPushTasks.manifests().map(({ level, name }) => `${level}:${name}`)).toEqual([
       "vibe:summarize",
       "vibe:vibe-view",
+      "vibe:vibe-orb",
       "object:display-name",
       "object:search-keywords",
+      "object:orb-identity",
       "element:describe-media",
     ]);
     expect([vibeView, displayName, searchKeywords].map(({ effort }) => effort)).toEqual([
@@ -84,6 +88,7 @@ describe("push task catalog and static schemas", () => {
       outputTokens: { base: 128, perObject: 1024 },
     });
     expect(vibeView.outputTokens).toEqual({ base: 1024, perObject: 0 });
+    expect(vibeOrb.outputTokens).toEqual({ base: 0, perObject: 0 });
     expect(displayName.outputTokens).toEqual({ base: 128, perObject: 64 });
     expect(searchKeywords.outputTokens).toEqual({ base: 128, perObject: 512 });
   });
@@ -100,6 +105,8 @@ describe("push task catalog and static schemas", () => {
   });
   test("compiles source pipelines independently of task registration order", () => {
     const reordered = new PushTaskCatalog([
+      vibeOrb,
+      orbIdentity,
       searchKeywords,
       summarize,
       displayName,
@@ -116,6 +123,8 @@ describe("push task catalog and static schemas", () => {
       "object:search-keywords",
       "vibe:summarize",
       "vibe:vibe-view",
+      "object:orb-identity",
+      "vibe:vibe-orb",
     ]);
   });
   test("rejects missing tasks, duplicate nodes, and cycles during pipeline compilation", () => {
@@ -136,8 +145,8 @@ describe("push task catalog and static schemas", () => {
     );
 
     const cycle = [
-      { task: PUSH_TASK_REFS.displayName, after: [PUSH_TASK_REFS.searchKeywords] },
-      { task: PUSH_TASK_REFS.searchKeywords, after: [PUSH_TASK_REFS.displayName] },
+      { task: PUSH_TASK_REFS.summarize, after: [PUSH_TASK_REFS.vibeOrb] },
+      { task: PUSH_TASK_REFS.vibeOrb, after: [PUSH_TASK_REFS.summarize] },
     ] as const satisfies ImportPushPipeline;
     expect(() => compileImportPushPipeline("cycle", cycle, installedPushTasks)).toThrow(
       "contains a cycle",

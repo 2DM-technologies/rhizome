@@ -58,6 +58,8 @@ import { PNG, pngHeader } from "./fixtures/push-images.ts";
 import { gardenImportCandidate, importPushSource } from "./fixtures/import-push.ts";
 import { describeMedia } from "../src/push/tasks/element/describe-media/manifest.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
+import { orbIdentity } from "../src/push/tasks/object/orb-identity/manifest.ts";
+import { vibeOrb } from "../src/push/tasks/vibe/vibe-orb/manifest.ts";
 import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
 import { searchKeywords } from "../src/push/tasks/object/search-keywords/manifest.ts";
 import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
@@ -111,6 +113,8 @@ const elementTask: PushTaskDefinition = {
 const tasks = new PushTaskCatalog([
   summarize,
   vibeView,
+  vibeOrb,
+  orbIdentity,
   displayName,
   searchKeywords,
   describeMedia,
@@ -385,6 +389,20 @@ function installedTaskResponse(request: CompletionRequest): CompletionResult {
         output: { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } },
         usage,
       };
+    case `rhizome_${orbIdentity.name}`:
+      return responseFor(request, {
+        version: 1,
+        palette: [
+          { color: "#2a794c", weight: 0.45 },
+          { color: "#50aa64", weight: 0.4 },
+          { color: "#e2bf53", weight: 0.15 },
+        ],
+        contrast: 0.5,
+        field: { grain: 0.35, warp: 0.2, anisotropy: 0.05 },
+        surface: { depth: 0.25, glow: 0.25 },
+        motion: { drift: 0.1, turbulence: 0.05, spin: 0.02 },
+        confidence: 0.88,
+      });
     default:
       throw new Error(`Unexpected installed task: ${request.schemaName}`);
   }
@@ -507,7 +525,11 @@ describe("new Vibe import enrichment", () => {
       [describeMedia, displayName, searchKeywords].map(({ name }) => `rhizome_${name}`),
     );
     expect(new Set(requestSequence.slice(3))).toEqual(
-      new Set([`rhizome_${summarize.name}`, `rhizome_${vibeView.name}`]),
+      new Set([
+        `rhizome_${summarize.name}`,
+        `rhizome_${orbIdentity.name}`,
+        `rhizome_${vibeView.name}`,
+      ]),
     );
     const pushes = await pushesFor(vibeUuid);
     const summary = pushes.find(({ request }) => request.task === summarize.name)!;
@@ -639,6 +661,7 @@ describe("new Vibe import enrichment", () => {
           tasks: [
             { task: displayName.name, status: "waiting", message: null },
             { task: searchKeywords.name, status: "waiting", message: null },
+            { task: orbIdentity.name, status: "waiting", message: null },
           ],
         },
         { revision: 0, tasks: [{ task: describeMedia.name, status: "running", message: null }] },
@@ -680,7 +703,7 @@ describe("new Vibe import enrichment", () => {
       await api(app, `/objects/${object.uri.split("/").at(-1)}/inference-status`)
     ).json();
     expect(activity.records).toMatchObject([
-      { uri: object.uri, revision: 2, tasks: [] },
+      { uri: object.uri, revision: 3, tasks: [] },
       { uri: element.uri, revision: 1, tasks: [] },
     ]);
 
@@ -814,6 +837,7 @@ describe("existing Vibe import enrichment", () => {
           tasks: [
             { task: displayName.name, status: "waiting" },
             { task: searchKeywords.name, status: "waiting" },
+            { task: orbIdentity.name, status: "waiting" },
           ],
         },
         { uri: elementUri, tasks: [{ task: describeMedia.name, status: "running" }] },
@@ -905,7 +929,14 @@ describe("existing Vibe import enrichment", () => {
     );
     const textPushes = await pushesFor(textOnly.vibeUuid);
     expect(new Set(textPushes.map(({ request }) => request.task))).toEqual(
-      new Set([displayName.name, searchKeywords.name, summarize.name, vibeView.name]),
+      new Set([
+        displayName.name,
+        searchKeywords.name,
+        summarize.name,
+        orbIdentity.name,
+        vibeView.name,
+        vibeOrb.name,
+      ]),
     );
     expect(textPushes.every(({ status }) => status === "done")).toBe(true);
   });
@@ -964,8 +995,10 @@ describe("existing Vibe import enrichment", () => {
           describeMedia.name,
           displayName.name,
           searchKeywords.name,
+          orbIdentity.name,
           summarize.name,
           vibeView.name,
+          vibeOrb.name,
         ]),
       );
     } finally {
@@ -1021,6 +1054,8 @@ describe("automatic task sequence", () => {
         "done",
         "done",
         "done",
+        "done",
+        "done",
       ]);
       const first = await poll(application(connector), pushes[0]!.uuid);
       expect(first.result).toMatchObject({
@@ -1055,14 +1090,22 @@ describe("automatic task sequence", () => {
 
     await pushService(connector).runPushPipeline(vibeUuid, ownerActor, contentPushPipeline);
 
-    const sequence = [describeMedia, displayName, searchKeywords, summarize, vibeView];
+    const sequence = [
+      describeMedia,
+      displayName,
+      searchKeywords,
+      summarize,
+      orbIdentity,
+      vibeView,
+      vibeOrb,
+    ];
     const pushes = await pushesFor(vibeUuid);
     const requestSequence = pushes.map(({ request }) => [request.level, request.task]);
     expect(requestSequence.slice(0, 3)).toEqual(
       sequence.slice(0, 3).map(({ level, name }) => [level, name]),
     );
     expect(new Set(requestSequence.slice(3).map(([, task]) => task))).toEqual(
-      new Set([summarize.name, vibeView.name]),
+      new Set([summarize.name, orbIdentity.name, vibeView.name, vibeOrb.name]),
     );
     expect(
       pushes.every(
@@ -1073,13 +1116,19 @@ describe("automatic task sequence", () => {
       sequence.slice(0, 3).map(({ name }) => `rhizome_${name}`),
     );
     expect(new Set(connector.requests.slice(3).map(({ schemaName }) => schemaName))).toEqual(
-      new Set([`rhizome_${summarize.name}`, `rhizome_${vibeView.name}`]),
+      new Set([
+        `rhizome_${summarize.name}`,
+        `rhizome_${orbIdentity.name}`,
+        `rhizome_${vibeView.name}`,
+      ]),
     );
     for (const operation of pushes) {
       expect(operation.invokedBy).toBe(ownerActor.subject);
       expect(operation.request).not.toHaveProperty("selection");
       const result = (await poll(application(connector), operation.uuid)).result;
-      expect(result.usage?.tokens_in).toBe(usage.tokensIn);
+      expect(result.usage?.tokens_in).toBe(
+        operation.request.task === vibeOrb.name ? 0 : usage.tokensIn,
+      );
       const [meter] = await db
         .select()
         .from(meterEntries)
@@ -1087,7 +1136,7 @@ describe("automatic task sequence", () => {
       expect(meter).toMatchObject({
         payer: "rhizome",
         breakdown: { invoked_by: ownerActor.subject },
-        turns: 1,
+        turns: operation.request.task === vibeOrb.name ? 0 : 1,
       });
       expect(meter?.durationMs).not.toBeNull();
     }
@@ -1097,6 +1146,8 @@ describe("automatic task sequence", () => {
       [searchKeywords.name, displayName.name],
       [summarize.name, searchKeywords.name],
       [vibeView.name, summarize.name],
+      [orbIdentity.name, searchKeywords.name],
+      [vibeOrb.name, orbIdentity.name],
     ]) {
       expect(pushByTask.get(task)!.createdAt.getTime()).toBeGreaterThanOrEqual(
         pushByTask.get(dependency)!.finishedAt!.getTime(),
@@ -1127,6 +1178,46 @@ describe("automatic task sequence", () => {
     expect(image?.inferred[storeTaskKey(describeMedia.name)]?.properties.caption).toBe("A fern");
   });
 
+  test("orb aggregation completes while independent Vibe presentation is still running", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    await imageFor(ids[0]!);
+    const viewStarted = gate();
+    const releaseView = gate();
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        if (request.schemaName === `rhizome_${vibeView.name}`) {
+          viewStarted.resolve();
+          await releaseView.promise;
+        }
+        return installedTaskResponse(request);
+      },
+    });
+    const running = pushService(connector).runPushPipeline(
+      vibeUuid,
+      ownerActor,
+      contentPushPipeline,
+    );
+    try {
+      await viewStarted.promise;
+      let aggregated = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const pushes = await pushesFor(vibeUuid);
+        if (pushes.some((p) => p.request.task === vibeOrb.name && p.status === "done")) {
+          aggregated = true;
+          break;
+        }
+        await Bun.sleep(10);
+      }
+      expect(aggregated).toBe(true);
+      expect(connector.requests.some((r) => r.schemaName === `rhizome_${vibeOrb.name}`)).toBe(
+        false,
+      );
+    } finally {
+      releaseView.resolve();
+      await running;
+    }
+  });
+
   test("a failed task closes its ledger and the remaining tasks still run", async () => {
     const { vibeUuid, ids } = await fixture(1);
     await imageFor(ids[0]!);
@@ -1138,7 +1229,15 @@ describe("automatic task sequence", () => {
     });
     await pushService(connector).runPushPipeline(vibeUuid, ownerActor, contentPushPipeline);
     const pushes = await pushesFor(vibeUuid);
-    expect(pushes.map(({ status }) => status)).toEqual(["failed", "done", "done", "done", "done"]);
+    expect(pushes.map(({ status }) => status)).toEqual([
+      "failed",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+      "done",
+    ]);
     const failed = await poll(application(connector), pushes[0]!.uuid);
     expect(failed.result.usage?.tokens_in).toBe(usage.tokensIn);
     expect((failed.result as Extract<PushOperationResult, { level: "element" }>).skipped).toEqual([
@@ -1161,14 +1260,20 @@ describe("automatic task sequence", () => {
       });
       await service.runPushPipeline(vibeUuid, ownerActor, contentPushPipeline);
       const pushes = await pushesFor(vibeUuid);
-      expect(pushes.map(({ request }) => request.level)).toEqual(["element", "vibe", "vibe"]);
+      expect(pushes.map(({ request }) => request.level)).toEqual([
+        "element",
+        "vibe",
+        "vibe",
+        "vibe",
+      ]);
       expect(pushes.every(({ status }) => status === "done")).toBe(true);
-      expect(log).toHaveBeenCalledTimes(2);
+      expect(log).toHaveBeenCalledTimes(3);
       expect(
         (await service.getObjectInferenceStatus(ids[0]!, ownerActor)).records[0]!.tasks,
       ).toMatchObject([
         { task: displayName.name, status: "error", message: "The request does not conform" },
         { task: searchKeywords.name, status: "error", message: "The request does not conform" },
+        { task: orbIdentity.name, status: "error", message: "The request does not conform" },
       ]);
       const retry = await service.startPush(
         vibeUuid,
@@ -1178,10 +1283,13 @@ describe("automatic task sequence", () => {
       await poll(application(connector), retry.uuid);
       expect(
         (await service.getObjectInferenceStatus(ids[0]!, ownerActor)).records[0]!.tasks,
-      ).toMatchObject([{ task: searchKeywords.name, status: "error" }]);
+      ).toMatchObject([
+        { task: searchKeywords.name, status: "error" },
+        { task: orbIdentity.name, status: "error" },
+      ]);
       expect(
         (await service.getObjectInferenceStatus(ids[1]!, ownerActor)).records[0]!.tasks,
-      ).toHaveLength(2);
+      ).toHaveLength(3);
     } finally {
       log.mockRestore();
     }
@@ -2322,6 +2430,73 @@ describe("push lifecycle and inferred writes", () => {
 });
 
 describe("installed image push", () => {
+  test("orb identity is saved on objects and Shape orb combines it without another model call", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const connector = new FakeModelConnector({ respond: installedTaskResponse });
+    const app = application(connector);
+    const identityOperation = await run(app, vibeUuid, { level: "object", task: orbIdentity.name });
+    expect(identityOperation.result).toMatchObject({ objects: { written: 2 }, llm_calls: 1 });
+    const automatic = await (await api(app, `/vibes/${vibeUuid}`)).json();
+    expect(automatic.inferred[storeTaskKey(vibeOrb.name)].confidence).toBe(1);
+    for (const id of ids) {
+      const object = await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, id) });
+      expect(object?.inferred[storeTaskKey(orbIdentity.name)]?.properties).toMatchObject({
+        version: 1,
+        motion: { drift: 0.1, turbulence: 0.05, spin: 0.02 },
+      });
+    }
+    const operation = await run(app, vibeUuid, { level: "vibe", task: vibeOrb.name });
+    expect(operation.result).toMatchObject({
+      level: "vibe",
+      vibe: { outcome: "written", key: storeTaskKey(vibeOrb.name) },
+      llm_calls: 0,
+    });
+    expect(connector.requests).toHaveLength(1);
+    const document = await (await api(app, `/vibes/${vibeUuid}`)).json();
+    const entry = document.inferred[storeTaskKey(vibeOrb.name)];
+    expect(entry.model).toContain("vibe-orb-rules");
+    expect(entry.confidence).toBe(1);
+    expect(entry.properties).toMatchObject({
+      version: 3,
+      motion: { drift: 0.1, turbulence: 0.05, spin: 0.02 },
+      surface: { depth: 0.25, glow: 0.25 },
+    });
+    expect(entry.properties.seed).toMatch(/^[a-f0-9]{32}$/);
+    expect(entry.properties.palette).toHaveLength(4);
+    expect(validateSchema("vibe", document).ok).toBe(true);
+    await run(app, vibeUuid, { level: "vibe", task: vibeOrb.name });
+    const again = await (await api(app, `/vibes/${vibeUuid}`)).json();
+    expect(again.inferred[storeTaskKey(vibeOrb.name)].properties).toEqual(entry.properties);
+    expect(connector.requests).toHaveLength(1);
+  });
+
+  test("removing and re-adding members recomposes saved identities without model calls", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const connector = new FakeModelConnector({ respond: installedTaskResponse });
+    const app = application(connector);
+    await run(app, vibeUuid, {
+      level: "object",
+      task: orbIdentity.name,
+      selection: [`rnet://object/${ids[0]}`],
+    });
+    const orb = async () =>
+      (await (await api(app, `/vibes/${vibeUuid}`)).json()).inferred[storeTaskKey(vibeOrb.name)];
+    expect((await orb()).confidence).toBe(0.5);
+    const response = await app.request(`/rnet/v0/vibes/${vibeUuid}/objects`, {
+      method: "DELETE",
+      headers: { authorization: "Bearer dev:user", "content-type": "application/json" },
+      body: JSON.stringify({ objects: [`rnet://object/${ids[0]}`] }),
+    });
+    expect(response.status).toBe(204);
+    expect((await orb()).confidence).toBe(0);
+    expect(
+      (await api(app, `/vibes/${vibeUuid}/objects`, { objects: [`rnet://object/${ids[0]}`] }))
+        .status,
+    ).toBe(204);
+    expect((await orb()).confidence).toBe(0.5);
+    expect(connector.requests).toHaveLength(1);
+  });
+
   test("describe-media attaches each reachable image once, writes valid element revisions, and meters its usage", async () => {
     const { vibeUuid, ids } = await fixture(2);
     const image = await imageFor(ids[0]!);

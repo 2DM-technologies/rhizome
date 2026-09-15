@@ -12,4 +12,6 @@ export const CONTENT_IMPORT_PUSH_PIPELINE = [
   { task: task.searchKeywords, after: [task.displayName] },
   { task: task.summarize, after: [task.searchKeywords] },
   { task: task.vibeView, after: [task.summarize] },
+  { task: task.orbIdentity, after: [task.searchKeywords] },
+  { task: task.vibeOrb, after: [task.orbIdentity] },
 ] as const satisfies ImportPushPipeline;
