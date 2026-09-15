@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TaskInferenceStatusQuery } from "@rhizome/store-contract";
+import type { Vibe } from "@rnet/types";
 import { api } from "../api/client.ts";
+import { uuidOf } from "../api/uris.ts";
 
 /** Poll a task independently of who started it, and refresh the Vibe after inferred writes. */
 export function useTaskInferenceStatus(
@@ -24,6 +26,25 @@ export function useTaskInferenceStatus(
     const key = `${uuid}:${query.data.revision}`;
     if (seen.current === key) return;
     seen.current = key;
+    // Automatic import enrichment has no locally tracked Push operation. Its committed
+    // writes advance the Vibe revision even when a later task fails or is only partial.
+    void client.invalidateQueries({
+      queryKey: api.queryOptions("get", "/rnet/v0/vibes/{id}/objects", {
+        params: { path: { id: uuid } },
+      }).queryKey,
+    });
+    const vibe = client.getQueryData<Vibe>(
+      api.queryOptions("get", "/rnet/v0/vibes/{id}", {
+        params: { path: { id: uuid } },
+      }).queryKey,
+    );
+    for (const uri of vibe?.objects ?? []) {
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/objects/{id}", {
+          params: { path: { id: uuidOf(uri) } },
+        }).queryKey,
+      });
+    }
     void client.invalidateQueries({
       queryKey: api.queryOptions("get", "/rnet/v0/vibes/{id}", {
         params: { path: { id: uuid } },
