@@ -1,13 +1,10 @@
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
 import type { JSONSchema } from "json-schema-to-ts";
 import type { ModelConnectorRegistry } from "../inference/connector-registry.ts";
 import type { CompletionRequest } from "../inference/model-connector.ts";
 import { assertStructuredOutputSchema } from "../inference/structured-output-schema.ts";
+import { validateOutputSchema } from "../inference/output-validator.ts";
 import type { PushLimits } from "./limits.ts";
 import type { PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
-
-const ajv = addFormats(new Ajv2020({ strict: true, allowUnionTypes: true }));
 
 export function batchEnvelope(outputSchema: JSONSchema, refs: readonly string[]): JSONSchema {
   if (!refs.length || new Set(refs).size !== refs.length)
@@ -43,15 +40,15 @@ export function unpackResults(
   refs: readonly string[],
   output: unknown,
 ): Array<TaskOutput | null> {
-  if (!ajv.compile(batchEnvelope(outputSchema, refs))(output))
+  if (!validateOutputSchema(batchEnvelope(outputSchema, refs), output))
     throw new Error("Invalid push batch output");
   const { results } = output as { results: Array<{ ref: string; result: TaskOutput | null }> };
   const byRef = new Map(results.map((item) => [item.ref, item.result]));
   if (byRef.size !== refs.length || refs.some((ref) => !byRef.has(ref)))
     throw new Error("Invalid push batch ref set");
-  const validate = ajv.compile(outputSchema);
   for (const result of byRef.values())
-    if (result !== null && !validate(result)) throw new Error("Invalid push task output");
+    if (result !== null && !validateOutputSchema(outputSchema, result))
+      throw new Error("Invalid push task output");
   return refs.map((ref) => byRef.get(ref)!);
 }
 

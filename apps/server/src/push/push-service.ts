@@ -7,7 +7,7 @@ import {
   type SkipReason,
   type TaskInferenceStatusQuery,
 } from "@rhizome/store-contract";
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { Actor } from "../auth.ts";
 import type { BlobStore } from "../blobs/types.ts";
@@ -20,6 +20,7 @@ import { mediaObjects } from "../db/models/media-object.ts";
 import { operations, type DbOperation } from "../db/models/operation.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
+import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { notFound, Problem } from "../errors.ts";
 import type { ModelConnectorRegistry } from "../inference/connector-registry.ts";
 import {
@@ -45,6 +46,7 @@ import { schemaProblem } from "../services/problems.ts";
 import { uriId } from "../services/uris.ts";
 import { VibesService } from "../services/vibe-service.ts";
 import { batchEnvelope, packChunks, unpackResults } from "./chunking.ts";
+import { isDatabaseJson } from "./output-json.ts";
 import {
   assembleObjectContext,
   assembleElementContext,
@@ -91,6 +93,7 @@ interface RunState {
 
 export class PushService {
   private readonly activity = new PushActivity();
+  private readonly pipelines = new Map<string, Promise<Map<string, string>>>();
 
   getObjectInferenceStatus(uuid: string, actor: Actor) {
     return readObjectInferenceStatus(this.dependencies.db, this.activity, uuid, actor);
@@ -145,20 +148,42 @@ export class PushService {
     actor: Actor,
     pipeline: CompiledImportPushPipeline,
     objectUris?: readonly string[],
-  ): Promise<void> {
-    if (!this.dependencies.modelConnectors) return;
+  ): Promise<Map<string, string>> {
+    if (!this.dependencies.modelConnectors || !pipeline.nodes.length) return new Map();
+    // A second import must wait for the first graph's writes and activity cleanup.
+    const previous = this.pipelines.get(vibeUuid) ?? Promise.resolve();
+    const run = previous
+      .catch(() => {})
+      .then(() => this.runPushPipelineNow(vibeUuid, actor, pipeline, objectUris));
+    this.pipelines.set(vibeUuid, run);
+    try {
+      return await run;
+    } finally {
+      if (this.pipelines.get(vibeUuid) === run) this.pipelines.delete(vibeUuid);
+    }
+  }
+
+  private async runPushPipelineNow(
+    vibeUuid: string,
+    actor: Actor,
+    pipeline: CompiledImportPushPipeline,
+    objectUris?: readonly string[],
+  ): Promise<Map<string, string>> {
     const tasks = pipeline.nodes.map(({ task }) => task);
+    const operationsByTask = new Map<string, string>();
     this.activity.begin(vibeUuid, tasks, objectUris?.map(uriId));
     try {
       const completions = new Map<string, Promise<void>>();
       for (const node of pipeline.nodes) {
         const dependencies = node.after.map((key) => completions.get(key)!);
-        const completion = Promise.allSettled(dependencies).then(() =>
-          this.runAutomaticTask(vibeUuid, actor, node.task, objectUris),
-        );
+        const completion = Promise.allSettled(dependencies).then(async () => {
+          const operationUuid = await this.runAutomaticTask(vibeUuid, actor, node.task, objectUris);
+          if (operationUuid) operationsByTask.set(node.key, operationUuid);
+        });
         completions.set(node.key, completion);
       }
       await Promise.allSettled(completions.values());
+      return operationsByTask;
     } finally {
       this.activity.end(vibeUuid);
     }
@@ -192,18 +217,31 @@ export class PushService {
     if (!pipeline) {
       throw new Error(`Source-skill ${source.skillId} has no compiled import push pipeline`);
     }
-    await this.runPushPipeline(vibeUuid, actor, pipeline, addedObjectUris);
+    const operationsByTask = await this.runPushPipeline(vibeUuid, actor, pipeline, addedObjectUris);
     // Existing Vibe imports enrich their additions without changing the owner's title.
     if (addedObjectUris) return;
 
     if (!imported?.result || imported.result.destination) return;
 
-    const service = new VibesService({ db, actor });
-    const vibe = await service.getVibe(vibeUuid);
-    const title = vibe.vibe.inferred[storeTaskKey(summarize.name)]?.properties.title;
+    const summaryOperation = operationsByTask.get(`vibe:${summarize.name}`);
+    if (!summaryOperation) return;
+    const confirmed = await db.query.vibeRevisions.findFirst({
+      where: and(eq(vibeRevisions.vibeUuid, vibeUuid), eq(vibeRevisions.rev, 1)),
+    });
+    const expectedTitle = confirmed?.snapshot.title;
+    // Only the host's unnamed-import placeholder is eligible for automatic naming.
+    if (expectedTitle !== "Imported objects") return;
+    const summary = await db.query.vibeRevisions.findFirst({
+      where: and(
+        eq(vibeRevisions.vibeUuid, vibeUuid),
+        eq(vibeRevisions.operationUuid, summaryOperation),
+      ),
+    });
+    const inferred = summary?.snapshot.inferred as typeof vibes.$inferSelect.inferred | undefined;
+    const title = inferred?.[storeTaskKey(summarize.name)]?.properties.title;
     if (typeof title !== "string") return;
     // Import naming is an owner action; the push writer still changes only inferred data.
-    await service.updateVibe(vibeUuid, { title });
+    await new VibesService({ db, actor }).renameVibeIfTitle(vibeUuid, expectedTitle, title);
   }
 
   private async runAutomaticTask(
@@ -211,7 +249,7 @@ export class PushService {
     actor: Actor,
     task: PushTaskDefinition,
     objectUris?: readonly string[],
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const level = task.level;
     try {
       let input: PushVibeRequest = { level, task: task.name };
@@ -234,6 +272,7 @@ export class PushService {
       const operation = await this.acceptPush(vibeUuid, input, actor);
       this.activity.accepted(vibeUuid, task);
       await this.runPush(operation.uuid);
+      return operation.uuid;
     } catch (error) {
       this.activity.rejected(vibeUuid, task, error);
       // Import enrichment is best effort: settled dependencies unblock all remaining nodes.
@@ -460,6 +499,7 @@ export class PushService {
             if (
               !jsonSchema(task.outputSchema).validate(output).ok ||
               task.validateOutput?.(output) === false ||
+              !isDatabaseJson(output) ||
               !validateInstalledTaskOutput(task, output, context.vibe)
             )
               state.vibe = { outcome: "skipped", reason: "invalid_output" };
@@ -497,7 +537,11 @@ export class PushService {
               yield { uuid: record.object.uuid, ...context };
             }
           } else {
-            for (const element of await loadElements(db, pending)) {
+            const elements = await loadElements(db, pending);
+            const liveIds = new Set(elements.map((element) => element.uuid));
+            for (const uuid of pending)
+              if (!liveIds.has(uuid)) state.outcomes.set(uuid, { outcome: "not_applicable" });
+            for (const element of elements) {
               if (controller.signal.aborted) {
                 stopForCeiling();
                 return;
@@ -591,7 +635,10 @@ export class PushService {
               break;
             }
             const output = outputs[index]!;
-            if (output !== null && task.validateOutput?.(output) === false) {
+            if (
+              !isDatabaseJson(output) ||
+              (output !== null && task.validateOutput?.(output) === false)
+            ) {
               state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
               continue;
             }
@@ -616,7 +663,11 @@ export class PushService {
           if (state.status !== "done") break;
         }
       }
-    } catch {
+    } catch (error) {
+      console.error("Push execution failed", {
+        operationUuid,
+        kind: error instanceof ModelConnectorError ? error.kind : "internal_error",
+      });
       if (controller.signal.aborted) stopForCeiling();
       else {
         state.status = "failed";
@@ -836,7 +887,13 @@ async function loadContextObjects(
     })
     .from(mediaObjects)
     .leftJoin(mediaObjectElements, eq(mediaObjectElements.mediaObjectUuid, mediaObjects.uuid))
-    .leftJoin(mediaElements, eq(mediaElements.uuid, mediaObjectElements.mediaElementUuid))
+    .leftJoin(
+      mediaElements,
+      and(
+        eq(mediaElements.uuid, mediaObjectElements.mediaElementUuid),
+        isNull(mediaElements.tombstonedAt),
+      ),
+    )
     .where(inArray(mediaObjects.uuid, [...uuids]))
     .groupBy(mediaObjects.uuid);
   const byId = new Map(rows.map((row) => [row.object.uuid, row]));
@@ -851,11 +908,10 @@ async function loadElements(db: Database, uuids: readonly string[]): Promise<DbM
   const rows = await db
     .select()
     .from(mediaElements)
-    .where(inArray(mediaElements.uuid, [...uuids]));
+    .where(and(inArray(mediaElements.uuid, [...uuids]), isNull(mediaElements.tombstonedAt)));
   const byId = new Map(rows.map((row) => [row.uuid, row]));
-  return uuids.map((uuid) => {
+  return uuids.flatMap((uuid) => {
     const record = byId.get(uuid);
-    if (!record) throw new Error("Push element disappeared");
-    return record;
+    return record ? [record] : [];
   });
 }

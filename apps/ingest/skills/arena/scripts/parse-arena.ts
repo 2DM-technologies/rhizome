@@ -716,6 +716,11 @@ function parseImage(value: unknown, label: string): ParsedImageDescriptor {
   if (originalMime !== undefined && !originalMime.startsWith("image/")) {
     throw new Error(`${label} original image MIME is not an image`);
   }
+  // Are.na can represent an absent optional description as an empty or whitespace-only string.
+  const altText =
+    typeof image.alt_text === "string" && !image.alt_text.trim()
+      ? undefined
+      : optionalNonemptyString(image.alt_text, `${label} image alt text`);
   return {
     originalUrl,
     ...(originalMime ? { originalMime } : {}),
@@ -731,9 +736,7 @@ function parseImage(value: unknown, label: string): ParsedImageDescriptor {
     ...(optionalPositiveInteger(image.height, `${label} image height`) !== undefined
       ? { height: image.height as number }
       : {}),
-    ...(optionalNonemptyString(image.alt_text, `${label} image alt text`)
-      ? { altText: image.alt_text as string }
-      : {}),
+    ...(altText ? { altText } : {}),
     declaredCaptureUrls,
   };
 }
