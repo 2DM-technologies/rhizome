@@ -585,7 +585,6 @@ export class PushService {
           attachment?: { mime: string; bytes: Uint8Array };
         };
         const { blobs } = this.dependencies;
-        const dispatched = new Set<string>();
         const prepare = async function* (): AsyncGenerator<Prepared> {
           if (request.level === "object") {
             for (const record of await loadContextObjects(db, pending)) {
@@ -617,6 +616,9 @@ export class PushService {
                 });
                 continue;
               }
+              // Classify any already-prepared lookahead before enforcing the ceiling, but
+              // do not fetch another image payload once the call/token budget is exhausted.
+              if (stopForCeiling()) return;
               const payload = await blobs.get("elements", element.contentHash, controller.signal);
               if (!payload) throw new Error("Push image payload disappeared");
               if (
@@ -667,17 +669,10 @@ export class PushService {
         await dispatchBounded(
           packed,
           this.dependencies.pushConcurrency?.batchesPerOperation ?? 2,
-          () => {
-            if (state.status !== "done") return false;
-            // Do not label an exactly exhausted workset as ceiling-aborted, or fetch more
-            // image bytes once a ceiling has stopped the remaining work.
-            const remaining = pending.some(
-              (uuid) => !dispatched.has(uuid) && !state.outcomes.has(uuid),
-            );
-            return !remaining || !stopForCeiling();
-          },
+          // A remaining record may only need a context-too-large skip. Enforce call/token
+          // ceilings when a real chunk reaches complete(), or before another image read.
+          () => state.status === "done",
           async (chunk) => {
-            for (const record of chunk) dispatched.add(record.uuid);
             let callIndex: number | undefined;
             try {
               const refs = chunk.map((_, index) => `${prefix}${index + 1}`);
@@ -755,16 +750,19 @@ export class PushService {
           console.error("Derived orb refresh failed", operationUuid);
         }
       }
-      await finalizePush(db, {
-        operationUuid,
-        ledger,
-        status: state.status,
-        result: buildResult(state, ledger),
-        error: state.error,
-        committed: state.committed,
-        createdAt: operation.createdAt,
-      });
-      this.activity.finishOperation(operationUuid);
+      try {
+        await finalizePush(db, {
+          operationUuid,
+          ledger,
+          status: state.status,
+          result: buildResult(state, ledger),
+          error: state.error,
+          committed: state.committed,
+          createdAt: operation.createdAt,
+        });
+      } finally {
+        this.activity.finishOperation(operationUuid);
+      }
     }
   }
 

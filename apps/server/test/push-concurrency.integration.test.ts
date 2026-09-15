@@ -1,4 +1,4 @@
-import { afterEach, afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { eq, inArray } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { PushOperationResult } from "@rhizome/store-contract";
@@ -25,6 +25,7 @@ import { FifoLimiter, type PushConcurrency } from "../src/push/concurrency.ts";
 import { ImportPushPipelineCatalog } from "../src/push/import-push-pipeline.ts";
 import { DEFAULT_PUSH_LIMITS, type PushLimits } from "../src/push/limits.ts";
 import { PushService } from "../src/push/push-service.ts";
+import type { PushActivity } from "../src/push/inference-status.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
 import { RNET_SCHEMA_VERSION } from "../src/rnet.ts";
 import { PNG } from "./fixtures/push-images.ts";
@@ -455,6 +456,116 @@ describe("parallel push batches", () => {
         abort_reason: limits.maxCalls ? "max_turns" : "max_tokens",
       });
     }
+  });
+
+  test("a failed terminal transaction releases activity while preserving paid writes and usage", async () => {
+    const fake = new FakeModelConnector({ respond: response });
+    const push = service(fake);
+    const { vibeUuid, ids } = await fixture(1);
+    const close = spyOn(MeterLedger.prototype, "close").mockRejectedValue(
+      new Error("injected terminal transaction failure"),
+    );
+    const log = spyOn(console, "error").mockImplementation(() => {});
+    let operationUuid: string | undefined;
+    try {
+      const op = await push.startPush(vibeUuid, { level: "object", task: task.name }, actor);
+      operationUuid = op.uuid;
+      await until(() => log.mock.calls.some(([message]) => message === "Push finalization failed"));
+      const activity = (push as unknown as { activity: PushActivity }).activity;
+      expect(activity.calls.has(op.uuid)).toBe(false);
+      expect(activity.settled.has(op.uuid)).toBe(false);
+      expect((Reflect.get(activity, "batches") as Map<string, unknown>).has(op.uuid)).toBe(false);
+      const row = await db.query.operations.findFirst({ where: eq(operations.uuid, op.uuid) });
+      expect(row?.status).toBe("running");
+      expect(row?.finishedAt).toBeNull();
+      expect(await meter(op.uuid)).toMatchObject({ turns: 1, tokensIn: 100 });
+      const object = await db.query.mediaObjects.findFirst({
+        where: eq(mediaObjects.uuid, ids[0]!),
+      });
+      expect(object?.inferredRev).toBe(1);
+      expect(log.mock.calls).toEqual([["Push finalization failed", op.uuid]]);
+    } finally {
+      close.mockRestore();
+      log.mockRestore();
+      if (operationUuid)
+        await db
+          .update(operations)
+          .set({ status: "failed", finishedAt: new Date(), error: "test cleanup" })
+          .where(eq(operations.uuid, operationUuid));
+    }
+  });
+
+  test("exhausting the call budget finishes normally when only oversized lookahead remains", async () => {
+    for (const batchesPerOperation of [1, 2]) {
+      for (const level of ["object", "element"] as const) {
+        const hold = gate();
+        const fake = new FakeModelConnector({
+          respond: async (request) => {
+            if (batchesPerOperation === 2) await hold.promise;
+            return response(request);
+          },
+        });
+        const { vibeUuid, ids, elements } = await fixture(3, level === "element");
+        const tooLarge = level === "object" ? ids[2]! : elements[2]!;
+        if (level === "element")
+          await db
+            .update(mediaElements)
+            .set({ alt: "oversized-lookahead" })
+            .where(eq(mediaElements.uuid, tooLarge));
+        else {
+          const object = (await db.query.mediaObjects.findFirst({
+            where: eq(mediaObjects.uuid, tooLarge),
+          }))!;
+          await db
+            .update(mediaObjects)
+            .set({ source: { ...object.source, properties: { title: "oversized-lookahead" } } })
+            .where(eq(mediaObjects.uuid, tooLarge));
+        }
+        // Make the final record unambiguously too large, independent of tokenizer estimates.
+        fake.countTokens = async ({ input }) => (input.includes("oversized-lookahead") ? 1_001 : 1);
+        const op = await start(
+          service(fake, { batchesPerOperation }, { maxCalls: 2, maxInputTokensPerCall: 1_000 }),
+          vibeUuid,
+          level,
+        );
+        await until(() => fake.requests.length === 2);
+        hold.resolve();
+        const finished = await terminal(op.uuid);
+        expect(fake.requests).toHaveLength(2);
+        expect(finished.status, `${level} with ${batchesPerOperation} batches`).toBe("done");
+        expect(finished.result).toMatchObject({
+          abort_reason: null,
+          llm_calls: 2,
+          [level === "object" ? "objects" : "elements"]: { written: 2, skipped: 1 },
+          skipped: [{ uri: `rnet://${level}/${tooLarge}`, reason: "context_too_large" }],
+        });
+      }
+    }
+  });
+
+  test("an exhausted call budget does not fetch image bytes beyond the prepared lookahead", async () => {
+    let reads = 0;
+    const store = {
+      ...blobs,
+      get: async () => {
+        reads++;
+        return { bytes: PNG };
+      },
+    };
+    const fake = new FakeModelConnector({ respond: response });
+    const { vibeUuid } = await fixture(6, true);
+    const op = await start(
+      service(fake, { batchesPerOperation: 1 }, { maxCalls: 1 }, store),
+      vibeUuid,
+      "element",
+    );
+    const finished = await terminal(op.uuid);
+    expect(fake.requests).toHaveLength(1);
+    expect(reads).toBeLessThanOrEqual(2);
+    expect(finished.result).toMatchObject({
+      abort_reason: "max_turns",
+      elements: { written: 1, skipped: 5 },
+    });
   });
 
   test("out-of-order multi-record envelopes retain refs within each batch", async () => {
