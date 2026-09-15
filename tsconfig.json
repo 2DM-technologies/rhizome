@@ -17,6 +17,7 @@
   },
   "include": [
     "scripts/**/*.ts",
+    "impl/speculative/store.integration.test.ts",
     "apps/**/*.ts",
     "apps/**/*.tsx",
     "apps/*/.storybook/**/*.ts",
