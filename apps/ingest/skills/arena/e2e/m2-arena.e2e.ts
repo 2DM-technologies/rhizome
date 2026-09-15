@@ -154,7 +154,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(page.getByRole("img", { name: "Synthetic primary" })).toBeVisible();
   await expect(page.getByRole("img", { name: "Synthetic link-preview" })).toBeVisible();
   await expect(page.getByRole("link", { name: /^Open source for/ })).toHaveCount(0);
-  await expect(page.getByTitle("PDF preview for Synthetic field notes")).toBeVisible();
+  const documentCard = importedCards.filter({ hasText: "Synthetic field notes" });
+  await expect(documentCard.getByText("Document", { exact: true })).toBeVisible();
+  await expect(documentCard.locator("object, iframe, embed")).toHaveCount(0);
   await expect(page.getByText("Loading image…")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toHaveLength(initialMembership.length + 5);
   expect(mockStore.objects.size).toBe(initialObjectCount + 5);
