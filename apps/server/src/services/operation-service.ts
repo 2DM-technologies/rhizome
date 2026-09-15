@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
 import { operations, type DbOperation } from "../db/models/operation.ts";
-import { grantMissing, notFound } from "../errors.ts";
+import { grantMissing, notFound, Problem } from "../errors.ts";
 import { AccessService } from "./access-service.ts";
 import type { ServiceContext } from "./types.ts";
 
@@ -24,18 +24,29 @@ export class OperationsService {
   }
 
   async getOperation(uuid: string): Promise<AuthorizedOperation> {
-    const [operation] = await this.db.select().from(operations).where(eq(operations.uuid, uuid));
+    let [operation] = await this.db.select().from(operations).where(eq(operations.uuid, uuid));
     if (!operation) throw notFound("Operation");
-    const isOwner = this.actor.kind === "user" && this.actor.uuid === operation.ownerUuid;
     if (operation.vibeUuid) {
-      if (operation.request.mode === "import_preview") {
-        await this.access.assertVibeOwner(operation.vibeUuid);
-      } else if (operation.kind === "pull") {
-        await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.PULL);
-      } else {
-        await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.READ);
+      try {
+        if (operation.request.mode === "import_preview") {
+          await this.access.assertVibeOwner(operation.vibeUuid);
+        } else if (operation.kind === "pull") {
+          await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.PULL);
+        } else {
+          await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.READ);
+        }
+      } catch (error) {
+        if (!(error instanceof Problem) || error.status !== 404) throw error;
+        // Deletion can commit after the operation read, clearing its foreign key before
+        // the scope lookup. Only use deleted-Vibe access rules when a fresh row proves it.
+        const [current] = await this.db.select().from(operations).where(eq(operations.uuid, uuid));
+        if (!current) throw notFound("Operation");
+        if (current.vibeUuid !== null) throw error;
+        operation = current;
       }
-    } else {
+    }
+    const isOwner = this.actor.kind === "user" && this.actor.uuid === operation.ownerUuid;
+    if (!operation.vibeUuid) {
       await this.access.assertAuthenticated();
       // Once the Vibe is gone there is no grant to check: the owner and the original invoker
       // keep access; a delegated invoker sees only the redacted view.
