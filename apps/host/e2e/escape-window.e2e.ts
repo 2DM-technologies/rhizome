@@ -18,6 +18,43 @@ test("Escape closes the active window, including when focus is outside it", asyn
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
 });
 
+test("Escape in the JSON editor preserves the draft and its window", async ({ page }) => {
+  await page.goto(`/objects/${OBJECT_ID}`);
+  const editor = page.getByLabel("User properties, as JSON");
+  await editor.fill('{"note":"unsaved draft"}');
+  await editor.press("Escape");
+  await expect(editor).toHaveValue('{"note":"unsaved draft"}');
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page.getByRole("button", { name: "Save user properties" })).toBeEnabled();
+});
+
+test("Escape keeps a pending title save open", async ({ page }) => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(`**/rnet/v0/vibes/${VIBE_ID}`, async (route) => {
+    if (route.request().method() === "PATCH") await held;
+    await route.fallback();
+  });
+  await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Edit Vibe title" }).click();
+  const title = page.getByRole("textbox", { name: "Vibe title", exact: true });
+  await title.fill("Saved after Escape");
+  try {
+    await title.press("Enter");
+    await expect(title).toHaveAttribute("readonly", "");
+    await title.press("Escape");
+    await expect(title).toBeVisible();
+    await expect(title).toHaveValue("Saved after Escape");
+  } finally {
+    release();
+  }
+  await expect(
+    page.getByRole("heading", { name: "Saved after Escape", exact: true }),
+  ).toBeVisible();
+});
+
 test("Escape dismisses the launcher before closing the window", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
   const surface = page.locator(`[data-surface-id="vibe:${VIBE_ID}"][data-view-mode]`);

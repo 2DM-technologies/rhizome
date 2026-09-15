@@ -34,6 +34,11 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   });
   const vibe = useVibe(uuid);
   const objects = useVibeObjects(uuid);
+  useTaskInferenceStatus(
+    uuid,
+    { level: "object", task: PUSH_TASKS.object["display-name"].name },
+    Boolean(vibe.data),
+  );
   const summaryStatus = useTaskInferenceStatus(
     uuid,
     { level: "vibe", task: PUSH_TASKS.vibe.summarize.name },
@@ -108,7 +113,19 @@ export function VibeSurface({ uuid }: { uuid: string }) {
               label={`${vibe.data.title} Vibe orb`}
             />
             {isOwner ? (
-              <form onSubmit={rename} className="group/title relative min-w-0">
+              <form
+                onSubmit={rename}
+                className="group/title relative min-w-0"
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape" || titleDraft === null) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!update.isPending) {
+                    setTitleDraft(null);
+                    update.reset();
+                  }
+                }}
+              >
                 {titleDraft === null ? (
                   <>
                     <h1 className="text-heading text-primary">{vibe.data.title}</h1>
@@ -139,13 +156,6 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                       readOnly={update.isPending}
                       onFocus={(event) => event.currentTarget.select()}
                       onChange={(event) => setTitleDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape" && !update.isPending) {
-                          event.preventDefault();
-                          setTitleDraft(null);
-                          update.reset();
-                        }
-                      }}
                     />
                     <IconButton
                       type="submit"

@@ -27,10 +27,9 @@ export interface OpenAIResponsesRequest {
 
 export interface OpenAIResponseUsage {
   input_tokens: number;
-  input_tokens_details?: { cached_tokens?: number };
-  cache_write_tokens?: number;
+  input_tokens_details?: { cached_tokens?: number | null; cache_write_tokens?: number | null };
   output_tokens: number;
-  output_tokens_details?: { reasoning_tokens?: number };
+  output_tokens_details?: { reasoning_tokens?: number | null };
 }
 
 export interface OpenAIResponsesResponse {
@@ -73,11 +72,15 @@ export function hasOpenAIResponseUsage(
     Number.isSafeInteger(usage.output_tokens) &&
     usage.output_tokens >= 0 &&
     optionalNonnegativeInteger(usage.input_tokens_details?.cached_tokens) &&
-    optionalNonnegativeInteger(usage.cache_write_tokens) &&
-    optionalNonnegativeInteger(usage.output_tokens_details?.reasoning_tokens)
+    optionalNonnegativeInteger(usage.input_tokens_details?.cache_write_tokens) &&
+    optionalNonnegativeInteger(usage.output_tokens_details?.reasoning_tokens) &&
+    (usage.input_tokens_details?.cached_tokens ?? 0) +
+      (usage.input_tokens_details?.cache_write_tokens ?? 0) <=
+      usage.input_tokens &&
+    (usage.output_tokens_details?.reasoning_tokens ?? 0) <= usage.output_tokens
   );
 }
 
-function optionalNonnegativeInteger(value: number | undefined): boolean {
-  return value === undefined || (Number.isSafeInteger(value) && value >= 0);
+function optionalNonnegativeInteger(value: number | null | undefined): boolean {
+  return value == null || (Number.isSafeInteger(value) && value >= 0);
 }

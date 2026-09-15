@@ -37,7 +37,9 @@ CSS chooses `--rz-control-scheme` and `--rz-content-scheme`; each tier applies i
 `color-scheme`, which also themes native inputs, selects, scrollbars, and media controls. Color
 tokens use `light-dark(light, dark)` and resolve against the consuming element's scheme. This uses
 modern browser support (`light-dark()` colors are Baseline 2024), consistent with the host's modern
-CSS baseline. There is no React theme state, listener, local storage preference, or app toggle.
+CSS baseline. `ThemeProvider` follows system changes until the launcher sets a light/dark
+override. That override is stored in `sessionStorage` for the tab session and applied through
+the root `data-theme` attribute. It is not a persistent account preference.
 
 Both the Vite app build and Storybook's final Vite config share `HOST_CSS_TARGET` so the compiler
 preserves native `light-dark()` colors. Lowering them for older browsers cannot follow the
@@ -75,7 +77,21 @@ the worked example, and all three levels are visible at once:
 `DmachineWindow` declares `control` and draws its cost tab _outside_ the region the guest controls,
 following implementation plan §7's requirement for host-owned cost display.
 
-## 4. Open questions
+## 4. Desktop and window lifetime
+
+The desktop mounts when first visited and remains in React `Activity` behind page windows.
+Hiding it preserves its DOM, component state, and scroll position while pausing effects,
+query subscriptions, its minute clock, and live orb work. A direct page load does not mount an
+unseen desktop. Cards fetch collections and previews only near the viewport. Image previews
+use authorized 64px thumbnails whose small blobs remain cached for five minutes after the
+last subscription, so short cover/reveal cycles do not download them again.
+
+Only the focused page window mounts; Home mounts no page window. Recent and pinned routes are
+metadata that can reopen windows. Page-window component drafts and scroll state may be lost on
+navigation. Escape first belongs to active editors and dialogs: a title save in progress and
+the object JSON editor keep their window open.
+
+## 5. Open questions
 
 Carry these into the next design pass rather than letting the current values harden:
 

@@ -6,7 +6,7 @@ import type { OperationDocument } from "@rhizome/store-contract";
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
 import { invalidatePushResult } from "../src/queries/push.ts";
 import { inferredObjectLabel, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
-import { missingObjectUris } from "../src/surfaces/PushControl.tsx";
+import { missingObjectUris, pushResultSummary } from "../src/surfaces/PushControl.tsx";
 
 const URI = "rnet://object/0198f2a1-b19c-77bb-a6e9-0d6c66c52ae3" as const;
 const object = { uri: URI, type: "note", inferred: {}, source: { properties: {} } } as MediaObject;
@@ -34,6 +34,15 @@ describe("push host integration", () => {
         PUSH_TASKS.object["display-name"].name,
       ),
     ).toEqual([]);
+  });
+  test("completion feedback exposes failed records and stopping limits", () => {
+    const result = {
+      level: "object",
+      objects: { written: 0, removed: 0, preserved_durable: 0, skipped: 0, failed: 3 },
+      abort_reason: "max_tokens",
+    } as Parameters<typeof pushResultSummary>[0];
+    expect(pushResultSummary(result)).toContain("3 failed");
+    expect(pushResultSummary(result)).toContain("Token limit reached");
   });
   test("labels and Vibe views use generated inferred entries with fallbacks", () => {
     expect(inferredObjectLabel(object)).toBe(`note ${URI.split("/").at(-1)}`);

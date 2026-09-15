@@ -49,6 +49,19 @@ for (const available of [true, false]) {
         )
         .toEqual([64, 64]);
       await expect(image).toHaveCSS("width", "18px");
+      for (let reveal = 0; reveal < 2; reveal++) {
+        await page
+          .getByRole("region", { name: "Pinned apps" })
+          .getByRole("button", { name: "Vibes", exact: true })
+          .click();
+        await expect(preview).toBeHidden();
+        await page.getByRole("button", { name: "Home", exact: true }).click();
+        await expect(image).toBeVisible();
+        await expect
+          .poll(() => image.evaluate((node) => (node as HTMLImageElement).naturalWidth))
+          .toBe(64);
+        expect(thumbnailRequests).toBe(1);
+      }
     } else {
       await expect(preview.locator("img")).toHaveCount(0);
       await expect(preview).toHaveText("i");

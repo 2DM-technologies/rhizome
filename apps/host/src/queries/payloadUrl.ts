@@ -63,7 +63,8 @@ export function useElementThumbnailUrl(uuid: string | undefined) {
     { params: { path: { id: uuid ?? "" } }, parseAs: "blob" },
     {
       enabled: Boolean(uuid),
-      gcTime: 0,
+      // Retained desktop subscriptions pause while covered; keep small images across reveals.
+      gcTime: 5 * 60 * 1000,
       staleTime: Number.POSITIVE_INFINITY,
       refetchOnWindowFocus: false,
       retry: false,

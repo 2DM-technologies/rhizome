@@ -13,7 +13,10 @@ import type {
   PublicRemoteSourceCatalog,
 } from "../../ingest/public-sources/types.ts";
 import { createCredentialedSourceCatalog } from "../../ingest/src/credentialed-source-catalog.ts";
-import { createPublicRemoteSourceCatalog } from "../../ingest/src/public-remote-source-catalog.ts";
+import {
+  createPublicRemoteSourceCatalog,
+  installedPublicAssetByteLimit,
+} from "../../ingest/src/public-remote-source-catalog.ts";
 import {
   createSourceSkillManifestCatalog,
   installedFileSourceSkills,
@@ -90,7 +93,11 @@ export function createApp({
   const resolvedPublicRemoteSources =
     publicRemoteSources ??
     createPublicRemoteSourceCatalog({
-      assetFetch: publicAssetFetcher ?? createSafePublicAssetFetcher(new SafePublicFetcher()),
+      assetFetch:
+        publicAssetFetcher ??
+        createSafePublicAssetFetcher(
+          new SafePublicFetcher({ maxBytes: installedPublicAssetByteLimit }),
+        ),
     });
   const sourceSkillManifests = createSourceSkillManifestCatalog(
     resolvedFileSources,

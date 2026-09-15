@@ -36,7 +36,7 @@ export class OperationsService {
           await this.access.assertVibeScope(operation.vibeUuid, GRANT_SCOPE.READ);
         }
       } catch (error) {
-        if (!(error instanceof Problem) || error.status !== 404) throw error;
+        if (!(error instanceof Problem) || ![403, 404].includes(error.status)) throw error;
         // Deletion can commit after the operation read, clearing its foreign key before
         // the scope lookup. Only use deleted-Vibe access rules when a fresh row proves it.
         const [current] = await this.db.select().from(operations).where(eq(operations.uuid, uuid));
@@ -48,9 +48,10 @@ export class OperationsService {
     const isOwner = this.actor.kind === "user" && this.actor.uuid === operation.ownerUuid;
     if (!operation.vibeUuid) {
       await this.access.assertAuthenticated();
-      // Once the Vibe is gone there is no grant to check: the owner and the original invoker
-      // keep access; a delegated invoker sees only the redacted view.
-      if (!isOwner && this.actor.subject !== operation.invokedBy) throw grantMissing("operation");
+      // Deleted Vibes revoke delegated access to push results, which contain member URIs.
+      // Other operation kinds retain the original invoker's existing redacted view.
+      if (!isOwner && (operation.kind === "push" || this.actor.subject !== operation.invokedBy))
+        throw grantMissing("operation");
     }
     return { exposeOwnerOnlyResult: isOwner, operation };
   }
