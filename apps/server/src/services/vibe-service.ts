@@ -4,7 +4,7 @@ import type {
   MediaObjectRefsRequest,
   UpdateVibeRequest,
 } from "@rhizome/store-contract";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 
 import type { Database, DatabaseTransaction } from "../db/index.ts";
@@ -334,7 +334,7 @@ export class VibesService {
   }
 
   private async loadAggregate(vibeRecord: DbVibe): Promise<VibeAggregate> {
-    const [memberships, activeGrants, latestRevisions] = await Promise.all([
+    const [memberships, activeGrants] = await Promise.all([
       this.db
         .select({ uuid: vibeMediaObjects.mediaObjectUuid })
         .from(vibeMediaObjects)
@@ -344,18 +344,11 @@ export class VibesService {
         .select()
         .from(grants)
         .where(and(eq(grants.vibeUuid, vibeRecord.uuid), isNull(grants.revokedAt))),
-      this.db
-        .select({ createdAt: vibeRevisions.createdAt })
-        .from(vibeRevisions)
-        .where(eq(vibeRevisions.vibeUuid, vibeRecord.uuid))
-        .orderBy(desc(vibeRevisions.createdAt), desc(vibeRevisions.rev))
-        .limit(1),
     ]);
     return {
       vibe: vibeRecord,
       grants: activeGrants,
       mediaObjectUuids: memberships.map((membership) => membership.uuid),
-      updatedAt: latestRevisions[0]?.createdAt ?? vibeRecord.createdAt,
     };
   }
 

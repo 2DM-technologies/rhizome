@@ -281,6 +281,7 @@ export class ImportService {
       pullConfig: null,
       extensions: {},
       createdAt: new Date(),
+      updatedAt: new Date(),
       rev: 0,
     };
     return this.startPreviewForVibe({

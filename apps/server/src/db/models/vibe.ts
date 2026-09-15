@@ -15,6 +15,10 @@ export const vibes = pgTable("vibes", {
   pullConfig: jsonb("pull_config").$type<Vibe["pull"]>(),
   extensions: jsonb("extensions").$type<JsonObject>().notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
   rev: integer("rev").notNull().default(1),
 });
 

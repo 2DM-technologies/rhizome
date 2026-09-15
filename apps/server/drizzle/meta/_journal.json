@@ -57,6 +57,13 @@
       "when": 1789040303446,
       "tag": "0007_long_silver_surfer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789461281560,
+      "tag": "0008_vibe_updated_at",
+      "breakpoints": true
     }
   ]
 }

@@ -24,7 +24,7 @@ test("the bare desktop renders live account totals and newest Vibes first", asyn
     ...structuredClone(base),
     uri: "rnet://vibe/0198f2a1-a09b-76aa-95d8-fc5b55b41fd3",
     title: "Newest",
-    "x-rhizome-updated-at": "2026-09-10T12:00:00.000Z",
+    updated_at: "2026-09-10T12:00:00.000Z",
   } as Vibe);
   mockStore.dashboardStats = {
     account_created_at: "2024-03-14T12:00:00.000Z",

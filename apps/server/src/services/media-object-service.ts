@@ -20,7 +20,7 @@ import {
 } from "../db/models/media-object.ts";
 import { originArtifacts } from "../db/models/origin-artifact.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
-import type { DbVibe } from "../db/models/vibe.ts";
+import { vibes, type DbVibe } from "../db/models/vibe.ts";
 import { grantMissing, notFound, Problem } from "../errors.ts";
 import { RNET_SCHEMA_VERSION } from "../rnet.ts";
 import type { MediaObjectAggregate } from "../serializers/media-object-serializer.ts";
@@ -159,6 +159,12 @@ export class MediaObjectsService {
         createdMediaObjects.push({ mediaObject: mediaObjectRecord, mediaElementReferences });
       }
       this.mediaElementsService.assertAllUploadsUsed(mediaElementUploads);
+      if (vibeUuid && createdMediaObjects.length) {
+        await transaction
+          .update(vibes)
+          .set({ updatedAt: new Date() })
+          .where(eq(vibes.uuid, vibeUuid));
+      }
       return createdMediaObjects;
     });
   }
