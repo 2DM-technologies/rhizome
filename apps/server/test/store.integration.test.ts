@@ -3194,6 +3194,7 @@ function createSyntheticOAuthSourceSkill(): CredentialedSourceSkill {
       connection: { mode: "oauth2_pkce", button_label: "Connect synthetic source" },
       input_fields: [],
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: [],
     },
     connection: {
       mode: "oauth2_pkce",
@@ -3324,6 +3325,7 @@ function createSyntheticFileSourceSkill(): FileSourceSkill {
         },
       ],
       review_actions: ["review_import"],
+      import_push_pipeline: [],
     },
     parser,
     compiledSource: {
@@ -3391,6 +3393,7 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
         },
       ],
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: [],
     },
     parser: {
       name: "synthetic-public",

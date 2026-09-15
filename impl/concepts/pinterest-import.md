@@ -2,7 +2,7 @@
 
 **Status:** Proposed M2 implementation plan. No implementation is included in this document.
 
-**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [X import](./x-import.md), [sandboxing](./sandboxing.md), and [design tiers](./design-tiers.md).
+**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [X import](./x-import.md), [sandboxing exploration](../speculative/sandboxing.md), and [design tiers](./design-tiers.md).
 
 ## 1. Why Pinterest
 

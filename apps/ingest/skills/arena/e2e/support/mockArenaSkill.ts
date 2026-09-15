@@ -90,6 +90,7 @@ export const mockArenaSourceSkill = {
     }
     return {
       candidates,
+      destination: { title: parsed.channelTitle },
       elements,
       verification: { ...verifyArena(parsed), totals_by_currency: {} },
     };

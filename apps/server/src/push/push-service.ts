@@ -56,6 +56,10 @@ import {
   type ContextCounts,
 } from "./context.ts";
 import type { PushLimits } from "./limits.ts";
+import type {
+  CompiledImportPushPipeline,
+  ImportPushPipelineCatalog,
+} from "./import-push-pipeline.ts";
 import { validateInstalledTaskOutput } from "./installed-tasks.ts";
 import type { PushTaskCatalog, PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
@@ -109,6 +113,7 @@ export class PushService {
       blobs: BlobStore;
       modelConnectors?: ModelConnectorRegistry;
       pushTasks: PushTaskCatalog;
+      importPushPipelines: ImportPushPipelineCatalog;
       pushLimits: PushLimits;
     },
   ) {}
@@ -121,6 +126,114 @@ export class PushService {
       );
     });
     return operation;
+  }
+
+  /** Run after import commit; ready tasks accept fresh context after their dependencies settle. */
+  async runPushPipeline(
+    vibeUuid: string,
+    actor: Actor,
+    pipeline: CompiledImportPushPipeline,
+    objectUris?: readonly string[],
+  ): Promise<void> {
+    if (!this.dependencies.modelConnectors) return;
+    const tasks = pipeline.nodes.map(({ task }) => task);
+    this.activity.begin(vibeUuid, tasks, objectUris?.map(uriId));
+    try {
+      const completions = new Map<string, Promise<void>>();
+      for (const node of pipeline.nodes) {
+        const dependencies = node.after.map((key) => completions.get(key)!);
+        const completion = Promise.allSettled(dependencies).then(() =>
+          this.runAutomaticTask(vibeUuid, actor, node.task, objectUris),
+        );
+        completions.set(node.key, completion);
+      }
+      await Promise.allSettled(completions.values());
+    } finally {
+      this.activity.end(vibeUuid);
+    }
+  }
+
+  async runImportedVibeTasks(
+    vibeUuid: string,
+    actor: Actor,
+    importOperationUuid: string,
+    addedObjectUris?: readonly string[],
+  ): Promise<void> {
+    if (!this.dependencies.modelConnectors) return;
+    if (addedObjectUris?.length === 0) return;
+    const { db } = this.dependencies;
+    const imported = await db.query.operations.findFirst({
+      where: eq(operations.uuid, importOperationUuid),
+    });
+    const request = imported?.request as { mode?: unknown; source?: unknown } | undefined;
+    if (request?.mode !== "import_preview" || typeof request.source !== "string") {
+      throw new Error("Automatic import push requires its import preview source");
+    }
+    const sourceUuid = request.source.startsWith("source:")
+      ? request.source.slice("source:".length)
+      : undefined;
+    if (!sourceUuid) throw new Error("Automatic import push source is malformed");
+    const source = await db.query.ingestionSources.findFirst({
+      where: eq(ingestionSources.uuid, sourceUuid),
+    });
+    if (!source) throw new Error("Automatic import push source disappeared");
+    const pipeline = this.dependencies.importPushPipelines.forSkillId(source.skillId);
+    if (!pipeline) {
+      throw new Error(`Source-skill ${source.skillId} has no compiled import push pipeline`);
+    }
+    await this.runPushPipeline(vibeUuid, actor, pipeline, addedObjectUris);
+    // Existing Vibe imports enrich their additions without changing the owner's title.
+    if (addedObjectUris) return;
+
+    if (!imported?.result || imported.result.destination) return;
+
+    const service = new VibesService({ db, actor });
+    const vibe = await service.getVibe(vibeUuid);
+    const title = vibe.vibe.inferred[storeTaskKey(summarize.name)]?.properties.title;
+    if (typeof title !== "string") return;
+    // Import naming is an owner action; the push writer still changes only inferred data.
+    await service.updateVibe(vibeUuid, { title });
+  }
+
+  private async runAutomaticTask(
+    vibeUuid: string,
+    actor: Actor,
+    task: PushTaskDefinition,
+    objectUris?: readonly string[],
+  ): Promise<void> {
+    const level = task.level;
+    try {
+      let input: PushVibeRequest = { level, task: task.name };
+      if (objectUris && level !== "vibe") {
+        const selection =
+          level === "object"
+            ? [...objectUris]
+            : (await loadContextObjects(this.dependencies.db, objectUris.map(uriId))).flatMap(
+                ({ elements }) =>
+                  elements
+                    .filter(({ element }) => task.elementKinds?.includes(element.kind))
+                    .map(({ element }) => `rnet://element/${element.uuid}`),
+              );
+        if (!selection.length) {
+          this.activity.accepted(vibeUuid, task);
+          return;
+        }
+        input = { level, task: task.name, selection: [...new Set(selection)] };
+      }
+      const operation = await this.acceptPush(vibeUuid, input, actor);
+      this.activity.accepted(vibeUuid, task);
+      await this.runPush(operation.uuid);
+    } catch (error) {
+      this.activity.rejected(vibeUuid, task, error);
+      // Import enrichment is best effort: settled dependencies unblock all remaining nodes.
+      console.error(
+        "Automatic push failed",
+        vibeUuid,
+        level,
+        task.name,
+        error instanceof Problem ? error.code : "internal_error",
+      );
+    }
   }
 
   private async acceptPush(

@@ -14,7 +14,7 @@ export const X_POST_PARSER_NAME = "x-posts" as const;
 export const X_POST_PARSER_VERSION = "x-posts@1.0.0" as const;
 
 export const X_SOURCE_LIMITS = Object.freeze({
-  maxCandidates: 100,
+  maxCandidates: 25,
   maxCaptureBytes: 48 * 1_024 * 1_024,
   maxElementBytes: 25 * 1_024 * 1_024,
   maxTotalElementBytes: 40 * 1_024 * 1_024,

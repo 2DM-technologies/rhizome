@@ -1,12 +1,14 @@
 import { expect, test } from "../../../../host/e2e/support/playwright.ts";
 
 import {
+  NEW_VIBE_ID,
   VIBE_ID,
   installMockStore,
   type MockStore,
 } from "../../../../host/e2e/support/mockStore.ts";
 import {
   ARENA_CHANNEL_URL,
+  ARENA_IMPORT_OPERATION_ID,
   ARENA_IMPORT_SOURCE_ID,
   mockArenaSourceSkill,
 } from "./support/mockArenaSkill.ts";
@@ -29,6 +31,34 @@ test.beforeEach(async ({ page }) => {
   delete target.pull;
 });
 
+test("a new Vibe uses the Are.na board title without entering a name", async ({ page }) => {
+  await page.goto("/imports");
+  await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
+  await page.getByLabel("Are.na channel URL").fill(CHANNEL_URL);
+  await page.getByRole("button", { name: "Review Are.na channel" }).click();
+
+  await expect(page.getByLabel("VERIFY reconciliation")).toBeVisible();
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Confirm import" })).toBeEnabled();
+  expect(mockStore.vibes.some(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
+
+  await page.getByRole("button", { name: "Confirm import" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
+  await expect(
+    page.getByRole("heading", { name: "Synthetic Media Study", exact: true, level: 1 }),
+  ).toBeVisible();
+  const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
+  expect(created?.title).toBe("Synthetic Media Study");
+  expect(created?.objects).toHaveLength(5);
+  const confirmation = mockStore.requests.find(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === `/rnet/v0/imports/${ARENA_IMPORT_OPERATION_ID}/confirm`,
+  );
+  expect(confirmation?.postDataJSON()).toEqual({ title: "Synthetic Media Study" });
+});
+
 test("a public Are.na channel follows element-aware review and commits atomically", async ({
   page,
 }) => {
@@ -37,6 +67,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   const initialElementCount = mockStore.elements.size;
 
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
   await page.getByLabel("Are.na channel URL").fill(CHANNEL_URL);
   await page.getByRole("button", { name: "Review Are.na channel" }).click();
@@ -46,6 +77,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
   await expect(reconciliation).toContainText("5 objects passed VERIFY");
   await expect(reconciliation).toContainText("5 source records → 5 candidates");
   await expect(reconciliation).toContainText("9 elements staged");
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
   await expect(page.getByRole("list", { name: "VERIFY checks" }).getByRole("listitem")).toHaveCount(
     8,
   );
@@ -104,7 +136,9 @@ test("a public Are.na channel follows element-aware review and commits atomicall
 
   await page.getByRole("button", { name: "Confirm import" }).click();
 
-  await expect(page.getByRole("status")).toContainText("Imported 5 objects from Are.na channel.");
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
+    "Imported 5 objects from Are.na channel.",
+  );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   const importedCards = page.locator("[data-media-object-card]");
   await expect(importedCards).toHaveCount(6);
@@ -144,6 +178,7 @@ test("a public Are.na channel follows element-aware review and commits atomicall
 
 test("a non-Are.na URL fails before a remote source is captured or created", async ({ page }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "Are.na channel" });
   await page.getByLabel("Are.na channel URL").fill("https://example.com/not-an-arena/channel");
   await page.getByRole("button", { name: "Review Are.na channel" }).click();

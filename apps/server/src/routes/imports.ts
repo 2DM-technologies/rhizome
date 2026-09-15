@@ -10,6 +10,7 @@ import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, ProviderLeasePool } from "../db/index.ts";
+import type { PushService } from "../push/push-service.ts";
 import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { serializeVibe } from "../serializers/vibe-serializer.ts";
 import { ImportService } from "../services/import-service.ts";
@@ -39,6 +40,7 @@ export function createPendingImportRoutes(
     providerLeasePool: ProviderLeasePool;
     publicRemoteSources: PublicRemoteSourceCatalog;
   },
+  pushService: PushService,
 ) {
   const router = createRhizomeRouter();
 
@@ -93,11 +95,15 @@ export function createPendingImportRoutes(
         actor: context.get("actor"),
         ...connectedSources,
       });
-      const vibe = await service.confirm(
-        undefined,
-        context.req.valid("param").operation_id,
-        context.req.valid("json"),
-      );
+      const operationUuid = context.req.valid("param").operation_id;
+      const vibe = await service.confirm(undefined, operationUuid, context.req.valid("json"));
+      const vibeUuid = vibe.vibe.uuid;
+      const actor = context.get("actor");
+      queueMicrotask(() => {
+        void pushService
+          .runImportedVibeTasks(vibeUuid, actor, operationUuid)
+          .catch(() => console.error("Automatic import push failed", vibeUuid));
+      });
       return context.json(serializeVibe(vibe));
     },
   );

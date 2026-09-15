@@ -39,4 +39,5 @@ export const simpleFinSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;

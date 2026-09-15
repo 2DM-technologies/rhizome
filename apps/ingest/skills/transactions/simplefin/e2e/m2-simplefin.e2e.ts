@@ -33,6 +33,7 @@ test("the SimpleFIN browser adapter satisfies credentialed-source conformance", 
 
 async function stageSimpleFin(page: Page): Promise<void> {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "SimpleFIN" });
   const token = page.getByLabel("SimpleFIN setup token");
   await token.fill(VALID_SETUP_TOKEN);
@@ -57,7 +58,9 @@ async function configureSimpleFin(page: Page): Promise<string> {
   );
   if (!source) throw new Error("Missing mocked SimpleFIN source");
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByRole("status")).toContainText("Imported 3 transactions from SimpleFIN.");
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
+    "Imported 3 transactions from SimpleFIN.",
+  );
   return source.source;
 }
 
@@ -112,7 +115,9 @@ test("SimpleFIN stages a secret-free reviewed import and commits only after conf
 
   await page.getByRole("button", { name: "Confirm import" }).click();
 
-  await expect(page.getByRole("status")).toContainText("Imported 3 transactions from SimpleFIN.");
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
+    "Imported 3 transactions from SimpleFIN.",
+  );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toHaveLength(initialMembership.length + 3);
   expect(mockStore.objects.size).toBe(initialObjectCount + 3);
@@ -128,7 +133,9 @@ test("cancel keeps the SimpleFIN credential, source, and raw response but commit
   await stageSimpleFin(page);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Review canceled. Nothing was imported.");
+  await expect(page.getByRole("status").filter({ hasText: "Review canceled" })).toHaveText(
+    "Review canceled. Nothing was imported.",
+  );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toEqual(initialMembership);
   expect(mockStore.objects.size).toBe(initialObjectCount);
@@ -147,6 +154,7 @@ test("a rejected compromised token is cleared and its disable warning stops the 
   page,
 }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page.getByLabel("Import source", { exact: true }).selectOption({ label: "SimpleFIN" });
   const token = page.getByLabel("SimpleFIN setup token");
   await token.fill(COMPROMISED_SIMPLEFIN_TOKEN);
@@ -202,7 +210,7 @@ test("an owner can review and confirm a configured SimpleFIN history recovery", 
   });
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
     "Imported 3 transactions from SimpleFIN history needs a new baseline.",
   );
 });

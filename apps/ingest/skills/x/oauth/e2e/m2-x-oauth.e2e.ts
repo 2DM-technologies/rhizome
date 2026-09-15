@@ -34,14 +34,13 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   const initialElements = mockStore.elements.size;
 
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await selectAndConnect(page);
 
   const reconciliation = page.getByLabel("VERIFY reconciliation");
   await expect(reconciliation).toContainText("2 objects passed VERIFY");
   await expect(reconciliation).toContainText("4 source records → 2 candidates");
   await expect(reconciliation).toContainText("4 elements staged");
-  await expect(page.getByLabel("New Vibe title")).toHaveValue("@example_user Tweets");
+  await expect(page.getByLabel("New Vibe title")).toHaveCount(0);
   const candidateList = page.getByRole("list", { name: "Candidate media objects" });
   await expect(candidateList.locator("[data-import-candidate]")).toHaveCount(2);
   for (const displayName of X_DISPLAY_NAMES) {
@@ -87,8 +86,12 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page.getByText("Target Vibe: @example_user Tweets", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
+  await expect(
+    page.getByRole("heading", { name: "@example_user Tweets", exact: true, level: 1 }),
+  ).toBeVisible();
   const created = mockStore.vibes.find(({ uri }) => uri.endsWith(`/${NEW_VIBE_ID}`));
+  expect(created?.title).toBe("@example_user Tweets");
   expect(created?.objects).toHaveLength(2);
   expect(mockStore.objects.size).toBe(initialObjects + 2);
   expect(mockStore.elements.size).toBe(initialElements + 4);
@@ -101,14 +104,17 @@ test("X OAuth connects and reviews text and media into a staged new destination 
   );
   expect(tweets[0]?.source.properties).not.toHaveProperty("text");
 
-  await page.goto(`/vibes/${NEW_VIBE_ID}`);
-  await expect(page.locator("[data-media-object-card]")).toHaveCount(2);
-  for (const displayName of X_DISPLAY_NAMES) {
-    await expect(page.getByText(displayName, { exact: true })).toBeVisible();
-  }
+  const feed = page.getByRole("list", { name: "Tweet feed" });
+  await expect(feed.locator("[data-tweet-object]")).toHaveCount(2);
+  await expect(feed.getByText("Example User", { exact: true })).toHaveCount(2);
+  await expect(feed.getByText("Newest post with a mocked image", { exact: true })).toBeVisible();
+  await expect(feed.getByRole("img", { name: "A mocked horizon" })).toBeVisible();
+  await expect(feed.getByRole("link", { name: "View quoted post" })).toHaveAttribute(
+    "href",
+    "https://x.com/quoted/status/170",
+  );
 
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await expect(page.getByRole("button", { name: "Sign in with X", exact: true })).toBeVisible();
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expectExactlyOnceConnectionAndPreview();
@@ -120,7 +126,6 @@ test("X provider denial is recoverable and leaves no credential, source, or capt
 }) => {
   mockStore.rejectNextOAuthConnection();
   await page.goto("/imports");
-  await page.getByRole("button", { name: "Import into a new Vibe" }).click();
   await selectAndConnect(page);
 
   await expect(page.getByRole("alert")).toHaveText(
@@ -146,7 +151,7 @@ async function selectAndConnect(page: Page): Promise<void> {
   await page
     .getByLabel("Import source", { exact: true })
     .selectOption({ label: xOAuthSourceManifest.label });
-  await expect(page.getByText("Up to 100 objects · capture limit 50 MB")).toBeVisible();
+  await expect(page.getByText("Up to 25 objects · capture limit 50 MB")).toBeVisible();
   await page
     .getByRole("button", { name: xOAuthSourceManifest.connection.button_label, exact: true })
     .click();

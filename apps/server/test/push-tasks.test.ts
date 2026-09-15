@@ -3,7 +3,9 @@ import {
   PUSH_TASK_REFS,
   storeTaskKey,
   pushTaskManifestsResponseSchema,
+  type ImportPushPipeline,
 } from "@rhizome/store-contract";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../ingest/source-skills/import-push-pipelines.ts";
 import { FakeModelConnector } from "../src/inference/fake-connector.ts";
 import { assertStructuredOutputSchema } from "../src/inference/structured-output-schema.ts";
 import { batchEnvelope, packChunks, unpackResults } from "../src/push/chunking.ts";
@@ -20,6 +22,7 @@ import {
 import { installedPushTasks, validateInstalledTaskOutput } from "../src/push/installed-tasks.ts";
 import { DEFAULT_PUSH_LIMITS } from "../src/push/limits.ts";
 import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catalog.ts";
+import { compileImportPushPipeline } from "../src/push/import-push-pipeline.ts";
 import { describeMedia } from "../src/push/tasks/element/describe-media/manifest.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
 import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
@@ -94,6 +97,51 @@ describe("push task catalog and static schemas", () => {
     expect(catalog.get("vibe", summarize.name)).toBe(summarize);
     expect(catalog.get("object", summarize.name)?.level).toBe("object");
     expect(catalog.get("element", summarize.name)).toBeUndefined();
+  });
+  test("compiles source pipelines independently of task registration order", () => {
+    const reordered = new PushTaskCatalog([
+      searchKeywords,
+      summarize,
+      displayName,
+      vibeView,
+      describeMedia,
+    ]);
+    expect(
+      compileImportPushPipeline("content", CONTENT_IMPORT_PUSH_PIPELINE, reordered).nodes.map(
+        ({ key }) => key,
+      ),
+    ).toEqual([
+      "element:describe-media",
+      "object:display-name",
+      "object:search-keywords",
+      "vibe:summarize",
+      "vibe:vibe-view",
+    ]);
+  });
+  test("rejects missing tasks, duplicate nodes, and cycles during pipeline compilation", () => {
+    expect(() =>
+      compileImportPushPipeline(
+        "missing",
+        [{ task: PUSH_TASK_REFS.describeMedia, after: [] }],
+        new PushTaskCatalog([summarize]),
+      ),
+    ).toThrow("references missing task element:describe-media");
+
+    const duplicate = [
+      { task: PUSH_TASK_REFS.summarize, after: [] },
+      { task: PUSH_TASK_REFS.summarize, after: [] },
+    ] as const satisfies ImportPushPipeline;
+    expect(() => compileImportPushPipeline("duplicate", duplicate, installedPushTasks)).toThrow(
+      "repeats task vibe:summarize",
+    );
+
+    const cycle = [
+      { task: PUSH_TASK_REFS.displayName, after: [PUSH_TASK_REFS.searchKeywords] },
+      { task: PUSH_TASK_REFS.searchKeywords, after: [PUSH_TASK_REFS.displayName] },
+    ] as const satisfies ImportPushPipeline;
+    expect(() => compileImportPushPipeline("cycle", cycle, installedPushTasks)).toThrow(
+      "contains a cycle",
+    );
   });
   test("rejects every load-time task error", () => {
     for (const task of [
