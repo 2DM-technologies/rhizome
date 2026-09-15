@@ -1402,6 +1402,7 @@ export async function installMockStore(
         status: "idle",
         message: null,
         revision: 1,
+        operation_id: null,
       });
     }
 
