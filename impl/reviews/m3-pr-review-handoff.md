@@ -2,6 +2,22 @@
 
 This is the single shared context packet for independently reviewing the seven draft PRs split from [#33](https://github.com/2DM-technologies/rhizome/pull/33). No earlier chat history is required. Assign each review agent one GitHub PR number below. The numbered concepts are the seven approved boundaries; GitHub PR order follows actual dependencies.
 
+## September 15 review repairs
+
+The six P2 findings from the independent stack review have been repaired in their owning PRs and carried forward through ordinary merges. No branch history was rewritten.
+
+- **#36:** re-read an operation after a concurrent Vibe deletion, retaining owner/invoker authorization and result redaction.
+- **#38:** reject semantically invalid all-zero orb palettes before writing, preserve valid results from the batch, and retain billed usage.
+- **#39:** use elapsed time for interaction decay and stable bounded pointer steps so slow frames do not prolong animation settling.
+- **#40:** refresh object collections and records when automatic inference advances the Vibe revision, including partial/error outcomes.
+- **#41:** retain outer desktop scrolling until the two-column breakpoint and defer collection/preview fetching until cards approach view. Unsupported preview types do not fetch full payloads.
+- **#41, cached thumbnails:** authorized 64×64 WebP image previews persist in the existing element bucket. Cache hits still require element access; same-key requests share work and at most two originals are downloaded/decoded concurrently. Failed image previews keep placeholders without fetching the original. Video and text payload behavior remains unchanged. Sharp stays external in the server bundle so native image processing works at runtime.
+- **#41, user preference:** “Start a Vibe” is a standard outline button with primary-purple border/text, no icon, and no special animation or sizing.
+
+Desktop retention remains required: React Activity preserves a visited desktop's DOM, scroll, and state behind page windows. Only the focused page window mounts. These repairs leave the original feature branch unchanged and use an isolated test database. A separate task performed a later, explicitly user-authorized development database reset; that one-time action does not authorize future review/test resets.
+
+The exact revisions and incremental file manifests below have been refreshed. These code heads include the repairs; initial validation evidence remains labeled separately. The oversized-image observation is still unresolved and is not claimed fixed.
+
 ## Published stack and merge order
 
 - **[#35 — M3: define push contracts and the inference connector boundary](https://github.com/2DM-technologies/rhizome/pull/35)** (concept 1); base `main`.
@@ -31,8 +47,8 @@ The backend status endpoints and generated contract belong with the engine. Sour
 
 - Original feature branch: `m3/01-push-pipeline`, unchanged at `f75bd8e443d6fe7ee8cce905508d0e974876c958`.
 - Original main/base: `220e289be5b064b6b5e80803c8a2f5e99698872c`.
-- Complete application code head: `4606eeac426ed3a1998aae5c99710ee1a81f82b1` (desktop PR, before the documentation-only commit containing this packet).
-- The final code tree and original feature tree are **identical Git tree objects**: `0f05054c92a31e86f928007bf8072bc6dec9acdc`. This proves the complete split preserves every tracked file, asset, and file mode from the original feature head.
+- Revised application code head: `e51977513a996ab52e561d78cf6fe3b799d95257` (before the documentation-only commit updating this packet).
+- Before review repairs, the split and original feature had the identical Git tree `0f05054c92a31e86f928007bf8072bc6dec9acdc`, at split code head `4606eeac426ed3a1998aae5c99710ee1a81f82b1`. The revised stack intentionally adds the review fixes and user-approved desktop changes listed below.
 - Original scope: 44 commits, 262 changed files, 25,129 insertions and 1,258 deletions, plus binary assets.
 - Backup ref: `refs/backup/pre-split-20260914-220544`, commit `6e71545cc23084ee1ceb0d2efd8e453eb6dd9f59`; includes the original untracked review packet. Original branches and worktrees are preserved.
 - Primary checkout: `/Users/noahputnam/2dm/rhizome`; split worktree: `/Users/noahputnam/2dm/rhizome-pr-split`.
@@ -99,6 +115,23 @@ The first engine/import slices install the five non-orb tasks. Orb identities an
 
 ## Validation and known issues
 
+### Review repair validation
+
+- **#36:** full local check passed, 486 tests; latest Linux deterministic and browser jobs passed.
+- **#37:** inherited the polling repair; latest Linux deterministic and browser jobs passed.
+- **#38:** full local check passed, 518 tests; latest Linux deterministic and browser jobs passed.
+- **#39:** full local check passed, 526 tests; 6 focused browser cases passed. Updated Linux CI run 34925689197 passed both jobs, including the previously failing blur-settling assertion.
+- **#40:** full local check passed, 540 tests; 6 focused browser cases passed. Updated Linux CI run 34925690353 passed both jobs.
+- **#41:** full local check passed, 544 tests, before the separate cached-thumbnail follow-up. The first full browser run had 120 passes and 3 failures: an obsolete icon assertion was corrected for the user's button preference and passed on rerun; two theme timeouts passed unchanged in a traced one-worker rerun. No timeout was increased. Both Linux CI jobs subsequently passed on `3e05de94fcfe0f842625edc018eb3123b3e31c51` (run 34926015764).
+
+Full checks include generated-contract freshness, formatting, typecheck, tests, and builds. Test database: `rhizome_pr_fixes_20260915`, with both database URL variables explicitly set. Fake providers only; development server 5173 stayed running. Logs are `/private/tmp/rhizome-fixes-{36,38,39,40,41}-check.log`, `/private/tmp/rhizome-fixes-{39,40,41}-browser.log`, `/private/tmp/rhizome-fixes-theme-repeat.log`, and `/private/tmp/rhizome-fixes-button-browser.log`.
+
+The final combined browser suite, including cached thumbnails, passed **125/125** tests with one worker on isolated port 4179. The first combined server check ran while several browser processes were active: 548 tests passed and four existing tests exceeded their five-second deadlines, with one subsequent assertion from a timed-out test. These results are preserved in `/private/tmp/rhizome-fixes-41-final-check.log`; no timeout was increased. Full builds passed separately. The subsequent serial `bun run check` passed **552 tests**, generated-contract freshness, formatting, typecheck, and production builds; log: `/private/tmp/rhizome-fixes-41-serial-check.log`. The complete final browser log is `/private/tmp/rhizome-fixes-41-final-browser.log`.
+
+The oversized-image case passed in these full checks. Source inspection and passing tests do not explain the original observation; the independent review report documents the additional telemetry needed on a failing attempt. It remains an open investigation.
+
+### Initial split validation (before review repairs)
+
 - **#35:** local `bun run check` passed — 400 tests, generated-contract freshness, formatting, typecheck, and production builds. Tests used a new isolated database.
 - **#36:** local `bun run check` passed — 484 tests, generated-contract freshness, formatting, typecheck, and production builds. Tests used a new isolated database.
 - **#37:** an earlier local full check passed all 504 tests. The latest repeat had 503 passes and one image-validation integration failure, described below; formatting, typecheck, and generated-contract checks passed. Its corrected complete browser suite passed 62/62 tests.
@@ -112,11 +145,11 @@ The first engine/import slices install the five non-orb tasks. Orb identities an
 - Validation was run on macOS with Bun 1.3.10. CI uses Ubuntu 24.04, Node 24.20.0 for browser startup, Postgres 16, and sibling rNet `036288c4064fb978399c6cb3eaba8f0699afa37c`. GitHub CI on the published heads is separate evidence; inspect each PR's Checks tab for its current result.
 - The host production build reports its existing main-bundle size advisory (approximately 520 kB minified / 159 kB gzip). No real-device CPU benchmark is claimed.
 
-### Known failures requiring investigation
+### Original review observations and current status
 
-- **#39 owns the original Linux orb-settling failure.** Original #33 run 34917152032 had a successful deterministic check but 116/117 browser tests passed. `apps/host/e2e/vibe-orb.e2e.ts`, “interaction-only list marks wake for keyboard focus and go still again,” expected `data-vibe-orb-animating="false"` within 3 seconds after blur and received `"true"`, including retries. The test is shorter/renumbered in #39 because desktop integration cases land in #41. Local passing runs do not establish a fix. Investigate interaction decay, the renderer's capped frame delta, and slow-frame wall-clock behavior; the capped-delta explanation is a hypothesis, not an established cause.
-- **#36 owns an observed intermittent deleted-Vibe polling failure.** The first published #37 CI run and one local full-check run while validating #39 failed the unchanged integration test “a deleted Vibe fails its write and remains pollable by its owner”: polling the accepted operation returned 404 rather than 200. The full unchanged rerun passed. Evidence: [failed #37 CI check](https://github.com/2DM-technologies/rhizome/actions/runs/34921425584/job/104230200281), `/private/tmp/rhizome-split-06-check-first.log`. Investigate authorization/row-deletion timing before classifying it; it was not fixed by splitting.
-- **#35/#36 own an additional observed image-validation failure.** The latest local #37 full check failed “MIME mismatch, unlisted MIME, and oversize payloads never reach the connector”: the result unexpectedly included image writes instead of the expected rejection/skip result. Earlier full runs passed; only browser fixtures had changed in that repeat. This is unresolved evidence, not an established root cause. Log: `/private/tmp/rhizome-split-03-check.log`. Trace blob metadata/bytes, test doubles, scheduling, and validation before deciding whether it is a runtime defect or test isolation issue.
+- **#39: orb-settling failure fixed.** Analytic energy decay now uses elapsed time; pointer springs catch up slow frames in stable bounded steps. The controlled 5/10/30/60 FPS regression and the previously failing blur assertion pass. The updated Linux CI run 34925689197 passed both jobs. Original failure evidence remains in the independent review report.
+- **#36: deleted-Vibe polling race fixed.** If deletion clears the operation foreign key between reading the operation and checking Vibe scope, the service re-reads the operation and applies its existing deleted-Vibe owner/invoker authorization and redaction rules. A real-database gated regression passes. Normal grants remain required while the Vibe exists.
+- **#35/#36 own an additional observed image-validation failure.** An initial-split local #37 full check failed “MIME mismatch, unlisted MIME, and oversize payloads never reach the connector”: the result unexpectedly included image writes instead of the expected rejection/skip result. Earlier full runs passed; only browser fixtures had changed in that repeat. This is unresolved evidence, not an established root cause. Log: `/private/tmp/rhizome-split-03-check.log`. Trace blob metadata/bytes, test doubles, scheduling, and validation before deciding whether it is a runtime defect or test isolation issue.
 - **#38/#39 own stale orb documentation.** `impl/concepts/vibe-orb.md` and orb follow-up passages in `impl/concepts/push-pipeline.md` still describe recipe version 1, Vibe-level image sampling/model inference, and deferred raster caching. The actual finished design uses object identity v1, recipe v3, deterministic composition, and implemented raster caching. `impl/CONFORMANCE.md` still says six tasks where the completed catalog has seven. These are known documentation discrepancies preserved from the source branch; do not infer product requirements from the superseded prose.
 - **#36's deferred M7 limits:** process-local execution/status, no durable resumption or late-write fencing, deferred membership/user-edit freshness guarantees, and possible spend loss on process death. Distinguish violations of current guarantees from requests to implement those explicit later milestones.
 
@@ -131,7 +164,7 @@ The first engine/import slices install the five non-orb tasks. Orb identities an
 
 The split-validation database is `rhizome_pr_split_20260914_2205`, created solely for this task. Do not assume it is free for simultaneous tests. Give reviewers separate databases or serialize access. Do not copy the development `.env` into a reviewer checkout. The relative `@rnet/types` dependency expects a sibling `rnet` checkout.
 
-The first CI wave passed both jobs for #35, #36, and #40, and the deterministic job for #38, #39, and #41. #37’s browser fixture failures were corrected and its full 62-test suite then passed locally; corrected heads are pushed and CI is rerunning. Refer to live checks rather than treating this snapshot as a merge gate.
+The initial CI snapshot above predates review repairs. Use the latest repair validation and live GitHub checks for merge decisions.
 
 ## Cross-PR review responsibilities
 
@@ -224,13 +257,13 @@ Runs asynchronous element, object, and Vibe tasks with permission checks, bounde
 - PR: [https://github.com/2DM-technologies/rhizome/pull/36](https://github.com/2DM-technologies/rhizome/pull/36)
 - Branch: `m3/review-02-push-engine`
 - Base: `20d2ff06db3a31f57324e40805a9747dd3ca373a` (`m3/review-01-foundations`)
-- Code head: `92ddc2e05449d39ffc98b08840bdb13b2f7d1ca8`
-- Incremental scope: 66 files changed, 10025 insertions(+), 78 deletions(-)
+- Code head: `1f849ab48e5432010e2e0f9d7c2b9fdc0e5d9b0f`
+- Incremental scope: 68 files changed, 10139 insertions(+), 88 deletions(-)
 
 ```bash
 git fetch origin m3/review-02-push-engine
-git diff --stat 20d2ff06db3a31f57324e40805a9747dd3ca373a...92ddc2e05449d39ffc98b08840bdb13b2f7d1ca8
-git diff 20d2ff06db3a31f57324e40805a9747dd3ca373a...92ddc2e05449d39ffc98b08840bdb13b2f7d1ca8 -- path/to/assigned/file
+git diff --stat 20d2ff06db3a31f57324e40805a9747dd3ca373a...1f849ab48e5432010e2e0f9d7c2b9fdc0e5d9b0f
+git diff 20d2ff06db3a31f57324e40805a9747dd3ca373a...1f849ab48e5432010e2e0f9d7c2b9fdc0e5d9b0f -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -303,12 +336,14 @@ apps/server/src/serializers/operation-serializer.ts
 apps/server/src/serializers/vibe-serializer.ts
 apps/server/src/services/inferred-writer.ts
 apps/server/src/services/media-object-service.ts
+apps/server/src/services/operation-service.ts
 apps/server/src/services/operation-sweep.ts
 apps/server/src/services/vibe-service.ts
 apps/server/src/services/vibe-snapshot.ts
 apps/server/test/image-attachments.test.ts
 apps/server/test/media-element-serializer.test.ts
 apps/server/test/operation-serializer.test.ts
+apps/server/test/operation-service.integration.test.ts
 apps/server/test/operation-sweep.test.ts
 apps/server/test/push-tasks.test.ts
 apps/server/test/push.integration.test.ts
@@ -332,14 +367,14 @@ Source manifests declare their enrichment graph. Confirmation schedules tasks af
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/37](https://github.com/2DM-technologies/rhizome/pull/37)
 - Branch: `m3/review-03-import-enrichment`
-- Base: `92ddc2e05449d39ffc98b08840bdb13b2f7d1ca8` (`m3/review-02-push-engine`)
-- Code head: `18c31471d8c066940493c8502c07e670043557fa`
+- Base: `1f849ab48e5432010e2e0f9d7c2b9fdc0e5d9b0f` (`m3/review-02-push-engine`)
+- Code head: `e55c95a066808c6750ff9700dc906e8b40c7adc9`
 - Incremental scope: 42 files changed, 1684 insertions(+), 33 deletions(-)
 
 ```bash
 git fetch origin m3/review-03-import-enrichment
-git diff --stat 92ddc2e05449d39ffc98b08840bdb13b2f7d1ca8...18c31471d8c066940493c8502c07e670043557fa
-git diff 92ddc2e05449d39ffc98b08840bdb13b2f7d1ca8...18c31471d8c066940493c8502c07e670043557fa -- path/to/assigned/file
+git diff --stat 1f849ab48e5432010e2e0f9d7c2b9fdc0e5d9b0f...e55c95a066808c6750ff9700dc906e8b40c7adc9
+git diff 1f849ab48e5432010e2e0f9d7c2b9fdc0e5d9b0f...e55c95a066808c6750ff9700dc906e8b40c7adc9 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -407,14 +442,14 @@ Adds reusable object orb identities and shared version-3 Vibe recipes. Vibe appe
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/38](https://github.com/2DM-technologies/rhizome/pull/38)
 - Branch: `m3/review-05-orb-identities`
-- Base: `18c31471d8c066940493c8502c07e670043557fa` (`m3/review-03-import-enrichment`)
-- Code head: `2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae`
-- Incremental scope: 22 files changed, 1664 insertions(+), 70 deletions(-)
+- Base: `e55c95a066808c6750ff9700dc906e8b40c7adc9` (`m3/review-03-import-enrichment`)
+- Code head: `72553de671c7cd02778c3730da293660c96df29d`
+- Incremental scope: 23 files changed, 1710 insertions(+), 70 deletions(-)
 
 ```bash
 git fetch origin m3/review-05-orb-identities
-git diff --stat 18c31471d8c066940493c8502c07e670043557fa...2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae
-git diff 18c31471d8c066940493c8502c07e670043557fa...2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae -- path/to/assigned/file
+git diff --stat e55c95a066808c6750ff9700dc906e8b40c7adc9...72553de671c7cd02778c3730da293660c96df29d
+git diff e55c95a066808c6750ff9700dc906e8b40c7adc9...72553de671c7cd02778c3730da293660c96df29d -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -432,6 +467,7 @@ apps/host/src/api/generated/push-tasks.ts
 apps/ingest/source-skills/import-push-pipelines.ts
 apps/server/src/push/installed-tasks.ts
 apps/server/src/push/push-service.ts
+apps/server/src/push/task-catalog.ts
 apps/server/src/push/tasks/object/orb-identity/PROMPT.md
 apps/server/src/push/tasks/object/orb-identity/manifest.ts
 apps/server/src/push/tasks/object/orb-identity/output.json
@@ -460,14 +496,14 @@ Adds the shared WebGL/raster painter, persistent raster cache, procedural fallba
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/39](https://github.com/2DM-technologies/rhizome/pull/39)
 - Branch: `m3/review-06-orb-rendering`
-- Base: `2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae` (`m3/review-05-orb-identities`)
-- Code head: `9f4b258890513bcb25327c619452cff8f8621c9b`
-- Incremental scope: 15 files changed, 2642 insertions(+), 1 deletion(-)
+- Base: `72553de671c7cd02778c3730da293660c96df29d` (`m3/review-05-orb-identities`)
+- Code head: `00d3ece1ac72183fd1dccc6bfc80f92a28aecb43`
+- Incremental scope: 16 files changed, 2716 insertions(+), 1 deletion(-)
 
 ```bash
 git fetch origin m3/review-06-orb-rendering
-git diff --stat 2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae...9f4b258890513bcb25327c619452cff8f8621c9b
-git diff 2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae...9f4b258890513bcb25327c619452cff8f8621c9b -- path/to/assigned/file
+git diff --stat 72553de671c7cd02778c3730da293660c96df29d...00d3ece1ac72183fd1dccc6bfc80f92a28aecb43
+git diff 72553de671c7cd02778c3730da293660c96df29d...00d3ece1ac72183fd1dccc6bfc80f92a28aecb43 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -482,6 +518,7 @@ git diff 2bd5a47b0c2d7166ecd4ad7d290cc38b73d31cae...9f4b258890513bcb25327c619452
 **Changed files:**
 
 ```text
+apps/host/e2e/orb-frame-timing.e2e.ts
 apps/host/e2e/orb-performance.e2e.ts
 apps/host/e2e/orb-raster.e2e.ts
 apps/host/e2e/vibe-orb.e2e.ts
@@ -507,14 +544,14 @@ Adds push controls and polling, inferred object/Vibe views, live status/error sk
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/40](https://github.com/2DM-technologies/rhizome/pull/40)
 - Branch: `m3/review-04-inferred-views`
-- Base: `9f4b258890513bcb25327c619452cff8f8621c9b` (`m3/review-06-orb-rendering`)
-- Code head: `6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d`
-- Incremental scope: 45 files changed, 3735 insertions(+), 690 deletions(-)
+- Base: `00d3ece1ac72183fd1dccc6bfc80f92a28aecb43` (`m3/review-06-orb-rendering`)
+- Code head: `661f91df35e56c43373f03f19f01b4c033cbae9b`
+- Incremental scope: 46 files changed, 3810 insertions(+), 690 deletions(-)
 
 ```bash
 git fetch origin m3/review-04-inferred-views
-git diff --stat 9f4b258890513bcb25327c619452cff8f8621c9b...6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d
-git diff 9f4b258890513bcb25327c619452cff8f8621c9b...6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d -- path/to/assigned/file
+git diff --stat 00d3ece1ac72183fd1dccc6bfc80f92a28aecb43...661f91df35e56c43373f03f19f01b4c033cbae9b
+git diff 00d3ece1ac72183fd1dccc6bfc80f92a28aecb43...661f91df35e56c43373f03f19f01b4c033cbae9b -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -534,6 +571,7 @@ git diff 9f4b258890513bcb25327c619452cff8f8621c9b...6a9547ceaf3cf25ddbe3c0a3693f
 **Changed files:**
 
 ```text
+apps/host/e2e/automatic-enrichment-refresh.e2e.ts
 apps/host/e2e/fixtures/tweetfeed.webm
 apps/host/e2e/inference-status.e2e.ts
 apps/host/e2e/m1-host.e2e.ts
@@ -589,14 +627,14 @@ Adds desktop cards, account totals, dock pins and navigation, theme/assets, and 
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/41](https://github.com/2DM-technologies/rhizome/pull/41)
 - Branch: `m3/review-07-desktop-shell`
-- Base: `6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d` (`m3/review-04-inferred-views`)
-- Code head: `4606eeac426ed3a1998aae5c99710ee1a81f82b1`
-- Incremental scope: 87 files changed, 3254 insertions(+), 646 deletions(-)
+- Base: `661f91df35e56c43373f03f19f01b4c033cbae9b` (`m3/review-04-inferred-views`)
+- Code head: `e51977513a996ab52e561d78cf6fe3b799d95257`
+- Incremental scope: 98 files changed, 4492 insertions(+), 712 deletions(-)
 
 ```bash
 git fetch origin m3/review-07-desktop-shell
-git diff --stat 6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d...4606eeac426ed3a1998aae5c99710ee1a81f82b1
-git diff 6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d...4606eeac426ed3a1998aae5c99710ee1a81f82b1 -- path/to/assigned/file
+git diff --stat 661f91df35e56c43373f03f19f01b4c033cbae9b...e51977513a996ab52e561d78cf6fe3b799d95257
+git diff 661f91df35e56c43373f03f19f01b4c033cbae9b...e51977513a996ab52e561d78cf6fe3b799d95257 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -626,6 +664,8 @@ git diff 6a9547ceaf3cf25ddbe3c0a3693fd645121d9f9d...4606eeac426ed3a1998aae5c9971
 apps/host/.storybook/main.ts
 apps/host/.storybook/preview.tsx
 apps/host/e2e/desktop-home.e2e.ts
+apps/host/e2e/desktop-loading.e2e.ts
+apps/host/e2e/desktop-thumbnails.e2e.ts
 apps/host/e2e/dock-layering.e2e.ts
 apps/host/e2e/dock-pins.e2e.ts
 apps/host/e2e/escape-window.e2e.ts
@@ -651,6 +691,7 @@ apps/host/src/assets/orbs/orb-vibes-96.png
 apps/host/src/assets/profile/development-user.jpg
 apps/host/src/queries/dashboard.ts
 apps/host/src/queries/index.ts
+apps/host/src/queries/payloadUrl.ts
 apps/host/src/session/session.ts
 apps/host/src/shell/DesktopHome.tsx
 apps/host/src/shell/DesktopVibeCard.tsx
@@ -688,22 +729,30 @@ apps/host/src/ui/ProgressBar.tsx
 apps/host/src/ui/SearchField.tsx
 apps/host/src/ui/SelectInput.tsx
 apps/host/src/ui/Shell.stories.tsx
+apps/host/src/ui/StartVibeGlow.tsx
 apps/host/src/ui/TextArea.tsx
 apps/host/src/ui/TextInput.tsx
 apps/host/src/ui/ToolCallBlock.tsx
 apps/host/src/ui/icons.tsx
+apps/host/src/ui/useNearViewport.ts
 apps/host/src/vibeRecency.ts
 apps/host/test/shell-search.test.ts
 apps/host/test/shell-store.test.ts
 apps/host/vite.config.ts
 apps/ingest/skills/arena/e2e/m2-arena.e2e.ts
 apps/ingest/skills/x/oauth/e2e/m2-x-oauth.e2e.ts
+apps/server/package.json
 apps/server/src/app.ts
+apps/server/src/blobs/element-thumbnails.ts
 apps/server/src/routes/me.ts
+apps/server/src/routes/media-elements.ts
 apps/server/src/services/dashboard-stats-service.ts
 apps/server/test/dashboard-stats-service.test.ts
+apps/server/test/element-thumbnails.test.ts
 apps/server/test/openapi.test.ts
+apps/server/test/store.integration.test.ts
 impl/concepts/design-tiers.md
+impl/reviews/m3-pr-review-handoff.md
 impl/speculative/sandboxing.md
 impl/speculative/ui-component-elements.md
 packages/store-contract/src/dashboard.ts
