@@ -1,0 +1,134 @@
+[
+  {
+    "version": 1,
+    "palette": [
+      {
+        "color": "#a52bd6",
+        "weight": 0.45
+      },
+      {
+        "color": "#ff5a92",
+        "weight": 0.4
+      },
+      {
+        "color": "#ffb85b",
+        "weight": 0.15
+      }
+    ],
+    "contrast": 0.35,
+    "field": {
+      "grain": 0.15,
+      "warp": 0.55,
+      "anisotropy": 0.15
+    },
+    "surface": {
+      "depth": 0.6,
+      "glow": 0.7
+    },
+    "motion": {
+      "drift": 0.35,
+      "turbulence": 0.25,
+      "spin": 0.2
+    },
+    "confidence": 0.85
+  },
+  {
+    "version": 1,
+    "palette": [
+      {
+        "color": "#c23438",
+        "weight": 0.45
+      },
+      {
+        "color": "#ef6b26",
+        "weight": 0.4
+      },
+      {
+        "color": "#ffbf4b",
+        "weight": 0.15
+      }
+    ],
+    "contrast": 0.85,
+    "field": {
+      "grain": 0.65,
+      "warp": 0.8,
+      "anisotropy": 0.8
+    },
+    "surface": {
+      "depth": 0.8,
+      "glow": 0.85
+    },
+    "motion": {
+      "drift": 0.4,
+      "turbulence": 0.9,
+      "spin": 0.1
+    },
+    "confidence": 0.85
+  },
+  {
+    "version": 1,
+    "palette": [
+      {
+        "color": "#1965c2",
+        "weight": 0.45
+      },
+      {
+        "color": "#17a9bd",
+        "weight": 0.4
+      },
+      {
+        "color": "#62d5ae",
+        "weight": 0.15
+      }
+    ],
+    "contrast": 0.2,
+    "field": {
+      "grain": 0.1,
+      "warp": 0.7,
+      "anisotropy": 0.7
+    },
+    "surface": {
+      "depth": 0.95,
+      "glow": 0.45
+    },
+    "motion": {
+      "drift": 0.65,
+      "turbulence": 0.15,
+      "spin": 0.75
+    },
+    "confidence": 0.85
+  },
+  {
+    "version": 1,
+    "palette": [
+      {
+        "color": "#2a794c",
+        "weight": 0.45
+      },
+      {
+        "color": "#50aa64",
+        "weight": 0.4
+      },
+      {
+        "color": "#e2bf53",
+        "weight": 0.15
+      }
+    ],
+    "contrast": 0.55,
+    "field": {
+      "grain": 0.35,
+      "warp": 0.2,
+      "anisotropy": 0.05
+    },
+    "surface": {
+      "depth": 0.25,
+      "glow": 0.25
+    },
+    "motion": {
+      "drift": 0.1,
+      "turbulence": 0.05,
+      "spin": 0.02
+    },
+    "confidence": 0.85
+  }
+]

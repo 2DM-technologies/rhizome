@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import orbIdentities from "./fixtures/orb-identities.json";
 import {
   composeVibeOrb,
   composeOrbPalette,
@@ -13,15 +14,13 @@ import { jsonSchema } from "../src/routes/contracts.ts";
 import type { ContextObject, VibeContext } from "../src/push/context.ts";
 import type { BlobStore } from "../src/blobs/types.ts";
 
-const examples = [...orbIdentity.prompt.matchAll(/```json\n([\s\S]*?)\n```/gu)].map((match) =>
-  JSON.parse(match[1]!),
-);
+const examples = orbIdentities;
 const bloom = examples[0] as OrbIdentity;
 const tide = examples[2] as OrbIdentity;
 const contribution = (id: string, character = bloom, weight = 1) => ({ id, character, weight });
 
 describe("object-derived Vibe orbs", () => {
-  test("all art-direction examples satisfy the object schema; renderer-only controls are rejected", () => {
+  test("representative identities satisfy the object schema; renderer-only controls are rejected", () => {
     expect(examples).toHaveLength(4);
     for (const example of examples) {
       expect(jsonSchema(orbIdentity.outputSchema).validate(example).ok).toBeTrue();
