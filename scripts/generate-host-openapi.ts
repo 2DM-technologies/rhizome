@@ -1,9 +1,9 @@
 import { createApp, type AppDependencies } from "../apps/server/src/app.ts";
-import openapiTS, { astToString } from "openapi-typescript";
+import openapiTS, { astToString, type OpenAPI3 } from "openapi-typescript";
 import { format, resolveConfig } from "prettier";
 import ts from "typescript";
 
-import type { STORE_SCHEMA_COMPONENTS } from "@rhizome/store-contract";
+import type { STORE_SCHEMA_COMPONENTS } from "../packages/store-contract/src/index.ts";
 
 const RNET_COMPONENT_TYPES = {
   Grant: "RnetGrant",
@@ -18,6 +18,11 @@ const RNET_COMPONENT_TYPES = {
 } as const;
 
 const STORE_COMPONENT_TYPES = {
+  PushVibeRequest: "StorePushVibeRequest",
+  PushOperationResult: "StorePushOperationResult",
+  PushTaskManifest: "StorePushTaskManifest",
+  PushTaskManifestsResponse: "StorePushTaskManifestsResponse",
+
   Problem: "StoreProblemDocument",
   Operation: "StoreOperationDocument",
   SourceCredential: "StoreSourceCredentialDocument",
@@ -61,6 +66,10 @@ import type {
   Vibe as RnetVibe,
 } from "@rnet/types";
 import type {
+  PushVibeRequest as StorePushVibeRequest,
+  PushOperationResult as StorePushOperationResult,
+  PushTaskManifest as StorePushTaskManifest,
+  PushTaskManifestsResponse as StorePushTaskManifestsResponse,
   ProblemDocument as StoreProblemDocument,
   OperationDocument as StoreOperationDocument,
   SourceCredentialDocument as StoreSourceCredentialDocument,
@@ -123,6 +132,7 @@ const { openApiDocument } = createApp({
   config,
   db: {} as AppDependencies["db"],
   blobs: {} as AppDependencies["blobs"],
+  providerLeasePool: {} as AppDependencies["providerLeasePool"],
 });
 
 const emittedComponentNames = Object.keys(openApiDocument.components.schemas);
@@ -171,7 +181,7 @@ function isFreeFormObject(schema: Record<string, unknown>): boolean {
   );
 }
 
-const types = await openapiTS(openApiDocument, {
+const types = await openapiTS(JSON.parse(JSON.stringify(openApiDocument)) as OpenAPI3, {
   inject: TYPE_IMPORTS,
   transform(schema, { path }) {
     const componentName = path?.match(/^#\/components\/schemas\/([^/]+)$/)?.[1];
