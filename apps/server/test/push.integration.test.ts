@@ -329,6 +329,21 @@ async function poll(
 async function run(app: App, vibeUuid: string, input?: PushVibeRequest) {
   return poll(app, (await accept(app, vibeUuid, input)).operation_id);
 }
+async function waitForVibeOrb(app: App, vibeUuid: string, confidence: number) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const document = await (await api(app, `/vibes/${vibeUuid}`)).json();
+    const entry = document.inferred?.[storeTaskKey(vibeOrb.name)];
+    const pushes = await pushesFor(vibeUuid);
+    if (
+      entry?.confidence === confidence &&
+      pushes.every(({ status }) => !["queued", "running"].includes(status))
+    )
+      return entry;
+    await Bun.sleep(5);
+  }
+  throw new Error("Derived orb did not settle");
+}
 function responseFor(
   request: CompletionRequest,
   result: Record<string, unknown> | null = { label: "fern" },
@@ -525,6 +540,151 @@ async function confirmAndWaitForEnrichment(
 }
 
 describe("new Vibe import enrichment", () => {
+  test("automatic waiters drop removed additions without losing eligible siblings or dependents", async () => {
+    for (const task of [objectTask, elementTask]) {
+      for (const removeAll of [false, true]) {
+        const { vibeUuid, ids } = await fixture(3);
+        const recordIds =
+          task.level === "element" ? await Promise.all(ids.map((id) => imageFor(id))) : ids;
+        const entered = gate(),
+          release = gate();
+        const connector = new FakeModelConnector({
+          respond: async (request) => {
+            if (connector.requests.length === 1) {
+              entered.resolve();
+              await release.promise;
+            }
+            return responseFor(request);
+          },
+        });
+        const service = pushService(connector, { pushTasks: tasks });
+        await service.startPush(
+          vibeUuid,
+          {
+            level: task.level,
+            task: task.name,
+            selection: [`rnet://${task.level}/${recordIds[0]}`],
+          },
+          ownerActor,
+        );
+        await entered.promise;
+        const key = `${task.level}:${task.name}`;
+        const graph = service.runPushPipeline(
+          vibeUuid,
+          ownerActor,
+          {
+            skillId: "test",
+            nodes: [
+              { key, task, after: [] },
+              { key: `object:${otherTask.name}`, task: otherTask, after: [key] },
+            ],
+          },
+          ids.slice(1).map((id) => `rnet://object/${id}`),
+        );
+        try {
+          await Bun.sleep(100);
+          expect(connector.requests).toHaveLength(1);
+          await db
+            .delete(vibeMediaObjects)
+            .where(
+              and(
+                eq(vibeMediaObjects.vibeUuid, vibeUuid),
+                inArray(vibeMediaObjects.mediaObjectUuid, removeAll ? ids.slice(1) : [ids[1]!]),
+              ),
+            );
+          // Explicit manual selections remain strict at the same HTTP boundary.
+          const invalid = await api(application(connector), `/vibes/${vibeUuid}/push`, {
+            level: task.level,
+            task: task.name,
+            selection: [`rnet://${task.level}/${recordIds[1]}`],
+          });
+          expect(invalid.status).toBe(422);
+        } finally {
+          release.resolve();
+        }
+        const completed = await graph;
+        expect(completed.size).toBe(removeAll ? 0 : 2);
+        expect(connector.requests).toHaveLength(removeAll ? 1 : 3);
+        if (!removeAll) {
+          const root = (await pushesFor(vibeUuid)).find(({ uuid }) => uuid === completed.get(key));
+          expect(root?.request.resolved).toMatchObject({ selection: [recordIds[2]!] });
+          const sibling = await db.query.mediaObjects.findFirst({
+            where: eq(mediaObjects.uuid, ids[2]!),
+          });
+          expect(sibling?.inferred).toHaveProperty(storeTaskKey(otherTask.name));
+          if (task.level === "object")
+            expect(sibling?.inferred).toHaveProperty(storeTaskKey(task.name));
+          else
+            expect(
+              (
+                await db.query.mediaElements.findFirst({
+                  where: eq(mediaElements.uuid, recordIds[2]!),
+                })
+              )?.inferred,
+            ).toHaveProperty(storeTaskKey(task.name));
+        }
+        expect(
+          (
+            await service.getTaskInferenceStatus(
+              vibeUuid,
+              { level: task.level, task: task.name },
+              ownerActor,
+            )
+          ).status,
+        ).toBe("done");
+      }
+    }
+  });
+
+  test("a durable Vibe entry saved during a covering run avoids a redundant automatic operation", async () => {
+    const { vibeUuid } = await fixture(1);
+    const entered = gate(),
+      release = gate();
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        entered.resolve();
+        await release.promise;
+        return installedTaskResponse(request);
+      },
+    });
+    const service = pushService(connector);
+    const manual = await service.startPush(
+      vibeUuid,
+      { level: "vibe", task: summarize.name },
+      ownerActor,
+    );
+    await entered.promise;
+    const graph = service.runPushPipeline(vibeUuid, ownerActor, {
+      skillId: "test",
+      nodes: [{ key: `vibe:${summarize.name}`, task: summarize, after: [] }],
+    });
+    try {
+      await Bun.sleep(100);
+      await db
+        .update(vibes)
+        .set({
+          inferred: {
+            [storeTaskKey(summarize.name)]: {
+              ...oldEntry,
+              durable: true,
+              properties: { title: "Owner title", summary: "Owner summary" },
+            },
+          },
+        })
+        .where(eq(vibes.uuid, vibeUuid));
+    } finally {
+      release.resolve();
+    }
+    expect((await graph).size).toBe(0);
+    expect(connector.requests).toHaveLength(1);
+    const pushes = await pushesFor(vibeUuid);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]?.uuid).toBe(manual.uuid);
+    expect(pushes[0]?.result).toMatchObject({
+      vibe: { outcome: "skipped", reason: "preserved_durable" },
+    });
+  });
+
   test("automatic conflicts wait, enrich only uncovered additions, and then release dependencies", async () => {
     for (const task of [objectTask, elementTask]) {
       const { vibeUuid, ids } = await fixture(3);
@@ -839,10 +999,20 @@ describe("new Vibe import enrichment", () => {
     expect(completed.size).toBe(0);
     expect(connector.requests).toHaveLength(0);
     expect(await pushesFor(vibeUuid)).toHaveLength(1);
-    await db
-      .update(operations)
-      .set({ status: "failed", finishedAt: new Date(), error: "test cleanup" })
-      .where(eq(operations.uuid, uuid));
+    const interrupted = await db.query.operations.findFirst({ where: eq(operations.uuid, uuid) });
+    expect(interrupted).toMatchObject({ status: "failed", error: "interrupted" });
+    expect(interrupted?.finishedAt).toBeInstanceOf(Date);
+    expect(
+      await service.getTaskInferenceStatus(
+        vibeUuid,
+        { level: "object", task: objectTask.name },
+        ownerActor,
+      ),
+    ).toMatchObject({
+      status: "error",
+      message:
+        "The running inference task did not finish; automatic enrichment could not continue.",
+    });
   });
 
   test("automatic graphs serialize per Vibe while unrelated Vibes and empty graphs can finish", async () => {
@@ -1713,6 +1883,7 @@ describe("automatic task sequence", () => {
 
   test("a workset rejected for one level does not stop the other levels", async () => {
     const { vibeUuid, ids } = await fixture(2);
+    await imageFor(ids[0]!);
     const connector = new FakeModelConnector({ respond: installedTaskResponse });
     const log = spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -2257,6 +2428,15 @@ describe("push lifecycle and inferred writes", () => {
         api(app, `/vibes/${vibeUuid}/push`, { level: "object", task: objectTask.name }),
       ]);
       expect(responses.map((response) => response.status).sort()).toEqual([202, 409]);
+      const conflict = responses.find((response) => response.status === 409)!;
+      expect(conflict.headers.get("content-type")).toContain("application/problem+json");
+      expect(await conflict.json()).toEqual({
+        type: "https://rnet.network/problems/operation_in_progress",
+        title: "Operation in progress",
+        status: 409,
+        detail: "This task is already running on the Vibe",
+        code: "operation_in_progress",
+      });
       released.resolve();
       const accepted = (await responses
         .find((response) => response.status === 202)!
@@ -3115,9 +3295,91 @@ describe("installed image push", () => {
       where: eq(mediaObjects.uuid, ids[0]!),
     });
     expect(rejected?.inferred[storeTaskKey(orbIdentity.name)]).toBeUndefined();
-    const document = await (await api(app, `/vibes/${vibeUuid}`)).json();
-    expect(document.inferred[storeTaskKey(vibeOrb.name)].confidence).toBe(0.5);
+    expect((await waitForVibeOrb(app, vibeUuid, 0.5)).confidence).toBe(0.5);
     expect(connector.requests).toHaveLength(1);
+  });
+
+  test("membership responses and identity finalization do not wait on a blocked orb refresh", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const entered = gate(),
+      release = gate();
+    let preparations = 0;
+    const gatedOrb: PushTaskDefinition = {
+      ...vibeOrb,
+      prepareVibeContext: async (input) => {
+        if (++preparations === 1) {
+          entered.resolve();
+          await release.promise;
+        }
+        return vibeOrb.prepareVibeContext!(input);
+      },
+    };
+    const catalog = new PushTaskCatalog(
+      installedPushTasks
+        .manifests()
+        .map(({ level, name }) =>
+          name === vibeOrb.name ? gatedOrb : installedPushTasks.get(level, name)!,
+        ),
+    );
+    const connector = new FakeModelConnector({ respond: installedTaskResponse });
+    const app = application(connector, { pushTasks: catalog });
+    const refreshes = spyOn(PushService.prototype, "refreshVibeOrb");
+    const held = await accept(app, vibeUuid, { level: "vibe", task: vibeOrb.name });
+    await entered.promise;
+    let identity: ReturnType<typeof run> | undefined;
+    try {
+      identity = run(app, vibeUuid, { level: "object", task: orbIdentity.name });
+      expect(
+        await Promise.race([
+          identity.then(({ status }) => status),
+          Bun.sleep(500).then(() => "blocked"),
+        ]),
+      ).toBe("done");
+      // Give the single background refresh time to enter the conflict wait before a burst.
+      await Bun.sleep(25);
+      for (const method of ["DELETE", "POST", "DELETE"]) {
+        const response = api(
+          app,
+          `/vibes/${vibeUuid}/objects`,
+          { objects: [`rnet://object/${ids[1]}`] },
+          owner,
+          method,
+        );
+        expect(
+          await Promise.race([
+            Promise.resolve(response).then(({ status }) => status),
+            Bun.sleep(500).then(() => "blocked"),
+          ]),
+        ).toBe(204);
+      }
+      expect(
+        (await db.query.operations.findFirst({ where: eq(operations.uuid, held.operation_id) }))
+          ?.status,
+      ).toBe("running");
+      expect(refreshes).toHaveBeenCalledTimes(1);
+    } finally {
+      release.resolve();
+      if (identity) await identity;
+      await poll(app, held.operation_id);
+      // New refreshes can be scheduled by the preceding pass; drain each observed promise.
+      for (let index = 0; index < refreshes.mock.results.length; index++)
+        await refreshes.mock.results[index]!.value;
+      refreshes.mockRestore();
+    }
+    const entry = await waitForVibeOrb(app, vibeUuid, 1);
+    expect(entry.confidence).toBe(1);
+    expect(connector.requests).toHaveLength(1);
+    const orbPushes = (await pushesFor(vibeUuid)).filter(
+      ({ request }) => request.task === vibeOrb.name,
+    );
+    expect(orbPushes).toHaveLength(3); // held run, one waiter, one coalesced follow-up
+    expect(orbPushes.at(-1)?.request.resolved).toMatchObject({ selection: [ids[0]!] });
+    const firstRevision = await db.query.vibeRevisions.findFirst({
+      where: eq(vibeRevisions.operationUuid, held.operation_id),
+    });
+    expect(firstRevision?.snapshot.inferred).toMatchObject({
+      [storeTaskKey(vibeOrb.name)]: { confidence: 0 },
+    });
   });
 
   test("orb identity is saved on objects and Shape orb combines it without another model call", async () => {
@@ -3126,8 +3388,7 @@ describe("installed image push", () => {
     const app = application(connector);
     const identityOperation = await run(app, vibeUuid, { level: "object", task: orbIdentity.name });
     expect(identityOperation.result).toMatchObject({ objects: { written: 2 }, llm_calls: 1 });
-    const automatic = await (await api(app, `/vibes/${vibeUuid}`)).json();
-    expect(automatic.inferred[storeTaskKey(vibeOrb.name)].confidence).toBe(1);
+    expect((await waitForVibeOrb(app, vibeUuid, 1)).confidence).toBe(1);
     for (const id of ids) {
       const object = await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, id) });
       expect(object?.inferred[storeTaskKey(orbIdentity.name)]?.properties).toMatchObject({
@@ -3169,21 +3430,19 @@ describe("installed image push", () => {
       task: orbIdentity.name,
       selection: [`rnet://object/${ids[0]}`],
     });
-    const orb = async () =>
-      (await (await api(app, `/vibes/${vibeUuid}`)).json()).inferred[storeTaskKey(vibeOrb.name)];
-    expect((await orb()).confidence).toBe(0.5);
+    expect((await waitForVibeOrb(app, vibeUuid, 0.5)).confidence).toBe(0.5);
     const response = await app.request(`/rnet/v0/vibes/${vibeUuid}/objects`, {
       method: "DELETE",
       headers: { authorization: "Bearer dev:user", "content-type": "application/json" },
       body: JSON.stringify({ objects: [`rnet://object/${ids[0]}`] }),
     });
     expect(response.status).toBe(204);
-    expect((await orb()).confidence).toBe(0);
+    expect((await waitForVibeOrb(app, vibeUuid, 0)).confidence).toBe(0);
     expect(
       (await api(app, `/vibes/${vibeUuid}/objects`, { objects: [`rnet://object/${ids[0]}`] }))
         .status,
     ).toBe(204);
-    expect((await orb()).confidence).toBe(0.5);
+    expect((await waitForVibeOrb(app, vibeUuid, 0.5)).confidence).toBe(0.5);
     expect(connector.requests).toHaveLength(1);
   });
 
