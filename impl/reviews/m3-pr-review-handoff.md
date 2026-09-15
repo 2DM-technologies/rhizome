@@ -1,10 +1,26 @@
 # M3 — PR stack review handoff
 
+## Latest follow-ups — start here
+
+All formerly unpublished application code is now in follow-up PRs #43–#46, with rNet #5 as the schema prerequisite. Read [the complete follow-up handoff](./m3-followups-review-handoff.md) for the current combined code pin, per-PR scope, 609 passing deterministic tests, 141 passing browser tests, and isolated review setup. The sections below describe the earlier #35–#42 stack and its historical review targets; they remain regression context.
+
 This is the single context packet for agents reviewing the seven conceptual PRs split from [#33](https://github.com/2DM-technologies/rhizome/pull/33), plus the separately approved bounded-concurrency PR #42. Assign each agent one PR; this packet includes the exact incremental review targets, full file manifests, decisions, repair dispositions, and test setup. No earlier conversation is required.
 
 ## Current state — September 15
 
-### September 15 approved overlap waiting policy
+### September 15 overlap review repairs — current code
+
+Claude's independent report (`m3-overlap-wait-review-claude.md`) and Codex's independent report (`m3-overlap-wait-review-codex.md`) passed the approved policy and prior fixes at #37 `3681cdfd` / combined #42 `adbf2189`, with no P0–P2. Claude identified two low-severity follow-ups worth fixing before merge. Both are now repaired:
+
+- **#37, `96f2583a954ee8fdbb5465fef7b0ae6cd16a2673`:** automatic re-acceptance drops removed/ineligible additions and continues with eligible siblings and dependent tasks; empty automatic selections create no operation. Manual selections remain strict. A waiter whose conflicting row outlives its creation time plus the wall limit and 60 seconds conditionally marks that still-active row failed/interrupted, making the error visible instead of leaving a running status. A durable Vibe entry saved during a covering run avoids an extra zero-call operation. Vanished/re-pointed operations are reported as missing operations. The public HTTP 409 body now has an exact regression assertion; §7.5 explains the bound and filtering.
+- **#38, `4ccf393b936baa2119bccfb10f7b23cb2aa4b04f`:** membership responses and committed manual identity operations schedule background derived-orb work. One refresh waits/runs per Vibe, with a coalesced further pass for changes during that work. Derived refreshes compose fresh context after a conflict rather than reusing a result captured before the triggering identity or membership changes. Normal graph result reuse is unchanged.
+- **Combined code head:** `346dd09cda2c941bf9a66063057c561e08a13094`. All descendants carry ordinary merges; no history rewrite. These commits exclude the primary checkout's unrelated unpublished styling, component extraction, file moves, and canonical `Vibe.updated_at` work.
+
+Validation: full `bun run check` passed **538 tests at #37**, **551 at #38**, and **605 at combined #42**, including OpenAPI freshness, formatting, types, and builds. The complete Chromium suite passed **134/134** at the combined code head. The removed-additions, durable-result, expired-row, and blocked-refresh regressions fail on the previous implementations. The blocked-refresh test verifies identity finalization and DELETE/POST/DELETE membership responses while a prior orb run is held, one waiting refresh plus one coalesced follow-up, zero extra model calls, and the final recipe from current membership/identities. Evidence is under `.rhizome/overlap-repair-20260915/` in the split and combined worktrees. All database checks used `rhizome_overlap_repairs_20260915`, explicit DB variables, and an empty live-provider key. Verify published-head CI separately.
+
+Focus any additional review on these two commits and their integration into #42. The queued-import display gap, minor dead-code/logging follow-ups, deterministic pre-dispatch skip reuse, and other documented P3/M7 limits remain; do not interpret this repair as closing every low-severity observation. No owner policy decision is required.
+
+### September 15 approved overlap waiting policy — prior implementation
 
 The owner chose **wait, then enrich uncovered records** for #37. The change is implemented in `3681cdfde0d2cd29b288d14c2dd06f75b8bea150` and carried into combined #42 code head `17fa2b0facc42ae5e31c4291622ffda590386394` through ordinary merges.
 
@@ -67,7 +83,7 @@ Agents may review all eight PRs concurrently. Merge in that order, preserve ance
 - Original feature branch: `m3/01-push-pipeline`, at `f75bd8e443d6fe7ee8cce905508d0e974876c958` when split. Its aggregate branch remains separate. The shared primary checkout now uses local branch `m3/local-latest` at the earlier #42 tip plus unpublished edits from other tasks; it is not a clean PR-review target.
 - Original main: `220e289be5b064b6b5e80803c8a2f5e99698872c`.
 - Repaired seven-PR application head: `980ef1a82d74dd72d7c822946a3511958ff9cd69`.
-- Combined concurrency application head: `17fa2b0facc42ae5e31c4291622ffda590386394`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
+- Combined concurrency application head: `346dd09cda2c941bf9a66063057c561e08a13094`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
 - Documentation-only commits updating this packet, and downstream merges carrying those docs, may follow these code pins. Review each pinned base-to-code-head diff and inspect later commits separately. Code pins precede the final packet-only commits.
 - Before repairs, original and split had identical tree `0f05054c92a31e86f928007bf8072bc6dec9acdc`. New repairs intentionally change that tree. Original scope was 44 commits, 262 files, 25,129 insertions and 1,258 deletions plus binary assets.
 - Recovery ref: `refs/backup/pre-split-20260914-220544`, commit `6e71545cc23084ee1ceb0d2efd8e453eb6dd9f59`.
@@ -178,10 +194,10 @@ Both targeted regressions fail against the previous implementation and pass afte
 This section separates retained behavior from open work; it is not a claim that all 27 findings in the earlier aggregate review have been resolved.
 
 - **Deliberate execution policy:** wall/fatal aborts still suppress new inferred writes even for paid returned output. Already-entered transactions settle, billed usage is retained, and finalization drains all started work. #42 fixes producer-before-call attribution and activity cleanup before finalization. Token overshoot and the 40-call/480-orb-object limit remain as described above.
-- **Deferred to M7 / freshness work:** process restart/resumption, spend loss on process death, membership/user-edit freshness, removals while automatic nodes wait, later append/pull enrichment, and complete derived-orb refresh coverage. Automatic graph serialization fixes overlapping confirms; manual same-task conflicts now wait and retry uncovered records, without a new durable dependency scheduler.
+- **Deferred to M7 / freshness work:** process restart/resumption, spend loss on process death, membership/user-edit freshness outside the explicit refresh hooks, later append/pull enrichment, and durable derived-job recovery. Removed additions during automatic waits and stale workset reuse by derived refreshes are fixed above. Automatic graph serialization fixes overlapping confirms; manual same-task conflicts now wait and retry uncovered records, without a new durable dependency scheduler.
 - **Open #35 P3:** `OPENAI_BASE_URL` still expects an origin-style base; `/v1` or empty custom values need configuration normalization/diagnostics. Null optional usage counters and impossible totals were fixed; generally malformed provider totals are rejected rather than guessed. Explicit prompt-cache controls remain an optional future product choice; current behavior is retained for alpha.
 - **Open #36 P3:** duplicate datatable columns for a pointer observed with multiple kinds; context trimming order; delimiter-safe data framing; Vibe-level workset/assembly scaling. `MeterLedger.close` still updates breakdown/status rather than repairing aggregate columns after a persistence failure; normal recorded calls persist aggregates before finalization. Do not represent DB-failure durability as solved.
-- **Open #37/#38 P3:** empty new-Vibe task rows, coarse outer import logging, and identical-recipe rewrites remain. The sticky 409 display error is fixed; a conflicting derived refresh now waits and checks workset coverage; membership-preserving content freshness remains deferred.
+- **Open #37/#38 P3:** a second graph queued behind another import has no pending display until it starts; coarse outer import logging and identical-recipe rewrites remain. Some deterministic pre-dispatch skips still create a later zero-call operation. The old conflict-only activity branch and post-commit catch are minor cleanup candidates. Empty automatic object/element selections, durable Vibe coverage, and derived-refresh freshness after conflicts are fixed above. Deletion/re-pointing, repeated conflicts, null terminal results, and queued-import display have independent probe evidence but not all have committed regression tests.
 - **Renderer hypotheses / minor issues:** batched IntersectionObserver crossings, DPR-only changes without resize, and pointer-leave interaction-floor behavior need a focused reproduction before changing rendering semantics.
 - **Additional verified P3 follow-ups:** `sent` is selected-minus-preserved and may include undispatched records; PushControl can offer Rerun all during observed server-started work; Vibe pages do not surface every polled object-task error. These are inherited findings from the independent follow-up, not regressions introduced by waiting.
 - **Host follow-up:** idle 1 Hz polling and redundant invalidations remain; mock-store fidelity and the fixed screenshot output path remain test-maintenance items. Object refresh/partial feedback bugs are fixed independently of that polling redesign.
@@ -402,13 +418,13 @@ Source manifests declare their enrichment graph. Confirmation schedules tasks af
 - PR: [https://github.com/2DM-technologies/rhizome/pull/37](https://github.com/2DM-technologies/rhizome/pull/37)
 - Branch: `m3/review-03-import-enrichment`
 - Base: `d2e95b5c8d89c5a69a0bdc148883f37bfe679371` (`m3/review-02-push-engine`)
-- Code head: `3681cdfde0d2cd29b288d14c2dd06f75b8bea150`
-- Incremental scope: 47 files changed, 2485 insertions(+), 71 deletions(-)
+- Code head: `96f2583a954ee8fdbb5465fef7b0ae6cd16a2673`
+- Incremental scope: 47 files changed, 2683 insertions(+), 75 deletions(-)
 
 ```bash
 git fetch origin m3/review-03-import-enrichment
-git diff --stat d2e95b5c8d89c5a69a0bdc148883f37bfe679371...3681cdfde0d2cd29b288d14c2dd06f75b8bea150
-git diff d2e95b5c8d89c5a69a0bdc148883f37bfe679371...3681cdfde0d2cd29b288d14c2dd06f75b8bea150 -- path/to/assigned/file
+git diff --stat d2e95b5c8d89c5a69a0bdc148883f37bfe679371...96f2583a954ee8fdbb5465fef7b0ae6cd16a2673
+git diff d2e95b5c8d89c5a69a0bdc148883f37bfe679371...96f2583a954ee8fdbb5465fef7b0ae6cd16a2673 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -482,14 +498,14 @@ Adds reusable object orb identities and shared version-3 Vibe recipes. Vibe appe
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/38](https://github.com/2DM-technologies/rhizome/pull/38)
 - Branch: `m3/review-05-orb-identities`
-- Base: `3681cdfde0d2cd29b288d14c2dd06f75b8bea150` (`m3/review-03-import-enrichment`)
-- Code head: `9a434aaa071e99734eb3251ea5198af0168386c6`
-- Incremental scope: 23 files changed, 1724 insertions(+), 68 deletions(-)
+- Base: `96f2583a954ee8fdbb5465fef7b0ae6cd16a2673` (`m3/review-03-import-enrichment`)
+- Code head: `4ccf393b936baa2119bccfb10f7b23cb2aa4b04f`
+- Incremental scope: 23 files changed, 1853 insertions(+), 69 deletions(-)
 
 ```bash
 git fetch origin m3/review-05-orb-identities
-git diff --stat 3681cdfde0d2cd29b288d14c2dd06f75b8bea150...9a434aaa071e99734eb3251ea5198af0168386c6
-git diff 3681cdfde0d2cd29b288d14c2dd06f75b8bea150...9a434aaa071e99734eb3251ea5198af0168386c6 -- path/to/assigned/file
+git diff --stat 96f2583a954ee8fdbb5465fef7b0ae6cd16a2673...4ccf393b936baa2119bccfb10f7b23cb2aa4b04f
+git diff 96f2583a954ee8fdbb5465fef7b0ae6cd16a2673...4ccf393b936baa2119bccfb10f7b23cb2aa4b04f -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -536,14 +552,14 @@ Adds the shared WebGL/raster painter, persistent raster cache, procedural fallba
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/39](https://github.com/2DM-technologies/rhizome/pull/39)
 - Branch: `m3/review-06-orb-rendering`
-- Base: `9a434aaa071e99734eb3251ea5198af0168386c6` (`m3/review-05-orb-identities`)
-- Code head: `88187291be6497fde85a1e12e1502785df6e1059`
+- Base: `4ccf393b936baa2119bccfb10f7b23cb2aa4b04f` (`m3/review-05-orb-identities`)
+- Code head: `6ff4b6ee6c6badff78ba5ea08e0e4ab8e03c485e`
 - Incremental scope: 16 files changed, 2716 insertions(+), 1 deletion(-)
 
 ```bash
 git fetch origin m3/review-06-orb-rendering
-git diff --stat 9a434aaa071e99734eb3251ea5198af0168386c6...88187291be6497fde85a1e12e1502785df6e1059
-git diff 9a434aaa071e99734eb3251ea5198af0168386c6...88187291be6497fde85a1e12e1502785df6e1059 -- path/to/assigned/file
+git diff --stat 4ccf393b936baa2119bccfb10f7b23cb2aa4b04f...6ff4b6ee6c6badff78ba5ea08e0e4ab8e03c485e
+git diff 4ccf393b936baa2119bccfb10f7b23cb2aa4b04f...6ff4b6ee6c6badff78ba5ea08e0e4ab8e03c485e -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -584,14 +600,14 @@ Adds push controls and polling, inferred object/Vibe views, live status/error sk
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/40](https://github.com/2DM-technologies/rhizome/pull/40)
 - Branch: `m3/review-04-inferred-views`
-- Base: `88187291be6497fde85a1e12e1502785df6e1059` (`m3/review-06-orb-rendering`)
-- Code head: `b0de000248fd19b1f96650352a5489226289116c`
+- Base: `6ff4b6ee6c6badff78ba5ea08e0e4ab8e03c485e` (`m3/review-06-orb-rendering`)
+- Code head: `46e5b890f651f214094607b245166cc05e7dc146`
 - Incremental scope: 48 files changed, 4055 insertions(+), 691 deletions(-)
 
 ```bash
 git fetch origin m3/review-04-inferred-views
-git diff --stat 88187291be6497fde85a1e12e1502785df6e1059...b0de000248fd19b1f96650352a5489226289116c
-git diff 88187291be6497fde85a1e12e1502785df6e1059...b0de000248fd19b1f96650352a5489226289116c -- path/to/assigned/file
+git diff --stat 6ff4b6ee6c6badff78ba5ea08e0e4ab8e03c485e...46e5b890f651f214094607b245166cc05e7dc146
+git diff 6ff4b6ee6c6badff78ba5ea08e0e4ab8e03c485e...46e5b890f651f214094607b245166cc05e7dc146 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -669,14 +685,14 @@ Adds desktop cards, account totals, dock pins and navigation, theme/assets, and 
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/41](https://github.com/2DM-technologies/rhizome/pull/41)
 - Branch: `m3/review-07-desktop-shell`
-- Base: `b0de000248fd19b1f96650352a5489226289116c` (`m3/review-04-inferred-views`)
-- Code head: `980ef1a82d74dd72d7c822946a3511958ff9cd69`
-- Incremental scope: 100 files changed, 4739 insertions(+), 723 deletions(-)
+- Base: `46e5b890f651f214094607b245166cc05e7dc146` (`m3/review-04-inferred-views`)
+- Code head: `bc8fadfd8e7bcfa192b2a5cf58ea013e4a1c220f`
+- Incremental scope: 100 files changed, 4768 insertions(+), 723 deletions(-)
 
 ```bash
 git fetch origin m3/review-07-desktop-shell
-git diff --stat b0de000248fd19b1f96650352a5489226289116c...980ef1a82d74dd72d7c822946a3511958ff9cd69
-git diff b0de000248fd19b1f96650352a5489226289116c...980ef1a82d74dd72d7c822946a3511958ff9cd69 -- path/to/assigned/file
+git diff --stat 46e5b890f651f214094607b245166cc05e7dc146...bc8fadfd8e7bcfa192b2a5cf58ea013e4a1c220f
+git diff 46e5b890f651f214094607b245166cc05e7dc146...bc8fadfd8e7bcfa192b2a5cf58ea013e4a1c220f -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -813,14 +829,14 @@ Defaults to two complete object/element batches per operation and four logical L
 
 - PR: https://github.com/2DM-technologies/rhizome/pull/42
 - Branch: `m3/parallel-batches`
-- Base: `980ef1a82d74dd72d7c822946a3511958ff9cd69` (`m3/review-07-desktop-shell`)
-- Code head: `17fa2b0facc42ae5e31c4291622ffda590386394`
-- Incremental scope: 10 files changed, 1257 insertions(+), 145 deletions(-)
+- Base: `bc8fadfd8e7bcfa192b2a5cf58ea013e4a1c220f` (`m3/review-07-desktop-shell`)
+- Code head: `346dd09cda2c941bf9a66063057c561e08a13094`
+- Incremental scope: 9 files changed, 1240 insertions(+), 139 deletions(-)
 
 ```bash
 git fetch origin m3/parallel-batches
-git diff --stat 980ef1a82d74dd72d7c822946a3511958ff9cd69...17fa2b0facc42ae5e31c4291622ffda590386394
-git diff 980ef1a82d74dd72d7c822946a3511958ff9cd69...17fa2b0facc42ae5e31c4291622ffda590386394 -- path/to/assigned/file
+git diff --stat bc8fadfd8e7bcfa192b2a5cf58ea013e4a1c220f...346dd09cda2c941bf9a66063057c561e08a13094
+git diff bc8fadfd8e7bcfa192b2a5cf58ea013e4a1c220f...346dd09cda2c941bf9a66063057c561e08a13094 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -843,7 +859,6 @@ apps/server/test/push-concurrency.integration.test.ts
 apps/server/test/push-concurrency.test.ts
 apps/server/test/push.integration.test.ts
 impl/concepts/push-pipeline.md
-impl/reviews/m3-pr-review-handoff.md
 ```
 
 ## Coordinator checklist
