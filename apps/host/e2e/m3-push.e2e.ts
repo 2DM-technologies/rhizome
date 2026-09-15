@@ -191,11 +191,6 @@ test("describe-media offers rerun all and refreshes a cached element's inferred 
     .getByLabel("Push task")
     .selectOption(`element:${PUSH_TASKS.element["describe-media"].name}`);
   await expect(page.getByRole("button", { name: "Run on missing" })).toHaveCount(0);
-  const refreshed = page.waitForResponse(
-    (response) =>
-      response.request().method() === "GET" &&
-      new URL(response.url()).pathname === `/rnet/v0/elements/${imageId}`,
-  );
   await page.getByRole("button", { name: "Rerun all" }).click();
   await expect(page.getByText("Push done", { exact: true })).toBeVisible();
   const sent = store.requests
@@ -206,10 +201,12 @@ test("describe-media offers rerun all and refreshes a cached element's inferred 
     task: PUSH_TASKS.element["describe-media"].name,
   });
   await page.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
-  const document = await (await refreshed).json();
-  expect(
-    document.inferred[storeTaskKey(PUSH_TASKS.element["describe-media"].name)].properties,
-  ).toEqual({
+  // Status polling can legitimately refresh this element before the model finishes.
+  // Assert the final rendered cache value, not whichever GET happened to finish first.
+  const inferred = page.getByLabel("Element 1 inferred").locator("pre");
+  await expect(inferred).toContainText("A small monochrome image");
+  const document = JSON.parse(await inferred.innerText());
+  expect(document[storeTaskKey(PUSH_TASKS.element["describe-media"].name)].properties).toEqual({
     caption: "A small monochrome image",
     description: "A single light pixel fills a square frame.",
     medium: "other",
