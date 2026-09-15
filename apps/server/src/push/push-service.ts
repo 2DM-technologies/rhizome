@@ -78,6 +78,22 @@ type RecordOutcome =
   WriteOutcome | { outcome: "skipped"; reason: SkipReason; code?: ModelConnectorErrorKind };
 type VibeOutcome = Extract<PushOperationResult, { level: "vibe" }>["vibe"];
 type TerminalStatus = "done" | "failed" | "aborted";
+
+/** Internal conflict context; the public 409 response contains no workset or operation details. */
+class ActivePushConflict extends Problem {
+  constructor(
+    readonly operation: DbOperation,
+    readonly selection: readonly string[],
+  ) {
+    super(
+      409,
+      "operation_in_progress",
+      "Operation in progress",
+      "This task is already running on the Vibe",
+    );
+  }
+}
+
 interface RunState {
   request: StoredPushRequest;
   outcomes: Map<string, RecordOutcome>;
@@ -258,7 +274,55 @@ export class PushService {
         }
         input = { level, task: task.name, selection: [...new Set(selection)] };
       }
-      const operation = await this.acceptPush(vibeUuid, input, actor);
+      let operation: DbOperation;
+      for (;;) {
+        try {
+          operation = await this.acceptPush(vibeUuid, input, actor);
+          break;
+        } catch (error) {
+          if (!(error instanceof ActivePushConflict)) throw error;
+          // Keep this node pending and its dependents blocked until the conflicting work settles.
+          const completed = await this.waitForConflictingPush(error.operation);
+          const result = completed.result as PushOperationResult | null;
+          if (level === "vibe") {
+            const previous = completed.request as StoredPushRequest;
+            if (
+              result?.level === "vibe" &&
+              (result.vibe.outcome !== "skipped" || result.vibe.reason === "not_applicable") &&
+              error.selection.every((uuid) => previous.resolved.selection.includes(uuid))
+            ) {
+              this.activity.accepted(vibeUuid, task);
+              // This was another run's summary, so it must not drive automatic import naming.
+              return;
+            }
+          } else {
+            const covered = new Set(
+              result && result.level === level
+                ? [
+                    ...result.written.map(({ uri }) => uri),
+                    ...result.preserved,
+                    ...result.skipped
+                      .filter(({ reason }) =>
+                        ["not_applicable", "preserved_durable"].includes(reason),
+                      )
+                      .map(({ uri }) => uri),
+                  ].map(uriId)
+                : [],
+            );
+            const remaining = error.selection.filter((uuid) => !covered.has(uuid));
+            if (!remaining.length) {
+              this.activity.accepted(vibeUuid, task);
+              return;
+            }
+            input = {
+              level,
+              task: task.name,
+              selection: remaining.map((uuid) => `rnet://${level}/${uuid}`),
+            };
+          }
+          // Reaccept after waiting: permissions, live membership, and durable writes are checked again.
+        }
+      }
       this.activity.accepted(vibeUuid, task);
       await this.runPush(operation.uuid);
       return operation.uuid;
@@ -272,6 +336,27 @@ export class PushService {
         task.name,
         error instanceof Problem ? error.code : "internal_error",
       );
+    }
+  }
+
+  private async waitForConflictingPush(operation: DbOperation): Promise<DbOperation> {
+    const deadline =
+      operation.createdAt.getTime() + this.dependencies.pushLimits.maxWallMs + 60_000;
+    for (;;) {
+      const current = await this.dependencies.db.query.operations.findFirst({
+        where: eq(operations.uuid, operation.uuid),
+      });
+      if (!current || current.vibeUuid !== operation.vibeUuid) throw notFound("Vibe");
+      if (!["queued", "running"].includes(current.status)) return current;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0)
+        throw new Problem(
+          503,
+          "push_unavailable",
+          "Push unavailable",
+          "The running inference task did not finish; automatic enrichment could not continue.",
+        );
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, remaining)));
     }
   }
 
@@ -355,7 +440,7 @@ export class PushService {
         .for("update");
       if (!locked) throw notFound("Vibe");
       const active = await transaction
-        .select({ uuid: operations.uuid })
+        .select()
         .from(operations)
         .where(
           and(
@@ -368,13 +453,7 @@ export class PushService {
           ),
         )
         .limit(1);
-      if (active.length)
-        throw new Problem(
-          409,
-          "operation_in_progress",
-          "Operation in progress",
-          "This task is already running on the Vibe",
-        );
+      if (active[0]) throw new ActivePushConflict(active[0], selection);
       const [created] = await transaction
         .insert(operations)
         .values({
