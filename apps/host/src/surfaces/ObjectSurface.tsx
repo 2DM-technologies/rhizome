@@ -230,6 +230,11 @@ export function ObjectSurface({ uuid }: { uuid: string }) {
                     spellCheck={false}
                     rows={14}
                     aria-label="User properties, as JSON"
+                    onKeyDown={(event) => {
+                      if (event.key !== "Escape") return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
                     bordered={false}
                     tone="canvas"
                     typography="mono"
