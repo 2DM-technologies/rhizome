@@ -221,22 +221,13 @@ export class MediaObjectsService {
         [key]: entry,
       }),
       persist: async (transaction, _currentMediaObject, inferred) => {
-        const [maxRevision] = await transaction
-          .select({ max: sql<number>`coalesce(max(${mediaObjectRevisions.rev}), 0)::int` })
-          .from(mediaObjectRevisions)
-          .where(
-            and(
-              eq(mediaObjectRevisions.mediaObjectUuid, mediaObjectUuid),
-              eq(mediaObjectRevisions.block, "inferred"),
-            ),
-          );
         const [nextMediaObject] = await transaction
           .update(mediaObjects)
-          .set({ inferred })
+          .set({ inferred, inferredRev: sql`${mediaObjects.inferredRev} + 1` })
           .where(eq(mediaObjects.uuid, mediaObjectUuid))
           .returning();
         if (!nextMediaObject) throw notFound("Object");
-        return { mediaObject: nextMediaObject, revision: (maxRevision?.max ?? 0) + 1 };
+        return { mediaObject: nextMediaObject, revision: nextMediaObject.inferredRev };
       },
     });
     return this.loadAggregate(updatedMediaObject);

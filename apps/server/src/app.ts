@@ -39,6 +39,15 @@ import type { AppEnvironment } from "./routes/types.ts";
 import { createVibeRoutes } from "./routes/vibes.ts";
 import type { SourceCredentialCrypto } from "./services/source-credential-crypto.ts";
 import { createSourceCredentialCrypto } from "./services/source-credential-crypto-factory.ts";
+import {
+  createModelConnectorRegistry,
+  type ModelConnectorRegistry,
+} from "./inference/connector-registry.ts";
+import { installedPushTasks } from "./push/installed-tasks.ts";
+import { DEFAULT_PUSH_LIMITS, type PushLimits } from "./push/limits.ts";
+import { PushService } from "./push/push-service.ts";
+import type { PushTaskCatalog } from "./push/task-catalog.ts";
+import { createPushTaskRoutes } from "./routes/push-tasks.ts";
 
 export interface AppDependencies {
   config: ServerConfig;
@@ -50,6 +59,9 @@ export interface AppDependencies {
   publicAssetFetcher?: PublicAssetFetcher;
   publicRemoteSources?: PublicRemoteSourceCatalog;
   sourceCredentialCrypto?: SourceCredentialCrypto;
+  modelConnectors?: ModelConnectorRegistry;
+  pushTasks?: PushTaskCatalog;
+  pushLimits?: PushLimits;
 }
 
 export function createApp({
@@ -62,6 +74,9 @@ export function createApp({
   publicAssetFetcher,
   publicRemoteSources,
   sourceCredentialCrypto,
+  modelConnectors,
+  pushTasks,
+  pushLimits,
 }: AppDependencies) {
   const app = new Hono<AppEnvironment>();
   const resolvedCredentialedSources =
@@ -79,6 +94,14 @@ export function createApp({
   );
   const credentialCrypto =
     sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
+  const resolvedPushTasks = pushTasks ?? installedPushTasks;
+  const pushService = new PushService({
+    db,
+    blobs,
+    modelConnectors: modelConnectors ?? createModelConnectorRegistry(config.inference),
+    pushTasks: resolvedPushTasks,
+    pushLimits: pushLimits ?? DEFAULT_PUSH_LIMITS,
+  });
 
   const requestLogger = logger();
   app.use("*", async (context, next) => {
@@ -162,14 +185,19 @@ export function createApp({
     },
     {
       basePath: "/rnet/v0/vibes",
-      router: createVibeRoutes(db, blobs, {
-        baseUrl: config.baseUrl,
-        credentialCrypto,
-        credentialedSources: resolvedCredentialedSources,
-        fileSources: resolvedFileSources,
-        providerLeasePool,
-        publicRemoteSources: resolvedPublicRemoteSources,
-      }),
+      router: createVibeRoutes(
+        db,
+        blobs,
+        {
+          baseUrl: config.baseUrl,
+          credentialCrypto,
+          credentialedSources: resolvedCredentialedSources,
+          fileSources: resolvedFileSources,
+          providerLeasePool,
+          publicRemoteSources: resolvedPublicRemoteSources,
+        },
+        pushService,
+      ),
     },
     {
       basePath: "/rnet/v0/ingestion-sources",
@@ -200,7 +228,8 @@ export function createApp({
       basePath: "/rnet/v0/source-skills",
       router: createSourceSkillRoutes(sourceSkillManifests),
     },
-    { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs) },
+    { basePath: "/rnet/v0/push-tasks", router: createPushTaskRoutes(resolvedPushTasks) },
+    { basePath: "/rnet/v0/objects", router: createMediaObjectRoutes(db, blobs, pushService) },
     {
       basePath: "/rnet/v0/elements",
       router: createMediaElementRoutes(db, blobs, config.baseUrl),
