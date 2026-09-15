@@ -155,6 +155,8 @@ test("theme commands follow the system until chosen, then override it for this t
 
   await page.emulateMedia({ colorScheme: "light" });
   await search.fill("Dark Mode");
+  // The OS change event must reach React before its theme-dependent command is available.
+  await expect(commands.getByRole("button", { name: "Dark Mode", exact: true })).toBeVisible();
   await search.press("Enter");
   await expectTheme(page, "dark");
   await expect(page.getByRole("dialog", { name: "Start something new" })).toBeHidden();
