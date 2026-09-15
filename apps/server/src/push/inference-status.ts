@@ -4,7 +4,7 @@ import {
   type ObjectInferenceStatus,
   type PushOperationResult,
 } from "@rhizome/store-contract";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../auth.ts";
 import type { Database } from "../db/index.ts";
 import { GRANT_SCOPE } from "../db/models/grant.ts";
@@ -49,6 +49,11 @@ export class PushActivity {
     this.pending.get(vibeUuid)?.delete(`${task.level}:${task.name}`);
   }
   rejected(vibeUuid: string, task: PushTaskDefinition, error: unknown) {
+    // The running operation is already reported by the status query for this task.
+    if (error instanceof Problem && error.status === 409) {
+      this.accepted(vibeUuid, task);
+      return;
+    }
     const pending = this.pending.get(vibeUuid)?.get(`${task.level}:${task.name}`);
     if (pending) {
       pending.message =
@@ -75,7 +80,13 @@ export async function readObjectInferenceStatus(
   const elements = await db
     .select({ element: mediaElements })
     .from(mediaObjectElements)
-    .innerJoin(mediaElements, eq(mediaElements.uuid, mediaObjectElements.mediaElementUuid))
+    .innerJoin(
+      mediaElements,
+      and(
+        eq(mediaElements.uuid, mediaObjectElements.mediaElementUuid),
+        isNull(mediaElements.tombstonedAt),
+      ),
+    )
     .where(eq(mediaObjectElements.mediaObjectUuid, uuid))
     .orderBy(asc(mediaObjectElements.position));
   const records = [
@@ -99,12 +110,25 @@ export async function readObjectInferenceStatus(
       return false;
     }
   }
+  const memberships = await db
+    .select({ vibeUuid: vibeMediaObjects.vibeUuid })
+    .from(vibeMediaObjects)
+    .where(eq(vibeMediaObjects.mediaObjectUuid, uuid));
+  const readableIds: string[] = [];
+  for (const { vibeUuid } of memberships)
+    if (await canRead(vibeUuid, object.ownerUuid)) readableIds.push(vibeUuid);
   const pushes = await db
     .select()
     .from(operations)
     .where(
       and(
         eq(operations.kind, "push"),
+        or(
+          inArray(operations.vibeUuid, readableIds),
+          actor.kind === "user"
+            ? and(isNull(operations.vibeUuid), eq(operations.ownerUuid, actor.uuid))
+            : undefined,
+        ) ?? sql`false`,
         sql`${operations.request}->>'level' IN ('object', 'element')`,
         sql`${operations.request}->'resolved'->'selection' ?| ARRAY[${sql.join(
           records.map((record) => sql`${record.uuid}`),
@@ -116,10 +140,6 @@ export async function readObjectInferenceStatus(
   const visiblePushes: DbOperation[] = [];
   for (const push of pushes)
     if (await canRead(push.vibeUuid, push.ownerUuid)) visiblePushes.push(push);
-  const memberships = await db
-    .select({ vibeUuid: vibeMediaObjects.vibeUuid })
-    .from(vibeMediaObjects)
-    .where(eq(vibeMediaObjects.mediaObjectUuid, uuid));
   const pending: PendingTask[] = [];
   for (const { vibeUuid } of memberships) {
     if (!activity.pending.has(vibeUuid) || !(await canRead(vibeUuid, object.ownerUuid))) continue;

@@ -1,5 +1,3 @@
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
 import {
   ModelConnectorError,
   type CompletionRequest,
@@ -10,6 +8,7 @@ import {
   type ModelUsage,
 } from "../model-connector.ts";
 import { assertStructuredOutputSchema } from "../structured-output-schema.ts";
+import { validateOutputSchema } from "../output-validator.ts";
 import type { OpenAIProviderSettings } from "./config.ts";
 import { priceUsage } from "./rate-card.ts";
 import { countLunaInputTokens } from "./image-tokens.ts";
@@ -38,7 +37,6 @@ export class OpenAIConnector implements ModelConnector {
   private readonly fetch: OpenAIFetch;
   private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   private readonly now: () => number;
-  private readonly ajv = addFormats(new Ajv2020({ strict: true, allowUnionTypes: true }));
 
   constructor(
     private readonly settings: OpenAIProviderSettings,
@@ -271,7 +269,7 @@ export class OpenAIConnector implements ModelConnector {
     } catch {
       throw error("output_invalid");
     }
-    if (!this.ajv.compile(request.schema)(output)) throw error("output_invalid");
+    if (!validateOutputSchema(request.schema, output)) throw error("output_invalid");
     return { output, usage };
   }
 }
@@ -288,7 +286,7 @@ function mapUsage(
   return {
     tokensIn: usage.input_tokens,
     cachedTokensIn: usage.input_tokens_details?.cached_tokens ?? 0,
-    cacheWriteTokensIn: usage.cache_write_tokens ?? 0,
+    cacheWriteTokensIn: usage.input_tokens_details?.cache_write_tokens ?? 0,
     tokensOut: usage.output_tokens,
     reasoningTokensOut: usage.output_tokens_details?.reasoning_tokens ?? 0,
     servedTier: raw === null ? "flex" : tier,
