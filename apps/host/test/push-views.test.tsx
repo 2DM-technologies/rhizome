@@ -6,7 +6,8 @@ import { storeTaskKey, type VIBE_VIEWS } from "@rhizome/store-contract";
 
 import { api } from "../src/api/client.ts";
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
-import { InferredVibeView, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
+import { InferredVibeView } from "../src/surfaces/vibe-view/InferredVibeView.tsx";
+import { resolveVibeView } from "../src/surfaces/vibe-view/utils.ts";
 
 import { VibeOverview } from "../src/surfaces/VibeOverview.tsx";
 

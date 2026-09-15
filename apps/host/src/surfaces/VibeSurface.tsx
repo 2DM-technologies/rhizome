@@ -17,7 +17,7 @@ import { surfaceId } from "../shell/surfaces.ts";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 import { ImportPanel } from "./ImportPanel.tsx";
 import { useSourceConnectionReturn } from "./sourceConnectionReturn.ts";
-import { InferredVibeView, resolveVibeView } from "./InferredVibeView.tsx";
+import { InferredVibeView, resolveVibeView } from "./vibe-view/InferredVibeView.tsx";
 import { PushControl } from "./PushControl.tsx";
 import { MediaObjectEntry } from "./MediaObjectEntry.tsx";
 import { VibeOverview } from "./VibeOverview.tsx";

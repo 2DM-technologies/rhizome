@@ -5,7 +5,7 @@ import type { OperationDocument } from "@rhizome/store-contract";
 
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
 import { invalidatePushResult } from "../src/queries/push.ts";
-import { inferredObjectLabel, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
+import { inferredObjectLabel, resolveVibeView } from "../src/surfaces/vibe-view/utils.ts";
 import { missingObjectUris, pushResultSummary } from "../src/surfaces/PushControl.tsx";
 
 const URI = "rnet://object/0198f2a1-b19c-77bb-a6e9-0d6c66c52ae3" as const;
