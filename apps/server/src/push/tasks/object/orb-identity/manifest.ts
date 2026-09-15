@@ -1,5 +1,6 @@
 import type { JSONSchema } from "json-schema-to-ts";
 import { PUSH_TASK_REFS } from "@rhizome/store-contract";
+import { parseOrbIdentity } from "@rhizome/store-contract/orb";
 import type { PushTaskDefinition } from "../../../task-catalog.ts";
 import prompt from "./PROMPT.md" with { type: "text" };
 import output from "./output.json";
@@ -11,6 +12,7 @@ export const orbIdentity: PushTaskDefinition = {
     "Give each media object a reusable palette, pattern, glass depth, and motion character.",
   prompt,
   outputSchema: output as JSONSchema,
+  validateOutput: (output) => parseOrbIdentity(output) !== undefined,
   effort: "low",
   maxObjectsPerCall: 12,
   outputTokens: { base: 128, perObject: 512 },

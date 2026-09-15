@@ -459,6 +459,7 @@ export class PushService {
             output = task.transformVibeOutput?.(output, context.vibe) ?? output;
             if (
               !jsonSchema(task.outputSchema).validate(output).ok ||
+              task.validateOutput?.(output) === false ||
               !validateInstalledTaskOutput(task, output, context.vibe)
             )
               state.vibe = { outcome: "skipped", reason: "invalid_output" };
@@ -590,6 +591,10 @@ export class PushService {
               break;
             }
             const output = outputs[index]!;
+            if (output !== null && task.validateOutput?.(output) === false) {
+              state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
+              continue;
+            }
             const input = {
               task: task.name,
               entry: output === null ? null : toEntry(output, state.producer!),
