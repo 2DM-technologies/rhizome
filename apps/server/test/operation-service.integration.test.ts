@@ -53,7 +53,7 @@ async function fixture() {
   return { vibeUuid, operationUuid };
 }
 
-test("deletion between operation and scope reads retains owner and redacted invoker access", async () => {
+test("deletion between operation and scope reads retains only the push owner's access", async () => {
   const assertScope = AccessService.prototype.assertVibeScope;
   for (const actor of [owner, invoker, { kind: "public", subject: "public" } as const]) {
     const { vibeUuid, operationUuid } = await fixture();
@@ -67,6 +67,8 @@ test("deletion between operation and scope reads retains owner and redacted invo
       const result = new OperationsService({ db, actor }).getOperation(operationUuid);
       if (actor.kind === "public") {
         await expect(result).rejects.toMatchObject({ status: 401 });
+      } else if (actor.kind === "client") {
+        await expect(result).rejects.toMatchObject({ status: 403 });
       } else {
         expect(await result).toMatchObject({
           exposeOwnerOnlyResult: actor.kind === "user",
@@ -82,6 +84,25 @@ test("deletion between operation and scope reads retains owner and redacted invo
     } finally {
       gate.mockRestore();
     }
+  }
+});
+
+test("a scope denial after Vibe deletion rechecks the owner rules", async () => {
+  const { vibeUuid, operationUuid } = await fixture();
+  const gate = spyOn(AccessService.prototype, "assertVibeScope").mockImplementation(async () => {
+    await db.delete(vibes).where(eq(vibes.uuid, vibeUuid));
+    const { grantMissing } = await import("../src/errors.ts");
+    throw grantMissing("read");
+  });
+  try {
+    expect(
+      await new OperationsService({ db, actor: owner }).getOperation(operationUuid),
+    ).toMatchObject({ exposeOwnerOnlyResult: true, operation: { vibeUuid: null } });
+    await expect(
+      new OperationsService({ db, actor: invoker }).getOperation(operationUuid),
+    ).rejects.toMatchObject({ status: 403 });
+  } finally {
+    gate.mockRestore();
   }
 });
 

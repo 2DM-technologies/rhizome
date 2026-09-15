@@ -15,9 +15,9 @@ export const arenaSourceSkillManifest = {
     maxCandidates: 200,
     // The source client counts decoded response bytes; the persisted JSON capture base64-encodes
     // media, so its generic capture envelope needs the corresponding expansion headroom.
-    maxCaptureBytes: 64 * 1_024 * 1_024,
-    maxElementBytes: 16 * 1_024 * 1_024,
-    maxTotalElementBytes: 40 * 1_024 * 1_024,
+    maxCaptureBytes: 640 * 1_024 * 1_024, // 640 MiB
+    maxElementBytes: 160 * 1_024 * 1_024, // 160 MiB
+    maxTotalElementBytes: 400 * 1_024 * 1_024, // 400 MiB
   },
   input_fields: [
     {
