@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -266,9 +266,17 @@ async function imageFor(
   const blobs = createBlobStore(config);
   await blobs.put("elements", contentHash, bytes, mime);
   // S3rver acknowledges the transform before its file stream finishes flushing.
-  // Wait for the fixture's full payload before testing the runtime's size checks.
+  // Inspect its backing file: GET can race Content-Length against the growing stream,
+  // and repeatedly downloads the oversized fixture just to check readiness.
+  // This is deliberately coupled to the pinned test double, not the runtime blob API.
+  const storage = (
+    s3 as S3rver & {
+      store: { getResourcePath(bucket: string, key: string, resource: string): string };
+    }
+  ).store;
+  const objectPath = storage.getResourcePath("elements", contentHash, "object");
   const deadline = Date.now() + 5000;
-  while ((await blobs.get("elements", contentHash))?.bytes.byteLength !== bytes.byteLength) {
+  while ((await stat(objectPath)).size !== bytes.byteLength) {
     if (Date.now() >= deadline) throw new Error("S3rver fixture did not finish writing");
     await Bun.sleep(5);
   }
