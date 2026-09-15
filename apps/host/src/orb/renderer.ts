@@ -726,19 +726,26 @@ export class OrbRenderer {
       this.frame = requestAnimationFrame(this.tick);
       return;
     }
-    const delta = Math.min(0.05, Math.max(0.001, (now - this.lastFrame) / 1000));
+    const elapsed = Math.max(0, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
     const viscosity = ORB_MATERIAL.response.viscosity;
     const stiffness = 18 - viscosity * 10;
     const damping = 3.2 + viscosity * 7;
-    this.pointer.vx += (this.pointer.targetX - this.pointer.x) * stiffness * delta;
-    this.pointer.vy += (this.pointer.targetY - this.pointer.y) * stiffness * delta;
-    this.pointer.vx *= Math.exp(-damping * delta);
-    this.pointer.vy *= Math.exp(-damping * delta);
-    this.pointer.x += this.pointer.vx * delta;
-    this.pointer.y += this.pointer.vy * delta;
+    // Catch up slow frames in stable spring steps, with bounded work after a long pause.
+    const springElapsed = Math.min(1, elapsed);
+    const steps = Math.max(1, Math.ceil(springElapsed / 0.05));
+    const delta = springElapsed / steps;
+    for (let step = 0; step < steps; step++) {
+      this.pointer.vx += (this.pointer.targetX - this.pointer.x) * stiffness * delta;
+      this.pointer.vy += (this.pointer.targetY - this.pointer.y) * stiffness * delta;
+      this.pointer.vx *= Math.exp(-damping * delta);
+      this.pointer.vy *= Math.exp(-damping * delta);
+      this.pointer.x += this.pointer.vx * delta;
+      this.pointer.y += this.pointer.vy * delta;
+    }
     const hoverFloor = this.interacting ? 0.14 : 0;
-    const decay = Math.exp(-delta * (1.4 + (1 - ORB_MATERIAL.response.settle) * 5.6));
+    // Analytic decay needs real elapsed time; a spring delta cap prolongs motion below 20 FPS.
+    const decay = Math.exp(-elapsed * (1.4 + (1 - ORB_MATERIAL.response.settle) * 5.6));
     this.energy = hoverFloor + (this.energy - hoverFloor) * decay;
     this.render(now);
     this.lastDraw = now;

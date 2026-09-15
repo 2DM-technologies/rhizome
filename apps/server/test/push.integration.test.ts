@@ -2430,6 +2430,43 @@ describe("push lifecycle and inferred writes", () => {
 });
 
 describe("installed image push", () => {
+  test("orb identity rejects all-zero palettes while preserving valid votes and billed usage", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const example = JSON.parse(orbIdentity.prompt.match(/```json\n([\s\S]*?)\n```/u)![1]!);
+    const connector = new FakeModelConnector({
+      respond: () => ({
+        usage,
+        output: {
+          results: [0, 1].map((weight, index) => ({
+            ref: `o${index + 1}`,
+            result: {
+              ...example,
+              palette: [
+                { color: "#2a794c", weight },
+                { color: "#50aa64", weight: 0 },
+              ],
+            },
+          })),
+        },
+      }),
+    });
+    const app = application(connector);
+    const operation = await run(app, vibeUuid, { level: "object", task: orbIdentity.name });
+    expect(operation.result).toMatchObject({
+      objects: { written: 1, skipped: 1, failed: 0 },
+      skipped: [{ uri: `rnet://object/${ids[0]}`, reason: "invalid_output" }],
+      llm_calls: 1,
+      usage: { tokens_in: usage.tokensIn, tokens_out: usage.tokensOut },
+    });
+    const rejected = await db.query.mediaObjects.findFirst({
+      where: eq(mediaObjects.uuid, ids[0]!),
+    });
+    expect(rejected?.inferred[storeTaskKey(orbIdentity.name)]).toBeUndefined();
+    const document = await (await api(app, `/vibes/${vibeUuid}`)).json();
+    expect(document.inferred[storeTaskKey(vibeOrb.name)].confidence).toBe(0.5);
+    expect(connector.requests).toHaveLength(1);
+  });
+
   test("orb identity is saved on objects and Shape orb combines it without another model call", async () => {
     const { vibeUuid, ids } = await fixture(2);
     const connector = new FakeModelConnector({ respond: installedTaskResponse });
