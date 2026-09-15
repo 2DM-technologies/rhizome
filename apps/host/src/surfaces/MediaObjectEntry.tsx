@@ -107,6 +107,18 @@ function MediaObjectPayload({
   payloadUrl: string | undefined;
   title: string;
 }) {
+  if (element?.kind === "document") {
+    return (
+      <span
+        data-media-object-presentation="download"
+        className="flex max-w-[80%] flex-col items-center gap-2 text-center"
+      >
+        <Badge>Document</Badge>
+        <span className="text-caption text-tertiary">{element.mime}</span>
+      </span>
+    );
+  }
+
   return (
     <ElementPreview
       title={title}
@@ -120,9 +132,7 @@ function MediaObjectPayload({
       frameTitle={
         element?.kind === "text"
           ? `${element.mime === "text/markdown" ? "Markdown" : "Text"} content for ${title}`
-          : element?.kind === "document"
-            ? `${element.mime === "application/pdf" ? "PDF" : "Document"} preview for ${title}`
-            : undefined
+          : undefined
       }
     />
   );
@@ -173,7 +183,11 @@ export function MediaObjectEntry({
   // early response can start a large download and then be replaced when later metadata arrives.
   const metadataSettled = viewport.active && elementQueries.every((query) => !query.isPending);
   const primaryElement = metadataSettled ? primaryPayloadCandidate(elements) : undefined;
-  const payload = usePayloadUrl("elements", primaryElement?.uuid);
+  // Documents stay lightweight on the board; their full payload is loaded in object detail.
+  const payload = usePayloadUrl(
+    "elements",
+    primaryElement?.element.kind === "document" ? undefined : primaryElement?.uuid,
+  );
   const elementPending =
     object.elements.length > 0 &&
     (!viewport.active || elementQueries.some((query) => query.isPending));
