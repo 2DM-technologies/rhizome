@@ -243,17 +243,17 @@ test("datatable rows open objects from values and title links without intercepti
   await expect(objectLink).toHaveAttribute("href", `/objects/${OBJECT_ID}`);
 
   await board.getByRole("cell", { name: "Monthly plan", exact: true }).click();
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await expect(page.getByLabel("User properties, as JSON")).toBeVisible();
   await page.getByRole("button", { name: "Back" }).click();
   await expect(board).toBeVisible();
 
   await objectLink.focus();
   await objectLink.press("Enter");
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await page.getByRole("button", { name: "Back" }).click();
   await board.getByRole("button", { name: `Open object rnet://object/${OBJECT_ID}` }).click();
-  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}\\?mode=maximized$`));
   await page.getByRole("button", { name: "Back" }).click();
 
   await board.getByRole("button", { name: `Remove rnet://object/${OBJECT_ID} from Vibe` }).click();

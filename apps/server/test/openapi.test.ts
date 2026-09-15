@@ -63,6 +63,7 @@ describe("OpenAPI", () => {
     expect(serialized).toContain('"operationId":"revokeSourceCredential"');
     expect(serialized).toContain('"operationId":"createImportPreview"');
     expect(serialized).toContain('"operationId":"confirmImportPreview"');
+    expect(serialized).toContain('"operationId":"getDashboardStats"');
     expect(serialized).toContain('"/rnet/v0/elements/{id}/bytes"');
     expect(serialized).toContain('"BearerAuth":{"type":"http","scheme":"bearer"}');
     expect(serialized).toContain('"name":"x-rnet-kind","in":"header","required":true');
@@ -75,6 +76,10 @@ describe("OpenAPI", () => {
     const createVibe = openApiDocument.paths["/rnet/v0/vibes"]?.post as
       { security?: unknown } | undefined;
     expect(createVibe?.security).toEqual([{ BearerAuth: [] }]);
+
+    const getDashboardStats = openApiDocument.paths["/rnet/v0/me/stats"]?.get as
+      { security?: unknown } | undefined;
+    expect(getDashboardStats?.security).toEqual([{ BearerAuth: [] }]);
 
     const getVibe = openApiDocument.paths["/rnet/v0/vibes/{id}"]?.get as
       { security?: unknown } | undefined;

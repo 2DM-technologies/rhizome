@@ -17,6 +17,49 @@
   }
 }
 
+.desktop-wallpaper {
+  background-image: var(--rz-wallpaper);
+  background-size: cover;
+  background-position: center;
+}
+
+.vibe-orb-stage {
+  background:
+    radial-gradient(
+      circle at 50% 44%,
+      color-mix(in srgb, var(--rz-bg-canvas) 82%, transparent),
+      transparent 58%
+    ),
+    linear-gradient(145deg, var(--rz-bg-pill), var(--rz-bg-canvas));
+}
+
+.vibe-orb-stage-grid {
+  background-image:
+    linear-gradient(var(--rz-border-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rz-border-hairline) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black, transparent 72%);
+}
+
+.vibe-orb-range {
+  height: 0.8rem;
+}
+
+.vibe-orb-loading-overlay {
+  opacity: 0.05;
+  animation: vibe-orb-loading-pulse 1.55s ease-in-out infinite;
+}
+
+@keyframes vibe-orb-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.05;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 @property --rz-launcher-expanded-alpha {
   syntax: "<number>";
   inherits: false;
@@ -69,120 +112,6 @@
   background: var(--rz-bg-canvas);
   transform-origin: top left;
   will-change: transform, clip-path;
-}
-
-.vibe-orb-stage {
-  background:
-    radial-gradient(
-      circle at 50% 44%,
-      color-mix(in srgb, var(--rz-bg-canvas) 82%, transparent),
-      transparent 58%
-    ),
-    linear-gradient(145deg, var(--rz-bg-pill), var(--rz-bg-canvas));
-}
-
-.vibe-orb-stage-grid {
-  background-image:
-    linear-gradient(var(--rz-border-hairline) 1px, transparent 1px),
-    linear-gradient(90deg, var(--rz-border-hairline) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: radial-gradient(circle at center, black, transparent 72%);
-}
-
-.vibe-orb-range {
-  height: 0.8rem;
-}
-
-.vibe-orb-loading-overlay {
-  opacity: 0.05;
-  animation: vibe-orb-loading-pulse 1.55s ease-in-out infinite;
-}
-
-@keyframes vibe-orb-loading-pulse {
-  0%,
-  100% {
-    opacity: 0.05;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vibe-orb-loading-overlay {
-    animation: none;
-    opacity: 0.14;
-  }
-}
-
-.inferred-block {
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: var(--rz-bg-canvas);
-}
-
-.inferred-block[data-inference-state="waiting"],
-.inferred-block[data-inference-state="running"] {
-  --inferred-base: var(--rz-skeleton-base);
-  --inferred-wave: linear-gradient(
-    110deg,
-    transparent 20%,
-    var(--rz-skeleton-shine) 45%,
-    transparent 70%
-  );
-  background: color-mix(in srgb, var(--inferred-base) 25%, var(--rz-bg-canvas));
-}
-
-.inferred-block[data-inference-state="running"] {
-  --inferred-base: var(--rz-accent-primary);
-  --inferred-wave: linear-gradient(
-    110deg,
-    transparent 10%,
-    #7d59ff33 25%,
-    #b844fe66 42%,
-    #b844fe44 58%,
-    #7d59ff33 72%,
-    transparent 90%
-  );
-}
-
-.inferred-block:not([data-inference-state="idle"])::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: var(--inferred-wave);
-  animation: inferred-shimmer 2.4s linear infinite;
-}
-
-.inferred-block:not([data-inference-state="idle"]) pre {
-  background: transparent;
-}
-
-.inferred-skeleton-line {
-  height: 0.8rem;
-  border-radius: 0.25rem;
-  background: color-mix(in srgb, var(--inferred-base) 45%, var(--rz-bg-canvas));
-  transition: background-color 300ms ease;
-}
-
-@keyframes inferred-shimmer {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(100%);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .inferred-block::after {
-    animation: none !important;
-  }
-  .inferred-skeleton-line {
-    transition: none;
-  }
 }
 
 .start-vibe-button {
@@ -281,9 +210,88 @@
   }
 }
 
+.inferred-block {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--rz-bg-canvas);
+}
+
+.inferred-block[data-inference-state="waiting"],
+.inferred-block[data-inference-state="running"] {
+  --inferred-base: var(--rz-skeleton-base);
+  --inferred-wave: linear-gradient(
+    110deg,
+    transparent 20%,
+    var(--rz-skeleton-shine) 45%,
+    transparent 70%
+  );
+  background: color-mix(in srgb, var(--inferred-base) 25%, var(--rz-bg-canvas));
+}
+
+.inferred-block[data-inference-state="running"] {
+  --inferred-base: var(--rz-accent-primary);
+  --inferred-wave: linear-gradient(
+    110deg,
+    transparent 10%,
+    #7d59ff33 25%,
+    #b844fe66 42%,
+    #b844fe44 58%,
+    #7d59ff33 72%,
+    transparent 90%
+  );
+}
+
+.inferred-block:not([data-inference-state="idle"])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--inferred-wave);
+  animation: inferred-shimmer 2.4s linear infinite;
+}
+
+.inferred-block:not([data-inference-state="idle"]) pre {
+  background: transparent;
+}
+
+.inferred-skeleton-line {
+  height: 0.8rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--inferred-base) 45%, var(--rz-bg-canvas));
+  transition: background-color 300ms ease;
+}
+
+@keyframes inferred-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .start-vibe-button,
+  .start-vibe-button > svg,
+  .start-vibe-glow {
+    transition: none;
+  }
   .start-vibe-glow::before,
   .start-vibe-glow::after {
     animation: none;
+  }
+  .start-vibe-glow::after {
+    background-position: 80px 0;
+  }
+  .inferred-block::after {
+    animation: none !important;
+  }
+  .inferred-skeleton-line {
+    transition: none;
+  }
+  .vibe-orb-loading-overlay {
+    animation: none;
+    opacity: 0.14;
   }
 }

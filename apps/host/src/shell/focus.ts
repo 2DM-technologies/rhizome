@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import { useShellStore } from "./store.ts";
@@ -30,40 +30,18 @@ export function useFocusedSurface(): { surface: Surface | null; mode: ViewMode }
  * It never writes focus, and it runs on every route change rather than only at load, because a
  * link can name a surface that is not open at any moment — not just from a cold start.
  */
-export function useEnsureSurfaceOpen(surface: Surface | null, mode: ViewMode): void {
-  const navigate = useNavigate();
+export function useEnsureSurfaceOpen(surface: Surface | null): void {
   const openSurface = useShellStore((state) => state.openSurface);
-  const defaultViewMode = useShellStore((state) => state.defaultViewMode);
-  const setDefaultViewMode = useShellStore((state) => state.setDefaultViewMode);
-  const initializedDefaultMode = useRef(false);
-  const id = surface ? surfaceId(surface) : null;
-  // A POP updates the URL before the destination surface exists in the window store. Reconcile
-  // in a layout effect so React can commit that surface before the browser paints an empty shell.
+  // A POP can name a surface that is no longer mounted. Open it before paint without
+  // changing the URL or synchronizing presentation back into the store.
   useLayoutEffect(() => {
-    if (surface) {
-      openSurface(surface);
-      // A cold deep link establishes the initial default. After that, history traversal may
-      // revisit an old URL with a different mode, but only an explicit open or toggle changes
-      // the inherited mode. Reading the store imperatively also survives Strict Mode's second
-      // effect setup before this hook has re-rendered with the synchronous Zustand update.
-      if (!initializedDefaultMode.current) {
-        initializedDefaultMode.current = true;
-        setDefaultViewMode(mode);
-        return;
-      }
-
-      const inheritedMode = useShellStore.getState().defaultViewMode;
-      if (mode !== inheritedMode) {
-        void navigate(locationOf(surface, inheritedMode), { replace: true });
-      }
-    }
-    // Keyed on the id so re-running depends on identity, not on object reference.
-  }, [defaultViewMode, id, mode, navigate, openSurface, setDefaultViewMode, surface]);
+    if (surface) openSurface(surface);
+  }, [openSurface, surface]);
 }
 
 export interface SurfaceNavigation {
-  /** Return to the bare desktop. */
-  home: () => void;
+  /** Toggle between the bare desktop and the most recently focused open window. */
+  home: (options?: { origin?: Element | null; source?: DockTransitionSource }) => void;
   /** Focus a surface, opening it if it is not already open. */
   open: (surface: Surface, options?: ViewMode | SurfaceOpenOptions) => void;
   /** Focus a surface with a shared-element transition from its dock control. */
@@ -73,7 +51,7 @@ export interface SurfaceNavigation {
       origin: Element | null;
       source: DockTransitionSource;
       mode?: ViewMode;
-      /** Preserve the current window instead of replacing it with this surface. */
+      /** Keep the current route available in the dock; its window still unmounts. */
       keepCurrentOpen?: boolean;
     },
   ) => void;
@@ -85,43 +63,77 @@ export interface SurfaceNavigation {
 
 export interface SurfaceOpenOptions {
   mode?: ViewMode;
-  /** Preserve the current window instead of replacing it with this surface. */
+  /** Surface-specific search parameters. Presentation mode is merged in by the shell. */
+  search?: Readonly<Record<string, string>>;
+  /** Keep the current route available in the dock; its window still unmounts. */
   keepCurrentOpen?: boolean;
+}
+
+interface ResolvedSurfaceOpenOptions {
+  mode: ViewMode;
+  keepCurrentOpen: boolean;
+  search?: Readonly<Record<string, string>>;
 }
 
 function resolveOpenOptions(
   options: ViewMode | SurfaceOpenOptions | undefined,
   defaultMode: ViewMode,
-): Required<SurfaceOpenOptions> {
+): ResolvedSurfaceOpenOptions {
   if (typeof options === "string") return { mode: options, keepCurrentOpen: false };
   return {
     mode: options?.mode ?? defaultMode,
     keepCurrentOpen: options?.keepCurrentOpen ?? false,
+    ...(options?.search ? { search: options.search } : {}),
   };
 }
 
 export function useSurfaceNavigation(): SurfaceNavigation {
   const navigate = useNavigate();
+  const location = useLocation();
   const openSurface = useShellStore((state) => state.openSurface);
   const closeSurface = useShellStore((state) => state.closeSurface);
-  const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const setDefaultViewMode = useShellStore((state) => state.setDefaultViewMode);
   const { surface: focused, mode } = useFocusedSurface();
 
   return {
-    home: () => navigate("/"),
+    home: ({ origin = null, source = "home" } = {}) => {
+      if (focused) {
+        // Showing the desktop unmounts the window; remember its exact presentation for
+        // the next Home click instead of applying the default from some earlier surface.
+        setDefaultViewMode(mode);
+        navigate("/");
+        return;
+      }
 
-    open: (surface, options) => {
-      const { mode: nextMode, keepCurrentOpen } = resolveOpenOptions(options, defaultViewMode);
-      openSurface(surface, { keepCurrentOpen });
-      setDefaultViewMode(nextMode);
-      navigate(locationOf(surface, nextMode));
+      const state = useShellStore.getState();
+      const remembered = state.lastFocusedSurface;
+      const target =
+        remembered && state.open.some((surface) => surfaceId(surface) === surfaceId(remembered))
+          ? remembered
+          : ({ kind: "vibes" } satisfies Surface);
+      const nextMode = state.defaultViewMode;
+      const animate =
+        origin !== null && !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (animate) setDockTransitionTarget(target, source, origin.getBoundingClientRect());
+      openSurface(target);
+      void navigate(locationOf(target, nextMode), animate ? { flushSync: true } : undefined);
     },
 
-    openFromDock: (
-      surface,
-      { origin, source, mode: nextMode = defaultViewMode, keepCurrentOpen = false },
-    ) => {
+    open: (surface, options) => {
+      // Async callbacks may outlive a maximize/restore click. Inherit the current choice
+      // when navigation happens, not the mode captured when the callback was created.
+      const {
+        mode: nextMode,
+        keepCurrentOpen,
+        search,
+      } = resolveOpenOptions(options, useShellStore.getState().defaultViewMode);
+      openSurface(surface, { keepCurrentOpen });
+      setDefaultViewMode(nextMode);
+      navigate(locationOf(surface, nextMode, search));
+    },
+
+    openFromDock: (surface, { origin, source, mode: requestedMode, keepCurrentOpen = false }) => {
+      const nextMode = requestedMode ?? useShellStore.getState().defaultViewMode;
       const alreadyFocused = focused !== null && surfaceId(focused) === surfaceId(surface);
       const animate =
         !alreadyFocused &&
@@ -137,14 +149,16 @@ export function useSurfaceNavigation(): SurfaceNavigation {
       closeSurface(id);
       // The only place the store drives a navigation, and it is a direct user action rather
       // than a reactive effect — which is what keeps it from becoming a loop.
-      if (focused && surfaceId(focused) === id) navigate("/");
+      // Reveal the desktop in the same commit that removes the window. A deferred route
+      // update leaves one frame with neither surface visible.
+      if (focused && surfaceId(focused) === id) void navigate("/", { flushSync: true });
     },
 
     toggleMaximized: () => {
       if (!focused) return;
       const next: ViewMode = mode === "maximized" ? "standard" : "maximized";
       setDefaultViewMode(next);
-      navigate(locationOf(focused, next), { replace: true });
+      navigate(locationOf(focused, next, new URLSearchParams(location.search)), { replace: true });
     },
   };
 }

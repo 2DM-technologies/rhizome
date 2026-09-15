@@ -205,7 +205,7 @@ function Tweet({
             <span
               id={tooltip.id}
               role="tooltip"
-              data-tier="dark"
+              data-tier="content"
               className={actionTooltipStyle}
               style={{ left: tooltip.left, top: tooltip.top, maxWidth: tooltip.maxWidth }}
             >

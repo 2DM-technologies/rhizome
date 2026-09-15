@@ -81,6 +81,117 @@ test("PNG captures match the live still shader and retain transparent edges", as
   }
 });
 
+test("a cached image survives reload without WebGL, while recipe changes replace it", async ({
+  page,
+}) => {
+  const store = await installMockStore(page);
+  store.vibes[0]!.inferred = inferred();
+  await probeContexts(page);
+  await page.goto("/vibes");
+  const row = page.getByRole("button", { name: "Open Vibe Spending" });
+  const orb = row.locator("[data-vibe-orb-renderer]");
+  await expect(orb).toHaveAttribute("data-vibe-orb-renderer", "raster");
+  const original = await orb.locator("img").screenshot();
+  const originalSrc = await orb.locator("img").getAttribute("src");
+
+  // Use the normal query refetch path to update a mounted row, including a recipe with the same seed.
+  store.vibes[0]!.inferred = inferred({ ...ORB_PRESETS.ember, seed: ORB_PRESETS.bloom.seed });
+  await page.evaluate(() => {
+    for (const visibilityState of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: visibilityState,
+      });
+      window.dispatchEvent(new Event("visibilitychange"));
+    }
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+  await expect(orb.locator("img")).not.toHaveAttribute("src", originalSrc!);
+  await expect(orb).toHaveAttribute("data-vibe-orb-renderer", "raster");
+  const updated = await orb.locator("img").screenshot();
+  expect(updated).not.toEqual(original);
+
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      configurable: true,
+      value(context: string, ...args: unknown[]) {
+        if (context === "webgl2") throw new Error("Cache hit must not create a WebGL context");
+        return Reflect.apply(original, this, [context, ...args]);
+      },
+    });
+  });
+  await page.reload();
+  await expect(orb).toHaveAttribute("data-vibe-orb-renderer", "raster");
+  expect(await orb.locator("img").screenshot()).toEqual(updated);
+  await expect(page.locator("canvas")).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __orbProbe: { contexts: number } }).__orbProbe.contexts,
+    ),
+  ).toBe(0);
+});
+
+test("a long list rasterizes visible orbs through a single shared context", async ({ page }) => {
+  const store = await installMockStore(page);
+  const source = store.vibes[0]!;
+  store.vibes.splice(
+    0,
+    store.vibes.length,
+    ...Array.from({ length: 80 }, (_, index) => ({
+      ...source,
+      uri: `rnet://vibe/0198f2a1-b19c-77bb-a6e9-${String(index + 100).padStart(12, "0")}`,
+      title: `Raster ${index}`,
+      inferred: inferred({ ...ORB_PRESETS.tideglass, seed: `raster-${index}` }),
+    })),
+  );
+  await probeContexts(page);
+  await page.goto("/vibes");
+  const images = page.locator('[data-vibe-orb-renderer="raster"] img');
+  await expect(images.first()).toBeVisible();
+  expect(await images.count()).toBeLessThan(80);
+  const last = page.getByRole("button", { name: "Open Vibe Raster 79", exact: true });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last.locator('[data-vibe-orb-renderer="raster"] img')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __orbProbe: { contexts: number } }).__orbProbe.contexts,
+    ),
+  ).toBe(1);
+  await expect(page.locator("canvas")).toHaveCount(0);
+});
+
+test("blocked storage still renders images and missing WebGL retains the CSS identity", async ({
+  page,
+}) => {
+  const store = await installMockStore(page);
+  store.vibes[0]!.inferred = inferred();
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "indexedDB", {
+      get() {
+        throw new Error("Storage blocked");
+      },
+    });
+  });
+  await page.goto("/vibes");
+  const orb = page
+    .getByRole("button", { name: "Open Vibe Spending" })
+    .locator("[data-vibe-orb-renderer]");
+  await expect(orb).toHaveAttribute("data-vibe-orb-renderer", "raster");
+  await page.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext;
+    Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+      value(context: string, ...args: unknown[]) {
+        return context === "webgl2" ? null : Reflect.apply(original, this, [context, ...args]);
+      },
+    });
+  });
+  await page.reload();
+  await expect(orb).toHaveAttribute("data-vibe-orb-renderer", "fallback");
+  await expect(orb.locator("span[aria-hidden]")).toHaveCSS("opacity", "1");
+  await expect(orb.locator("img, canvas")).toHaveCount(0);
+});
+
 test("disk cache evicts old entries by recency and encoded size", async ({ page }) => {
   await installMockStore(page);
   await page.goto("/");

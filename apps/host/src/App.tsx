@@ -6,6 +6,7 @@ import { RouterProvider } from "react-router/dom";
 import { VibeOrbPlayground } from "./orb/VibeOrbPlayground.tsx";
 import { createQueryClient } from "./queries/index.ts";
 import { ShellLayout } from "./shell/ShellLayout.tsx";
+import { ThemeProvider } from "./theme.tsx";
 
 const router = createBrowserRouter([
   { path: "/playgrounds/vibe-orb", element: <VibeOrbPlayground /> },
@@ -20,8 +21,10 @@ const router = createBrowserRouter([
 export function App() {
   const [queryClient] = useState(createQueryClient);
   return (
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

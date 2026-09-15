@@ -43,9 +43,13 @@ test("a maximized window expands underneath the dock", async ({ page }) => {
 
   await page.getByRole("button", { name: "Maximize window" }).click();
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
+  await expect(page).toHaveURL(/\/$/);
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(page).toHaveURL(/\/m\/Geometry\?mode=maximized$/);
 
-  const openingSurface = page.locator('[data-surface-id="vibes"][data-surface-opening="true"]');
+  const openingSurface = page.locator(
+    '[data-surface-id="m:Geometry"][data-surface-opening="true"]',
+  );
   await expect(openingSurface).toBeVisible();
   await expect(openingSurface).toHaveAttribute("data-surface-opening-source", "home");
   await expect(openingSurface).toHaveCSS("z-index", "auto");

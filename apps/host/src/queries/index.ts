@@ -1,4 +1,5 @@
 export { createQueryClient } from "./queryClient.ts";
+export { useDashboardStats } from "./dashboard.ts";
 export { makeOwnerCreateMediaObjectsFormData } from "@rhizome/store-contract/multipart";
 export { useImportPreviewPayloadUrl, usePayloadUrl } from "./payloadUrl.ts";
 export {

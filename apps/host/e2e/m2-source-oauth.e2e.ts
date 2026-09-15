@@ -137,7 +137,7 @@ test("generic OAuth resumes a new destination exactly once after a full-page pro
   await expectCleanBrowserBoundary(page);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "Imported objects", exact: true, level: 1 }),
   ).toBeVisible();

@@ -1,12 +1,141 @@
-import vibesMark from "../assets/brand/vibes-mark.svg?no-inline";
 /**
- * Icon geometry is copied verbatim from the Figma exports (viewBox and path data unchanged);
+ * Icons labeled with Figma references retain their exported geometry (viewBox and path data);
  * only the hard-coded stroke and fill colours become `currentColor`, so an icon inherits the
  * tier it is rendered in rather than pinning one tier's palette.
  */
-import type { SVGProps } from "react";
+import { useId, type SVGProps } from "react";
+import appMark from "../assets/brand/app-mark.png";
+// External SVG <use> references must remain file URLs in production.
+import vibesMark from "../assets/brand/vibes-mark.svg?no-inline";
 
 type IconProps = SVGProps<SVGSVGElement>;
+
+/** A softly filled sun with eight short rays. */
+export function LightModeIcon({ width = 24, height = 24, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <circle
+        cx="12"
+        cy="12"
+        r="4"
+        fill="currentColor"
+        fillOpacity="0.08"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M12 2V4M12 20V22M2 12H4M20 12H22M4.9 4.9L6.3 6.3M17.7 17.7L19.1 19.1M4.9 19.1L6.3 17.7M17.7 6.3L19.1 4.9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** A crescent moon with a small four-point star. */
+export function DarkModeIcon({ width = 24, height = 24, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M20.5 13.1A8.5 8.5 0 1 1 10.9 3.5A6.5 6.5 0 0 0 20.5 13.1Z"
+        fill="currentColor"
+        fillOpacity="0.08"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M17.5 2.5L18.3 5.2L21 6L18.3 6.8L17.5 9.5L16.7 6.8L14 6L16.7 5.2L17.5 2.5Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Four purple circle outlines with violet outlined connections and no lettering. */
+export function StartVibeIcon({ width = 19, height = 19, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <use href={`${vibesMark}#vibes-mark`} />
+    </svg>
+  );
+}
+
+/** Rhizome ring mark — Figma 4856:2076, tinted through the original artwork's alpha. */
+export function ImportIcon({ width = 24, height = 24, ...props }: IconProps) {
+  const maskId = useId();
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <defs>
+        <mask
+          id={maskId}
+          maskUnits="userSpaceOnUse"
+          x="0"
+          y="0"
+          width="24"
+          height="24"
+          style={{ maskType: "alpha" }}
+        >
+          <image href={appMark} x="1" y="1" width="22" height="22" />
+        </mask>
+      </defs>
+      <rect width="24" height="24" fill="#333" mask={`url(#${maskId})`} />
+    </svg>
+  );
+}
+
+/** Right-pointing navigation arrow beside a stored object. */
+export function OpenObjectIcon({ width = 22, height = 22, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M16.5 4.5L23 8.25V15.75L16.5 19.5L10 15.75V8.25L16.5 4.5ZM10 8.25L16.5 12L23 8.25M16.5 12V19.5M1 12H7.5M4.5 9L7.5 12L4.5 15"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Twitter bird with an outward arrow alongside it. */
+export function OriginalPostIcon({ width = 22, height = 22, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        fill="currentColor"
+        transform="translate(1 6) scale(.64)"
+        d="M23.954 4.57a10 10 0 0 1-2.825.775 4.958 4.958 0 0 0 2.163-2.723 9.99 9.99 0 0 1-3.127 1.195 4.916 4.916 0 0 0-8.384 4.482A13.944 13.944 0 0 1 1.64 3.162a4.916 4.916 0 0 0 1.523 6.558 4.903 4.903 0 0 1-2.229-.616v.061a4.917 4.917 0 0 0 3.946 4.818 4.935 4.935 0 0 1-2.224.084 4.923 4.923 0 0 0 4.6 3.419A9.869 9.869 0 0 1 0 19.523a13.94 13.94 0 0 0 7.548 2.212c9.057 0 14.01-7.503 14.01-14.01 0-.213-.005-.425-.014-.636A10.013 10.013 0 0 0 24 4.59z"
+      />
+      <path
+        d="M17.5 16L23 10.5M17.5 10.5H23V16"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Inline title editing. */
+export function EditIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M10.5 4.5L13.5 7.5M3 15L4 11L12.5 2.5A2.12 2.12 0 0 1 15.5 5.5L7 14L3 15Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /** icon/search — Figma 4859:277 */
 export function SearchIcon({ width = 18, height = 18, ...props }: IconProps) {
@@ -131,66 +260,6 @@ export function CloseIcon({ width = 18, height = 18, ...props }: IconProps) {
         strokeWidth="1.5"
         strokeLinecap="round"
       />
-    </svg>
-  );
-}
-
-export function EditIcon({ width = 18, height = 18, ...props }: IconProps) {
-  return (
-    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
-      <path
-        d="M10.5 4.5L13.5 7.5M3 15L4 11L12.5 2.5A2.12 2.12 0 0 1 15.5 5.5L7 14L3 15Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/** icon/search — Figma 4859:277 */
-
-export function OpenObjectIcon({ width = 22, height = 22, ...props }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
-      <path
-        d="M16.5 4.5L23 8.25V15.75L16.5 19.5L10 15.75V8.25L16.5 4.5ZM10 8.25L16.5 12L23 8.25M16.5 12V19.5M1 12H7.5M4.5 9L7.5 12L4.5 15"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/** Twitter bird with an outward arrow alongside it. */
-export function OriginalPostIcon({ width = 22, height = 22, ...props }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
-      <path
-        fill="currentColor"
-        transform="translate(1 6) scale(.64)"
-        d="M23.954 4.57a10 10 0 0 1-2.825.775 4.958 4.958 0 0 0 2.163-2.723 9.99 9.99 0 0 1-3.127 1.195 4.916 4.916 0 0 0-8.384 4.482A13.944 13.944 0 0 1 1.64 3.162a4.916 4.916 0 0 0 1.523 6.558 4.903 4.903 0 0 1-2.229-.616v.061a4.917 4.917 0 0 0 3.946 4.818 4.935 4.935 0 0 1-2.224.084 4.923 4.923 0 0 0 4.6 3.419A9.869 9.869 0 0 1 0 19.523a13.94 13.94 0 0 0 7.548 2.212c9.057 0 14.01-7.503 14.01-14.01 0-.213-.005-.425-.014-.636A10.013 10.013 0 0 0 24 4.59z"
-      />
-      <path
-        d="M17.5 16L23 10.5M17.5 10.5H23V16"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-/** Inline title editing. */
-
-export function StartVibeIcon({ width = 19, height = 19, ...props }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
-      <use href={`${vibesMark}#vibes-mark`} />
     </svg>
   );
 }

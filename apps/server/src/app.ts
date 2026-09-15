@@ -26,6 +26,7 @@ import { notFound, Problem, problemResponse } from "./errors.ts";
 import { createOpenApiDocument } from "./openapi.ts";
 import { createSafePublicAssetFetcher, SafePublicFetcher } from "./public-fetch/index.ts";
 import { createMediaElementRoutes } from "./routes/media-elements.ts";
+import { createMeRoutes } from "./routes/me.ts";
 import { createIngestionSourceRoutes } from "./routes/ingestion-sources.ts";
 import { createPendingImportRoutes } from "./routes/imports.ts";
 import { createMediaObjectRoutes } from "./routes/media-objects.ts";
@@ -178,6 +179,7 @@ export function createApp({
 
   app.get("/health", (context) => context.json({ ok: true, service: "rhizome" }));
   const routeGroups = [
+    { basePath: "/rnet/v0/me", router: createMeRoutes(db) },
     {
       basePath: "/rnet/v0/imports",
       router: createPendingImportRoutes(

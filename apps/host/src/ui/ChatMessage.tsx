@@ -13,8 +13,8 @@ export interface ChatMessageProps {
 }
 
 /**
- * Figma 4861:42 — agent conversation message. Content tier: it stays dark inside the
- * sidebar because it is page content, not a control, so it never inverts on its own.
+ * Figma 4861:42 — agent conversation message. Inherits the sidebar's content tier:
+ * dark in light mode, light in dark mode. Messages do not select a tier of their own.
  */
 export function ChatMessage({ sender, name, children, className }: ChatMessageProps) {
   const isAgent = sender === "rhizome";

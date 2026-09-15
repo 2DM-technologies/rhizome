@@ -15,7 +15,7 @@ export interface CategoryTableProps {
   className?: string;
 }
 
-const RULE = "border-[rgba(20,20,26,0.06)]";
+const RULE = "border-neutral-border";
 const CELL = "flex h-9 items-center gap-3 px-1 py-2.5 font-sans";
 
 /**
