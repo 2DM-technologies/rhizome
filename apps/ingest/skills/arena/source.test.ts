@@ -60,6 +60,24 @@ describe("Are.na public-remote source skill", () => {
     }
   });
 
+  test("bounds long channel titles before destination validation", async () => {
+    const fixture = JSON.parse(
+      new TextDecoder().decode(await readFixtureBytes()),
+    ) as ArenaCaptureV1;
+    const channel = JSON.parse(Buffer.from(fixture.channel.body_base64, "base64").toString());
+    const title = `  ${"Title ".repeat(60)}  `;
+    (channel.data ?? channel).title = title;
+    fixture.channel.body_base64 = Buffer.from(JSON.stringify(channel)).toString("base64");
+    const skill = createArenaSourceSkill({ assetFetch: async () => Promise.reject() });
+    const bundle = await skill.compiledSource.compile({
+      bytes: new TextEncoder().encode(JSON.stringify(fixture)),
+      config: skill.normalizeConfig({ url: fixture.channel_url }),
+      limits: skill.manifest.limits,
+    });
+    expect(bundle.destination?.title).toBe(title.trim().slice(0, 256).trim());
+    expect(bundle.destination!.title.length).toBeLessThanOrEqual(256);
+  });
+
   test("round-trips the committed fixture through fixed API and injected asset transports", async () => {
     const fixtureBytes = await readFixtureBytes();
     const fixture = JSON.parse(new TextDecoder().decode(fixtureBytes)) as ArenaCaptureV1;

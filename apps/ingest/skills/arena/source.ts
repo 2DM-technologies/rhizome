@@ -71,7 +71,13 @@ export function createArenaSourceSkill(
         }));
         return {
           ...candidateBundle(candidates, verify),
-          destination: { title: channel.channelTitle },
+          destination: {
+            title: channel.channelTitle
+              .trim()
+              .slice(0, 256)
+              .replace(/[\uD800-\uDBFF]$/u, "")
+              .trim(),
+          },
         };
       },
     },

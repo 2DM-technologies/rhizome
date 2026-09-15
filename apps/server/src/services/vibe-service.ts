@@ -138,6 +138,32 @@ export class VibesService {
     return this.loadAggregate(vibeRecord);
   }
 
+  /** An automatic import name may replace only the still-current placeholder. */
+  async renameVibeIfTitle(vibeUuid: string, expectedTitle: string, title: string): Promise<void> {
+    await this.access.assertVibeOwner(vibeUuid);
+    await this.db.transaction(async (transaction) => {
+      const [updated] = await transaction
+        .update(vibes)
+        .set({ title, rev: sql`${vibes.rev} + 1` })
+        .where(and(eq(vibes.uuid, vibeUuid), eq(vibes.title, expectedTitle)))
+        .returning();
+      if (!updated) return;
+      const activeGrants = await transaction
+        .select()
+        .from(grants)
+        .where(and(eq(grants.vibeUuid, vibeUuid), isNull(grants.revokedAt)));
+      await transaction.insert(vibeRevisions).values({
+        vibeUuid,
+        rev: updated.rev,
+        actor: this.actor.subject,
+        snapshot: snapshotVibe(
+          updated,
+          activeGrants.map((grant) => ({ subject: grant.subject, scope: grant.scopes })),
+        ),
+      });
+    });
+  }
+
   async updateVibe(vibeUuid: string, patch: UpdateVibeRequest): Promise<VibeAggregate> {
     await this.access.assertVibeOwner(vibeUuid);
     const currentVibe = await this.getVibe(vibeUuid);

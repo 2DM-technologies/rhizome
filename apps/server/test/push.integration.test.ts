@@ -497,6 +497,126 @@ async function confirmAndWaitForEnrichment(
 }
 
 describe("new Vibe import enrichment", () => {
+  test("automatic graphs serialize per Vibe while unrelated Vibes and empty graphs can finish", async () => {
+    const first = await fixture(2),
+      unrelated = await fixture(1);
+    const entered = gate(),
+      release = gate();
+    let calls = 0;
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        if (++calls === 1) {
+          entered.resolve();
+          await release.promise;
+        }
+        return responseFor(request);
+      },
+    });
+    const service = pushService(connector, { pushTasks: tasks });
+    const pipeline = {
+      skillId: "test",
+      nodes: [{ key: `object:${objectTask.name}`, task: objectTask, after: [] }],
+    };
+    const a = service.runPushPipeline(first.vibeUuid, ownerActor, pipeline, [
+      `rnet://object/${first.ids[0]}`,
+    ]);
+    await entered.promise;
+    const b = service.runPushPipeline(first.vibeUuid, ownerActor, pipeline, [
+      `rnet://object/${first.ids[1]}`,
+    ]);
+    try {
+      await service.runPushPipeline(first.vibeUuid, ownerActor, { skillId: "empty", nodes: [] });
+      expect(
+        (await service.getObjectInferenceStatus(first.ids[0]!, ownerActor)).records[0]?.tasks,
+      ).toMatchObject([{ status: "running" }]);
+      await service.runPushPipeline(unrelated.vibeUuid, ownerActor, pipeline);
+      expect(calls).toBe(2);
+    } finally {
+      release.resolve();
+    }
+    const [aRuns, bRuns] = await Promise.all([a, b]);
+    expect(aRuns.size).toBe(1);
+    expect(bRuns.size).toBe(1);
+    expect(calls).toBe(3);
+    expect((await pushesFor(first.vibeUuid)).map((operation) => operation.status)).toEqual([
+      "done",
+      "done",
+    ]);
+    for (const uuid of first.ids)
+      expect(
+        (await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, uuid) }))
+          ?.inferredRev,
+      ).toBe(1);
+  });
+
+  test("summary naming preserves explicit confirmation titles and edits made while enrichment runs", async () => {
+    for (const mode of ["explicit", "edit"] as const) {
+      let vibeUuid: string | undefined;
+      const connector = new FakeModelConnector({
+        respond: async (request) => {
+          if (mode === "edit" && request.schemaName === `rhizome_${summarize.name}`) {
+            const operation = await db.query.operations.findFirst({
+              where: eq(operations.uuid, request.trace.operationUuid),
+            });
+            vibeUuid = operation!.vibeUuid!;
+            await db
+              .update(vibes)
+              .set({ title: "My edited title" })
+              .where(eq(vibes.uuid, vibeUuid));
+          }
+          return installedTaskResponse(request);
+        },
+      });
+      const app = application(connector, {
+        pushTasks: installedPushTasks,
+        fileSources: new FileSourceCatalog([importPushSource()]),
+      });
+      const { operation } = await importPreview(app);
+      const enriched = await confirmAndWaitForEnrichment(
+        app,
+        operation.operation_id,
+        mode === "explicit" ? "My explicit title" : "Imported objects",
+      );
+      expect(enriched.title).toBe(mode === "explicit" ? "My explicit title" : "My edited title");
+    }
+  });
+
+  test("fallback naming reads the summary written by its own run", async () => {
+    const connector = new FakeModelConnector({ respond: installedTaskResponse });
+    const app = application(connector, {
+      pushTasks: installedPushTasks,
+      fileSources: new FileSourceCatalog([importPushSource()]),
+    });
+    const original = PushService.prototype.runPushPipeline;
+    const afterGraph = spyOn(PushService.prototype, "runPushPipeline").mockImplementation(
+      async function (this: PushService, ...args) {
+        const result = await original.apply(this, args);
+        await db
+          .update(vibes)
+          .set({
+            inferred: {
+              [storeTaskKey(summarize.name)]: {
+                ...oldEntry,
+                properties: { title: "A different run" },
+              },
+            },
+          })
+          .where(eq(vibes.uuid, args[0]));
+        return result;
+      },
+    );
+    try {
+      const { operation } = await importPreview(app);
+      const enriched = await confirmAndWaitForEnrichment(app, operation.operation_id);
+      expect(enriched.title).toBe("Fern collection");
+      expect(enriched.inferred[storeTaskKey(summarize.name)].properties.title).toBe(
+        "A different run",
+      );
+    } finally {
+      afterGraph.mockRestore();
+    }
+  });
+
   test("an unnamed import uses the metered summary title without an extra model call", async () => {
     const connector = new FakeModelConnector({ respond: installedTaskResponse });
     const app = application(connector, {
