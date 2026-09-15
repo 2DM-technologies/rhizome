@@ -523,6 +523,326 @@ async function confirmAndWaitForEnrichment(
 }
 
 describe("new Vibe import enrichment", () => {
+  test("automatic conflicts wait, enrich only uncovered additions, and then release dependencies", async () => {
+    for (const task of [objectTask, elementTask]) {
+      const { vibeUuid, ids } = await fixture(3);
+      const recordIds =
+        task.level === "element" ? await Promise.all(ids.map((uuid) => imageFor(uuid))) : ids;
+      const entered = gate(),
+        release = gate();
+      const connector = new FakeModelConnector({
+        respond: async (request) => {
+          if (connector.requests.length === 1) {
+            entered.resolve();
+            await release.promise;
+          }
+          return responseFor(request);
+        },
+      });
+      const service = pushService(connector, { pushTasks: tasks });
+      await service.startPush(
+        vibeUuid,
+        {
+          level: task.level,
+          task: task.name,
+          selection: recordIds.slice(0, 2).map((uuid) => `rnet://${task.level}/${uuid}`),
+        },
+        ownerActor,
+      );
+      await entered.promise;
+      const key = `${task.level}:${task.name}`;
+      const pipeline = {
+        skillId: "test",
+        nodes: [
+          { key, task, after: [] },
+          { key: `object:${otherTask.name}`, task: otherTask, after: [key] },
+        ],
+      };
+      const graph = service.runPushPipeline(
+        vibeUuid,
+        ownerActor,
+        pipeline,
+        ids.slice(1).map((uuid) => `rnet://object/${uuid}`),
+      );
+      try {
+        await Bun.sleep(100);
+        expect(connector.requests).toHaveLength(1);
+        const status = await service.getObjectInferenceStatus(ids[2]!, ownerActor);
+        expect(
+          status.records.find(({ uri }) => uri === `rnet://${task.level}/${recordIds[2]}`)?.tasks,
+        ).toContainEqual({ task: task.name, status: "waiting", message: null });
+      } finally {
+        release.resolve();
+      }
+      const completed = await graph;
+      const root = (await db.query.operations.findFirst({
+        where: eq(operations.uuid, completed.get(key)!),
+      }))!;
+      expect(root.request.resolved).toMatchObject({ selection: [recordIds[2]!] });
+      expect(root.result).toMatchObject({
+        written: [{ uri: `rnet://${task.level}/${recordIds[2]}` }],
+      });
+      expect(connector.requests).toHaveLength(3);
+      expect(connector.requests[2]!.input).toContain(storeTaskKey(task.name));
+      for (const uuid of recordIds) {
+        const record =
+          task.level === "element"
+            ? await db.query.mediaElements.findFirst({ where: eq(mediaElements.uuid, uuid) })
+            : await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, uuid) });
+        expect(record?.inferredRev).toBe(
+          task.level === "object" && ids.slice(1).includes(uuid) ? 2 : 1,
+        );
+      }
+      expect(
+        (
+          await service.getTaskInferenceStatus(
+            vibeUuid,
+            { level: task.level, task: task.name },
+            ownerActor,
+          )
+        ).status,
+      ).toBe("done");
+    }
+  });
+
+  test("fully covered automatic conflicts wait without another paid run", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    const entered = gate(),
+      release = gate();
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        entered.resolve();
+        await release.promise;
+        return responseFor(request);
+      },
+    });
+    const service = pushService(connector, { pushTasks: tasks });
+    await service.startPush(vibeUuid, { level: "object", task: objectTask.name }, ownerActor);
+    await entered.promise;
+    let settled = false;
+    const graph = service
+      .runPushPipeline(
+        vibeUuid,
+        ownerActor,
+        {
+          skillId: "test",
+          nodes: [{ key: `object:${objectTask.name}`, task: objectTask, after: [] }],
+        },
+        ids.map((uuid) => `rnet://object/${uuid}`),
+      )
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await Bun.sleep(100);
+      expect(settled).toBe(false);
+    } finally {
+      release.resolve();
+    }
+    expect((await graph).size).toBe(0);
+    expect(connector.requests).toHaveLength(1);
+    expect(await pushesFor(vibeUuid)).toHaveLength(1);
+    expect(
+      (
+        await service.getTaskInferenceStatus(
+          vibeUuid,
+          { level: "object", task: objectTask.name },
+          ownerActor,
+        )
+      ).status,
+    ).toBe("done");
+  });
+
+  test("failed records in a covering run remain eligible for automatic enrichment", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    const entered = gate(),
+      release = gate();
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        if (connector.requests.length === 1) {
+          entered.resolve();
+          await release.promise;
+          throw new ModelConnectorError("output_refused", { retryable: false, usage });
+        }
+        return responseFor(request);
+      },
+    });
+    const service = pushService(connector, { pushTasks: tasks });
+    await service.startPush(vibeUuid, { level: "object", task: objectTask.name }, ownerActor);
+    await entered.promise;
+    const key = `object:${objectTask.name}`;
+    const graph = service.runPushPipeline(
+      vibeUuid,
+      ownerActor,
+      { skillId: "test", nodes: [{ key, task: objectTask, after: [] }] },
+      ids.map((uuid) => `rnet://object/${uuid}`),
+    );
+    try {
+      await Bun.sleep(100);
+      expect(connector.requests).toHaveLength(1);
+    } finally {
+      release.resolve();
+    }
+    const completed = await graph;
+    expect(completed.has(key)).toBe(true);
+    expect(connector.requests).toHaveLength(2);
+    expect(
+      (await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, ids[0]!) }))
+        ?.inferredRev,
+    ).toBe(1);
+  });
+
+  test("Vibe conflicts reuse a covering result but recompute when the manual workset missed additions", async () => {
+    for (const addedAfterStart of [false, true]) {
+      const { vibeUuid, ids } = await fixture(2);
+      if (addedAfterStart)
+        await db
+          .delete(vibeMediaObjects)
+          .where(
+            and(
+              eq(vibeMediaObjects.vibeUuid, vibeUuid),
+              eq(vibeMediaObjects.mediaObjectUuid, ids[1]!),
+            ),
+          );
+      const entered = gate(),
+        release = gate();
+      const connector = new FakeModelConnector({
+        respond: async (request) => {
+          if (connector.requests.length === 1) {
+            entered.resolve();
+            await release.promise;
+          }
+          return installedTaskResponse(request);
+        },
+      });
+      const service = pushService(connector);
+      await service.startPush(vibeUuid, { level: "vibe", task: summarize.name }, ownerActor);
+      await entered.promise;
+      if (addedAfterStart)
+        await db
+          .insert(vibeMediaObjects)
+          .values({ vibeUuid, mediaObjectUuid: ids[1]!, position: 1 });
+      const key = `vibe:${summarize.name}`;
+      const graph = service.runPushPipeline(vibeUuid, ownerActor, {
+        skillId: "test",
+        nodes: [{ key, task: summarize, after: [] }],
+      });
+      try {
+        await Bun.sleep(100);
+        expect(connector.requests).toHaveLength(1);
+      } finally {
+        release.resolve();
+      }
+      expect((await graph).has(key)).toBe(addedAfterStart);
+      expect(connector.requests).toHaveLength(addedAfterStart ? 2 : 1);
+    }
+  });
+
+  test("automatic waiters recheck push permission before accepting uncovered work", async () => {
+    const { vibeUuid, ids } = await fixture(2);
+    const actor: Actor = {
+      kind: "client",
+      uuid: DEV_DMACHINE_UUID,
+      name: "rbudget",
+      subject: "client:rbudget",
+    };
+    await db.insert(grants).values({ vibeUuid, subject: actor.subject, scopes: ["push", "read"] });
+    const entered = gate(),
+      release = gate();
+    const connector = new FakeModelConnector({
+      respond: async (request) => {
+        entered.resolve();
+        await release.promise;
+        return responseFor(request);
+      },
+    });
+    const service = pushService(connector, { pushTasks: tasks });
+    await service.startPush(
+      vibeUuid,
+      { level: "object", task: objectTask.name, selection: [`rnet://object/${ids[0]}`] },
+      ownerActor,
+    );
+    await entered.promise;
+    const graph = service.runPushPipeline(
+      vibeUuid,
+      actor,
+      {
+        skillId: "test",
+        nodes: [{ key: `object:${objectTask.name}`, task: objectTask, after: [] }],
+      },
+      [`rnet://object/${ids[1]}`],
+    );
+    try {
+      await Bun.sleep(100);
+      expect(
+        (await service.getObjectInferenceStatus(ids[1]!, ownerActor)).records[0]?.tasks,
+      ).toMatchObject([{ task: objectTask.name, status: "waiting" }]);
+      await db
+        .update(grants)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(grants.vibeUuid, vibeUuid), eq(grants.subject, actor.subject)));
+    } finally {
+      release.resolve();
+    }
+    expect((await graph).size).toBe(0);
+    expect(connector.requests).toHaveLength(1);
+    expect(await pushesFor(vibeUuid)).toHaveLength(1);
+    expect(
+      (await db.query.mediaObjects.findFirst({ where: eq(mediaObjects.uuid, ids[1]!) }))
+        ?.inferredRev,
+    ).toBe(0);
+    expect(
+      (
+        await service.getTaskInferenceStatus(
+          vibeUuid,
+          { level: "object", task: objectTask.name },
+          ownerActor,
+        )
+      ).status,
+    ).toBe("error");
+  });
+
+  test("automatic waiters stop if a conflicting operation never reaches terminal state", async () => {
+    const { vibeUuid, ids } = await fixture(1);
+    const uuid = uuidv7();
+    await db.insert(operations).values({
+      uuid,
+      kind: "push",
+      status: "running",
+      ownerUuid: DEV_USER_UUID,
+      invokedBy: ownerActor.subject,
+      vibeUuid,
+      createdAt: new Date(Date.now() - 59_000),
+      request: {
+        mode: "push",
+        level: "object",
+        task: objectTask.name,
+        resolved: { selection: ids, outcomes_before_run: { preserved_durable: [] } },
+      },
+    });
+    const connector = new FakeModelConnector({ respond: responseFor });
+    const service = pushService(connector, {
+      pushTasks: tasks,
+      pushLimits: { ...DEFAULT_PUSH_LIMITS, maxWallMs: 0 },
+    });
+    const completed = await service.runPushPipeline(
+      vibeUuid,
+      ownerActor,
+      {
+        skillId: "test",
+        nodes: [{ key: `object:${objectTask.name}`, task: objectTask, after: [] }],
+      },
+      ids.map((id) => `rnet://object/${id}`),
+    );
+    expect(completed.size).toBe(0);
+    expect(connector.requests).toHaveLength(0);
+    expect(await pushesFor(vibeUuid)).toHaveLength(1);
+    await db
+      .update(operations)
+      .set({ status: "failed", finishedAt: new Date(), error: "test cleanup" })
+      .where(eq(operations.uuid, uuid));
+  });
+
   test("automatic graphs serialize per Vibe while unrelated Vibes and empty graphs can finish", async () => {
     const first = await fixture(2),
       unrelated = await fixture(1);
