@@ -39,7 +39,8 @@ export async function prepareVibeOrbContext({
       surface: { depth: 0.5, glow: 0.3 },
       motion: { drift: 0.3, turbulence: 0.2, spin: 0.2 },
     },
-    confidence: recipe ? contributions.length / members.size : 0,
+    // Neutral identities are valid coverage even when composition chooses the neutral palette.
+    confidence: members.size ? contributions.length / members.size : 0,
   };
 }
 
