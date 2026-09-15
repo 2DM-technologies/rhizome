@@ -7,6 +7,7 @@ import { ProceduralVibeOrb, useOrbHover, useReducedMotion } from "../orb/Procedu
 import type { OrbVisualRecipe } from "../orb/recipe.ts";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 import { useMediaElement, usePayloadUrl, useVibeObjects } from "../queries/index.ts";
+import { useNearViewport } from "../ui/useNearViewport.ts";
 import { vibeUpdatedAt } from "../vibeRecency.ts";
 import { useSurfaceNavigation } from "./focus.ts";
 
@@ -96,8 +97,8 @@ function ObjectThumbnail({ object }: { object: MediaObject }) {
   const reference = elementReference(object);
   const elementUuid = reference ? uuidOf(reference.uri) : undefined;
   const element = useMediaElement(elementUuid);
-  const payload = usePayloadUrl("elements", element.data ? elementUuid : undefined);
   const presentation = payloadKind(element.data?.mime);
+  const payload = usePayloadUrl("elements", presentation !== "other" ? elementUuid : undefined);
 
   return (
     <span
@@ -172,7 +173,8 @@ function DesktopVibeOpenButton({
 /** Compact desktop-only Vibe tile from Figma 5034:1108; intentionally not the shared Card. */
 export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
   const uuid = uuidOf(vibe.uri);
-  const objects = useVibeObjects(uuid);
+  const { active: loadPreviews, ref } = useNearViewport<HTMLElement>();
+  const objects = useVibeObjects(loadPreviews ? uuid : undefined);
   const details = objects.data ?? [];
   const previews = details.slice(0, CARD_PREVIEW_LIMIT);
   const source = details[0] ? objectSource(details[0]) : "Rhizome";
@@ -203,6 +205,7 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
 
   return (
     <article
+      ref={ref}
       data-desktop-vibe-card
       data-vibe-card-background={visual.backgroundSource}
       onPointerEnter={() => setOrbHovered(true)}

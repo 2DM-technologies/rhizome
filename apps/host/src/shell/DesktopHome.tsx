@@ -58,7 +58,7 @@ const DesktopHomeContent = memo(function DesktopHomeContent() {
     <main
       data-desktop-home
       aria-label="Home"
-      className="absolute inset-x-6 top-6 bottom-28 overflow-y-auto sm:inset-x-12 lg:overflow-hidden"
+      className="absolute inset-x-6 top-6 bottom-28 overflow-y-auto sm:inset-x-12 xl:overflow-hidden"
     >
       <div className="grid min-h-full w-full grid-cols-1 gap-5 xl:h-full xl:min-h-0 xl:grid-cols-[35%_62%] xl:justify-between xl:gap-0">
         <section className="flex min-h-80 flex-col rounded-lg border border-dashed border-neutral-border bg-home-panel p-7 xl:min-h-0 2xl:p-[60px]">

@@ -19,8 +19,8 @@ function nearViewportObserver(): IntersectionObserver | undefined {
   return cardObserver;
 }
 
-export function useNearViewport() {
-  const ref = useRef<HTMLLIElement>(null);
+export function useNearViewport<T extends HTMLElement = HTMLLIElement>() {
+  const ref = useRef<T>(null);
   const [active, setActive] = useState(() => typeof IntersectionObserver === "undefined");
 
   useEffect(() => {
