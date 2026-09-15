@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g id="vibes-mark" fill="none" stroke="#7d59ff" stroke-width="0.8" stroke-linecap="round" stroke-linejoin="round">
+    <path fill="none" stroke="#b844fe" d="M4.970 2.250L19.030 2.250 M6.400 4.750L17.600 4.750 M21.921 7.278L14.900 19.338 M19.041 7.256L13.459 16.844 M9.100 19.338L2.079 7.278 M10.541 16.844L4.959 7.256 M6.392 4.961L10.347 7.217 M5.153 7.133L9.108 9.389 M18.847 7.133L14.892 9.389 M17.608 4.961L13.653 7.217 M13.250 12.217L13.250 16.733 M10.750 12.217L10.750 16.733"/>
+    <circle cx="3.5" cy="4.75" r="2.9"/>
+    <circle cx="20.5" cy="4.75" r="2.9"/>
+    <circle cx="12" cy="9.6" r="2.9"/>
+    <circle cx="12" cy="19.35" r="2.9"/>
+  </g>
+</svg>

@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caption", "description", "medium", "subjects", "text_in_image"],
+  "properties": {
+    "caption": { "type": "string", "pattern": "^.{1,120}$" },
+    "description": { "type": "string", "pattern": "^[\\s\\S]{1,1200}$" },
+    "medium": {
+      "type": "string",
+      "enum": ["photo", "screenshot", "illustration", "diagram", "document_scan", "other"]
+    },
+    "subjects": { "type": "array", "minItems": 0, "maxItems": 10, "items": { "type": "string" } },
+    "text_in_image": { "type": ["string", "null"] }
+  }
+}

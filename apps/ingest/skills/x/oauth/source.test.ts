@@ -94,6 +94,45 @@ describe("X OAuth connected-source adapter", () => {
     expect(provider.authorizations).toEqual(["Bearer access-token", "Bearer access-token"]);
   });
 
+  test("imports only the latest 25 eligible posts from the captured page", async () => {
+    const post = (id: number) => ({
+      id: String(id),
+      text: `Post ${id}`,
+      author_id: "42",
+      created_at: new Date(Date.UTC(2026, 7, 20, 10, 0, id)).toISOString(),
+      edit_history_tweet_ids: [String(id)],
+    });
+    const provider = mockProvider([
+      timeline([
+        { ...post(32), referenced_tweets: [{ type: "retweeted", id: "1" }] },
+        { ...post(31), referenced_tweets: [{ type: "replied_to", id: "1" }] },
+        ...Array.from({ length: 30 }, (_, index) => post(30 - index)),
+      ]),
+    ]);
+    const skill = createXOAuthSkill(settings, provider.options);
+    const prepared = await skill.prepareFetch({
+      config: {},
+      endDateEpoch: 1_800_000_000,
+      limits: skill.manifest.limits,
+    });
+    const bytes = await prepared.retrieve(secret(), { signal: new AbortController().signal });
+    const bundle = await prepared.compiledSource.compile({ bytes, limits: skill.manifest.limits });
+
+    expect(bundle.candidates.map(({ keys }) => keys.x_tweet_id)).toEqual(
+      Array.from({ length: 25 }, (_, index) => String(30 - index)),
+    );
+    expect(bundle.verify).toMatchObject({
+      ok: true,
+      source_record_count: 32,
+      replies_excluded: 1,
+      reposts_excluded: 1,
+      eligible_count: 30,
+      candidate_count: 25,
+      configured_cap: 25,
+    });
+    expect(provider.timelineCalls).toHaveLength(1);
+  });
+
   test("persists the newest checkpoint, requests a 30-minute edit overlap, and treats absence as no deletion", async () => {
     const provider = mockProvider([
       timeline([

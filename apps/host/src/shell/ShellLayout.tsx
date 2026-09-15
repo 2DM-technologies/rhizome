@@ -1,12 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
-import appMark from "../assets/brand/app-mark.png";
-import orb1 from "../assets/orbs/orb-1-44.png";
-import orb2 from "../assets/orbs/orb-2-44.png";
-import orb3 from "../assets/orbs/orb-3-44.png";
-import orb4 from "../assets/orbs/orb-4-44.png";
 import orbHome from "../assets/orbs/orb-home-48.png";
 import { uuidOf } from "../api/uris.ts";
+import { DarkModeIcon, ImportIcon, LightModeIcon, StartVibeIcon } from "../ui/icons.tsx";
 import { useVibes } from "../queries/index.ts";
 import {
   Desktop,
@@ -19,40 +15,55 @@ import {
   OrbButton,
 } from "../ui/index.ts";
 import { SurfaceLayer } from "./SurfaceLayer.tsx";
+import { DesktopHome } from "./DesktopHome.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
 import { useOpenSurfaces, useShellStore } from "./store.ts";
 import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import { markForSurface } from "./surfaceMarks.ts";
+import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
+import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
+import { useTheme } from "../theme.tsx";
+import { cn } from "../ui/cn.ts";
+import { useDockPinsStore, usePinnedVibeUuids } from "./dockPins.ts";
 
-/**
- * There is no Figma spec for host surfaces in the dock — the mockups only show dMachine apps —
- * so their marks are stand-ins, picked deterministically per surface so a window keeps the
- * same face across a session.
- */
-const STAND_IN_ORBS = [orb1, orb2, orb3, orb4];
 const DOCK_RAIL_ITEM_SIZE = 44;
 const DOCK_RAIL_GAP = 20;
 const DOCK_RAIL_VISIBLE_VIBE_ITEMS = 3;
-const HOME_SURFACE = { kind: "vibes" } satisfies Surface;
+const PINNED_DOCK_SURFACES = [{ kind: "vibes" }, { kind: "import" }] as const;
 
-function markFor(surface: Surface): string {
-  if (surface.kind === "dmachine") return appMark;
-  const id = surfaceId(surface);
-  let hash = 0;
-  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) % 997;
-  return STAND_IN_ORBS[hash % STAND_IN_ORBS.length] as string;
+function isPinnedDockSurface(surface: Surface, pinnedVibeUuids: readonly string[]): boolean {
+  return (
+    surface.kind === "vibes" ||
+    surface.kind === "import" ||
+    (surface.kind === "vibe" && pinnedVibeUuids.includes(surface.uuid))
+  );
+}
+
+function iconForDockSurface(surface: Surface) {
+  if (surface.kind === "vibes") {
+    return <StartVibeIcon width={32} height={32} className="shrink-0 text-primary" />;
+  }
+  if (surface.kind === "import") {
+    return (
+      <ImportIcon width={32} height={32} viewBox="1 1 22 22" className="shrink-0 text-primary" />
+    );
+  }
+  return undefined;
 }
 
 /**
  * The persistent shell. The dock and desktop live above the router's control, while the URL
  * decides which surface is focused. Surface navigation replaces the window tree by default;
- * callers can explicitly retain a background window when its local state must survive.
+ * recent routes remain dock shortcuts without keeping their React trees mounted.
  */
 export function ShellLayout() {
+  const { theme, setTheme } = useTheme();
   const { surface: focused, mode } = useFocusedSurface();
-  useEnsureSurfaceOpen(focused, mode);
+  useEnsureSurfaceOpen(focused);
 
   const open = useOpenSurfaces();
+  const pinnedVibeUuids = usePinnedVibeUuids();
   const recentVibeSurfaces = useShellStore((state) => state.recentVibeSurfaces);
   const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const launcherOpen = useShellStore((state) => state.launcherOpen);
@@ -75,11 +86,16 @@ export function ShellLayout() {
       (vibes.data ?? []).map((vibe) => ({
         uuid: uuidOf(vibe.uri),
         title: vibe.title,
+        orb: orbVisualForVibe(vibe),
       })),
     [vibes.data],
   );
   const vibeTitles = useMemo(
     () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.title])),
+    [loadedVibes],
+  );
+  const vibeOrbs = useMemo(
+    () => new Map(loadedVibes.map((vibe) => [vibe.uuid, vibe.orb])),
     [loadedVibes],
   );
   const vibeCatalogLoaded = vibes.data !== undefined;
@@ -88,14 +104,32 @@ export function ShellLayout() {
     // authoritative catalog arrives, missing or deleted Vibes disappear from the shortcuts.
     const recentVibes = recentVibeSurfaces.filter(
       (surface) =>
+        surface.kind === "vibe" &&
+        !pinnedVibeUuids.includes(surface.uuid) &&
         surfaceId(surface) !== focusedId &&
-        (surface.kind === "vibes" || !vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
+        (!vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
     );
 
     // Every Vibe route already appears in the shared recency list. Pin only other explicitly
     // retained windows before those shortcuts so one route cannot appear twice in the rail.
-    return [...background.filter((surface) => !isVibeSurface(surface)), ...recentVibes];
-  }, [background, focusedId, recentVibeSurfaces, vibeCatalogLoaded, vibeTitles]);
+    return [
+      ...background.filter(
+        (surface) => !isVibeSurface(surface) && !isPinnedDockSurface(surface, pinnedVibeUuids),
+      ),
+      ...recentVibes,
+    ];
+  }, [background, focusedId, recentVibeSurfaces, vibeCatalogLoaded, vibeTitles, pinnedVibeUuids]);
+  const pinnedVibes = pinnedVibeUuids.filter((uuid) => !vibeCatalogLoaded || vibeTitles.has(uuid));
+
+  useEffect(() => {
+    function syncPins(event: StorageEvent) {
+      if (event.key === "rhizome.dock-pins" || event.key === null) {
+        void useDockPinsStore.persist.rehydrate();
+      }
+    }
+    window.addEventListener("storage", syncPins);
+    return () => window.removeEventListener("storage", syncPins);
+  }, []);
   const retainedDockRailItems = dockRailSurfaces.filter(
     (surface) => !isVibeSurface(surface),
   ).length;
@@ -112,7 +146,10 @@ export function ShellLayout() {
       ? 0
       : visibleDockRailItems * DOCK_RAIL_ITEM_SIZE + (visibleDockRailItems - 1) * DOCK_RAIL_GAP;
   const dockRailOrder = dockRailSurfaces.map(surfaceId).join("\0");
-  const results = useMemo(() => searchShell(query, loadedVibes), [loadedVibes, query]);
+  const results = useMemo(
+    () => searchShell(query, loadedVibes, theme),
+    [loadedVibes, query, theme],
+  );
 
   // The rail is an MRU view, so a newly opened Vibe should always restore its newest edge even
   // if the user had scrolled back through older entries immediately beforehand.
@@ -153,8 +190,8 @@ export function ShellLayout() {
 
   function selectResult(result: ShellSearchResult) {
     dismissLauncher({ blurFocus: true, animate: false });
-    if (result.action.kind === "home") {
-      navigation.home();
+    if (result.action.kind === "theme") {
+      setTheme(result.action.theme);
     } else {
       navigation.openFromDock(result.action.surface, {
         origin: launcherContainer.current,
@@ -177,14 +214,41 @@ export function ShellLayout() {
       : [
           {
             title: group,
-            items: groupResults.map((result) => (
-              <LauncherItem
-                key={result.id}
-                label={result.label}
-                icon={result.group === "Commands" ? "⌘" : "◉"}
-                onSelect={() => selectResult(result)}
-              />
-            )),
+            items: groupResults.map((result) => {
+              const surface = result.action.kind === "open" ? result.action.surface : undefined;
+              const CommandIcon =
+                result.action.kind === "theme"
+                  ? result.action.theme === "light"
+                    ? LightModeIcon
+                    : DarkModeIcon
+                  : surface?.kind === "vibes"
+                    ? StartVibeIcon
+                    : surface?.kind === "import"
+                      ? ImportIcon
+                      : undefined;
+              const orb = surface?.kind === "vibe" ? vibeOrbs.get(surface.uuid) : undefined;
+              return (
+                <LauncherItem
+                  key={result.id}
+                  label={result.label}
+                  iconStyle={CommandIcon ? "app" : "artwork"}
+                  icon={
+                    CommandIcon ? (
+                      <CommandIcon
+                        width={28}
+                        height={28}
+                        viewBox={surface?.kind === "import" ? "1 1 22 22" : "0 0 24 24"}
+                      />
+                    ) : orb ? (
+                      <RasterVibeOrb recipe={orb.recipe} loading={orb.loading} size={32} />
+                    ) : (
+                      "⌘"
+                    )
+                  }
+                  onSelect={() => selectResult(result)}
+                />
+              );
+            }),
           },
         ];
   });
@@ -198,18 +262,23 @@ export function ShellLayout() {
               label="Home"
               src={orbHome}
               onClick={(event) =>
-                navigation.openFromDock(HOME_SURFACE, {
+                navigation.home({
                   origin: event.currentTarget,
                   source: "home",
-                  // Preserve an in-progress review; every ordinary window switch still replaces.
-                  keepCurrentOpen: focused?.kind === "import",
                 })
               }
             />
           }
           apps={
             focused ? (
-              <DockApp name={labelOf(focused, vibeTitles)} src={markFor(focused)} state="active" />
+              <DockApp
+                name={labelOf(focused, vibeTitles)}
+                src={markForSurface(focused)}
+                icon={iconForDockSurface(focused)}
+                recipe={focused.kind === "vibe" ? vibeOrbs.get(focused.uuid)?.recipe : undefined}
+                orbLoading={focused.kind === "vibe" ? vibeOrbs.get(focused.uuid)?.loading : false}
+                state="active"
+              />
             ) : null
           }
           tray={
@@ -221,15 +290,25 @@ export function ShellLayout() {
                 data-dock-recent-vibes
                 data-dock-running-apps
                 data-count={dockRailSurfaces.length}
-                style={{ width: dockRailWidth }}
-                className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden transition-[width] duration-100 ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                style={{
+                  width: dockRailWidth,
+                  // The empty rail stays mounted for its width transition but needs no tray gap.
+                  marginRight: dockRailSurfaces.length === 0 ? -DOCK_RAIL_GAP : 0,
+                }}
+                className="min-w-0 shrink-0 overflow-x-auto overflow-y-hidden transition-[width,margin-right] duration-100 ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
                 <div className="flex w-max items-center gap-5">
                   {dockRailSurfaces.map((surface) => (
                     <DockApp
                       key={surfaceId(surface)}
                       name={labelOf(surface, vibeTitles)}
-                      src={markFor(surface)}
+                      src={markForSurface(surface)}
+                      recipe={
+                        surface.kind === "vibe" ? vibeOrbs.get(surface.uuid)?.recipe : undefined
+                      }
+                      orbLoading={
+                        surface.kind === "vibe" ? vibeOrbs.get(surface.uuid)?.loading : false
+                      }
                       onOpen={(event) =>
                         navigation.openFromDock(surface, {
                           origin: event.currentTarget,
@@ -240,11 +319,24 @@ export function ShellLayout() {
                   ))}
                 </div>
               </div>
-              <DockDivider />
+              <div
+                aria-hidden
+                style={{
+                  width: dockRailSurfaces.length === 0 ? 0 : 1,
+                  marginRight: dockRailSurfaces.length === 0 ? -DOCK_RAIL_GAP : 0,
+                }}
+                className="flex shrink-0 overflow-hidden transition-[width,margin-right] duration-100 ease-out"
+              >
+                <DockDivider />
+              </div>
               <div
                 ref={launcherContainer}
                 data-launcher-slot
-                className="relative h-12 w-60 shrink-0"
+                className={cn(
+                  "relative h-12 shrink-0",
+                  launcherOpen ? "w-[308px]" : "w-60",
+                  launcherMotion ? "transition-[width] duration-100 ease-out" : "transition-none",
+                )}
               >
                 <LauncherPanel
                   ref={launcherInput}
@@ -271,11 +363,67 @@ export function ShellLayout() {
                   }
                 />
               </div>
+              <DockDivider />
+              <div
+                data-dock-pinned-apps
+                role="region"
+                aria-label="Pinned apps"
+                className="flex min-w-0 flex-1 items-center gap-5"
+              >
+                {PINNED_DOCK_SURFACES.map((surface) => (
+                  <DockApp
+                    key={surface.kind}
+                    name={labelOf(surface)}
+                    src={markForSurface(surface)}
+                    icon={iconForDockSurface(surface)}
+                    current={focusedId === surfaceId(surface)}
+                    onOpen={(event) => {
+                      dismissLauncher({ blurFocus: true, animate: false });
+                      navigation.openFromDock(surface, {
+                        origin: event.currentTarget,
+                        source: "pinned",
+                      });
+                    }}
+                  />
+                ))}
+                {pinnedVibes.length > 0 ? (
+                  <div
+                    role="region"
+                    aria-label="Pinned Vibes"
+                    data-dock-pinned-vibes
+                    className="min-w-0 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  >
+                    <div className="flex w-max items-center gap-5">
+                      {pinnedVibes.map((uuid) => {
+                        const surface = { kind: "vibe", uuid } as const;
+                        return (
+                          <DockApp
+                            key={uuid}
+                            name={labelOf(surface, vibeTitles)}
+                            src={markForSurface(surface)}
+                            recipe={vibeOrbs.get(uuid)?.recipe}
+                            orbLoading={vibeOrbs.get(uuid)?.loading}
+                            current={focusedId === surfaceId(surface)}
+                            onOpen={(event) => {
+                              dismissLauncher({ blurFocus: true, animate: false });
+                              navigation.openFromDock(surface, {
+                                origin: event.currentTarget,
+                                source: "pinned",
+                              });
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </DockTray>
           }
         />
       }
     >
+      <DesktopHome visible={focused === null} />
       <SurfaceLayer />
     </Desktop>
   );

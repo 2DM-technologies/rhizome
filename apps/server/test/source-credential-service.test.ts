@@ -524,6 +524,7 @@ function fakeCredentialedSkill(options: FakeSkillOptions = {}): CredentialSource
         },
       ],
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: [],
     },
     connection: {
       mode: "claim_exchange",

@@ -7,6 +7,7 @@ import {
   CANDIDATE_BUNDLE_CAPABILITY,
   candidateBundle,
 } from "../../ingest/source-skills/candidate-bundle.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../ingest/source-skills/import-push-pipelines.ts";
 import { createApp } from "../src/app.ts";
 import type { BlobStore } from "../src/blobs/index.ts";
 import type { ServerConfig } from "../src/config.ts";
@@ -62,6 +63,7 @@ describe("OpenAPI", () => {
     expect(serialized).toContain('"operationId":"revokeSourceCredential"');
     expect(serialized).toContain('"operationId":"createImportPreview"');
     expect(serialized).toContain('"operationId":"confirmImportPreview"');
+    expect(serialized).toContain('"operationId":"getDashboardStats"');
     expect(serialized).toContain('"/rnet/v0/elements/{id}/bytes"');
     expect(serialized).toContain('"BearerAuth":{"type":"http","scheme":"bearer"}');
     expect(serialized).toContain('"name":"x-rnet-kind","in":"header","required":true');
@@ -74,6 +76,10 @@ describe("OpenAPI", () => {
     const createVibe = openApiDocument.paths["/rnet/v0/vibes"]?.post as
       { security?: unknown } | undefined;
     expect(createVibe?.security).toEqual([{ BearerAuth: [] }]);
+
+    const getDashboardStats = openApiDocument.paths["/rnet/v0/me/stats"]?.get as
+      { security?: unknown } | undefined;
+    expect(getDashboardStats?.security).toEqual([{ BearerAuth: [] }]);
 
     const getVibe = openApiDocument.paths["/rnet/v0/vibes/{id}"]?.get as
       { security?: unknown } | undefined;
@@ -129,6 +135,7 @@ describe("OpenAPI", () => {
           connector_version: "simplefin-connector@1.0.0",
           parser: { name: "simplefin", version: "simplefin@2.0.0" },
           review_actions: ["review_import", "refresh_source"],
+          import_push_pipeline: [],
         }),
         expect.objectContaining({
           skill_id: "arena",
@@ -137,6 +144,7 @@ describe("OpenAPI", () => {
           connector_version: "arena-connector@1.0.0",
           parser: { name: "arena", version: "arena@1.2.0" },
           review_actions: ["review_import", "refresh_source"],
+          import_push_pipeline: CONTENT_IMPORT_PUSH_PIPELINE,
         }),
       ]),
     });
@@ -176,6 +184,7 @@ describe("OpenAPI", () => {
             },
           ],
           review_actions: ["review_import"],
+          import_push_pipeline: [],
         },
         parser,
         compiledSource: {

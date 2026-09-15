@@ -5,6 +5,7 @@ import {
   mediaObjectsResponseSchema,
   operationDocumentSchema,
   pullVibeRequestSchema,
+  pushVibeRequestSchema,
   updateVibeRequestSchema,
   vibesResponseSchema,
 } from "@rhizome/store-contract";
@@ -15,15 +16,13 @@ import type { FileSourceCatalog } from "../../../ingest/file-sources/types.ts";
 import type { PublicRemoteSourceCatalog } from "../../../ingest/public-sources/types.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database, ProviderLeasePool } from "../db/index.ts";
-import { GRANT_SCOPE } from "../db/models/grant.ts";
-import { Problem } from "../errors.ts";
-import { AccessService } from "../services/access-service.ts";
 import { VibesService } from "../services/vibe-service.ts";
 import { ImportService } from "../services/import-service.ts";
 import type { SourceCredentialCrypto } from "../services/source-credential-crypto.ts";
 import { serializeOperation } from "../serializers/operation-serializer.ts";
 import { serializeMediaObject } from "../serializers/media-object-serializer.ts";
 import { serializeVibe } from "../serializers/vibe-serializer.ts";
+import type { PushService } from "../push/push-service.ts";
 import {
   ProblemSchema,
   RecordIdParamsSchema,
@@ -33,12 +32,15 @@ import {
 } from "./contracts.ts";
 import { createRhizomeRouter } from "./rhizome-router.ts";
 
+import { registerTaskInferenceStatusRoute } from "./task-inference-status.ts";
+
 export const CreateVibeRequestSchema = jsonSchema(createVibeRequestSchema);
 export const UpdateVibeRequestSchema = jsonSchema(updateVibeRequestSchema);
 export const MediaObjectRefsRequestSchema = jsonSchema(mediaObjectRefsRequestSchema);
 const CreateImportPreviewRequestSchema = jsonSchema(createImportPreviewRequestSchema);
 const OperationDocumentSchema = jsonSchema(operationDocumentSchema);
 const PullVibeRequestSchema = jsonSchema(pullVibeRequestSchema);
+const PushVibeRequestSchema = jsonSchema(pushVibeRequestSchema);
 const ImportConfirmParamsSchema = jsonSchema({
   type: "object",
   required: ["id", "operation_id"],
@@ -67,8 +69,10 @@ export function createVibeRoutes(
     providerLeasePool: ProviderLeasePool;
     publicRemoteSources: PublicRemoteSourceCatalog;
   },
+  pushService: PushService,
 ) {
   const router = createRhizomeRouter();
+  registerTaskInferenceStatusRoute(router, pushService);
 
   router.get(
     "/",
@@ -179,6 +183,7 @@ export function createVibeRoutes(
       const body = context.req.valid("json");
       const vibesService = new VibesService({ db, actor: context.get("actor") });
       await vibesService.addMediaObjectRefs(context.req.valid("param").id, body.objects);
+      await pushService.refreshVibeOrb(context.req.valid("param").id, context.get("actor"));
       return context.body(null, 204);
     },
   );
@@ -194,6 +199,7 @@ export function createVibeRoutes(
       const body = context.req.valid("json");
       const vibesService = new VibesService({ db, actor: context.get("actor") });
       await vibesService.removeMediaObjectRefs(context.req.valid("param").id, body.objects);
+      await pushService.refreshVibeOrb(context.req.valid("param").id, context.get("actor"));
       return context.body(null, 204);
     },
   );
@@ -249,6 +255,19 @@ export function createVibeRoutes(
         ...connectedSources,
       });
       const vibe = await service.confirm(parameters.id, parameters.operation_id);
+      const actor = context.get("actor");
+      if (vibe.addedObjectUris.length) {
+        queueMicrotask(() => {
+          void pushService
+            .runImportedVibeTasks(
+              parameters.id,
+              actor,
+              parameters.operation_id,
+              vibe.addedObjectUris,
+            )
+            .catch(() => console.error("Automatic import push failed", parameters.id));
+        });
+      }
       return context.json(serializeVibe(vibe));
     },
   );
@@ -257,22 +276,29 @@ export function createVibeRoutes(
     {
       operationId: "pushVibe",
       auth: "user_or_client",
-      request: { param: RecordIdParamsSchema },
+      request: { param: RecordIdParamsSchema, json: PushVibeRequestSchema },
       responses: {
+        202: OperationDocumentSchema,
         401: ProblemSchema,
         403: ProblemSchema,
+        404: ProblemSchema,
+        409: ProblemSchema,
         422: ProblemSchema,
-        501: ProblemSchema,
+        503: ProblemSchema,
       },
     },
     async (context) => {
-      const accessService = new AccessService({ db, actor: context.get("actor") });
-      await accessService.assertVibeScope(context.req.valid("param").id, GRANT_SCOPE.PUSH);
-      throw new Problem(
-        501,
-        "not_implemented",
-        "Push is scheduled for M3",
-        "The operation record exists in M1; model execution lands in M3",
+      const operation = await pushService.startPush(
+        context.req.valid("param").id,
+        context.req.valid("json"),
+        context.get("actor"),
+      );
+      return context.json(
+        serializeOperation(operation, {
+          exposeOwnerOnlyResult:
+            context.get("actor").subject === `id:rnet://id/${operation.ownerUuid}`,
+        }),
+        202,
       );
     },
   );

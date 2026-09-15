@@ -6,6 +6,7 @@ export interface LauncherItemProps {
   label: string;
   /** App art or emoji glyph. */
   icon: ReactNode;
+  iconStyle?: "artwork" | "app";
   onSelect?: () => void;
   className?: string;
 }
@@ -14,21 +15,34 @@ export interface LauncherItemProps {
  * Figma 4860:46 — icon + caption cell for the launcher popover
  * ("Start something new" / "Import Vibe" grids).
  */
-export function LauncherItem({ label, icon, onSelect, className }: LauncherItemProps) {
+export function LauncherItem({
+  label,
+  icon,
+  iconStyle = "artwork",
+  onSelect,
+  className,
+}: LauncherItemProps) {
   return (
     <button
       type="button"
       onClick={onSelect}
       className={cn(
         "flex w-18 shrink-0 flex-col items-center gap-1.5 rounded-sm bg-surface p-2",
-        "transition-colors hover:bg-[#e7e7e2]",
-        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+        "transition-colors hover:bg-surface-hover",
+        iconStyle === "app"
+          ? "outline-none focus-visible:bg-surface-hover"
+          : "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         className,
       )}
     >
       <span
         aria-hidden
-        className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-sm bg-primary/8 text-[22px] leading-none text-primary"
+        className={cn(
+          "grid size-9 shrink-0 place-items-center overflow-hidden text-[22px] leading-none text-primary",
+          iconStyle === "app"
+            ? "rounded-[35%] bg-surface/25 shadow-[inset_0_0_0_1px_var(--rz-border-neutral)] [corner-shape:squircle]"
+            : "rounded-sm bg-primary/8",
+        )}
       >
         {icon}
       </span>

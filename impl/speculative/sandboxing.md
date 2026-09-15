@@ -1,8 +1,8 @@
 # dMachine Sandboxing
 
-**Status: decided for alpha; palette decision deferred to evidence. Resolves the isolation-mechanism question left open in `IMPLEMENTATION_PLAN.md` §6.2.**
+**Status: speculative. Not decided, scheduled, or approved for implementation. See [AGENTS.md](./AGENTS.md). The proposals below retain their original wording for discussion; they are not implementation requirements.**
 
-Companion documents: `IMPLEMENTATION_PLAN.md` (§6.2, §7), `rnet-spec-v0.1.md` §3. This file wins on sandbox mechanism, bridge design, and the kit-escape instrumentation that feeds the post-alpha decision.
+Companion documents: [implementation plan](../IMPLEMENTATION_PLAN.md) (§6.2, §7), [rNet specification](../../../rnet/spec/rnet-spec-v0.1.md) §3. The implementation plan and rNet specification remain authoritative.
 
 ---
 

@@ -23,6 +23,14 @@ import {
   type Vibe,
 } from "@rnet/types";
 import S3rver from "s3rver";
+import {
+  isPushOperation,
+  storeTaskKey,
+  type OperationDocument,
+  type PushOperationResult,
+  type PushTaskManifest,
+  type PushTaskManifestsResponse,
+} from "@rhizome/store-contract";
 
 import { createApp } from "../src/app.ts";
 import { createBlobStore } from "../src/blobs/index.ts";
@@ -30,6 +38,7 @@ import type { ServerConfig } from "../src/config.ts";
 import { createDatabase, createProviderLeasePool } from "../src/db/index.ts";
 import { seedDb } from "../src/db/seedDb.ts";
 import { createCredentialKeyring } from "../src/services/source-credential-crypto.ts";
+import { FakeModelConnector } from "../src/inference/fake-connector.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 1 });
@@ -46,6 +55,7 @@ const otherOwner = { Authorization: "Bearer dev:user:other" };
 const dmachine = { Authorization: "Bearer dev:client:rbudget" };
 
 let app: ReturnType<typeof createApp>["app"];
+let keylessApp: typeof app;
 let s3: S3rver | undefined;
 let scratch = "";
 
@@ -63,6 +73,11 @@ let authoredObject: MediaObject;
 let authoredElement: MediaElement;
 let authoredElementBytesUrl = "";
 const authoredPayload = "“atomic” client payload 🤔";
+let displayTask: PushTaskManifest;
+let keywordsTask: PushTaskManifest;
+let summarizeTask: PushTaskManifest;
+let clientPush: OperationDocument & { result: PushOperationResult | null };
+let beforePush: MediaObject;
 
 beforeAll(async () => {
   await client.unsafe(`
@@ -105,7 +120,30 @@ beforeAll(async () => {
       buckets,
     },
   };
-  app = createApp({ config, db, blobs: createBlobStore(config), providerLeasePool }).app;
+  const dependencies = { config, db, blobs: createBlobStore(config), providerLeasePool };
+  keylessApp = createApp(dependencies).app;
+  const samples = new FakeModelConnector();
+  let names = 0;
+  const connector = new FakeModelConnector({
+    respond: async (request) => {
+      const response = await samples.complete(request);
+      if (request.schemaName === "rhizome_display-name") {
+        names++;
+        for (const item of (response.output as { results: { result: { display_name: string } }[] })
+          .results)
+          item.result.display_name = `Name ${names}`;
+      }
+      return response;
+    },
+  });
+  app = createApp({
+    ...dependencies,
+    modelConnectors: {
+      target: { provider: connector.provider, name: connector.models[0] },
+      identity: `${connector.provider}/${connector.models[0]}`,
+      connector,
+    },
+  }).app;
   await seedDb(db);
 });
 
@@ -526,6 +564,193 @@ describe("rNet semantics", () => {
     );
   });
 
+  test("push task names and their record levels are discoverable to owners and clients", async () => {
+    const ownerResponse = await request("/rnet/v0/push-tasks", { headers: owner });
+    const clientResponse = await request("/rnet/v0/push-tasks", { headers: dmachine });
+    expect(ownerResponse.status).toBe(200);
+    expect(clientResponse.status).toBe(200);
+    const manifests = (await ownerResponse.json()) as PushTaskManifestsResponse;
+    expect(await clientResponse.json()).toEqual(manifests);
+    const find = (level: PushTaskManifest["level"], name: string): PushTaskManifest => {
+      const task = manifests.tasks.find((task) => task.level === level && task.name === name);
+      expect(task).toBeDefined();
+      return task!;
+    };
+    displayTask = find("object", "display-name");
+    keywordsTask = find("object", "search-keywords");
+    summarizeTask = find("vibe", "summarize");
+    find("vibe", "vibe-view");
+    for (const manifest of manifests.tasks) {
+      expect(Object.keys(manifest).sort()).toEqual([
+        "description",
+        "label",
+        "level",
+        "name",
+        "output_schema",
+      ]);
+      expect(manifest.label.length).toBeGreaterThan(0);
+      expect(manifest.output_schema).toHaveProperty("type", "object");
+    }
+  });
+
+  test("push requires its own named scope even when a client can read and write inferred", async () => {
+    const response = await request(`/rnet/v0/vibes/${vibeId}/push`, {
+      method: "POST",
+      headers: dmachine,
+      json: { level: displayTask.level, task: displayTask.name },
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      code: "grant_missing",
+      scope: "push",
+      detail: "The push scope is required",
+    });
+  });
+
+  test("a push-only grantee can invoke but cannot poll or discover omitted membership in its handle", async () => {
+    beforePush = await readObject();
+    expect(beforePush.inferred?.["rbudget:pattern"]?.durable).toBe(true);
+    await setClientScopes(["push"]);
+    const response = await request(`/rnet/v0/vibes/${vibeId}/push`, {
+      method: "POST",
+      headers: dmachine,
+      json: { level: displayTask.level, task: displayTask.name },
+    });
+    expect(response.status).toBe(202);
+    const accepted = (await response.json()) as OperationDocument;
+    expect(accepted.kind).toBe("push");
+    expect(accepted.request).toEqual({
+      mode: "push",
+      level: displayTask.level,
+      task: displayTask.name,
+      vibe: vibe.uri,
+    });
+    expect(accepted.request).not.toHaveProperty("selection");
+    expect(accepted.request).not.toHaveProperty("resolved");
+    const denied = await request(`/rnet/v0/operations/${accepted.operation_id}`, {
+      headers: dmachine,
+    });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: "grant_missing", scope: "read" });
+    clientPush = await pollPush(accepted.operation_id);
+  });
+
+  test("a read-only grantee may poll push without owner usage but cannot invoke it", async () => {
+    await setClientScopes(["read"]);
+    const response = await request(`/rnet/v0/operations/${clientPush.operation_id}`, {
+      headers: dmachine,
+    });
+    expect(response.status).toBe(200);
+    const publicOperation = (await response.json()) as OperationDocument;
+    expect(isPushOperation(publicOperation)).toBe(true);
+    if (!isPushOperation(publicOperation) || !publicOperation.result || !clientPush.result)
+      throw new Error("Expected completed push results");
+    const { usage, ...visibleResult } = clientPush.result;
+    expect(usage!.tokens_in).toBeGreaterThan(0);
+    expect(Number(usage!.usd)).toBeGreaterThan(0);
+    expect(publicOperation.result).toEqual(visibleResult);
+    expect(publicOperation.result).not.toHaveProperty("usage");
+    expect(publicOperation.request).not.toHaveProperty("resolved");
+    expect(clientPush.request).not.toHaveProperty("resolved");
+    const denied = await request(`/rnet/v0/vibes/${vibeId}/push`, {
+      method: "POST",
+      headers: dmachine,
+      json: { level: displayTask.level, task: displayTask.name },
+    });
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: "grant_missing", scope: "push" });
+  });
+
+  test("push writes only inferred under the store namespace and preserves durable and other-writer entries", async () => {
+    const after = await readObject();
+    const { inferred: beforeInferred, ...beforeOtherBlocks } = beforePush;
+    const { inferred: afterInferred, ...afterOtherBlocks } = after;
+    expect(afterOtherBlocks).toEqual(beforeOtherBlocks);
+    expect(Object.keys(afterInferred!).sort()).toEqual(
+      [...Object.keys(beforeInferred ?? {}), storeTaskKey(displayTask.name)].sort(),
+    );
+    for (const [key, entry] of Object.entries(beforeInferred ?? {}))
+      expect(afterInferred![key]).toEqual(entry);
+    expect(afterInferred?.["rbudget:pattern"]).toEqual(beforeInferred?.["rbudget:pattern"]);
+    const entry = afterInferred![storeTaskKey(displayTask.name)]!;
+    expect(entry).toMatchObject({
+      model: "openai/gpt-5.6-luna",
+      properties: { display_name: "Name 1" },
+    });
+    expect(entry).not.toHaveProperty("durable");
+    expect(validateMediaObject(after).ok).toBe(true);
+  });
+
+  test("a later push replaces only its own task key and never marks its output durable", async () => {
+    await pushAndPoll(keywordsTask, [createdObject.uri]);
+    const before = await readObject();
+    expect(before.inferred?.[storeTaskKey(keywordsTask.name)]).toBeDefined();
+    await pushAndPoll(displayTask, [createdObject.uri]);
+    const after = await readObject();
+    const key = storeTaskKey(displayTask.name);
+    expect(after.inferred![key]!.properties).toEqual({ display_name: "Name 2" });
+    expect(after.inferred![key]).not.toEqual(before.inferred![key]);
+    for (const [otherKey, entry] of Object.entries(before.inferred!))
+      if (otherKey !== key) expect(after.inferred![otherKey]).toEqual(entry);
+    const omitTask = (object: MediaObject) => ({
+      ...object,
+      inferred: Object.fromEntries(
+        Object.entries(object.inferred!).filter(([name]) => name !== key),
+      ),
+    });
+    expect(omitTask(after)).toEqual(omitTask(before));
+    expect(after.inferred![key]).not.toHaveProperty("durable");
+    expect(after.inferred![storeTaskKey(keywordsTask.name)]).not.toHaveProperty("durable");
+  });
+
+  test("Vibe-level push writes the Vibe's inferred block and preserves its protocol document", async () => {
+    const before = (await (
+      await request(`/rnet/v0/vibes/${vibeId}`, { headers: owner })
+    ).json()) as Vibe;
+    const operation = await pushAndPoll(summarizeTask);
+    expect(operation.result).toMatchObject({ level: "vibe", vibe: { outcome: "written" } });
+    const after = (await (
+      await request(`/rnet/v0/vibes/${vibeId}`, { headers: owner })
+    ).json()) as Vibe;
+    expect(validateSchema("vibe", after).ok).toBe(true);
+    expect(after.inferred?.[storeTaskKey(summarizeTask.name)]).toMatchObject({
+      properties: { summary: "fake", tags: ["fake"] },
+      confidence: 0.5,
+    });
+    expect(after.inferred?.[storeTaskKey(summarizeTask.name)]).not.toHaveProperty("durable");
+    const {
+      inferred: _beforeInferred,
+      "x-rhizome-updated-at": _beforeUpdatedAt,
+      ...beforeOther
+    } = before;
+    const {
+      inferred: _afterInferred,
+      "x-rhizome-updated-at": _afterUpdatedAt,
+      ...afterOther
+    } = after;
+    expect(afterOther).toEqual(beforeOther);
+  });
+
+  test("a keyless store serves discovery and rejects authorized push with 503", async () => {
+    const discovery = await keylessApp.request("http://rhizome.test/rnet/v0/push-tasks", {
+      headers: dmachine,
+    });
+    expect(discovery.status).toBe(200);
+    expect((await discovery.json()) as PushTaskManifestsResponse).toHaveProperty("tasks");
+    const invoke = (headers: Record<string, string>) =>
+      keylessApp.request(`http://rhizome.test/rnet/v0/vibes/${vibeId}/push`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ level: displayTask.level, task: displayTask.name }),
+      });
+    const denied = await invoke(dmachine);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: "grant_missing", scope: "push" });
+    const unavailable = await invoke(owner);
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toMatchObject({ code: "push_unavailable" });
+  });
+
   test("revoking a grant fails closed on the next request", async () => {
     const revoke = await request(`/rnet/v0/vibes/${vibeId}`, {
       method: "PATCH",
@@ -539,6 +764,56 @@ describe("rNet semantics", () => {
     expect(bytes.status).toBe(403);
   });
 });
+
+async function setClientScopes(scope: string[]): Promise<void> {
+  const response = await request(`/rnet/v0/vibes/${vibeId}`, {
+    method: "PATCH",
+    headers: owner,
+    json: { grants: [{ subject: "client:rbudget", scope }] },
+  });
+  expect(response.status).toBe(200);
+}
+
+async function readObject(): Promise<MediaObject> {
+  const response = await request(`/rnet/v0/objects/${objectId}`, { headers: owner });
+  expect(response.status).toBe(200);
+  return (await response.json()) as MediaObject;
+}
+
+async function pushAndPoll(task: PushTaskManifest, selection?: string[]) {
+  const response = await request(`/rnet/v0/vibes/${vibeId}/push`, {
+    method: "POST",
+    headers: owner,
+    json: { level: task.level, task: task.name, ...(selection ? { selection } : {}) },
+  });
+  expect(response.status).toBe(202);
+  return pollPush(((await response.json()) as OperationDocument).operation_id);
+}
+
+async function pollPush(
+  id: string,
+): Promise<OperationDocument & { result: PushOperationResult | null }> {
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const response = await request(`/rnet/v0/operations/${id}`, { headers: owner });
+    expect(response.status).toBe(200);
+    const operation = (await response.json()) as OperationDocument;
+    if (["queued", "running"].includes(operation.status)) {
+      await Bun.sleep(10);
+      continue;
+    }
+    expect(operation.status).toBe("done");
+    expect(isPushOperation(operation)).toBe(true);
+    if (!isPushOperation(operation)) throw new Error("Expected a push operation");
+    // Every accepted push in this HTTP suite proves owner-visible metering on completion.
+    expect(operation.finished_at).toBeDefined();
+    expect(operation.result?.usage?.tokens_in).toBeGreaterThan(0);
+    expect(operation.result?.usage?.tokens_out).toBeGreaterThan(0);
+    expect(Number(operation.result?.usage?.usd)).toBeGreaterThan(0);
+    expect(operation.request).not.toHaveProperty("resolved");
+    return operation;
+  }
+  throw new Error("Push did not finish");
+}
 
 async function createObjects(
   headers: Record<string, string>,

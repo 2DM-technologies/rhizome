@@ -19,6 +19,7 @@ export const mediaObjects = pgTable(
     user: jsonb("user").$type<MediaObject["user"]>(),
     userRev: integer("user_rev").notNull().default(0),
     inferred: jsonb("inferred").$type<NonNullable<MediaObject["inferred"]>>().notNull().default({}),
+    inferredRev: integer("inferred_rev").notNull().default(0),
     extensions: jsonb("extensions").$type<JsonObject>().notNull().default({}),
     rnetSchema: text("rnet_schema").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

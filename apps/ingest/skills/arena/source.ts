@@ -69,7 +69,10 @@ export function createArenaSourceSkill(
           })),
           semanticIdentity: { type: "arena.block", keys: block.keys },
         }));
-        return candidateBundle(candidates, verify);
+        return {
+          ...candidateBundle(candidates, verify),
+          destination: { title: channel.channelTitle },
+        };
       },
     },
     sourceRequestSchema: arenaSourceConfigSchema,

@@ -4,7 +4,7 @@
 [AGENTS.md](./AGENTS.md).
 
 **Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md),
-[conformance status](../CONFORMANCE.md), [sandboxing](../concepts/sandboxing.md), and
+[conformance status](../CONFORMANCE.md), [sandboxing exploration](./sandboxing.md), and
 [design tiers](../concepts/design-tiers.md).
 
 ## 1. The primitive
@@ -101,7 +101,7 @@ Adaptive Cards means taking Microsoft's vocabulary, and hast means taking HTML's
 JSX is the better authoring format and the worse storage format. A tree is inert data validated by a
 schema check. JSX is a program — once it executes, the closed vocabulary stops being enforceable
 (computed member access, dynamic import, hooks, I/O). Full JSX also needs a JS runtime per
-component: dMachine-weight, 30–50MB/process per [sandboxing](../concepts/sandboxing.md) §6,
+component: dMachine-weight, 30–50MB/process per [sandboxing exploration](./sandboxing.md) §6,
 impossible in a feed.
 
 ```text

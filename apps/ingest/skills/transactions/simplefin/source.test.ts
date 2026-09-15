@@ -31,6 +31,7 @@ describe("SimpleFIN connected-source skill", () => {
           claim_policy: { kind: "single_use_global" },
         },
         review_actions: ["review_import", "refresh_source"],
+        import_push_pipeline: [],
       },
       parser: simpleFinParser,
       fetchPolicy: { attempts: 24, windowHours: 24 },

@@ -49,6 +49,7 @@ function syntheticSkill(options: SyntheticSkillOptions = {}): PublicRemoteSource
         },
       ],
       review_actions: ["review_import"],
+      import_push_pipeline: [],
     },
     parser,
     compiledSource: {

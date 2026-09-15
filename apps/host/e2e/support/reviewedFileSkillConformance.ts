@@ -41,6 +41,7 @@ export function createReviewedFileSkillConformance({
 
   async function stageFixture(page: Page): Promise<void> {
     await page.goto(`/vibes/${VIBE_ID}`);
+    await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
     await page
       .getByLabel("Import source", { exact: true })
       .selectOption({ label: adapter.manifest.label });
@@ -106,7 +107,7 @@ export function createReviewedFileSkillConformance({
 
       await page.getByRole("button", { name: "Confirm import" }).click();
 
-      await expect(page.getByRole("status")).toContainText(
+      await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
         `Imported ${candidateCount} transactions from ${fixtureFilename}.`,
       );
       await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
@@ -131,7 +132,9 @@ export function createReviewedFileSkillConformance({
 
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
-      await expect(page.getByRole("status")).toHaveText("Review canceled. Nothing was imported.");
+      await expect(page.getByRole("status").filter({ hasText: "Review canceled" })).toHaveText(
+        "Review canceled. Nothing was imported.",
+      );
       await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
       expect(mockStore.vibes[0]?.objects).toEqual(initialMembership);
       expect(mockStore.objects.size).toBe(initialObjectCount);
@@ -146,6 +149,7 @@ export function createReviewedFileSkillConformance({
     },
     async rejectUnsupportedFile(page: Page, mockStore: MockStore): Promise<void> {
       await page.goto(`/vibes/${VIBE_ID}`);
+      await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
       await page
         .getByLabel("Import source", { exact: true })
         .selectOption({ label: adapter.manifest.label });

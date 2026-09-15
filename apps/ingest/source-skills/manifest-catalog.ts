@@ -6,8 +6,10 @@ import {
   SOURCE_SKILL_ID_PATTERN,
   SOURCE_PARSER_VERSION_PATTERN,
   SOURCE_SKILL_REVIEW_ACTIONS,
+  PUSH_TASK_LEVELS,
   type SourceSkillManifest,
 } from "../../../packages/store-contract/src/index.ts";
+import { TASK_PATTERN } from "@rnet/types/patterns";
 
 /** Immutable data-only catalog shared by every source-skill execution kind. */
 export class SourceSkillManifestCatalog {
@@ -53,6 +55,7 @@ export function assertSourceSkillManifest(value: unknown): asserts value is Sour
     "connection",
     "input_fields",
     "review_actions",
+    "import_push_pipeline",
   ]);
   const skillIdPattern = new RegExp(SOURCE_SKILL_ID_PATTERN);
   if (typeof value.skill_id !== "string" || !skillIdPattern.test(value.skill_id)) {
@@ -94,6 +97,39 @@ export function assertSourceSkillManifest(value: unknown): asserts value is Sour
   ) {
     throw new Error(`Source-skill ${value.skill_id} has invalid review actions`);
   }
+  assertImportPushPipeline(value);
+}
+
+function assertImportPushPipeline(manifest: Record<string, unknown>): void {
+  if (!Array.isArray(manifest.import_push_pipeline)) {
+    throw new Error(`Source-skill ${manifest.skill_id} must declare an import push pipeline`);
+  }
+  for (const node of manifest.import_push_pipeline) {
+    if (
+      !isRecord(node) ||
+      !onlyKeys(node, ["task", "after"]) ||
+      !isPushTaskReference(node.task) ||
+      !Array.isArray(node.after) ||
+      node.after.some((dependency) => !isPushTaskReference(dependency)) ||
+      new Set(node.after.map(pushTaskReferenceKey)).size !== node.after.length
+    ) {
+      throw new Error(`Source-skill ${manifest.skill_id} has an invalid import push pipeline`);
+    }
+  }
+}
+
+function isPushTaskReference(value: unknown): value is { level: string; name: string } {
+  return (
+    isRecord(value) &&
+    onlyKeys(value, ["level", "name"]) &&
+    includes(PUSH_TASK_LEVELS, value.level) &&
+    typeof value.name === "string" &&
+    new RegExp(TASK_PATTERN).test(value.name)
+  );
+}
+
+function pushTaskReferenceKey(reference: { level: string; name: string }): string {
+  return `${reference.level}:${reference.name}`;
 }
 
 function assertExecutionLimits(manifest: Record<string, unknown>): void {

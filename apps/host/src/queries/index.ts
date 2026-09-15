@@ -1,4 +1,5 @@
 export { createQueryClient } from "./queryClient.ts";
+export { useDashboardStats } from "./dashboard.ts";
 export { makeOwnerCreateMediaObjectsFormData } from "@rhizome/store-contract/multipart";
 export { useImportPreviewPayloadUrl, usePayloadUrl } from "./payloadUrl.ts";
 export {
@@ -18,6 +19,7 @@ export {
   useSetMediaObjectUser,
 } from "./mediaObjects.ts";
 export { useCreateMediaElement, useDeleteMediaElement, useMediaElement } from "./mediaElements.ts";
+export { usePushOperation, usePushVibe } from "./push.ts";
 export { useCreateOriginArtifact, useDeleteOriginArtifact, useOriginArtifact } from "./origins.ts";
 export {
   useConnectSourceCredential,

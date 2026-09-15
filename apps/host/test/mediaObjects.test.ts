@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 
 const actualReactQuery = { ...(await import("@tanstack/react-query")) };
 const actualClient = { ...(await import("../src/api/client.ts")) };
@@ -26,6 +26,11 @@ mock.module("../src/api/client.ts", () => ({
 
 const { useMediaObject, useSetMediaObjectUser } = await import("../src/queries/mediaObjects.ts");
 const { useAddVibeObjects, useDeleteVibe } = await import("../src/queries/vibes.ts");
+
+afterAll(() => {
+  mock.module("@tanstack/react-query", () => actualReactQuery);
+  mock.module("../src/api/client.ts", () => actualClient);
+});
 
 beforeEach(() => {
   invalidateQueries.mockClear();

@@ -2690,7 +2690,7 @@ describe("rNet M1 store", () => {
         },
       });
     };
-    const pendingWrites = [write("concurrent_alpha", "alpha"), write("concurrent_beta", "beta")];
+    const pendingWrites = [write("concurrent-alpha", "alpha"), write("concurrent-beta", "beta")];
     startWrites();
     const writes = await Promise.all(pendingWrites);
     expect(writes.map(({ status }) => status)).toEqual([200, 200]);
@@ -2698,8 +2698,8 @@ describe("rNet M1 store", () => {
     const current = (await (
       await request(`/rnet/v0/objects/${mediaObjectId}`, { headers: dmachine })
     ).json()) as MediaObject;
-    expect(current.inferred?.["rbudget:concurrent_alpha"]?.properties).toEqual({ value: "alpha" });
-    expect(current.inferred?.["rbudget:concurrent_beta"]?.properties).toEqual({ value: "beta" });
+    expect(current.inferred?.["rbudget:concurrent-alpha"]?.properties).toEqual({ value: "alpha" });
+    expect(current.inferred?.["rbudget:concurrent-beta"]?.properties).toEqual({ value: "beta" });
 
     const history = await db
       .select({ revision: mediaObjectRevisions.rev, snapshot: mediaObjectRevisions.snapshot })
@@ -2713,8 +2713,8 @@ describe("rNet M1 store", () => {
       .orderBy(asc(mediaObjectRevisions.rev));
     expect(history.map(({ revision }) => revision)).toEqual([1, 2]);
     expect(history.at(-1)?.snapshot).toMatchObject({
-      "rbudget:concurrent_alpha": { properties: { value: "alpha" } },
-      "rbudget:concurrent_beta": { properties: { value: "beta" } },
+      "rbudget:concurrent-alpha": { properties: { value: "alpha" } },
+      "rbudget:concurrent-beta": { properties: { value: "beta" } },
     });
   });
 
@@ -3194,6 +3194,7 @@ function createSyntheticOAuthSourceSkill(): CredentialedSourceSkill {
       connection: { mode: "oauth2_pkce", button_label: "Connect synthetic source" },
       input_fields: [],
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: [],
     },
     connection: {
       mode: "oauth2_pkce",
@@ -3324,6 +3325,7 @@ function createSyntheticFileSourceSkill(): FileSourceSkill {
         },
       ],
       review_actions: ["review_import"],
+      import_push_pipeline: [],
     },
     parser,
     compiledSource: {
@@ -3391,6 +3393,7 @@ function createSyntheticPublicSourceSkill(): PublicRemoteSourceSkill {
         },
       ],
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: [],
     },
     parser: {
       name: "synthetic-public",

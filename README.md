@@ -25,6 +25,13 @@ The store requires object storage at startup, so `bun run dev:s3` runs a local S
 
 The development auth mode recognizes `Bearer dev:user` and `Bearer dev:user:other` for seeded owners and `Bearer dev:client:rbudget` for the seeded standard dMachine. Development credentials are rejected when `NODE_ENV=production`, including when the auth-mode variable is omitted.
 
+Push inference is optional. Set `OPENAI_API_KEY` to enable the configured
+`RHIZOME_PUSH_DEFAULT_TARGET` (default `model:openai/gpt-5.6-luna`) on flex processing.
+`OPENAI_BASE_URL` defaults to `https://api.openai.com`, the base before `/v1/responses`.
+For keyless local development, set `RHIZOME_USE_FAKE_INFERENCE_PROVIDER=true`; production refuses
+the fake. Without a configured provider, the server and task discovery work and push returns
+503 `push_unavailable` after checking the caller's scope.
+
 ## Credential key management
 
 Local development generates a stable private `.rhizome/source-credential.key`; it does not depend

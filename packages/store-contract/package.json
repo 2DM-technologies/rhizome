@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./ingestion": "./src/ingestion.ts",
-    "./multipart": "./src/multipart.ts"
+    "./multipart": "./src/multipart.ts",
+    "./orb": "./src/orb.ts"
   },
   "files": [
     "src"

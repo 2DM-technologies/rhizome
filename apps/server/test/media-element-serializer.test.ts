@@ -15,6 +15,7 @@ const mediaElement: DbMediaElement = {
   byteSize: 4,
   alt: null,
   inferred: {},
+  inferredRev: 0,
   rnetSchema: "0.1",
   createdAt: new Date("2026-08-29T12:00:00.000Z"),
   createdBy: "user:0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",

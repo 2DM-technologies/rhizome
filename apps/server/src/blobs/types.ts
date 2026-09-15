@@ -12,7 +12,7 @@ export interface BlobStore {
     bytes: Uint8Array,
     contentType?: string,
   ): Promise<void>;
-  get(namespace: BlobNamespace, key: string): Promise<StoredBlob | null>;
+  get(namespace: BlobNamespace, key: string, signal?: AbortSignal): Promise<StoredBlob | null>;
   delete(namespace: BlobNamespace, key: string): Promise<void>;
   signedUrl(namespace: BlobNamespace, key: string, expiresInSeconds?: number): Promise<string>;
 }

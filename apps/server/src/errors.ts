@@ -6,7 +6,7 @@ export { PROBLEM_CODES, problemDocumentSchema } from "@rhizome/store-contract";
 export type { ProblemCode, ProblemDocument } from "@rhizome/store-contract";
 
 /** Statuses raised intentionally by the Hono server implementation. */
-export type ProblemStatus = 400 | 401 | 403 | 404 | 413 | 415 | 422 | 429 | 500 | 501;
+export type ProblemStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 500 | 501 | 503;
 
 export class Problem extends HTTPException {
   constructor(

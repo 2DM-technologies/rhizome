@@ -73,6 +73,7 @@ export const syntheticFileSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;
 
 export const syntheticPublicSourceSkillManifest = {
@@ -103,6 +104,7 @@ export const syntheticPublicSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;
 
 export const syntheticCredentialedSourceSkillManifest = {
@@ -139,6 +141,7 @@ export const syntheticCredentialedSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;
 
 /**
@@ -159,6 +162,7 @@ export const syntheticOAuthSourceSkillManifest = {
   },
   input_fields: [],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;
 
 export const mockSyntheticFileSourceSkill = {

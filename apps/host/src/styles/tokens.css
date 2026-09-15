@@ -1,55 +1,116 @@
 /**
  * Rhizome host design tokens — generated from Figma "🪸 Design System" (file TemtoVCMSygDh5yBiMaIbF).
  *
- * TIERS. The same token names resolve to different values by tier. This is not a
- * light/dark user preference — it is the polarity inversion that `impl/concepts/sandboxing.md`
- * §5 requires: host-tier chrome must have a visual grammar the SDK UI kit cannot express.
- * A surface declares its tier with `data-tier`; everything inside reads the same token names.
+ * Theme follows the system unless a session command overrides it. Tiers describe roles:
+ * control follows the active scheme; content takes the opposite. Nested controls re-enter control.
+ * `light-dark()` resolves each color against the consuming element's color-scheme, so
+ * shared utilities and native controls agree even across nested tier boundaries.
  *
- *   data-tier="light"  control tier — dMachine windows, cards, the canvas
- *   data-tier="dark"   content tier — agent sidebar, launcher popover, message streams
+ *   data-tier="control" — desktop, windows, cards, launcher/search, composers
+ *   data-tier="content" — dock, agent sidebar, message streams
  *
  * Tier-invariant tokens (accent, hairline, on-accent, charts) are declared once and never
  * inverted: they are signal, not ground.
  */
 
-:root,
-[data-tier="light"] {
-  --rz-bg-canvas: #fffffa;
-  --rz-bg-surface: #f2f2ed;
-  --rz-bg-pill: #212227;
-  --rz-text-primary: #14151a;
-  --rz-text-secondary: #6b6b70;
-  --rz-text-tertiary: #9a9aa0;
-  --rz-text-on-pill: #b4b4b9;
-  --rz-status-success: #28b45a;
-  --rz-status-warning: #be8c14;
-  --rz-status-error: #d2323c;
-  /* Status tints back the Status Chip. Light values are taken from the design. */
-  --rz-status-success-tint: #ccf0d6;
-  --rz-status-error-tint: #fadbde;
-  --rz-status-neutral-tint: #edede8;
+@font-face {
+  font-family: "ABC Areal";
+  src: url("../assets/fonts/ABCArealVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
 }
 
-[data-tier="dark"] {
-  --rz-bg-canvas: #0e1214;
-  --rz-bg-surface: #16191c;
-  --rz-bg-pill: #1c1f22;
-  --rz-text-primary: #ffffff;
-  --rz-text-secondary: #a6a6ad;
-  --rz-text-tertiary: #75757c;
-  --rz-text-on-pill: #96969d;
-  --rz-status-success: #73e68c;
-  --rz-status-warning: #f2bf4d;
-  --rz-status-error: #ff666b;
-  /* NOTE: the design has no dark-tier tints — every Status Chip in the mockups sits on a
-     light card. These are derived (status colour at 18%) and want a designer's sign-off. */
-  --rz-status-success-tint: #73e68c2e;
-  --rz-status-error-tint: #ff666b2e;
-  --rz-status-neutral-tint: #ffffff14;
+@font-face {
+  font-family: "Publico Text Web";
+  src: url("../assets/fonts/PublicoTextWeb-Roman.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
 }
 
 :root {
+  --rz-control-scheme: light;
+  --rz-content-scheme: dark;
+  --rz-wallpaper:
+    linear-gradient(rgb(255 255 255 / 75%), rgb(255 255 255 / 75%)),
+    url("../assets/brand/wallpaper.png");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --rz-control-scheme: dark;
+    --rz-content-scheme: light;
+    --rz-wallpaper: url("../assets/brand/wallpaper-dark.png");
+  }
+}
+
+/* Root overrides serve session commands; scoped overrides serve Storybook previews. */
+[data-theme="light"] {
+  --rz-control-scheme: light;
+  --rz-content-scheme: dark;
+  --rz-wallpaper:
+    linear-gradient(rgb(255 255 255 / 75%), rgb(255 255 255 / 75%)),
+    url("../assets/brand/wallpaper.png");
+}
+
+[data-theme="dark"] {
+  --rz-control-scheme: dark;
+  --rz-content-scheme: light;
+  --rz-wallpaper: url("../assets/brand/wallpaper-dark.png");
+}
+
+:root,
+[data-tier="control"] {
+  color-scheme: var(--rz-control-scheme);
+  color: var(--rz-text-primary);
+}
+
+[data-tier="content"] {
+  color-scheme: var(--rz-content-scheme);
+  color: var(--rz-text-primary);
+}
+
+:root {
+  --rz-bg-canvas: light-dark(#ffffff, #0e1214);
+  --rz-bg-surface: light-dark(#f2f2ed, #16191c);
+  --rz-bg-surface-hover: light-dark(#e7e7e2, #272b30);
+  --rz-bg-pill: light-dark(#edede8, #1c1f22);
+  --rz-text-primary: light-dark(#14151a, #ffffff);
+  --rz-text-secondary: light-dark(#6b6b70, #a6a6ad);
+  --rz-text-tertiary: light-dark(#76767d, #96969d);
+  --rz-text-on-pill: light-dark(#6b6b70, #a6a6ad);
+  --rz-text-on-error: light-dark(#ffffff, #14151a);
+  --rz-status-success: light-dark(#187a3b, #73e68c);
+  --rz-status-warning: light-dark(#806000, #f2bf4d);
+  --rz-status-error: light-dark(#d2323c, #ff666b);
+  /* Dark status tints are derived from the status color at 18%. */
+  --rz-status-success-tint: light-dark(#ccf0d6, #73e68c2e);
+  --rz-status-error-tint: light-dark(#fadbde, #ff666b2e);
+  --rz-status-neutral-tint: light-dark(#edede8, #ffffff14);
+
+  /* Neutral UI fills adapt; the raw gray scale below remains invariant. */
+  --rz-border-neutral: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 14%));
+  --rz-home-panel: light-dark(rgb(255 255 255 / 28%), rgb(22 25 28 / 78%));
+  --rz-home-stat: light-dark(rgb(0 0 0 / 13%), rgb(255 255 255 / 6%));
+  --rz-vibe-hover-shadow: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 12%));
+  --rz-skeleton-base: light-dark(#e5e5e5, #525252);
+  --rz-skeleton-shine: light-dark(#ffffff99, #ffffff14);
+  --rz-tooltip-bg: light-dark(#f5f5f5, #252525);
+  --rz-tooltip-text: light-dark(#14151a, #ffffff);
+  --rz-tooltip-border: light-dark(#525252, #fafafa);
+
+  /* UI typeface switch. Change only this alias to return the host to Helvetica Neue. */
+  --rz-font-family-abc-areal:
+    "ABC Areal", "Helvetica Neue", Helvetica, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial,
+    sans-serif;
+  --rz-font-family-helvetica-neue:
+    "Helvetica Neue", Helvetica, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --rz-font-family-ui: var(--rz-font-family-abc-areal);
+  /* Editorial display typeface switch, currently used only by the desktop home headings. */
+  --rz-font-family-publico-text-web: "Publico Text Web", Georgia, "Times New Roman", serif;
+  --rz-font-family-display: var(--rz-font-family-publico-text-web);
+
   /* Tier-invariant. */
   --rz-accent-primary: #7d59ff;
   --rz-accent-secondary: #b844fe;
@@ -68,14 +129,12 @@
   --rz-gray-800: #252525;
   --rz-gray-900: #111111;
 
-  /* Dock chrome. Raw values in the design — the dock does not follow tier, so these are
-     named rather than tokenised into the tier sets. The translucent fills stay in the
-     colour itself so backdrop-filter can sample the desktop behind them. */
-  --rz-dock-tray: rgb(from var(--rz-gray-900) r g b / 90%);
-  --rz-dock-search: rgb(255 255 250 / 90%);
-  --rz-dock-search-text: #14151a;
-  --rz-dock-search-placeholder: #6b6b70;
-  --rz-dock-divider: rgb(255 255 255 / 20%);
+  /* Tray/card use content; search declares control. Keep alpha in the fill for live glass. */
+  --rz-dock-tray: light-dark(rgb(232 232 226 / 82%), rgb(from var(--rz-gray-900) r g b / 90%));
+  --rz-dock-search: light-dark(rgb(255 255 250 / 90%), rgb(22 25 28 / 90%));
+  --rz-dock-search-text: var(--rz-text-primary);
+  --rz-dock-search-placeholder: var(--rz-text-secondary);
+  --rz-dock-divider: light-dark(rgb(0 0 0 / 20%), rgb(255 255 255 / 20%));
   --rz-dock-card: var(--rz-dock-tray);
   --rz-dock-glow: #7d59ff40;
 
@@ -96,12 +155,14 @@
      at build time and the inversion would not happen. */
   --color-canvas: var(--rz-bg-canvas);
   --color-surface: var(--rz-bg-surface);
+  --color-surface-hover: var(--rz-bg-surface-hover);
   --color-pill: var(--rz-bg-pill);
   --color-primary: var(--rz-text-primary);
   --color-secondary: var(--rz-text-secondary);
   --color-tertiary: var(--rz-text-tertiary);
   --color-on-pill: var(--rz-text-on-pill);
   --color-on-accent: var(--rz-text-on-accent);
+  --color-on-error: var(--rz-text-on-error);
   --color-accent: var(--rz-accent-primary);
   --color-accent-secondary: var(--rz-accent-secondary);
   --color-hairline: var(--rz-border-hairline);
@@ -111,6 +172,12 @@
   --color-success-tint: var(--rz-status-success-tint);
   --color-error-tint: var(--rz-status-error-tint);
   --color-neutral-tint: var(--rz-status-neutral-tint);
+  --color-neutral-border: var(--rz-border-neutral);
+  --color-home-panel: var(--rz-home-panel);
+  --color-home-stat: var(--rz-home-stat);
+  --color-tooltip: var(--rz-tooltip-bg);
+  --color-tooltip-text: var(--rz-tooltip-text);
+  --color-tooltip-border: var(--rz-tooltip-border);
   --color-gray-50: var(--rz-gray-50);
   --color-gray-100: var(--rz-gray-100);
   --color-gray-200: var(--rz-gray-200);
@@ -138,8 +205,8 @@
 }
 
 @theme {
-  --font-sans:
-    "Helvetica Neue", Helvetica, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  --font-sans: var(--rz-font-family-ui);
+  --font-serif: var(--rz-font-family-display);
   --font-mono: "Roboto Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
   /* Type ramp — Figma "02 · Typography". */

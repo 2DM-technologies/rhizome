@@ -1,6 +1,6 @@
 import { surfaceId, type Surface } from "./surfaces.ts";
 
-export type DockTransitionSource = "home" | "launcher" | "running";
+export type DockTransitionSource = "home" | "launcher" | "running" | "pinned";
 
 export interface DockOpenTransition {
   key: number;

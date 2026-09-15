@@ -27,6 +27,7 @@ const manifest = {
     },
   ],
   review_actions: ["review_import"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;
 
 describe("file capture", () => {

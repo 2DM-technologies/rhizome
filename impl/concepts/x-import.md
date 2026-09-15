@@ -3,7 +3,7 @@
 **Status:** M2 implementation plan, revised after M2 to remove the X archive source and the
 browser file-capture preprocessor. No implementation is included in this document.
 
-**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [sandboxing](./sandboxing.md), and [design tiers](./design-tiers.md).
+**Companion docs:** [M2 implementation plan](../IMPLEMENTATION_PLAN.md), [sandboxing exploration](../speculative/sandboxing.md), and [design tiers](./design-tiers.md).
 
 ## 1. Purpose
 
@@ -13,13 +13,13 @@ OAuth is the only X ingestion path. An archive-upload source was built during M2
 
 The initial product promise is deliberately bounded:
 
-- Import up to the 100 most recent eligible posts from the connected account.
+- Import up to the 25 most recent eligible posts from the connected account.
 - Support original posts and quote posts with authored commentary.
 - Exclude replies and bare reposts.
 - Preserve text and supported image/video attachments as MediaElements.
 - Create a new Vibe, defaulting to `@handle Tweets` and falling back to `Tweets`.
 
-The UI must say “up to 100 most recent eligible posts,” not “all posts.”
+The UI must say “up to 25 most recent eligible posts,” not “all posts.”
 
 ## 2. Architectural invariant: compile every source to candidate bundles
 
@@ -192,7 +192,7 @@ Exclude:
 
 Quote eligibility is determined by removing only the provider-identified quoted-post URL span for the purpose of the test, then checking whether meaningful authored text remains. The stored text element still contains the exact original source text.
 
-After classification, sort eligible posts deterministically newest-first, use the stable post ID as the tie-breaker, and select the first 100. The cap applies after exclusions.
+After classification, sort eligible posts deterministically newest-first, use the stable post ID as the tie-breaker, and select the first 25. The cap applies after exclusions.
 
 VERIFY reports at least:
 
@@ -221,14 +221,14 @@ interface SourceExecutionLimits {
 
 Initial X limits are:
 
-- `maxCandidates: 100`
+- `maxCandidates: 25`
 - `maxCaptureBytes: 48 MiB`
 - `maxElementBytes: 25 MiB`
 - `maxTotalElementBytes: 40 MiB`
 
 All element bytes, including text, count toward the total. The installed source definition supplies defaults; the effective values are persisted with the source/capture, exposed through the manifest, passed to compilation, and enforced by the server. This makes a later default change auditable.
 
-The 100-post cap is not a configuration value, and raising it is a code change rather than a setting. The provider request is fixed at a single `max_results=100` page, the capture manifest records `maxResults: 100` as request evidence, and replay rejects a capture whose `maxCandidates` exceeds 100. Going to 500 therefore requires provider pagination, relaxed timeline and parser validation, and a new capture format version. Below that ceiling the retained capture is authoritative rather than stale: the stored archive holds the complete returned page, so a cap lowered and then restored under 100 re-reads what was retained instead of refetching.
+The owner set the default import cap to 25 on 2026-09-12. It applies after exclusions and newest-first ordering, before selected-media retrieval and candidate construction. The one-page capture ceiling is still 100 records; changing that ceiling is a code change rather than a setting. The provider request is fixed at a single `max_results=100` page, the capture manifest records `maxResults: 100` as request evidence, and replay rejects a capture whose `maxCandidates` exceeds 100. Going to 500 therefore requires provider pagination, relaxed timeline and parser validation, and a new capture format version. Below that ceiling the retained capture is authoritative rather than stale: the stored archive holds the complete returned page, so a cap lowered and then restored under 100 re-reads what was retained instead of refetching.
 
 ## 8. Text, images, video, and deterministic omissions
 
@@ -293,7 +293,7 @@ OAuth is the only X ingestion path. Its acceptance target is:
 
 - The generic PKCE connection lifecycle has synthetic conformance coverage.
 - X can connect an identity with `/users/me` and store sealed credentials.
-- When an operator enables provider access and budget, the X timeline capture fetches at most one 100-result page because the product cap is 100.
+- When an operator enables provider access and budget, the X timeline capture fetches at most one 100-result page, then selects up to 25 eligible posts.
 - The returned records compile through the shared X normalizer and candidate-bundle path.
 - Live provider spend is never required by CI.
 
@@ -336,7 +336,7 @@ The destination Vibe should be staged and created on confirmation so cancellatio
 
 - Mocked `/users/me`, timeline, media, token, refresh, revoke, provider error, and rate-limit responses.
 - Requested scopes and exact callback behavior.
-- 100-result product cap and eligibility revalidation.
+- 25-post import cap, 100-record capture ceiling, and eligibility revalidation.
 - Capture-archive traversal, duplicate/case-conflicting entry, ZIP-bomb, and malformed JSON rejection on re-read.
 - Original/quote/reply/repost classification, including quote commentary edge cases.
 - Newest-first selection after filtering and stable tie-breaking.
@@ -371,7 +371,7 @@ Record these as explicit follow-ups rather than quietly baking temporary assumpt
 
 M2 X import is complete when:
 
-- A connected X account imports up to 100 eligible posts into a new Vibe with deterministic ordering.
+- A connected X account imports up to 25 eligible posts into a new Vibe with deterministic ordering.
 - Text is stored once as the first MediaElement; supported images/video follow with association-level alt text where supplied.
 - Replies and bare reposts are excluded, and quote posts require authored commentary.
 - VERIFY explains every selection and media omission count.
