@@ -1,5 +1,3 @@
-import Ajv2020 from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
 import type { JSONSchema } from "json-schema-to-ts";
 import {
   ModelConnectorError,
@@ -12,13 +10,13 @@ import {
 import { priceUsage } from "./openai/rate-card.ts";
 import { countLunaInputTokens } from "./openai/image-tokens.ts";
 import { assertStructuredOutputSchema } from "./structured-output-schema.ts";
+import { validateOutputSchema } from "./output-validator.ts";
 
 /** Deterministic provider substitute; scripted failures carry the same usage as real responses. */
 export class FakeModelConnector implements ModelConnector {
   readonly provider = "openai";
   readonly models = ["gpt-5.6-luna"] as const;
   readonly requests: CompletionRequest[] = [];
-  private readonly ajv = addFormats(new Ajv2020({ strict: true, allowUnionTypes: true }));
   constructor(
     private readonly options: {
       respond?: (
@@ -50,7 +48,7 @@ export class FakeModelConnector implements ModelConnector {
           } satisfies ModelUsage,
         };
     if (response instanceof ModelConnectorError) throw response;
-    if (!this.ajv.compile(request.schema)(response.output))
+    if (!validateOutputSchema(request.schema, response.output))
       throw new ModelConnectorError("output_invalid", { retryable: false, usage: response.usage });
     return response;
   }

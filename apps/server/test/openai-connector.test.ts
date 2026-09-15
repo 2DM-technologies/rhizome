@@ -40,8 +40,7 @@ function envelope(overrides: Record<string, unknown> = {}) {
     output: [{ type: "message", content: [{ type: "output_text", text: '{"name":"ok"}' }] }],
     usage: {
       input_tokens: 40,
-      input_tokens_details: { cached_tokens: 12 },
-      cache_write_tokens: 3,
+      input_tokens_details: { cached_tokens: 12, cache_write_tokens: 3 },
       output_tokens: 9,
       output_tokens_details: { reasoning_tokens: 4 },
     },
@@ -119,6 +118,78 @@ describe("OpenAI Responses connector", () => {
       max_output_tokens: 321,
       metadata: { rhizome_operation: "operation-1" },
     });
+  });
+
+  test("prices the documented cache-write shape and retains it on billed failure", async () => {
+    const client = connector(async () =>
+      response(
+        envelope({
+          usage: {
+            input_tokens: 12_000,
+            input_tokens_details: { cached_tokens: 0, cache_write_tokens: 12_000 },
+            output_tokens: 0,
+          },
+        }),
+      ),
+    );
+    const result = await client.complete(request());
+    expect(client.reportCost(result.usage, request().target).usd).toBe("0.001500");
+    const failed = connector(async () =>
+      response(
+        envelope({
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+        }),
+      ),
+    );
+    expect((await expectKind(failed.complete(request()), "output_truncated")).usage).toMatchObject({
+      cachedTokensIn: 12,
+      cacheWriteTokensIn: 3,
+    });
+  });
+
+  test("retains billed totals when optional usage details are missing or null", async () => {
+    for (const details of [undefined, { cached_tokens: null, cache_write_tokens: null }]) {
+      const client = connector(async () =>
+        response(
+          envelope({
+            usage: {
+              input_tokens: 40,
+              output_tokens: 9,
+              input_tokens_details: details,
+              output_tokens_details: { reasoning_tokens: null },
+            },
+          }),
+        ),
+      );
+      expect((await client.complete(request())).usage).toMatchObject({
+        tokensIn: 40,
+        tokensOut: 9,
+        cachedTokensIn: 0,
+        cacheWriteTokensIn: 0,
+        reasoningTokensOut: 0,
+      });
+    }
+  });
+
+  test("rejects impossible nested cache usage before pricing", async () => {
+    for (const details of [
+      { cached_tokens: 30, cache_write_tokens: 11 },
+      { cached_tokens: 0, cache_write_tokens: -1 },
+    ]) {
+      const client = connector(async () =>
+        response(
+          envelope({
+            usage: {
+              input_tokens: 40,
+              output_tokens: 9,
+              input_tokens_details: details,
+            },
+          }),
+        ),
+      );
+      await expectKind(client.complete(request()), "provider_unavailable");
+    }
   });
 
   test("normalizes missing, default, and unknown served tiers conservatively", async () => {
