@@ -183,7 +183,7 @@ export function createVibeRoutes(
       const body = context.req.valid("json");
       const vibesService = new VibesService({ db, actor: context.get("actor") });
       await vibesService.addMediaObjectRefs(context.req.valid("param").id, body.objects);
-      await pushService.refreshVibeOrb(context.req.valid("param").id, context.get("actor"));
+      pushService.scheduleVibeOrbRefresh(context.req.valid("param").id, context.get("actor"));
       return context.body(null, 204);
     },
   );
@@ -199,7 +199,7 @@ export function createVibeRoutes(
       const body = context.req.valid("json");
       const vibesService = new VibesService({ db, actor: context.get("actor") });
       await vibesService.removeMediaObjectRefs(context.req.valid("param").id, body.objects);
-      await pushService.refreshVibeOrb(context.req.valid("param").id, context.get("actor"));
+      pushService.scheduleVibeOrbRefresh(context.req.valid("param").id, context.get("actor"));
       return context.body(null, 204);
     },
   );

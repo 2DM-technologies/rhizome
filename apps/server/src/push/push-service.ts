@@ -110,6 +110,7 @@ interface RunState {
 export class PushService {
   private readonly activity = new PushActivity();
   private readonly pipelines = new Map<string, Promise<Map<string, string>>>();
+  private readonly orbRefreshes = new Map<string, { actor: Actor; pending: boolean }>();
 
   getObjectInferenceStatus(uuid: string, actor: Actor) {
     return readObjectInferenceStatus(this.dependencies.db, this.activity, uuid, actor);
@@ -141,7 +142,7 @@ export class PushService {
     const operation = await this.acceptPush(vibeUuid, input, actor);
     const afterCommit =
       input.level === "object" && input.task === PUSH_TASK_REFS.orbIdentity.name
-        ? () => this.refreshVibeOrb(vibeUuid, actor)
+        ? () => this.scheduleVibeOrbRefresh(vibeUuid, actor)
         : undefined;
     queueMicrotask(() => {
       void this.runPush(operation.uuid, afterCommit).catch(() =>
@@ -155,7 +156,36 @@ export class PushService {
   async refreshVibeOrb(vibeUuid: string, actor: Actor): Promise<void> {
     const task = this.dependencies.pushTasks.get("vibe", PUSH_TASK_REFS.vibeOrb.name);
     if (!task || !this.dependencies.modelConnectors) return;
-    await this.runAutomaticTask(vibeUuid, actor, task);
+    // A covering workset can predate membership changes or the identity writes that caused
+    // this refresh. Wait for it, then compose from fresh context even if its workset covers us.
+    await this.runAutomaticTask(vibeUuid, actor, task, undefined, { reuseVibeResult: false });
+  }
+
+  /** Membership responses and committed identity pushes never wait on derived work. */
+  scheduleVibeOrbRefresh(vibeUuid: string, actor: Actor): void {
+    const existing = this.orbRefreshes.get(vibeUuid);
+    if (existing) {
+      existing.actor = actor;
+      existing.pending = true;
+      return;
+    }
+    const refresh = { actor, pending: true };
+    this.orbRefreshes.set(vibeUuid, refresh);
+    queueMicrotask(() => {
+      void (async () => {
+        try {
+          // Changes arriving during a refresh need one more pass, not another concurrent waiter.
+          while (refresh.pending) {
+            refresh.pending = false;
+            await this.refreshVibeOrb(vibeUuid, refresh.actor);
+          }
+        } catch {
+          console.error("Derived orb refresh failed", vibeUuid);
+        } finally {
+          this.orbRefreshes.delete(vibeUuid);
+        }
+      })();
+    });
   }
 
   /** Run after import commit; ready tasks accept fresh context after their dependencies settle. */
@@ -265,6 +295,7 @@ export class PushService {
     actor: Actor,
     task: PushTaskDefinition,
     objectUris?: readonly string[],
+    { reuseVibeResult = true }: { reuseVibeResult?: boolean } = {},
   ): Promise<string | undefined> {
     const level = task.level;
     try {
@@ -298,6 +329,7 @@ export class PushService {
           if (level === "vibe") {
             const previous = completed.request as StoredPushRequest;
             if (
+              reuseVibeResult &&
               result?.level === "vibe" &&
               (result.vibe.outcome !== "skipped" || result.vibe.reason === "preserved_durable") &&
               error.selection.every((uuid) => previous.resolved.selection.includes(uuid))
@@ -513,7 +545,7 @@ export class PushService {
   }
 
   /** Rehydrates exclusively from the operation row; no accept-time record snapshot is captured. */
-  async runPush(operationUuid: string, afterCommit?: () => Promise<void>): Promise<void> {
+  async runPush(operationUuid: string, afterCommit?: () => void | Promise<void>): Promise<void> {
     const { db, modelConnectors: registry, pushTasks, pushLimits: limits } = this.dependencies;
     const [operation] = await db
       .update(operations)
