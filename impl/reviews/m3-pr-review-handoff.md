@@ -4,6 +4,19 @@ This is the single context packet for agents reviewing the seven conceptual PRs 
 
 ## Current state — September 15
 
+### September 15 approved overlap waiting policy
+
+The owner chose **wait, then enrich uncovered records** for #37. The change is implemented in `3681cdfde0d2cd29b288d14c2dd06f75b8bea150` and carried into combined #42 code head `17fa2b0facc42ae5e31c4291622ffda590386394` through ordinary merges.
+
+- An automatic node remains pending while a manual same-task operation runs; its dependent nodes wait too. Written, preserved, and benignly skipped records are covered. Failed or uncovered records remain eligible for a fresh automatic operation, with permissions, membership, and durable state checked again.
+- A Vibe-level result is reusable only when its captured workset covers the requested members. New members force a fresh run. Reused summaries are never attributed to the importing graph for automatic naming.
+- Waiting polls every 250 ms and ends by the conflicting operation's creation time plus its configured maximum wall time and a 60-second grace period. Missing/deleted operations and stalled work terminate safely. This does not introduce durable restart/resumption.
+- Manual HTTP conflicts retain their public 409 shape; internal operation/workset context is not serialized.
+
+Validation: the owning #37 passed the complete `bun run check` gate (**536 tests**); the combined #42 passed the same gate (**602 tests**), including API freshness, formatting, types, and builds. Six new integration tests cover record/element overlap and dependency ordering, full coverage without another paid run, failed-record retry, Vibe worksets, permission revocation, and bounded stalled-operation waiting. The overlap/dependency and fully-covered tests both fail against the preceding implementation. Tests used only `rhizome_overlap_wait_20260915`, with both DB variables explicit and fake providers. Current logs live under `.rhizome/review-overlap-wait-20260915/` in the owning and combined worktrees. Verify current published-head CI separately.
+
+The independent Codex follow-up on the preceding heads found the five P2 repairs and both #42 P3 repairs fixed, with no new P0–P2; it passed 596 deterministic and 134 browser tests. Its report, `m3-stack-followup-codex.md`, predates this waiting change. No owner decision remains required for this change. The other P3 follow-ups and M7 deferrals remain in scope as documented below.
+
 The independent Codex re-review found five remaining P2 gaps in checklist items 2, 9, 10, 13, and 16. Those five now have repairs and regression coverage in their owning PRs. The original 21-item checklist is addressed in the current code pins below. Earlier Astra repairs are retained. Descendants carry the repairs through ordinary merges; no history was rewritten. The parallel-batches implementation was completed in the visible **Parallel LLM batches** task and integrated after the repaired seven-PR stack as a separate conceptual change.
 
 These are draft PRs with the follow-up repairs validated locally. Verify the current published-head CI before beginning another review. This packet does not claim that every P3 or every finding from the earlier #33 report is fixed. Remaining issues and deliberate policy choices are listed below.
@@ -15,7 +28,7 @@ These are draft PRs with the follow-up repairs validated locally. Verify the cur
 3. **#36 — deletion race:** re-read the operation after either 403 or 404 from Vibe scope lookup, applying deleted-Vibe rules only when the fresh foreign key is null.
 4. **#36 — post-deletion privacy:** null-Vibe push results are owner-only. Other operation kinds retain their existing invoker/redaction behavior; push-only callers cannot gain record-list access after deletion.
 5. **#39 — orb settling:** elapsed-time decay and stable bounded spring steps preserve settling at slow frame rates. No assertion timeout was increased.
-6. **#36 — sticky 409:** a conflicting accepted operation covers the task; a 409 rejection no longer creates a permanent pending error.
+6. **#36/#37 — sticky 409 and automatic overlap:** a 409 rejection no longer creates a permanent pending error. Automatic graphs now wait for conflicting work and then enrich uncovered records under the approved policy above.
 7. **#37 — overlapping graphs:** automatic graphs queue per Vibe; different Vibes can progress independently. Only the active graph owns pending activity, and empty/keyless graphs leave it untouched. Per-run activity keys are unnecessary under this serialization.
 8. **#37 — title precedence:** use the graph's own summary revision. Rename only a newly imported placeholder title, atomically while the current title still matches; preserve explicit confirm titles and owner renames.
 9. **#40 — stale automatic results:** task status transitions refresh Vibe, object collection, object, and loaded element queries even when the Vibe revision stays constant. The status contract includes nullable `operation_id`; the host invalidates when it changes, including a second run that starts and completes between polls at unchanged Vibe revision. Observe an object-level task and the control's selected task so “Run on missing” updates after server-started work.
@@ -53,9 +66,9 @@ Agents may review all eight PRs concurrently. Merge in that order, preserve ance
 
 - Original feature branch: `m3/01-push-pipeline`, at `f75bd8e443d6fe7ee8cce905508d0e974876c958` when split. Its aggregate branch remains separate. The shared primary checkout now uses local branch `m3/local-latest` at the earlier #42 tip plus unpublished edits from other tasks; it is not a clean PR-review target.
 - Original main: `220e289be5b064b6b5e80803c8a2f5e99698872c`.
-- Repaired seven-PR application head: `17d3a18b928b05feedebf7fee0f3041791a01000`.
-- Combined concurrency application head: `3a00b8af1f71698a7a481401026d56d061b798d5`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
-- Documentation-only commits updating this packet, and downstream merges carrying those docs, may follow these code pins. Review each pinned base-to-code-head diff and inspect later commits separately. The pinned #41 base for the concurrency review deliberately excludes handoff-only updates.
+- Repaired seven-PR application head: `980ef1a82d74dd72d7c822946a3511958ff9cd69`.
+- Combined concurrency application head: `17fa2b0facc42ae5e31c4291622ffda590386394`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
+- Documentation-only commits updating this packet, and downstream merges carrying those docs, may follow these code pins. Review each pinned base-to-code-head diff and inspect later commits separately. Code pins precede the final packet-only commits.
 - Before repairs, original and split had identical tree `0f05054c92a31e86f928007bf8072bc6dec9acdc`. New repairs intentionally change that tree. Original scope was 44 commits, 262 files, 25,129 insertions and 1,258 deletions plus binary assets.
 - Recovery ref: `refs/backup/pre-split-20260914-220544`, commit `6e71545cc23084ee1ceb0d2efd8e453eb6dd9f59`.
 - Primary checkout: `/Users/noahputnam/2dm/rhizome`; repairs: `/Users/noahputnam/2dm/rhizome-pr-split`; concurrency integration: `/Users/noahputnam/2dm/rhizome-parallel-batches`.
@@ -68,7 +81,7 @@ Replace `PR_NUMBER` with one of 35–41 or 42. Give the agent this whole file or
 
 ```text
 Review Rhizome PR #PR_NUMBER using the complete handoff:
-https://github.com/2DM-technologies/rhizome/blob/m3/review-07-desktop-shell/impl/reviews/m3-pr-review-handoff.md
+https://github.com/2DM-technologies/rhizome/blob/m3/parallel-batches/impl/reviews/m3-pr-review-handoff.md
 Local copy: /Users/noahputnam/2dm/rhizome/impl/reviews/m3-pr-review-handoff.md
 
 Find your PR's exact base/code-head revisions and complete file manifest below.
@@ -124,6 +137,19 @@ The 400k token ceiling measures observed usage, so already-admitted calls can ov
 
 ## Validation
 
+Current waiting-policy evidence is summarized at the top. Older `/private/tmp` artifacts below were transient and may no longer exist; use recorded GitHub runs, preserved reports, and the current persistent logs.
+
+### September 15 Claude concurrency follow-up
+
+Claude's independent re-review examined the earlier combined head `78401b3`, before the five P2 follow-up repairs in this packet. Its two remaining P2s (validator lifetime and desktop text/video downloads) are covered by those later repairs. Two additional #42 P3s have now been fixed at `82cf4446bde2618f6aa491a13bc5cb62bcebadde`:
+
+- Always clear per-operation activity in `finally` if the terminal transaction fails. Paid writes and usage already persisted remain intact; database recovery after a failed finalization remains outside this repair.
+- Let the packer classify already-prepared oversized lookahead before declaring a call/token ceiling abort. Call admission still enforces the ceiling, and image preparation checks it before any further payload read. Serial and concurrent object/image probes verify correct completion and no additional downloads past the allowed lookahead.
+
+Both targeted regressions fail against the previous implementation and pass after repair. The complete deterministic gate passed **596 tests**, API freshness, formatting, types, and builds. Logs: `/private/tmp/rhizome-claude-followup-20260915/check.log` and `negative-control.log`. Verify CI on the final published head; this paragraph does not claim a browser rerun on this code yet.
+
+**#37 policy is now approved and implemented:** wait, then enrich uncovered records. See the current-state section for behavior, tests, and exact new code pins. This is a separate repair from the two #42 fixes above.
+
 ### September 15 independent re-review follow-up
 
 - Clean combined repairs at `1593ffe` passed `bun run check`: **593 tests**, OpenAPI freshness, formatting, types, and production build. Full Chromium suite: **134 passed**. Logs: `/private/tmp/rhizome-rereview-fixes-check.log` and `/private/tmp/rhizome-rereview-fixes-browser-full.log`.
@@ -152,11 +178,12 @@ The 400k token ceiling measures observed usage, so already-admitted calls can ov
 This section separates retained behavior from open work; it is not a claim that all 27 findings in the earlier aggregate review have been resolved.
 
 - **Deliberate execution policy:** wall/fatal aborts still suppress new inferred writes even for paid returned output. Already-entered transactions settle, billed usage is retained, and finalization drains all started work. #42 fixes producer-before-call attribution and activity cleanup before finalization. Token overshoot and the 40-call/480-orb-object limit remain as described above.
-- **Deferred to M7 / freshness work:** process restart/resumption, spend loss on process death, membership/user-edit freshness, removals while automatic nodes wait, later append/pull enrichment, and complete derived-orb refresh coverage. Automatic graph serialization fixes overlapping confirms; a manual same-task conflict is treated as covered, without a new durable dependency scheduler.
-- **Open #35 P3:** `OPENAI_BASE_URL` still expects an origin-style base; `/v1` or empty custom values need configuration normalization/diagnostics. Null optional usage counters and impossible totals were fixed; generally malformed provider totals are rejected rather than guessed. Explicit prompt-cache policy remains an owner decision, not a defect claim.
+- **Deferred to M7 / freshness work:** process restart/resumption, spend loss on process death, membership/user-edit freshness, removals while automatic nodes wait, later append/pull enrichment, and complete derived-orb refresh coverage. Automatic graph serialization fixes overlapping confirms; manual same-task conflicts now wait and retry uncovered records, without a new durable dependency scheduler.
+- **Open #35 P3:** `OPENAI_BASE_URL` still expects an origin-style base; `/v1` or empty custom values need configuration normalization/diagnostics. Null optional usage counters and impossible totals were fixed; generally malformed provider totals are rejected rather than guessed. Explicit prompt-cache controls remain an optional future product choice; current behavior is retained for alpha.
 - **Open #36 P3:** duplicate datatable columns for a pointer observed with multiple kinds; context trimming order; delimiter-safe data framing; Vibe-level workset/assembly scaling. `MeterLedger.close` still updates breakdown/status rather than repairing aggregate columns after a persistence failure; normal recorded calls persist aggregates before finalization. Do not represent DB-failure durability as solved.
-- **Open #37/#38 P3:** empty new-Vibe task rows, coarse outer import logging, and identical-recipe rewrites remain. The sticky 409 display error is fixed; a conflicting derived refresh can still be subsumed by an existing run under the Alpha freshness policy.
+- **Open #37/#38 P3:** empty new-Vibe task rows, coarse outer import logging, and identical-recipe rewrites remain. The sticky 409 display error is fixed; a conflicting derived refresh now waits and checks workset coverage; membership-preserving content freshness remains deferred.
 - **Renderer hypotheses / minor issues:** batched IntersectionObserver crossings, DPR-only changes without resize, and pointer-leave interaction-floor behavior need a focused reproduction before changing rendering semantics.
+- **Additional verified P3 follow-ups:** `sent` is selected-minus-preserved and may include undispatched records; PushControl can offer Rerun all during observed server-started work; Vibe pages do not surface every polled object-task error. These are inherited findings from the independent follow-up, not regressions introduced by waiting.
 - **Host follow-up:** idle 1 Hz polling and redundant invalidations remain; mock-store fidelity and the fixed screenshot output path remain test-maintenance items. Object refresh/partial feedback bugs are fixed independently of that polling redesign.
 - **Theme/assets:** `design-tiers.md` now documents the actual session theme override and desktop/window lifetime. Wrong-theme first paint is an unverified hypothesis; the 2.09 MB wallpaper remains unchanged.
 - **Canonical documentation debt:** older orb and push passages still say six tasks, recipe v1, Vibe-level image sampling, or deferred raster caching. Use the seven-task catalog, identity v1 / recipe v3, deterministic composition, and implemented renderer described here. Layout listings and a few outdated comments also remain. Ignore `impl/speculative/` for implementation. These are follow-ups, not authority to change the shipped design.
@@ -375,13 +402,13 @@ Source manifests declare their enrichment graph. Confirmation schedules tasks af
 - PR: [https://github.com/2DM-technologies/rhizome/pull/37](https://github.com/2DM-technologies/rhizome/pull/37)
 - Branch: `m3/review-03-import-enrichment`
 - Base: `d2e95b5c8d89c5a69a0bdc148883f37bfe679371` (`m3/review-02-push-engine`)
-- Code head: `03ddf7321a6c81fcf9a3079ff75e2920365587c2`
-- Incremental scope: 47 files changed, 2076 insertions(+), 63 deletions(-)
+- Code head: `3681cdfde0d2cd29b288d14c2dd06f75b8bea150`
+- Incremental scope: 47 files changed, 2485 insertions(+), 71 deletions(-)
 
 ```bash
 git fetch origin m3/review-03-import-enrichment
-git diff --stat d2e95b5c8d89c5a69a0bdc148883f37bfe679371...03ddf7321a6c81fcf9a3079ff75e2920365587c2
-git diff d2e95b5c8d89c5a69a0bdc148883f37bfe679371...03ddf7321a6c81fcf9a3079ff75e2920365587c2 -- path/to/assigned/file
+git diff --stat d2e95b5c8d89c5a69a0bdc148883f37bfe679371...3681cdfde0d2cd29b288d14c2dd06f75b8bea150
+git diff d2e95b5c8d89c5a69a0bdc148883f37bfe679371...3681cdfde0d2cd29b288d14c2dd06f75b8bea150 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -390,6 +417,7 @@ git diff d2e95b5c8d89c5a69a0bdc148883f37bfe679371...03ddf7321a6c81fcf9a3079ff75e
 - Do eligible ready nodes overlap, and do settled failures unblock descendants without inventing successful results? Are context and operations accepted after dependency settlement?
 - Does work start only after successful confirmation, never on preview/cancel/rejected VERIFY, and only once on replay? Existing-Vibe imports with no additions must not run enrichment.
 - Do existing-Vibe imports select only added objects/eligible elements, run whole-Vibe tasks where intended, and preserve the owner's title? Are source-captured titles preferred and summary fallback naming correctly scoped to new destinations?
+- Do same-task manual conflicts keep automatic nodes and dependencies waiting, avoid duplicate paid work, retry failed/uncovered records, recheck permissions, and stop if the conflict never settles? Does a reused manual summary remain excluded from import naming?
 - Do keyless imports and empty transaction-source graphs remain usable? Does scope/selection failure in one task allow later tasks to settle coherently?
 - Does the host navigate only after the destination exists and preserve reviewed-input meaning? Does history recreate import UI safely under the new window-unmount policy?
 - Does the X latest-25 cap count eligible posts after exclusions, with deterministic ordering and matching VERIFY counts? Are source-specific behaviors kept within the source skill?
@@ -454,14 +482,14 @@ Adds reusable object orb identities and shared version-3 Vibe recipes. Vibe appe
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/38](https://github.com/2DM-technologies/rhizome/pull/38)
 - Branch: `m3/review-05-orb-identities`
-- Base: `03ddf7321a6c81fcf9a3079ff75e2920365587c2` (`m3/review-03-import-enrichment`)
-- Code head: `907dcb7a07500ca0ed431fd0df32ebe794709511`
+- Base: `3681cdfde0d2cd29b288d14c2dd06f75b8bea150` (`m3/review-03-import-enrichment`)
+- Code head: `9a434aaa071e99734eb3251ea5198af0168386c6`
 - Incremental scope: 23 files changed, 1724 insertions(+), 68 deletions(-)
 
 ```bash
 git fetch origin m3/review-05-orb-identities
-git diff --stat 03ddf7321a6c81fcf9a3079ff75e2920365587c2...907dcb7a07500ca0ed431fd0df32ebe794709511
-git diff 03ddf7321a6c81fcf9a3079ff75e2920365587c2...907dcb7a07500ca0ed431fd0df32ebe794709511 -- path/to/assigned/file
+git diff --stat 3681cdfde0d2cd29b288d14c2dd06f75b8bea150...9a434aaa071e99734eb3251ea5198af0168386c6
+git diff 3681cdfde0d2cd29b288d14c2dd06f75b8bea150...9a434aaa071e99734eb3251ea5198af0168386c6 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -508,14 +536,14 @@ Adds the shared WebGL/raster painter, persistent raster cache, procedural fallba
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/39](https://github.com/2DM-technologies/rhizome/pull/39)
 - Branch: `m3/review-06-orb-rendering`
-- Base: `907dcb7a07500ca0ed431fd0df32ebe794709511` (`m3/review-05-orb-identities`)
-- Code head: `66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae`
+- Base: `9a434aaa071e99734eb3251ea5198af0168386c6` (`m3/review-05-orb-identities`)
+- Code head: `88187291be6497fde85a1e12e1502785df6e1059`
 - Incremental scope: 16 files changed, 2716 insertions(+), 1 deletion(-)
 
 ```bash
 git fetch origin m3/review-06-orb-rendering
-git diff --stat 907dcb7a07500ca0ed431fd0df32ebe794709511...66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae
-git diff 907dcb7a07500ca0ed431fd0df32ebe794709511...66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae -- path/to/assigned/file
+git diff --stat 9a434aaa071e99734eb3251ea5198af0168386c6...88187291be6497fde85a1e12e1502785df6e1059
+git diff 9a434aaa071e99734eb3251ea5198af0168386c6...88187291be6497fde85a1e12e1502785df6e1059 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -556,14 +584,14 @@ Adds push controls and polling, inferred object/Vibe views, live status/error sk
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/40](https://github.com/2DM-technologies/rhizome/pull/40)
 - Branch: `m3/review-04-inferred-views`
-- Base: `66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae` (`m3/review-06-orb-rendering`)
-- Code head: `c93a8c841f0957c0a65a5a4782df9516c225e81e`
+- Base: `88187291be6497fde85a1e12e1502785df6e1059` (`m3/review-06-orb-rendering`)
+- Code head: `b0de000248fd19b1f96650352a5489226289116c`
 - Incremental scope: 48 files changed, 4055 insertions(+), 691 deletions(-)
 
 ```bash
 git fetch origin m3/review-04-inferred-views
-git diff --stat 66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae...c93a8c841f0957c0a65a5a4782df9516c225e81e
-git diff 66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae...c93a8c841f0957c0a65a5a4782df9516c225e81e -- path/to/assigned/file
+git diff --stat 88187291be6497fde85a1e12e1502785df6e1059...b0de000248fd19b1f96650352a5489226289116c
+git diff 88187291be6497fde85a1e12e1502785df6e1059...b0de000248fd19b1f96650352a5489226289116c -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -641,14 +669,14 @@ Adds desktop cards, account totals, dock pins and navigation, theme/assets, and 
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/41](https://github.com/2DM-technologies/rhizome/pull/41)
 - Branch: `m3/review-07-desktop-shell`
-- Base: `c93a8c841f0957c0a65a5a4782df9516c225e81e` (`m3/review-04-inferred-views`)
-- Code head: `17d3a18b928b05feedebf7fee0f3041791a01000`
+- Base: `b0de000248fd19b1f96650352a5489226289116c` (`m3/review-04-inferred-views`)
+- Code head: `980ef1a82d74dd72d7c822946a3511958ff9cd69`
 - Incremental scope: 100 files changed, 4739 insertions(+), 723 deletions(-)
 
 ```bash
 git fetch origin m3/review-07-desktop-shell
-git diff --stat c93a8c841f0957c0a65a5a4782df9516c225e81e...17d3a18b928b05feedebf7fee0f3041791a01000
-git diff c93a8c841f0957c0a65a5a4782df9516c225e81e...17d3a18b928b05feedebf7fee0f3041791a01000 -- path/to/assigned/file
+git diff --stat b0de000248fd19b1f96650352a5489226289116c...980ef1a82d74dd72d7c822946a3511958ff9cd69
+git diff b0de000248fd19b1f96650352a5489226289116c...980ef1a82d74dd72d7c822946a3511958ff9cd69 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -785,21 +813,21 @@ Defaults to two complete object/element batches per operation and four logical L
 
 - PR: https://github.com/2DM-technologies/rhizome/pull/42
 - Branch: `m3/parallel-batches`
-- Base: `17d3a18b928b05feedebf7fee0f3041791a01000` (`m3/review-07-desktop-shell`)
-- Code head: `3a00b8af1f71698a7a481401026d56d061b798d5`
-- Incremental scope: 9 files changed, 1122 insertions(+), 130 deletions(-)
+- Base: `980ef1a82d74dd72d7c822946a3511958ff9cd69` (`m3/review-07-desktop-shell`)
+- Code head: `17fa2b0facc42ae5e31c4291622ffda590386394`
+- Incremental scope: 10 files changed, 1257 insertions(+), 145 deletions(-)
 
 ```bash
 git fetch origin m3/parallel-batches
-git diff --stat 17d3a18b928b05feedebf7fee0f3041791a01000...3a00b8af1f71698a7a481401026d56d061b798d5
-git diff 17d3a18b928b05feedebf7fee0f3041791a01000...3a00b8af1f71698a7a481401026d56d061b798d5 -- path/to/assigned/file
+git diff --stat 980ef1a82d74dd72d7c822946a3511958ff9cd69...17fa2b0facc42ae5e31c4291622ffda590386394
+git diff 980ef1a82d74dd72d7c822946a3511958ff9cd69...17fa2b0facc42ae5e31c4291622ffda590386394 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
 
 - Do call indexes and record refs survive out-of-order completion without lost totals or duplicate writes?
 - Do call/token stops let admitted calls finish, while fatal/wall stops suppress new writes and drain all started work?
-- Does an unbilled or zero-call failure keep a null producer? Does activity remain until the finalizer commits?
+- Does an unbilled or zero-call failure keep a null producer? Is activity cleared even when the finalizer fails?
 - Can a cancelled shared wait leak a permit, exceed maxCalls, or buffer additional image batches?
 - Does a failed pricing/persistence entry prevent a billed sibling from recording? Are both snapshots serialized?
 
@@ -815,6 +843,7 @@ apps/server/test/push-concurrency.integration.test.ts
 apps/server/test/push-concurrency.test.ts
 apps/server/test/push.integration.test.ts
 impl/concepts/push-pipeline.md
+impl/reviews/m3-pr-review-handoff.md
 ```
 
 ## Coordinator checklist
