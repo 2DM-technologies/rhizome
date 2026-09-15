@@ -44,7 +44,7 @@ export async function readTaskInferenceStatus(
       desc(operations.uuid),
     )
     .limit(1);
-  const base = { ...input, revision: vibe.rev, message: null };
+  const base = { ...input, revision: vibe.rev, operation_id: latest?.uuid ?? null, message: null };
   if (latest && ["queued", "running"].includes(latest.status))
     return { ...base, status: latest.status === "queued" ? "waiting" : "running" };
   const pending = activity.pending.get(uuid)?.get(`${input.level}:${input.task}`);

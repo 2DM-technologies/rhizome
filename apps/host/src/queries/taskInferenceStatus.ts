@@ -23,7 +23,7 @@ export function useTaskInferenceStatus(
   );
   useEffect(() => {
     if (!query.data) return;
-    const key = `${uuid}:${task.level}:${task.task}:${query.data.revision}:${query.data.status}`;
+    const key = `${uuid}:${task.level}:${task.task}:${query.data.revision}:${query.data.operation_id}:${query.data.status}`;
     if (seen.current === key) return;
     seen.current = key;
     // Record writes do not advance the Vibe revision. Task transitions also refresh
