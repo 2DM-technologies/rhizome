@@ -344,7 +344,7 @@ function parseBlock(
   const title = suppliedTitle ?? `Are.na ${blockType.toLowerCase()} ${blockId}`;
   const description = optionalMarkdown(block.description, `${label} description`);
   const source = optionalObject(block.source, `${label} source`);
-  const sourceUrl = source ? requiredHttpsUrl(source.url, `${label} source URL`) : undefined;
+  const sourceUrl = source ? requiredWebUrl(source.url, `${label} source URL`) : undefined;
   const sourceTitle = source
     ? optionalNonemptyString(source.title, `${label} source title`)
     : undefined;
@@ -352,7 +352,7 @@ function parseBlock(
   const sourceProvider = provider
     ? {
         name: requiredString(provider.name, `${label} source provider name`),
-        url: requiredHttpsUrl(provider.url, `${label} source provider URL`),
+        url: requiredWebUrl(provider.url, `${label} source provider URL`),
       }
     : undefined;
   const commonProperties: Record<string, unknown> = {
@@ -477,12 +477,9 @@ function parseBlock(
     rejectUnexpectedAssets(assets, blockId, label);
   } else {
     const embed = objectValue(block.embed, `${label} embed`);
-    const embedUrl = firstHttpsUrl([embed.url, embed.source_url, sourceUrl], `${label} embed URL`);
+    const embedUrl = firstWebUrl([embed.url, embed.source_url, sourceUrl], `${label} embed URL`);
     if (!embedUrl) throw new Error(`${label} embed is missing its destination URL`);
-    const embedSourceUrl = firstHttpsUrl(
-      [sourceUrl, embed.source_url],
-      `${label} embed source URL`,
-    );
+    const embedSourceUrl = firstWebUrl([sourceUrl, embed.source_url], `${label} embed source URL`);
     Object.assign(commonProperties, {
       embed_url: embedUrl,
       ...(embedSourceUrl ? { embed_source_url: embedSourceUrl } : {}),
@@ -993,12 +990,27 @@ function canonicalUrl(value: string): string {
   return new URL(value).toString();
 }
 
-function firstHttpsUrl(values: unknown[], label: string): string | undefined {
+function firstWebUrl(values: unknown[], label: string): string | undefined {
   for (const value of values) {
     if (value === undefined || value === null) continue;
-    return requiredHttpsUrl(value, label);
+    return requiredWebUrl(value, label);
   }
   return undefined;
+}
+
+/** Source and embed destinations are stored links, not URLs fetched by the importer. */
+function requiredWebUrl(value: unknown, label: string): string {
+  const source = requiredString(value, label);
+  let url: URL;
+  try {
+    url = new URL(source);
+  } catch {
+    throw new Error(`${label} is not a valid URL`);
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error(`${label} must be an HTTP or HTTPS URL without credentials`);
+  }
+  return url.toString();
 }
 
 function requiredHttpsUrl(value: unknown, label: string): string {
