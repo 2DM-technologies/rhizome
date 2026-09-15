@@ -21,12 +21,12 @@ test("summary polls task state and shares a row with inferred above the view", a
   let revision = 1;
   await page.route("**/rnet/v0/vibes/*/inference-status?*", (route) => {
     const url = new URL(route.request().url());
-    expect(url.searchParams.get("level")).toBe("vibe");
     const task = url.searchParams.get("task");
-    expect(["summarize", "vibe-view", "vibe-orb"]).toContain(task);
+    expect(url.searchParams.get("level")).toBe(task === "display-name" ? "object" : "vibe");
+    expect(["summarize", "vibe-view", "vibe-orb", "display-name"]).toContain(task);
     return route.fulfill({
       json: {
-        level: "vibe",
+        level: url.searchParams.get("level"),
         task,
         status: task === "summarize" ? status : "idle",
         revision,
@@ -59,6 +59,13 @@ test("summary polls task state and shares a row with inferred above the view", a
   await expect(summary).toContainText("A refreshed collection.");
   await expect(skeleton).toHaveCount(0);
   await expect(summary.getByRole("alert")).toHaveCount(0);
+  status = "running";
+  await expect(
+    page.getByLabel("Vibe inferred", { exact: true }).locator(".inferred-block"),
+  ).toHaveAttribute("data-inference-state", "running");
+  await expect(summary).toContainText("A refreshed collection.");
+  await expect(skeleton).toHaveCount(0);
+  status = "done";
   const layout = await page.getByLabel("Vibe overview", { exact: true }).evaluate((container) => {
     const bounds = container.getBoundingClientRect();
     const left = container.children[0]!.getBoundingClientRect();

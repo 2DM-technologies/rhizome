@@ -16,6 +16,64 @@ test.beforeEach(async ({ page }) => {
   store = await installMockStore(page);
 });
 
+for (const terminal of ["done", "error"] as const) {
+  test(`automatic object ${terminal} refreshes records without a Vibe revision change`, async ({
+    page,
+  }) => {
+    const object = store.objects.get(OBJECT_ID)!;
+    object.inferred = {};
+    store.vibes[0]!.inferred = {
+      "rhizome:vibe-view": {
+        model: "mock",
+        properties: { view: "mediaboard", config: { caption_pointer: null } },
+      },
+    };
+    let status = "running";
+    await page.route("**/rnet/v0/vibes/*/inference-status?*", (route) => {
+      const query = new URL(route.request().url()).searchParams;
+      const task = query.get("task");
+      return route.fulfill({
+        json: {
+          level: query.get("level"),
+          task,
+          status: task === "display-name" ? status : "idle",
+          revision: 1,
+          message: status === "error" ? "A later record failed" : null,
+        },
+      });
+    });
+    await page.goto(`/vibes/${VIBE_ID}`);
+    await page.getByLabel("Push task").selectOption("object:display-name");
+    await expect(page.getByRole("button", { name: "Run on missing" })).toBeEnabled();
+    const elementReads = () =>
+      store.requests.filter(
+        (request) =>
+          request.method() === "GET" &&
+          new URL(request.url()).pathname === `/rnet/v0/elements/${ELEMENT_ID}`,
+      ).length;
+    await expect.poll(elementReads).toBeGreaterThan(0);
+    const before = elementReads();
+    object.inferred = {
+      "rhizome:display-name": {
+        model: "mock",
+        properties: { display_name: "Automatically enriched" },
+      },
+    };
+    status = terminal;
+    await expect(
+      page.getByLabel("Inferred Vibe view").getByText("Automatically enriched", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run on missing" })).toBeDisabled();
+    await expect.poll(elementReads).toBeGreaterThan(before);
+    expect(
+      store.requests.filter(
+        (request) =>
+          request.method() === "POST" && new URL(request.url()).pathname.endsWith("/push"),
+      ),
+    ).toHaveLength(0);
+  });
+}
+
 test("object and Vibe pushes poll, refresh inferred data, and render the inferred view", async ({
   page,
 }) => {
