@@ -14,13 +14,14 @@ export const taskInferenceStatusQuerySchema = {
 
 export const taskInferenceStatusSchema = {
   type: "object",
-  required: ["level", "task", "status", "message", "revision"],
+  required: ["level", "task", "status", "message", "revision", "operation_id"],
   additionalProperties: false,
   properties: {
     ...taskInferenceStatusQuerySchema.properties,
     status: { enum: ["idle", "waiting", "running", "done", "error"] },
     message: { type: ["string", "null"] },
     revision: { type: "integer", minimum: 1 },
+    operation_id: { type: ["string", "null"], format: "uuid" },
   },
 } as const satisfies JSONSchema;
 

@@ -541,10 +541,17 @@ export class PushService {
             const liveIds = new Set(elements.map((element) => element.uuid));
             for (const uuid of pending)
               if (!liveIds.has(uuid)) state.outcomes.set(uuid, { outcome: "not_applicable" });
-            for (const element of elements) {
+            for (const candidate of elements) {
               if (controller.signal.aborted) {
                 stopForCeiling();
                 return;
+              }
+              // Earlier batches may have waited on providers since the initial workset load.
+              // Check the tombstone immediately before preparing each new payload.
+              const [element] = await loadElements(db, [candidate.uuid]);
+              if (!element) {
+                state.outcomes.set(candidate.uuid, { outcome: "not_applicable" });
+                continue;
               }
               if (
                 element.byteSize > limits.maxAttachmentBytes ||
