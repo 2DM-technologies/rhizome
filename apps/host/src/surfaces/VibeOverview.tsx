@@ -47,7 +47,7 @@ export function VibeOverview({
       <div className="flex min-w-0 flex-col gap-6">
         <section aria-label="Summary" className="flex min-w-0 flex-col gap-3">
           <h2 className="text-label text-primary">Summary</h2>
-          {busy ? (
+          {busy && typeof summary !== "string" ? (
             <div
               className="flex flex-col gap-3 [--inferred-base:var(--rz-skeleton-base)]"
               data-inference-state="waiting"

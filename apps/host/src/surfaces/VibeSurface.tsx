@@ -34,6 +34,11 @@ export function VibeSurface({ uuid }: { uuid: string }) {
   });
   const vibe = useVibe(uuid);
   const objects = useVibeObjects(uuid);
+  useTaskInferenceStatus(
+    uuid,
+    { level: "object", task: PUSH_TASKS.object["display-name"].name },
+    Boolean(vibe.data),
+  );
   const summaryStatus = useTaskInferenceStatus(
     uuid,
     { level: "vibe", task: PUSH_TASKS.vibe.summarize.name },

@@ -77,6 +77,7 @@ export async function writeElementTaskInferred(
         .where(eq(mediaElements.uuid, input.mediaElementUuid))
         .for("update");
       if (!locked) throw new Error("Push element disappeared");
+      if (locked.tombstonedAt) throw new NoWrite("not_applicable");
       if (locked.inferred[key]?.durable === true) throw new NoWrite("preserved_durable");
       if (input.entry === null && !Object.hasOwn(locked.inferred, key))
         throw new NoWrite("not_applicable");

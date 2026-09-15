@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TaskInferenceStatusQuery } from "@rhizome/store-contract";
-import type { Vibe } from "@rnet/types";
+import type { MediaObject, Vibe } from "@rnet/types";
 import { api } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
 
@@ -23,11 +23,26 @@ export function useTaskInferenceStatus(
   );
   useEffect(() => {
     if (!query.data) return;
-    const key = `${uuid}:${query.data.revision}`;
+    const key = `${uuid}:${task.level}:${task.task}:${query.data.revision}:${query.data.status}`;
     if (seen.current === key) return;
     seen.current = key;
-    // Automatic import enrichment has no locally tracked Push operation. Its committed
-    // writes advance the Vibe revision even when a later task fails or is only partial.
+    // Record writes do not advance the Vibe revision. Task transitions also refresh
+    // data after server-started runs, including partial writes followed by errors.
+    const collection = client.getQueryData<{ mediaObjects: MediaObject[] }>(
+      api.queryOptions("get", "/rnet/v0/vibes/{id}/objects", {
+        params: { path: { id: uuid } },
+      }).queryKey,
+    );
+    const elementUris = new Set(
+      collection?.mediaObjects.flatMap((object) => object.elements.map((element) => element.uri)),
+    );
+    for (const uri of elementUris) {
+      void client.invalidateQueries({
+        queryKey: api.queryOptions("get", "/rnet/v0/elements/{id}", {
+          params: { path: { id: uuidOf(uri) } },
+        }).queryKey,
+      });
+    }
     void client.invalidateQueries({
       queryKey: api.queryOptions("get", "/rnet/v0/vibes/{id}/objects", {
         params: { path: { id: uuid } },
@@ -53,6 +68,6 @@ export function useTaskInferenceStatus(
     void client.invalidateQueries({
       queryKey: api.queryOptions("get", "/rnet/v0/vibes").queryKey,
     });
-  }, [client, query.data, uuid]);
+  }, [client, query.data, uuid, task.level, task.task]);
   return query;
 }

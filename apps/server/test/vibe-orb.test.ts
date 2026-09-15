@@ -154,5 +154,21 @@ describe("object-derived Vibe orbs", () => {
     } as VibeContext);
     expect(empty.confidence).toBe(0);
     expect(jsonSchema(vibeOrb.outputSchema).validate(empty).ok).toBeTrue();
+    const neutral = deriveVibeOrb({
+      task_context: await prepareVibeOrbContext({
+        ...input,
+        records: [
+          record("gray", {
+            ...bloom,
+            palette: [
+              { color: "#888888", weight: 0.5 },
+              { color: "#eeeeee", weight: 0.5 },
+            ],
+          }),
+        ],
+      }),
+    } as VibeContext);
+    expect(neutral.confidence).toBe(1);
+    expect(jsonSchema(vibeOrb.outputSchema).validate(neutral).ok).toBeTrue();
   });
 });
