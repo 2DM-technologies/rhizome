@@ -2942,3 +2942,143 @@ describe("object inference status", () => {
     await poll(app, operation!.operation_id);
   });
 });
+
+test("later image tombstones prevent payload preparation and billing while earlier batches are held", async () => {
+  const { vibeUuid, ids } = await fixture(6);
+  const elementIds: string[] = [];
+  for (let index = 0; index < ids.length; index++) {
+    const bytes = new Uint8Array([...PNG, index + 1]);
+    const elementUuid = await imageFor(ids[index]!, "image", bytes);
+    await db
+      .update(mediaElements)
+      .set({ alt: `review-element-${index}` })
+      .where(eq(mediaElements.uuid, elementUuid));
+    elementIds.push(elementUuid);
+  }
+  const targetUuid = elementIds.at(-1)!;
+  const target = await db.query.mediaElements.findFirst({
+    where: eq(mediaElements.uuid, targetUuid),
+  });
+  const firstStarted = gate();
+  const release = gate();
+  const payloads: Array<{ hash: string; deleted: boolean }> = [];
+  const sent: Array<{ alt: string; deleted: boolean }> = [];
+  let deleted = false;
+  let calls = 0;
+  const connector = new FakeModelConnector({
+    respond: async (request) => {
+      const data = JSON.parse(request.input.slice(6, -7));
+      sent.push(
+        ...data.elements.map((element: { alt: string }) => ({ alt: element.alt, deleted })),
+      );
+      calls++;
+      if (calls <= 1) {
+        if (calls === 1) firstStarted.resolve();
+        await release.promise;
+      }
+      return responseFor(request);
+    },
+  });
+  const blobs = createBlobStore(config);
+  const originalGet = blobs.get.bind(blobs);
+  const reads = spyOn(blobs, "get").mockImplementation(async (bucket, hash, signal) => {
+    payloads.push({ hash, deleted });
+    return originalGet(bucket, hash, signal);
+  });
+  const app = application(connector, {
+    blobs,
+    pushLimits: { ...DEFAULT_PUSH_LIMITS, maxObjectsPerCall: 1 },
+  });
+  try {
+    const operation = await accept(app, vibeUuid, { level: "element", task: elementTask.name });
+    await Promise.race([
+      firstStarted.promise,
+      Bun.sleep(2500).then(() => {
+        throw new Error("Probe calls did not start");
+      }),
+    ]);
+    expect(payloads.some(({ hash }) => hash === target!.contentHash)).toBe(false);
+    await db
+      .update(mediaElements)
+      .set({ tombstonedAt: new Date() })
+      .where(eq(mediaElements.uuid, targetUuid));
+    deleted = true;
+    release.resolve();
+    const terminal = await poll(app, operation.operation_id);
+    const after = await db.query.mediaElements.findFirst({
+      where: eq(mediaElements.uuid, targetUuid),
+    });
+    const targetRead = payloads.find(({ hash }) => hash === target!.contentHash);
+    const targetSend = sent.find(({ alt }) => alt === "review-element-5");
+    expect(targetRead).toBeUndefined();
+    expect(calls).toBe(5);
+    expect(targetSend).toBeUndefined();
+    expect(after?.inferredRev).toBe(0);
+  } finally {
+    release.resolve();
+    reads.mockRestore();
+  }
+});
+
+test("shared-element running and error status follows other readable parent Vibes", async () => {
+  const left = await fixture(1);
+  const right = await fixture(1);
+  const elementUuid = await imageFor(left.ids[0]!);
+  await db
+    .insert(mediaObjectElements)
+    .values({ mediaObjectUuid: right.ids[0]!, mediaElementUuid: elementUuid, position: 0 });
+  await db.insert(grants).values([
+    { vibeUuid: left.vibeUuid, subject: "client:rbudget", scopes: ["read"] },
+    { vibeUuid: right.vibeUuid, subject: "client:rbudget", scopes: ["read"] },
+  ]);
+  const started = gate();
+  const release = gate();
+  const connector = new FakeModelConnector({
+    respond: async () => {
+      started.resolve();
+      await release.promise;
+      return new ModelConnectorError("output_refused", { retryable: false, usage });
+    },
+  });
+  const app = application(connector);
+  const read = async (uuid: string, token = owner) => {
+    const response = await api(app, `/objects/${uuid}/inference-status`, undefined, token);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    return body.records.find(
+      (record: { uri: string }) => record.uri === `rnet://element/${elementUuid}`,
+    );
+  };
+  try {
+    const operation = await accept(app, right.vibeUuid, {
+      level: "element",
+      task: elementTask.name,
+    });
+    await started.promise;
+    const ownerRunning = { left: await read(left.ids[0]!), right: await read(right.ids[0]!) };
+    const clientRunning = {
+      left: await read(left.ids[0]!, clientToken),
+      right: await read(right.ids[0]!, clientToken),
+    };
+    expect(ownerRunning.left.tasks).toEqual(ownerRunning.right.tasks);
+    expect(ownerRunning.right.tasks).toEqual([
+      { task: elementTask.name, status: "running", message: null },
+    ]);
+    expect(clientRunning).toEqual(ownerRunning);
+    await db
+      .delete(grants)
+      .where(and(eq(grants.vibeUuid, right.vibeUuid), eq(grants.subject, "client:rbudget")));
+    expect((await read(left.ids[0]!, clientToken)).tasks).toEqual([]);
+    await db
+      .insert(grants)
+      .values({ vibeUuid: right.vibeUuid, subject: "client:rbudget", scopes: ["read"] });
+    release.resolve();
+    await poll(app, operation.operation_id);
+    const ownerFailed = { left: await read(left.ids[0]!), right: await read(right.ids[0]!) };
+    expect(ownerFailed.left.tasks).toEqual(ownerFailed.right.tasks);
+    expect((await read(left.ids[0]!, clientToken)).tasks).toEqual(ownerFailed.right.tasks);
+    expect(ownerFailed.right.tasks[0].status).toBe("error");
+  } finally {
+    release.resolve();
+  }
+});

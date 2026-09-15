@@ -71,6 +71,7 @@ describe("task inference status", () => {
     expect(await f.read()).toEqual({
       ...input,
       revision: 3,
+      operation_id: null,
       status: "error",
       message: "Cannot start summary",
     });
@@ -97,7 +98,13 @@ describe("task inference status", () => {
       createdAt: new Date(),
       result: { level: "vibe", vibe: { outcome: "written" } },
     };
-    expect(await f.read()).toEqual({ ...input, revision: 3, status: "done", message: null });
+    expect(await f.read()).toEqual({
+      ...input,
+      revision: 3,
+      operation_id: null,
+      status: "done",
+      message: null,
+    });
     expect(JSON.stringify(await f.read())).not.toMatch(/resolved|usage|secret/);
   });
 
@@ -182,6 +189,28 @@ test("HTTP status route requires a task and level and passes only validated inpu
   expect(calls).toHaveLength(0);
   const response = await router.hono.request(`/${uuid}/inference-status?level=vibe&task=summarize`);
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ ...input, revision: 3, message: null, status: "idle" });
+  expect(await response.json()).toEqual({
+    ...input,
+    revision: 3,
+    operation_id: null,
+    message: null,
+    status: "idle",
+  });
   expect(calls).toEqual([{ id: uuid, query: input, actor: owner }]);
+});
+
+test("repeat completed record runs have distinct observable identities at the same Vibe revision", async () => {
+  const f = fixture();
+  const query = { level: "object", task: "display-name" } as const;
+  f.state.operation = {
+    uuid,
+    status: "done",
+    createdAt: new Date(),
+    result: { level: "object", skipped: [] },
+  };
+  const first = await f.read(owner, query);
+  f.state.operation.uuid = "0198f2a1-1401-7501-8501-999999999998";
+  const second = await f.read(owner, query);
+  expect(second).toEqual({ ...first, operation_id: f.state.operation.uuid });
+  expect(second.operation_id).not.toBe(first.operation_id);
 });
