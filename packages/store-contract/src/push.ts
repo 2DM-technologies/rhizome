@@ -54,6 +54,7 @@ export const PUSH_TASK_REFS = {
   describeMedia: { level: "element", name: "describe-media" },
   displayName: { level: "object", name: "display-name" },
   searchKeywords: { level: "object", name: "search-keywords" },
+  orbIdentity: { level: "object", name: "orb-identity" },
   summarize: { level: "vibe", name: "summarize" },
   vibeView: { level: "vibe", name: "vibe-view" },
   vibeOrb: { level: "vibe", name: "vibe-orb" },

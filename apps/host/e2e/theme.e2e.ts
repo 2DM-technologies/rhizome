@@ -51,7 +51,7 @@ for (const theme of ["light", "dark"] as const) {
     );
     await expect(home.locator("section").first()).toHaveCSS(
       "background-color",
-      theme === "dark" ? "rgba(22, 25, 28, 0.92)" : "rgba(255, 255, 255, 0.28)",
+      theme === "dark" ? "rgba(22, 25, 28, 0.78)" : "rgba(255, 255, 255, 0.28)",
     );
     await page.screenshot({
       path: testInfo.outputPath(`home-${theme}.png`),
@@ -127,5 +127,65 @@ test("live system changes preserve the mounted window, unsaved edits, and focuse
     expect(await originalEditor?.evaluate((node) => node.isConnected)).toBe(true);
     expect(await originalWindow?.evaluate((node) => node.isConnected)).toBe(true);
     expect(await originalSearch?.evaluate((node) => node.isConnected)).toBe(true);
+  }
+});
+
+test("theme commands follow the system until chosen, then override it for this tab session", async ({
+  page,
+  context,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto(`/objects/${OBJECT_ID}`);
+  const editor = page.getByRole("textbox", { name: "User properties, as JSON" });
+  const draft = '{"notes":"Keep this while switching themes"}';
+  await editor.fill(draft);
+  const originalWindow = await page.locator("[data-surface-window]").elementHandle();
+  const search = page.getByRole("searchbox", { name: "Search everything" });
+  const commands = page.locator('[data-launcher-section="Commands"]');
+  await search.click();
+  await expect(commands.getByRole("button", { name: "Show Desktop", exact: true })).toHaveCount(0);
+  await expect(commands.getByRole("button", { name: "Dark Mode", exact: true })).toBeVisible();
+  await expect(commands.getByRole("button", { name: "Light Mode", exact: true })).toHaveCount(0);
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expectTheme(page, "dark");
+  await expect(commands.getByRole("button", { name: "Light Mode", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => sessionStorage.getItem("rhizome.theme"))).toBeNull();
+  expect(await page.locator("html").getAttribute("data-theme")).toBeNull();
+
+  await page.emulateMedia({ colorScheme: "light" });
+  await search.fill("Dark Mode");
+  await search.press("Enter");
+  await expectTheme(page, "dark");
+  await expect(page.getByRole("dialog", { name: "Start something new" })).toBeHidden();
+  await expect(editor).toHaveValue(draft);
+  await expect(page).toHaveURL(new RegExp(`/objects/${OBJECT_ID}$`));
+  expect(await originalWindow?.evaluate((node) => node.isConnected)).toBe(true);
+  for (const systemTheme of ["dark", "light"] as const) {
+    await page.emulateMedia({ colorScheme: systemTheme });
+    await expectTheme(page, "dark");
+  }
+  await search.click();
+  await expect(commands.getByRole("button", { name: "Dark Mode", exact: true })).toHaveCount(0);
+  await commands.getByRole("button", { name: "Light Mode", exact: true }).click();
+  await expectTheme(page, "light");
+  await expect(editor).toHaveValue(draft);
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.reload();
+  await expectTheme(page, "light");
+  expect(await page.evaluate(() => sessionStorage.getItem("rhizome.theme"))).toBe("light");
+  expect(await page.evaluate(() => localStorage.getItem("rhizome.theme"))).toBeNull();
+
+  const fresh = await context.newPage();
+  try {
+    await installMockStore(fresh);
+    await fresh.emulateMedia({ colorScheme: "dark" });
+    await fresh.goto("/");
+    await expectTheme(fresh, "dark");
+    expect(await fresh.locator("html").getAttribute("data-theme")).toBeNull();
+    expect(await fresh.evaluate(() => sessionStorage.getItem("rhizome.theme"))).toBeNull();
+  } finally {
+    await fresh.close();
   }
 });

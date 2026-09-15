@@ -1,8 +1,8 @@
 /**
  * Rhizome host design tokens — generated from Figma "🪸 Design System" (file TemtoVCMSygDh5yBiMaIbF).
  *
- * Theme follows the system. Tiers describe roles, not fixed colors: control follows the
- * system scheme; content takes the opposite scheme. Nested controls re-enter control.
+ * Theme follows the system unless a session command overrides it. Tiers describe roles:
+ * control follows the active scheme; content takes the opposite. Nested controls re-enter control.
  * `light-dark()` resolves each color against the consuming element's color-scheme, so
  * shared utilities and native controls agree even across nested tier boundaries.
  *
@@ -45,7 +45,7 @@
   }
 }
 
-/* Scoped overrides are for Storybook previews; the application always follows the system. */
+/* Root overrides serve session commands; scoped overrides serve Storybook previews. */
 [data-theme="light"] {
   --rz-control-scheme: light;
   --rz-content-scheme: dark;
@@ -91,8 +91,9 @@
 
   /* Neutral UI fills adapt; the raw gray scale below remains invariant. */
   --rz-border-neutral: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 14%));
-  --rz-home-panel: light-dark(rgb(255 255 255 / 28%), rgb(22 25 28 / 92%));
+  --rz-home-panel: light-dark(rgb(255 255 255 / 28%), rgb(22 25 28 / 78%));
   --rz-home-stat: light-dark(rgb(0 0 0 / 13%), rgb(255 255 255 / 6%));
+  --rz-vibe-hover-shadow: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 12%));
   --rz-skeleton-base: light-dark(#e5e5e5, #525252);
   --rz-skeleton-shine: light-dark(#ffffff99, #ffffff14);
   --rz-tooltip-bg: light-dark(#f5f5f5, #252525);

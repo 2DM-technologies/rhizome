@@ -1,228 +1,158 @@
 import { describe, expect, test } from "bun:test";
-import sharp from "sharp";
-
-import type { BlobStore } from "../src/blobs/types.ts";
-import type { ContextObject, VibeContext } from "../src/push/context.ts";
-import { vibeOrb } from "../src/push/tasks/vibe/vibe-orb/manifest.ts";
 import {
-  aggregateImagePalettes,
-  measureImagePalette,
-  prepareVibeOrbContext,
-  transformVibeOrbOutput,
-} from "../src/push/tasks/vibe/vibe-orb/palette.ts";
+  composeVibeOrb,
+  composeOrbPalette,
+  orbColorHsl,
+  parseOrbIdentity,
+  type OrbIdentity,
+} from "@rhizome/store-contract/orb";
+import { orbIdentity } from "../src/push/tasks/object/orb-identity/manifest.ts";
+import { vibeOrb } from "../src/push/tasks/vibe/vibe-orb/manifest.ts";
+import { prepareVibeOrbContext, deriveVibeOrb } from "../src/push/tasks/vibe/vibe-orb/palette.ts";
 import { jsonSchema } from "../src/routes/contracts.ts";
+import type { ContextObject, VibeContext } from "../src/push/context.ts";
+import type { BlobStore } from "../src/blobs/types.ts";
 
-async function swatch(colors: Array<[number, number, number, number]>): Promise<Uint8Array> {
-  const bytes = Uint8Array.from(colors.flat());
-  return new Uint8Array(
-    await sharp(bytes, { raw: { width: colors.length, height: 1, channels: 4 } })
-      .png()
-      .toBuffer(),
-  );
-}
+const examples = [...orbIdentity.prompt.matchAll(/```json\n([\s\S]*?)\n```/gu)].map((match) =>
+  JSON.parse(match[1]!),
+);
+const bloom = examples[0] as OrbIdentity;
+const tide = examples[2] as OrbIdentity;
+const contribution = (id: string, character = bloom, weight = 1) => ({ id, character, weight });
 
-const output = {
-  version: 2,
-  seed: "ffffffffffffffffffffffffffffffff",
-  palette: [
-    { color: "#245c83", weight: 0.4 },
-    { color: "#b94158", weight: 0.35 },
-    { color: "#62976d", weight: 0.25 },
-  ],
-  contrast: 0.5,
-  field: { grain: 0.5, warp: 0.5, anisotropy: 0.5 },
-  energy: 0.55,
-  confidence: 0.9,
-};
-
-describe("Vibe orb palette preparation", () => {
-  test("accepts every prompt example and rejects generated material overrides", () => {
-    const examples = [...vibeOrb.prompt.matchAll(/```json\n([\s\S]*?)\n```/gu)];
+describe("object-derived Vibe orbs", () => {
+  test("all art-direction examples satisfy the object schema; renderer-only controls are rejected", () => {
     expect(examples).toHaveLength(4);
-    const schema = jsonSchema(vibeOrb.outputSchema);
-    for (const [, example] of examples) {
-      const recipe = { ...JSON.parse(example!), version: 2, seed: output.seed, confidence: 0.9 };
-      expect(schema.validate(recipe).ok).toBeTrue();
-      expect(schema.validate({ ...recipe, version: 1 }).ok).toBeFalse();
-      expect(schema.validate({ ...recipe, energy: 1.1 }).ok).toBeFalse();
-      for (const key of ["surface", "motion", "response"]) {
-        expect(schema.validate({ ...recipe, [key]: {} }).ok).toBeFalse();
-      }
-      for (const key of ["roughness", "cellularity"]) {
-        expect(
-          schema.validate({ ...recipe, field: { ...recipe.field, [key]: 0.5 } }).ok,
-        ).toBeFalse();
-      }
+    for (const example of examples) {
+      expect(jsonSchema(orbIdentity.outputSchema).validate(example).ok).toBeTrue();
+      expect(
+        jsonSchema(orbIdentity.outputSchema).validate({ ...example, seed: "model-seed" }).ok,
+      ).toBeFalse();
+      expect(
+        jsonSchema(orbIdentity.outputSchema).validate({
+          ...example,
+          surface: { ...example.surface, gloss: 0 },
+        }).ok,
+      ).toBeFalse();
+    }
+    expect(orbIdentity.prompt).toContain("never use other objects in the batch");
+  });
+  test("averages independent controls with explicit object weights", () => {
+    const orb = composeVibeOrb("seed", [contribution("a"), contribution("b", tide, 3)])!;
+    expect(orb.motion.drift).toBeCloseTo((bloom.motion.drift + tide.motion.drift * 3) / 4);
+    expect(orb.motion.turbulence).toBeCloseTo(
+      (bloom.motion.turbulence + tide.motion.turbulence * 3) / 4,
+    );
+    expect(orb.surface.depth).toBeCloseTo((bloom.surface.depth + tide.surface.depth * 3) / 4);
+    expect(orb.field.anisotropy).toBeCloseTo(
+      (bloom.field.anisotropy + tide.field.anisotropy * 3) / 4,
+    );
+    expect(orb.motion.drift).not.toBe(orb.motion.turbulence);
+    expect(
+      jsonSchema(vibeOrb.outputSchema).validate({ ...orb, seed: "a".repeat(32), confidence: 1 }).ok,
+    ).toBeTrue();
+  });
+  test("order, duplicate placements, and palette weight magnitude do not change influence", () => {
+    const a = contribution("a"),
+      b = contribution("b", tide);
+    const expected = composeVibeOrb("seed", [a, b]);
+    expect(composeVibeOrb("seed", [b, a, a])).toEqual(expected);
+    expect(
+      composeVibeOrb("seed", [
+        {
+          ...a,
+          character: {
+            ...bloom,
+            palette: bloom.palette.map((p) => ({ ...p, weight: p.weight / 2 })),
+          },
+        },
+        b,
+      ]),
+    ).toEqual(expected);
+    expect(composeVibeOrb("seed", [a, { ...b, weight: 0 }])).toEqual(composeVibeOrb("seed", [a]));
+    expect(composeVibeOrb("another-seed", [a, b])?.palette).toEqual(expected?.palette);
+  });
+  test("opposing colors stay chromatic, with a normalized bounded palette", () => {
+    const palette = composeOrbPalette([
+      { color: "#1562d4", weight: 1 },
+      { color: "#ee812b", weight: 1 },
+      { color: "#31b873", weight: 1 },
+    ]);
+    expect(palette).toHaveLength(4);
+    expect(palette.reduce((sum, c) => sum + c.weight, 0)).toBeCloseTo(1, 6);
+    for (const { color } of palette) {
+      const [, saturation, lightness] = orbColorHsl(color);
+      expect(saturation).toBeGreaterThan(0.65);
+      expect(lightness).toBeGreaterThan(0.3);
+      expect(lightness).toBeLessThan(0.7);
     }
   });
-
-  test("asks the model to derive color from text semantics without constraining source meaning", () => {
-    expect(vibeOrb.prompt.replace(/\s+/gu, " ")).toContain(
-      "derive color from the subject, tone, and emotional register of text elements and properties",
-    );
-  });
-
-  test("measures actual decoded pixels deterministically and preserves distant colors", async () => {
-    const image = await swatch([
-      [255, 0, 0, 255],
-      [0, 0, 255, 255],
-      [0, 255, 0, 0],
-    ]);
-    const first = await measureImagePalette(image);
-    expect(await measureImagePalette(image)).toEqual(first);
-    expect(first.map(({ color }) => color).sort()).toEqual(["#0000ff", "#ff0000"]);
-    expect(first.reduce((sum, stop) => sum + stop.weight, 0)).toBeCloseTo(1, 3);
-    expect(aggregateImagePalettes([first, [{ color: "#ff0000", weight: 1 }]])[0]?.color).toBe(
-      "#ff0000",
-    );
-  });
-
-  test("neutral image backgrounds cannot crowd out small areas of useful color", async () => {
-    const image = await swatch([
-      ...Array.from({ length: 8 }, () => [254, 254, 254, 255] as [number, number, number, number]),
-      ...Array.from({ length: 5 }, () => [55, 55, 56, 255] as [number, number, number, number]),
-      [0, 0, 0, 255],
-      [153, 157, 156, 255],
-      [244, 239, 223, 255],
-      [22, 11, 16, 255],
-      [23, 169, 189, 255],
-      [223, 51, 31, 255],
-    ]);
-    const palette = await measureImagePalette(image);
-    expect(palette.map(({ color }) => color).sort()).toEqual(["#17a9bd", "#df331f"]);
-    expect(palette.reduce((sum, stop) => sum + stop.weight, 0)).toBeCloseTo(1, 3);
-    expect(await measureImagePalette(image)).toEqual(palette);
-  });
-
-  test("an entirely neutral image leaves color selection to the semantic palette", async () => {
-    const image = await swatch([
-      [255, 255, 255, 255],
-      [0, 0, 0, 255],
-      [127, 127, 127, 255],
-      [244, 239, 223, 255],
-    ]);
-    expect(await measureImagePalette(image)).toEqual([]);
+  test("white, black, and neutral backgrounds never displace the chromatic family", () => {
+    const color = { color: "#17a9bd" as const, weight: 0.01 };
     expect(
-      aggregateImagePalettes([
-        [{ color: "#fefefe", weight: 1 }],
-        [{ color: "#373738", weight: 1 }],
-        [{ color: "#17a9bd", weight: 1 }],
+      composeOrbPalette([
+        color,
+        { color: "#fefefe", weight: 10 },
+        { color: "#373738", weight: 10 },
+        { color: "#879b9a", weight: 10 },
       ]),
-    ).toEqual([{ color: "#17a9bd", weight: 1 }]);
-    const transformed = transformVibeOrbOutput(output, {
-      title: "Monochrome images",
-      objects: 1,
-      types: [],
-      elements: [],
-      task_context: {
-        image_palette: [
-          { color: "#fefefe", weight: 0.8 },
-          { color: "#373738", weight: 0.2 },
-        ],
-      },
-    });
-    expect(transformed.palette).toEqual(output.palette);
-    expect(jsonSchema(vibeOrb.outputSchema).validate(transformed).ok).toBeTrue();
+    ).toEqual(composeOrbPalette([color]));
+    expect(composeOrbPalette([{ color: "#ffffff", weight: 1 }])).toEqual([]);
   });
-
-  test("the final blend excludes neutral measurements while retaining useful image hues", () => {
-    const transformed = transformVibeOrbOutput(output, {
-      title: "Images with paper backgrounds",
-      objects: 1,
-      types: [],
-      elements: [],
-      task_context: {
-        image_palette: [
-          { color: "#fefefe", weight: 0.7 },
-          { color: "#373738", weight: 0.2 },
-          { color: "#17a9bd", weight: 0.1 },
-        ],
-      },
-    });
-    const palette = transformed.palette as Array<{ color: string; weight: number }>;
-    expect(palette.map(({ color }) => color)).toEqual(["#17a9bd", "#245c83", "#b94158", "#62976d"]);
-    expect(palette.reduce((sum, stop) => sum + stop.weight, 0)).toBeCloseTo(1, 3);
-    expect(jsonSchema(vibeOrb.outputSchema).validate(transformed).ok).toBeTrue();
+  test("red hues across the circular boundary cluster as red, and changing object counts changes the family", () => {
+    const red = composeOrbPalette([
+      { color: "#ff0022", weight: 1 },
+      { color: "#ff2200", weight: 1 },
+    ]);
+    const [hue] = orbColorHsl(red[1]!.color);
+    expect(Math.min(hue, 360 - hue)).toBeLessThan(8);
+    expect(
+      composeVibeOrb("seed", [contribution("a", bloom, 10), contribution("b", tide)])?.palette,
+    ).not.toEqual(
+      composeVibeOrb("seed", [contribution("a"), contribution("b", tide, 10)])?.palette,
+    );
   });
-
-  test("deduplicates shared images, skips invalid payloads, and derives a stable opaque seed", async () => {
-    const image = await swatch([[18, 52, 86, 255]]);
-    let reads = 0;
-    const blobs = {
-      async get(_namespace, key) {
-        reads++;
-        return key === "valid"
-          ? { bytes: image, contentType: "image/png" }
-          : { bytes: new Uint8Array() };
-      },
-      async put() {},
-      async delete() {},
-      async signedUrl() {
-        return "";
-      },
-    } satisfies BlobStore;
-    const element = (uuid: string, contentHash: string) => ({
-      element: {
-        uuid,
-        kind: "image" as const,
-        mime: "image/png",
-        alt: null,
-        inferred: {},
-        contentHash,
-        byteSize: image.byteLength,
-      },
-    });
-    const record = (uuid: string, elements: ContextObject["elements"]): ContextObject => ({
-      object: {
-        uuid,
-        type: "test",
-        source: {
-          properties: {},
-          origins: [],
-          ingest: { method: "authored", reproducible: false },
-        },
-        user: null,
-        keys: {},
-        inferred: {},
-      },
-      elements,
-    });
-    const records = [
-      record("one", [element("shared", "valid"), element("invalid", "invalid")]),
-      record("two", [element("shared", "valid")]),
-    ];
+  test("rejects malformed identities and ignores invalid or absent contributions", () => {
+    expect(parseOrbIdentity({ ...bloom, version: 2 })).toBeUndefined();
+    expect(
+      parseOrbIdentity({ ...bloom, motion: { ...bloom.motion, spin: Number.NaN } }),
+    ).toBeUndefined();
+    expect(
+      parseOrbIdentity({ ...bloom, palette: bloom.palette.map((p) => ({ ...p, weight: 0 })) }),
+    ).toBeUndefined();
+    expect(composeVibeOrb("seed", [])).toBeUndefined();
+    expect(composeVibeOrb("seed", [contribution("bad", bloom, Number.NaN)])).toBeUndefined();
+  });
+  test("prepares only saved distinct object identities, with a stable seed and no blob reads", async () => {
+    const record = (uuid: string, properties?: OrbIdentity) =>
+      ({
+        object: { uuid, inferred: properties ? { "rhizome:orb-identity": { properties } } : {} },
+        elements: [],
+      }) as unknown as ContextObject;
+    const a = record("a", bloom),
+      b = record("b", tide);
     const input = {
-      vibeUuid: "0198f2a1-7c3d-7e4b-9f21-3a5c8d0e1b47",
-      records,
-      blobs,
+      vibeUuid: "vibe",
+      records: [a, b, a, record("missing")],
+      blobs: {
+        get: () => {
+          throw new Error("No image reads allowed");
+        },
+      } as unknown as BlobStore,
       signal: new AbortController().signal,
     };
-    const first = await prepareVibeOrbContext(input);
-    expect(await prepareVibeOrbContext(input)).toEqual(first);
-    expect(reads).toBe(4);
-    expect(first.seed).toMatch(/^[a-f0-9]{32}$/);
-    expect(first.image_palette).toEqual([{ color: "#123456", weight: 1 }]);
-  });
-
-  test("merges measured colors with semantic output and forces the operation seed", () => {
-    const context = {
-      title: "Test",
-      objects: 1,
-      types: [],
-      elements: [],
-      task_context: {
-        seed: "0123456789abcdef0123456789abcdef",
-        image_palette: [{ color: "#37a5d1", weight: 1 }],
-      },
-    } satisfies VibeContext;
-    const transformed = transformVibeOrbOutput(output, context);
-    expect(transformed.seed).toBe(context.task_context.seed);
-    expect(transformed.palette).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ color: "#37a5d1" }),
-        expect.objectContaining({ color: "#245c83" }),
-      ]),
+    const task_context = await prepareVibeOrbContext(input);
+    const output = deriveVibeOrb({ task_context } as VibeContext);
+    expect(output.confidence).toBeCloseTo(2 / 3);
+    expect(output.seed).toMatch(/^[a-f0-9]{32}$/);
+    expect(jsonSchema(vibeOrb.outputSchema).validate(output).ok).toBeTrue();
+    expect(await prepareVibeOrbContext({ ...input, records: [record("missing"), b, a] })).toEqual(
+      task_context,
     );
-    expect(jsonSchema(vibeOrb.outputSchema).validate(transformed).ok).toBe(true);
+    const empty = deriveVibeOrb({
+      task_context: await prepareVibeOrbContext({ ...input, records: [] }),
+    } as VibeContext);
+    expect(empty.confidence).toBe(0);
+    expect(jsonSchema(vibeOrb.outputSchema).validate(empty).ok).toBeTrue();
   });
 });

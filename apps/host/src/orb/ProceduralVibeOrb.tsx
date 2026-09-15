@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "../ui/cn.ts";
-import { ORB_MATERIAL, normalizeOrbRecipe, type OrbVisualRecipe } from "./recipe.ts";
-import { OrbRenderer, type OrbMotionMode } from "./renderer.ts";
+import type { OrbVisualRecipe } from "./recipe.ts";
+import { OrbFallback, OrbLoadingOverlay } from "./OrbFallback.tsx";
+import { OrbRenderer, type OrbMotionMode, type OrbRendererOptions } from "./renderer.ts";
 
 export interface ProceduralVibeOrbProps {
   recipe: OrbVisualRecipe;
@@ -15,9 +16,11 @@ export interface ProceduralVibeOrbProps {
   active?: boolean;
   /** Shows a soft white pulse while the neutral pre-inference identity is being replaced. */
   loading?: boolean;
+  /** Disable the CSS underlay when this canvas overlays an existing raster image. */
+  fallback?: boolean;
 }
 
-function useReducedMotion(): boolean {
+export function useReducedMotion(): boolean {
   const [reduced, setReduced] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -35,21 +38,18 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-export function orbFallbackBackground(recipeInput: OrbVisualRecipe): string {
-  const recipe = normalizeOrbRecipe(recipeInput);
-  const colors = recipe.palette.map(({ color }) => color);
-  const first = colors[0]!;
-  const second = colors[1]!;
-  const third = colors[2] ?? first;
-  const fourth = colors[3] ?? second;
-  return [
-    `radial-gradient(ellipse at 36% 28%, rgb(255 250 245 / ${0.3 + ORB_MATERIAL.surface.gloss * 0.4}) 0%, transparent 9%)`,
-    `radial-gradient(ellipse at 33% 25%, rgb(255 255 255 / ${ORB_MATERIAL.surface.gloss * 0.24}) 0%, transparent 32%)`,
-    `radial-gradient(circle, transparent 57%, rgb(14 18 28 / 18%) 82%, rgb(235 247 255 / ${0.2 + ORB_MATERIAL.surface.rim * 0.55}) 100%)`,
-    `radial-gradient(circle at 30% 24%, color-mix(in srgb, ${fourth} 92%, white) 0%, transparent 34%)`,
-    `radial-gradient(circle at 68% 72%, ${third} 0%, transparent 48%)`,
-    `conic-gradient(from 28deg, ${first}, ${second}, ${third}, ${fourth}, ${first})`,
-  ].join(", ");
+/** Don't compile or attach an orb just because the pointer passed across a card. */
+export function useOrbHover(hovered: boolean): boolean {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!hovered) {
+      setSettled(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setSettled(true), 100);
+    return () => window.clearTimeout(timer);
+  }, [hovered]);
+  return hovered && settled;
 }
 
 /**
@@ -64,41 +64,55 @@ export function ProceduralVibeOrb({
   label,
   active = false,
   loading = false,
+  fallback = true,
 }: ProceduralVibeOrbProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasHost = useRef<HTMLSpanElement>(null);
   const rendererRef = useRef<OrbRenderer>(null);
   const [rendererState, setRendererState] = useState<"pending" | "webgl" | "fallback">("pending");
   const reducedMotion = useReducedMotion();
-  const fallback = useMemo(() => orbFallbackBackground(recipe), [recipe]);
+  const icon = typeof size === "number" && size <= 48;
   const dimension = typeof size === "number" ? `${size}px` : size;
   const style = dimension
     ? ({ width: dimension, height: dimension } satisfies CSSProperties)
     : undefined;
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const host = canvasHost.current;
+    if (!host) return;
+    setRendererState("pending");
     try {
-      const renderer = new OrbRenderer(canvas, recipe, {
+      const options: OrbRendererOptions = {
         motion,
         reducedMotion,
-        onContextAvailabilityChange: (available) =>
-          setRendererState(available ? "webgl" : "fallback"),
-      });
+        onContextAvailabilityChange: (available: boolean) => {
+          renderer.canvas.style.opacity = available ? "1" : "0";
+          setRendererState(available ? "webgl" : "fallback");
+        },
+      };
+      const renderer = icon
+        ? OrbRenderer.forIcon(recipe, options)
+        : new OrbRenderer(document.createElement("canvas"), recipe, options);
+      const canvas = renderer.canvas;
+      canvas.className = "absolute inset-0 size-full";
+      canvas.setAttribute("aria-hidden", "true");
+      canvas.style.opacity = "0";
+      host.append(canvas);
+      renderer.resize();
       rendererRef.current = renderer;
       return () => {
-        renderer.destroy();
+        renderer.destroy({ recycle: icon });
+        canvas.remove();
         rendererRef.current = null;
       };
     } catch {
       setRendererState("fallback");
     }
-  }, []);
+  }, [icon]);
 
-  useEffect(() => rendererRef.current?.setRecipe(recipe), [recipe]);
-  useEffect(() => rendererRef.current?.setMotion(motion), [motion]);
-  useEffect(() => rendererRef.current?.setReducedMotion(reducedMotion), [reducedMotion]);
-  useEffect(() => rendererRef.current?.setInteraction(active), [active]);
+  useEffect(() => rendererRef.current?.setRecipe(recipe), [recipe, icon]);
+  useEffect(() => rendererRef.current?.setMotion(motion), [motion, icon]);
+  useEffect(() => rendererRef.current?.setReducedMotion(reducedMotion), [reducedMotion, icon]);
+  useEffect(() => rendererRef.current?.setInteraction(active), [active, icon]);
 
   return (
     <span
@@ -110,24 +124,9 @@ export function ProceduralVibeOrb({
       className={cn("relative block shrink-0 touch-none select-none", className)}
       style={style}
     >
-      <span
-        aria-hidden
-        className="absolute inset-[4.5%] rounded-full shadow-[inset_-0.18em_-0.2em_0.5em_rgb(0_0_0/24%),inset_0.1em_0.12em_0.36em_rgb(255_255_255/32%),0_0.16em_0.5em_rgb(0_0_0/18%)]"
-        style={{ background: fallback, opacity: rendererState === "webgl" ? 0 : 1 }}
-      />
-      <canvas
-        ref={canvasRef}
-        aria-hidden
-        className="absolute inset-0 size-full"
-        style={{ opacity: rendererState === "webgl" ? 1 : 0 }}
-      />
-      {loading ? (
-        <span
-          aria-hidden
-          data-vibe-orb-loading-overlay
-          className="vibe-orb-loading-overlay pointer-events-none absolute inset-[4.5%] rounded-full bg-white"
-        />
-      ) : null}
+      <OrbFallback recipe={recipe} hidden={!fallback || rendererState === "webgl"} />
+      <span ref={canvasHost} aria-hidden className="absolute inset-0 size-full" />
+      {loading ? <OrbLoadingOverlay /> : null}
     </span>
   );
 }

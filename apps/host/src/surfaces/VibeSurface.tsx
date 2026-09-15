@@ -25,6 +25,7 @@ import { useTaskInferenceStatus } from "../queries/taskInferenceStatus.ts";
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
+import { VibeActionsMenu } from "./VibeActionsMenu.tsx";
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const sourceConnectionReturn = useSourceConnectionReturn({
@@ -168,9 +169,9 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       }
       detail={vibe.data?.uri}
       actions={
-        vibe.data && isOwner ? (
+        vibe.data ? (
           <div className="flex items-center gap-2">
-            {confirmDelete ? (
+            {isOwner && confirmDelete ? (
               <>
                 <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
                   Cancel
@@ -184,11 +185,11 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                   {deleteVibe.isPending ? "Deleting…" : "Confirm delete"}
                 </Button>
               </>
-            ) : (
-              <Button variant="secondary" onClick={() => setConfirmDelete(true)}>
-                Delete Vibe
-              </Button>
-            )}
+            ) : null}
+            <VibeActionsMenu
+              uuid={uuid}
+              onDelete={isOwner && !confirmDelete ? () => setConfirmDelete(true) : undefined}
+            />
           </div>
         ) : null
       }

@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Vibe } from "@rnet/types";
 
-import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
+import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 import { useVibes } from "../queries/index.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
@@ -12,27 +12,12 @@ import { StartVibeGlow } from "../ui/StartVibeGlow.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 
 function VibeListItem({ vibe, open }: { vibe: Vibe; open: () => void }) {
-  const [active, setActive] = useState(false);
   const visual = useMemo(() => orbVisualForVibe(vibe), [vibe]);
   return (
-    <li
-      onPointerEnter={() => setActive(true)}
-      onPointerLeave={() => setActive(false)}
-      onFocusCapture={() => setActive(true)}
-      onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setActive(false);
-      }}
-    >
+    <li>
       <EntityRow
-        leading={
-          <ProceduralVibeOrb
-            recipe={visual.recipe}
-            motion="interaction"
-            active={active}
-            loading={visual.loading}
-            size={20}
-          />
-        }
+        className="transition-[background-color,box-shadow] duration-150 hover:bg-surface/40 hover:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] focus-within:bg-surface/40 focus-within:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] motion-reduce:transition-none [&>button]:cursor-pointer"
+        leading={<RasterVibeOrb recipe={visual.recipe} loading={visual.loading} size={20} />}
         title={vibe.title}
         meta={`${vibe.objects.length} objects`}
         selectLabel={`Open Vibe ${vibe.title}`}

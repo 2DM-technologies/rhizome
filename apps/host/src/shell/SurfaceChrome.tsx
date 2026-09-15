@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
 
 import {
@@ -26,9 +26,8 @@ interface SurfaceChromeProps {
 }
 
 /**
- * Geometry for one surface, and nothing else. Navigation replaces the current window by default.
- * When a caller explicitly keeps one open in the background, `hidden` removes it from layout and
- * `inert` from the tab order and accessibility tree while its DOM and scroll position survive.
+ * Geometry for one surface. SurfaceLayer mounts only the focused route; remembered routes
+ * keep their dock shortcuts without retaining a background window tree.
  *
  * Maximized makes the surface itself full-bleed. Equal-and-opposite padding preserves the
  * standard window's content rectangle while the outer edges expand, so maximizing never moves
@@ -137,6 +136,25 @@ export function SurfaceChrome({ surface, active, mode, children }: SurfaceChrome
   }, [active, id, maximized, transitionKey]);
 
   const { close, toggleMaximized } = useSurfaceNavigation();
+  useEffect(() => {
+    if (!active) return;
+    let pending: ReturnType<typeof setTimeout> | undefined;
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented)
+        return;
+      // Let local editors and overlays claim Escape before closing their containing window.
+      clearTimeout(pending);
+      pending = setTimeout(() => {
+        if (!event.defaultPrevented) close(id);
+      }, 0);
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      clearTimeout(pending);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [active, close, id]);
+
   const windowTopBar = (
     <div
       data-window-top-bar

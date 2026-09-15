@@ -3,21 +3,86 @@
  * only the hard-coded stroke and fill colours become `currentColor`, so an icon inherits the
  * tier it is rendered in rather than pinning one tier's palette.
  */
-import type { SVGProps } from "react";
+import { useId, type SVGProps } from "react";
+import appMark from "../assets/brand/app-mark.png";
+// External SVG <use> references must remain file URLs in production.
+import vibesMark from "../assets/brand/vibes-mark.svg?no-inline";
 
 type IconProps = SVGProps<SVGSVGElement>;
 
-/** A new branch unfurls into a four-point spark. */
-export function StartVibeIcon({ width = 19, height = 19, ...props }: IconProps) {
+/** A softly filled sun with eight short rays. */
+export function LightModeIcon({ width = 24, height = 24, ...props }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <circle
+        cx="12"
+        cy="12"
+        r="4"
+        fill="currentColor"
+        fillOpacity="0.08"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
       <path
-        d="M11 21V14M11 17C11 14 13 12 16 11M11 14C5.5 14 3 10.5 3 6C8.5 6 11 9.5 11 14ZM6 9L11 14M17 3L18.4 7.6L23 9L18.4 10.4L17 15L15.6 10.4L11 9L15.6 7.6L17 3Z"
+        d="M12 2V4M12 20V22M2 12H4M20 12H22M4.9 4.9L6.3 6.3M17.7 17.7L19.1 19.1M4.9 19.1L6.3 17.7M17.7 6.3L19.1 4.9"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** A crescent moon with a small four-point star. */
+export function DarkModeIcon({ width = 24, height = 24, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M20.5 13.1A8.5 8.5 0 1 1 10.9 3.5A6.5 6.5 0 0 0 20.5 13.1Z"
+        fill="currentColor"
+        fillOpacity="0.08"
+        stroke="currentColor"
+        strokeWidth="1.5"
         strokeLinejoin="round"
       />
+      <path
+        d="M17.5 2.5L18.3 5.2L21 6L18.3 6.8L17.5 9.5L16.7 6.8L14 6L16.7 5.2L17.5 2.5Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Four purple circle outlines with violet outlined connections and no lettering. */
+export function StartVibeIcon({ width = 19, height = 19, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <use href={`${vibesMark}#vibes-mark`} />
+    </svg>
+  );
+}
+
+/** Rhizome ring mark — Figma 4856:2076, tinted through the original artwork's alpha. */
+export function ImportIcon({ width = 24, height = 24, ...props }: IconProps) {
+  const maskId = useId();
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <defs>
+        <mask
+          id={maskId}
+          maskUnits="userSpaceOnUse"
+          x="0"
+          y="0"
+          width="24"
+          height="24"
+          style={{ maskType: "alpha" }}
+        >
+          <image href={appMark} x="1" y="1" width="22" height="22" />
+        </mask>
+      </defs>
+      <rect width="24" height="24" fill="#333" mask={`url(#${maskId})`} />
     </svg>
   );
 }

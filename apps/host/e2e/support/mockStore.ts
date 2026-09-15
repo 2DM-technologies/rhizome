@@ -135,7 +135,7 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
           }
         : operation.input.task === PUSH_TASKS.vibe["vibe-orb"].name
           ? {
-              version: 2,
+              version: 3,
               seed: operation.vibeId.replaceAll("-", "").slice(0, 32),
               palette: [
                 { color: "#174c66", weight: 0.35 },
@@ -148,7 +148,8 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
                 warp: 0.62,
                 anisotropy: 0.3,
               },
-              energy: 0.55,
+              surface: { depth: 0.6, glow: 0.5 },
+              motion: { drift: 0.5, turbulence: 0.3, spin: 0.2 },
             }
           : { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } };
     vibe.inferred = { ...(vibe.inferred ?? {}), [key]: envelope(taskProperties) };

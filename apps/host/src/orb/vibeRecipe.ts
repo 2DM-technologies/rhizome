@@ -2,7 +2,12 @@ import { storeTaskKey } from "@rhizome/store-contract";
 import type { Vibe } from "@rnet/types";
 
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
-import { ORB_RECIPE_VERSION, normalizeOrbRecipe, type OrbVisualRecipe } from "./recipe.ts";
+import {
+  ORB_RECIPE_VERSION,
+  isOrbCharacter,
+  normalizeOrbRecipe,
+  type OrbVisualRecipe,
+} from "./recipe.ts";
 
 const PRE_INFERENCE_ORB_RECIPE: OrbVisualRecipe = {
   version: ORB_RECIPE_VERSION,
@@ -14,41 +19,19 @@ const PRE_INFERENCE_ORB_RECIPE: OrbVisualRecipe = {
   ],
   contrast: 0.2,
   field: { grain: 0.08, warp: 0.32, anisotropy: 0.18 },
-  energy: 0.45,
+  surface: { depth: 0.5, glow: 0.3 },
+  motion: { drift: 0.3, turbulence: 0.2, spin: 0.2 },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function unit(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
-function scalarGroup(value: unknown, keys: readonly string[]): value is Record<string, number> {
-  return isRecord(value) && keys.every((key) => unit(value[key]));
-}
-
 /** Strictly decode store-authored inference before it reaches WebGL uniforms. */
 export function parseOrbVisualRecipe(value: unknown): OrbVisualRecipe | undefined {
   if (!isRecord(value) || value.version !== ORB_RECIPE_VERSION || typeof value.seed !== "string")
     return;
-  if (
-    !Array.isArray(value.palette) ||
-    value.palette.length < 2 ||
-    value.palette.length > 6 ||
-    !value.palette.every(
-      (stop) =>
-        isRecord(stop) &&
-        typeof stop.color === "string" &&
-        /^#[\da-f]{6}$/iu.test(stop.color) &&
-        unit(stop.weight),
-    ) ||
-    !unit(value.contrast) ||
-    !scalarGroup(value.field, ["grain", "warp", "anisotropy"]) ||
-    !unit(value.energy)
-  )
-    return;
+  if (!isOrbCharacter(value)) return;
   return normalizeOrbRecipe(value as unknown as OrbVisualRecipe);
 }
 
@@ -61,7 +44,8 @@ export function inferredOrbRecipeForVibe(
   vibe: Pick<Vibe, "inferred">,
 ): OrbVisualRecipe | undefined {
   const key = storeTaskKey(PUSH_TASKS.vibe["vibe-orb"].name);
-  return parseOrbVisualRecipe(vibe.inferred?.[key]?.properties);
+  const entry = vibe.inferred?.[key];
+  return entry?.confidence === 0 ? undefined : parseOrbVisualRecipe(entry?.properties);
 }
 
 export function orbVisualForVibe(vibe: Pick<Vibe, "uri" | "inferred">): {

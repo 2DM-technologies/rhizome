@@ -77,7 +77,10 @@ function Tweet({
     if (!tooltip) return;
     const hide = () => setTooltip(null);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") hide();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        hide();
+      }
     };
     window.addEventListener("scroll", hide, true);
     window.addEventListener("resize", hide);

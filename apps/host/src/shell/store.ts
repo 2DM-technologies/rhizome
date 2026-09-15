@@ -19,7 +19,7 @@ import {
  * source of truth and, inevitably, an effect that writes one into the other.
  */
 interface ShellState {
-  /** Open surfaces in dock order. Normally one surface; explicit navigation can preserve more. */
+  /** Reopenable routes in dock order. Only the URL's focused route is mounted. */
   open: Surface[];
   /** Vibe routes opened in this browser session, most recently opened first. */
   recentVibeSurfaces: VibeSurface[];
@@ -37,7 +37,7 @@ interface ShellState {
 }
 
 export interface OpenSurfaceOptions {
-  /** Preserve the existing window set while opening a new surface. */
+  /** Preserve existing dock routes while opening a new surface, without retaining their UI. */
   keepCurrentOpen?: boolean;
 }
 

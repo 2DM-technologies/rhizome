@@ -2,7 +2,8 @@ import type { MediaObject, Vibe } from "@rnet/types";
 import { useEffect, useMemo, useState } from "react";
 
 import { uuidOf } from "../api/uris.ts";
-import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
+import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
+import { ProceduralVibeOrb, useOrbHover, useReducedMotion } from "../orb/ProceduralVibeOrb.tsx";
 import type { OrbVisualRecipe } from "../orb/recipe.ts";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
 import { useMediaElement, usePayloadUrl, useVibeObjects } from "../queries/index.ts";
@@ -144,9 +145,32 @@ function objectSource(object: MediaObject): string {
   return humanize(object.source.ingest.skill ?? object.source.ingest.method);
 }
 
+/** Only the small navigation control subscribes to route changes, not the media-rich card. */
+function DesktopVibeOpenButton({
+  uuid,
+  title,
+  onOpen,
+}: {
+  uuid: string;
+  title: string;
+  onOpen: () => void;
+}) {
+  const navigation = useSurfaceNavigation();
+  return (
+    <button
+      type="button"
+      className="absolute inset-0 z-10 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      aria-label={`Open Vibe ${title}`}
+      onClick={() => {
+        onOpen();
+        navigation.open({ kind: "vibe", uuid });
+      }}
+    />
+  );
+}
+
 /** Compact desktop-only Vibe tile from Figma 5034:1108; intentionally not the shared Card. */
 export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
-  const navigation = useSurfaceNavigation();
   const uuid = uuidOf(vibe.uri);
   const objects = useVibeObjects(uuid);
   const details = objects.data ?? [];
@@ -164,37 +188,64 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
       backgroundSource: orb.loading ? "fallback" : "inferred",
     };
   }, [vibe]);
-  const [orbActive, setOrbActive] = useState(false);
+  const [orbHovered, setOrbHovered] = useState(false);
+  const [orbFocused, setOrbFocused] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const hoverActive = useOrbHover(orbHovered);
+  // Activity preserves the card, but hover/focus must not survive a trip behind a window.
+  useEffect(
+    () => () => {
+      setOrbHovered(false);
+      setOrbFocused(false);
+    },
+    [],
+  );
 
   return (
     <article
       data-desktop-vibe-card
       data-vibe-card-background={visual.backgroundSource}
-      style={{ backgroundColor: visual.backgroundColor }}
-      onPointerEnter={() => setOrbActive(true)}
-      onPointerLeave={() => setOrbActive(false)}
-      onFocusCapture={() => setOrbActive(true)}
+      onPointerEnter={() => setOrbHovered(true)}
+      onPointerLeave={() => setOrbHovered(false)}
+      onFocusCapture={() => setOrbFocused(true)}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOrbActive(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) setOrbFocused(false);
       }}
-      className="group relative h-[102px] min-h-0 min-w-0 overflow-hidden rounded-sm shadow-[0_2px_10px_rgb(20_21_26/4%)]"
+      style={{
+        backgroundColor: `color-mix(in srgb, ${visual.backgroundColor} var(--vibe-card-opacity), transparent)`,
+      }}
+      className="group relative h-[102px] min-h-0 min-w-0 overflow-hidden rounded-sm shadow-[0_2px_10px_rgb(20_21_26/4%)] transition-[background-color,box-shadow] duration-150 [--vibe-card-opacity:92%] hover:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] hover:[--vibe-card-opacity:100%] focus-within:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] focus-within:[--vibe-card-opacity:100%] motion-reduce:transition-none"
     >
-      <button
-        type="button"
-        className="absolute inset-0 z-10 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        aria-label={`Open Vibe ${vibe.title}`}
-        onClick={() => navigation.open({ kind: "vibe", uuid })}
+      <DesktopVibeOpenButton
+        uuid={uuid}
+        title={vibe.title}
+        onOpen={() => {
+          setOrbHovered(false);
+          setOrbFocused(false);
+        }}
       />
 
       <div className="flex h-full min-h-0 min-w-0 flex-col px-2 py-[9px]">
         <div className="flex min-h-0 min-w-0 gap-2">
-          <ProceduralVibeOrb
-            recipe={visual.recipe}
-            motion="interaction"
-            active={orbActive}
-            loading={visual.loading}
-            size={44}
-          />
+          <div className="group/orb relative size-11 shrink-0">
+            <RasterVibeOrb
+              recipe={visual.recipe}
+              loading={visual.loading}
+              size={44}
+              className="group-has-[[data-vibe-orb-renderer=webgl]]/orb:invisible"
+            />
+            {(hoverActive || orbFocused) && !visual.loading && !reducedMotion ? (
+              <div className="pointer-events-none absolute inset-0">
+                <ProceduralVibeOrb
+                  recipe={visual.recipe}
+                  motion="interaction"
+                  active
+                  fallback={false}
+                  size={44}
+                />
+              </div>
+            ) : null}
+          </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-baseline gap-1">
               <h3 className="truncate text-[18px] font-medium leading-[1.05] tracking-[-0.2px] text-primary">

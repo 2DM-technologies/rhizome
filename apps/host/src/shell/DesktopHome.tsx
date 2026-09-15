@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Activity, memo, useEffect, useMemo, useState } from "react";
 
 import developmentUserProfile from "../assets/profile/development-user.jpg";
 import { useDashboardStats, useVibes } from "../queries/index.ts";
@@ -12,6 +12,7 @@ const integer = new Intl.NumberFormat();
 function useMinuteClock(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    setNow(Date.now());
     const interval = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(interval);
   }, []);
@@ -29,8 +30,23 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
   );
 }
 
-/** The linked no-window Figma frame, shown only while the URL names no focused surface. */
-export function DesktopHome() {
+/** Keep a visited desktop's DOM and scroll state, with effects paused behind a window. */
+export function DesktopHome({ visible }: { visible: boolean }) {
+  const [visited, setVisited] = useState(visible);
+  if (visible && !visited) setVisited(true);
+  if (!visible && !visited) return null;
+
+  return (
+    <Activity mode={visible ? "visible" : "hidden"}>
+      <div data-desktop-layer>
+        <DesktopHomeContent />
+      </div>
+    </Activity>
+  );
+}
+
+/** Shell navigation and launcher typing don't rebuild these panels; query updates stay live. */
+const DesktopHomeContent = memo(function DesktopHomeContent() {
   const session = useSession();
   const stats = useDashboardStats();
   const vibes = useVibes();
@@ -88,7 +104,8 @@ export function DesktopHome() {
             My Vibes
             <span aria-hidden className="ml-1 size-1.5 rounded-full bg-accent" />
           </h2>
-          <div className="mt-6 min-h-0 flex-1 overflow-y-auto pr-1">
+          {/* Give outer shadows room inside the scroll clip without shifting the cards. */}
+          <div className="-mx-3 -mb-3 mt-3 min-h-0 flex-1 overflow-y-auto p-3 pr-4">
             {vibes.isPending ? (
               <p className="text-body text-tertiary">Loading Vibes…</p>
             ) : vibes.isError ? (
@@ -109,4 +126,4 @@ export function DesktopHome() {
       </div>
     </main>
   );
-}
+});

@@ -25,6 +25,7 @@ import { PushTaskCatalog, type PushTaskDefinition } from "../src/push/task-catal
 import { compileImportPushPipeline } from "../src/push/import-push-pipeline.ts";
 import { describeMedia } from "../src/push/tasks/element/describe-media/manifest.ts";
 import { summarize } from "../src/push/tasks/vibe/summarize/manifest.ts";
+import { orbIdentity } from "../src/push/tasks/object/orb-identity/manifest.ts";
 import { vibeOrb } from "../src/push/tasks/vibe/vibe-orb/manifest.ts";
 import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
 import { searchKeywords } from "../src/push/tasks/object/search-keywords/manifest.ts";
@@ -74,6 +75,7 @@ describe("push task catalog and static schemas", () => {
       "vibe:vibe-orb",
       "object:display-name",
       "object:search-keywords",
+      "object:orb-identity",
       "element:describe-media",
     ]);
     expect([vibeView, displayName, searchKeywords].map(({ effort }) => effort)).toEqual([
@@ -86,7 +88,7 @@ describe("push task catalog and static schemas", () => {
       outputTokens: { base: 128, perObject: 1024 },
     });
     expect(vibeView.outputTokens).toEqual({ base: 1024, perObject: 0 });
-    expect(vibeOrb.outputTokens).toEqual({ base: 1536, perObject: 0 });
+    expect(vibeOrb.outputTokens).toEqual({ base: 0, perObject: 0 });
     expect(displayName.outputTokens).toEqual({ base: 128, perObject: 64 });
     expect(searchKeywords.outputTokens).toEqual({ base: 128, perObject: 512 });
   });
@@ -104,6 +106,7 @@ describe("push task catalog and static schemas", () => {
   test("compiles source pipelines independently of task registration order", () => {
     const reordered = new PushTaskCatalog([
       vibeOrb,
+      orbIdentity,
       searchKeywords,
       summarize,
       displayName,
@@ -120,6 +123,7 @@ describe("push task catalog and static schemas", () => {
       "object:search-keywords",
       "vibe:summarize",
       "vibe:vibe-view",
+      "object:orb-identity",
       "vibe:vibe-orb",
     ]);
   });

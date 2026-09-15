@@ -19,7 +19,7 @@ async function openImportFromLauncher(page: Page): Promise<void> {
   await page.getByRole("searchbox", { name: "Search everything" }).click();
   await page
     .locator('[data-launcher-section="Commands"]')
-    .getByRole("button", { name: "Import", exact: true })
+    .getByRole("button", { name: "Ingest", exact: true })
     .click();
 }
 
@@ -32,6 +32,17 @@ test("the start-something-new launcher opens a retained import surface", async (
   await expect(page.getByRole("list", { name: "Owned Vibes" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Choose another Vibe" })).toHaveCount(0);
   await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
+  const active = page.locator("[data-dock-app-slot]");
+  const pinned = page
+    .getByRole("region", { name: "Pinned apps", exact: true })
+    .getByRole("button", { name: "Ingest", exact: true });
+  await expect(active).toHaveAttribute("data-present", "true");
+  await expect(active.locator("[data-dock-app-label]")).toHaveText("Ingest");
+  await expect(active.locator("svg")).toBeVisible();
+  await expect(active.locator("svg image")).toHaveAttribute(
+    "href",
+    (await pinned.locator("svg image").getAttribute("href"))!,
+  );
 });
 
 test("the new-Vibe import flow survives surface history", async ({ page }) => {

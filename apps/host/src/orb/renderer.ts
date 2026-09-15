@@ -2,7 +2,7 @@ import {
   MAX_ORB_COLORS,
   ORB_MATERIAL,
   normalizeOrbRecipe,
-  orbMotionForEnergy,
+  orbMotionForCharacter,
   orbSeedVector,
   type OrbVisualRecipe,
 } from "./recipe.ts";
@@ -37,12 +37,10 @@ uniform float u_anisotropy;
 uniform float u_drift;
 uniform float u_turbulence;
 uniform float u_spin;
+uniform float u_depth;
+uniform float u_glow;
 
-const float GLASS_ROUGHNESS = ${ORB_MATERIAL.field.roughness};
-const float GLASS_CELLULARITY = ${ORB_MATERIAL.field.cellularity};
 const float GLASS_GLOSS = ${ORB_MATERIAL.surface.gloss};
-const float GLASS_GLOW = ${ORB_MATERIAL.surface.glow};
-const float GLASS_RIM = ${ORB_MATERIAL.surface.rim};
 const float GLASS_GRAIN = ${ORB_MATERIAL.surface.grainOverlay};
 const float PULSE_AMPLITUDE = ${ORB_MATERIAL.motion.pulseAmplitude};
 const float PULSE_PERIOD = ${ORB_MATERIAL.motion.pulsePeriod};
@@ -56,69 +54,23 @@ float hash31(vec3 point) {
   return fract((point.x + point.y) * point.z);
 }
 
-vec3 hash33(vec3 point) {
-  point = vec3(
-    dot(point, vec3(127.1, 311.7, 74.7)),
-    dot(point, vec3(269.5, 183.3, 246.1)),
-    dot(point, vec3(113.5, 271.9, 124.6))
-  );
-  return fract(sin(point + u_seed.xyz * 19.7) * 43758.5453);
+vec3 rgb_hsv(vec3 c) {
+  vec4 k = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, k.wz), vec4(c.gb, k.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + 1.0e-10)), d / (q.x + 1.0e-10), q.x);
 }
 
-float value_noise(vec3 point) {
-  vec3 cell = floor(point);
-  vec3 local = fract(point);
-  vec3 curve = local * local * (3.0 - 2.0 * local);
-
-  float n000 = hash31(cell + vec3(0.0, 0.0, 0.0));
-  float n100 = hash31(cell + vec3(1.0, 0.0, 0.0));
-  float n010 = hash31(cell + vec3(0.0, 1.0, 0.0));
-  float n110 = hash31(cell + vec3(1.0, 1.0, 0.0));
-  float n001 = hash31(cell + vec3(0.0, 0.0, 1.0));
-  float n101 = hash31(cell + vec3(1.0, 0.0, 1.0));
-  float n011 = hash31(cell + vec3(0.0, 1.0, 1.0));
-  float n111 = hash31(cell + vec3(1.0, 1.0, 1.0));
-
-  return mix(
-    mix(mix(n000, n100, curve.x), mix(n010, n110, curve.x), curve.y),
-    mix(mix(n001, n101, curve.x), mix(n011, n111, curve.x), curve.y),
-    curve.z
-  );
+vec3 hsv_rgb(vec3 c) {
+  vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+  return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
 }
 
-float fbm(vec3 point) {
-  float value = 0.0;
-  float total = 0.0;
-  float amplitude = 0.52;
-  mat3 rotation = mat3(
-    0.00, 0.80, 0.60,
-    -0.80, 0.36, -0.48,
-    -0.60, -0.48, 0.64
-  );
-  for (int octave = 0; octave < 5; octave++) {
-    value += amplitude * value_noise(point);
-    total += amplitude;
-    point = rotation * point * 2.03 + vec3(7.7, 2.3, 5.1);
-    amplitude *= mix(0.18, 0.52, GLASS_ROUGHNESS);
-  }
-  return value / total;
-}
-
-float cellular(vec3 point) {
-  vec3 cell = floor(point);
-  vec3 local = fract(point);
-  float nearest = 10.0;
-  for (int z = -1; z <= 1; z++) {
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        vec3 neighbor = vec3(float(x), float(y), float(z));
-        vec3 feature = hash33(cell + neighbor);
-        feature = 0.5 + 0.5 * sin(TAU * feature + u_time * u_turbulence * 0.16);
-        nearest = min(nearest, length(neighbor + feature - local));
-      }
-    }
-  }
-  return nearest;
+vec3 color_blend(vec3 a, vec3 b, float t) {
+  vec3 ah = rgb_hsv(a), bh = rgb_hsv(b);
+  float arc = fract(bh.x - ah.x + 0.5) - 0.5;
+  return hsv_rgb(vec3(ah.x + arc * t, mix(ah.yz, bh.yz, t)));
 }
 
 vec3 palette_color(float position) {
@@ -128,11 +80,11 @@ vec3 palette_color(float position) {
   }
 
   float cursor = max(u_weights[0], 0.0001) / total;
-  float softness = mix(0.24, 0.025, u_contrast);
+  float softness = mix(0.3, 0.085, u_contrast);
   vec3 color = u_colors[0];
   for (int index = 1; index < 6; index++) {
     if (index < u_color_count) {
-      color = mix(color, u_colors[index], smoothstep(cursor - softness, cursor + softness, position));
+      color = color_blend(color, u_colors[index], smoothstep(cursor - softness, cursor + softness, position));
       cursor += max(u_weights[index], 0.0001) / total;
     }
   }
@@ -164,53 +116,40 @@ void main() {
   // Bend the view into the sphere; the color lives below a smooth, stationary shell.
   vec3 view_ray = vec3(0.0, 0.0, -1.0);
   vec3 transmitted = refract(view_ray, normal, 1.0 / 1.46);
-  vec3 interior = normal + transmitted * sphere_z * mix(0.65, 1.35, GLASS_GLOSS);
-  float spin_angle = (u_seed.x - 0.5) * 1.8 + u_time * u_spin * 0.1;
+  vec3 interior = normal + transmitted * sphere_z * mix(0.35, 1.5, u_depth);
+  float spin_angle = u_time * u_spin * 0.28;
   interior.xz = rotate_2d(spin_angle) * interior.xz;
-  interior.xy = rotate_2d((u_seed.y - 0.5) * 2.4) * interior.xy;
-  vec3 field_point = interior;
-  field_point.xy *= vec2(
-    mix(0.58, 1.72, u_anisotropy),
-    mix(1.58, 0.72, u_anisotropy)
-  );
-  field_point *= mix(1.1, 4.8, u_grain);
-  field_point += (u_seed.xyz - 0.5) * 13.0;
+  interior.xy = rotate_2d(u_seed.y * TAU) * interior.xy;
 
-  float time = u_time * u_drift * 0.14;
-  float deformation_time = u_time * u_turbulence * 0.12;
-  vec3 flow = vec3(
-    fbm(field_point + vec3(deformation_time, 0.0, -deformation_time * 0.4)),
-    fbm(field_point + vec3(8.3, -deformation_time * 0.7, deformation_time * 0.5)),
-    fbm(field_point + vec3(-5.1, deformation_time * 0.45, 4.7))
-  ) - 0.5;
-  field_point += flow * u_warp * 1.8;
+  // Broad analytic pools and ribbons avoid the high-frequency noise of a planet surface.
+  vec2 field_point = interior.xy * mix(1.2, 3.2, u_grain);
+  float time = u_time * u_drift * 0.35;
+  float deformation = u_time * u_turbulence * 0.3;
+  float phase = u_seed.x * TAU;
+  float twist = (1.0 - dot(interior.xy, interior.xy)) * u_warp * 2.8;
+  field_point = rotate_2d(twist) * field_point;
+  field_point += vec2(
+    sin(field_point.y * 1.2 + phase + deformation),
+    cos(field_point.x * 1.1 - phase - deformation * 0.7)
+  ) * u_warp * 0.65;
+  field_point += (u_pointer - sphere_point) * REACTIVITY * u_energy * 0.7;
 
-  vec2 pointer_pull = (u_pointer - sphere_point) * REACTIVITY * u_energy;
-  field_point.xy += pointer_pull * 0.8;
-  field_point.z += u_energy * u_turbulence * 0.4;
-
-  float cloudy = fbm(field_point + vec3(0.0, 0.0, time));
-  float back_cloud = fbm(field_point * 0.72 + transmitted * 1.6 + vec3(3.1, 0.0, time));
-  float cells = cloudy;
-  if (GLASS_CELLULARITY > 0.01) {
-    cells = 1.0 - smoothstep(0.08, 0.82, cellular(field_point * 1.16));
-  }
-  float texture = mix(cloudy, cells, GLASS_CELLULARITY * 0.65);
-  texture += sin((interior.x + interior.y * 0.7) * 3.0 + flow.z * 2.0) * u_anisotropy * 0.08;
-  texture = clamp((texture - 0.5) * 2.25 + 0.5 + (u_seed.w - 0.5) * 0.12, 0.0, 1.0);
-
+  float pools = 0.5 + sin(field_point.x * 1.45 + time + phase) * 0.29
+    + cos(field_point.y * 1.35 - time * 0.6 + u_seed.z * TAU) * 0.22;
+  float ribbons = 0.5 + sin(field_point.y * 2.2 + sin(field_point.x + deformation) * u_warp * 1.8 + phase + time) * 0.47;
+  float texture = clamp(mix(pools, ribbons, u_anisotropy), 0.0, 1.0);
   vec3 color = palette_color(texture);
-  vec3 depth_color = palette_color(clamp((back_cloud - 0.5) * 2.0 + 0.5, 0.0, 1.0));
-  color = mix(color, depth_color, sphere_z * GLASS_GLOSS * 0.24);
+  vec3 depth_color = palette_color(clamp(texture + sin(interior.z * 2.0 + phase) * 0.16, 0.0, 1.0));
+  color = color_blend(color, depth_color, sphere_z * u_depth * 0.16);
 
   // A darker inner edge and a bright Fresnel lip give the glass visible thickness.
   float facing = max(sphere_z, 0.0);
   float fresnel = pow(1.0 - facing, 3.0);
   float inner_edge = exp(-pow((facing - 0.3) / 0.17, 2.0));
-  color *= 0.78 + 0.22 * facing - inner_edge * GLASS_GLOSS * 0.18;
-  color += color * pow(facing, 1.8) * GLASS_GLOW * 0.22;
-  vec3 edge_color = mix(depth_color, vec3(0.94, 0.97, 1.0), 0.72);
-  color = mix(color, edge_color, fresnel * mix(0.18, 0.88, GLASS_RIM));
+  color *= 0.78 + 0.22 * facing - inner_edge * u_depth * 0.16;
+  color += color * pow(facing, 1.8) * u_glow * 0.3;
+  vec3 edge_color = mix(depth_color, vec3(0.94, 0.97, 1.0), 0.38);
+  color = mix(color, edge_color, fresnel * mix(0.3, 0.8, u_depth));
 
   // Fixed studio reflections stay coherent as the suspended color slowly moves.
   vec3 reflected = reflect(view_ray, normal);
@@ -237,6 +176,8 @@ export type OrbMotionMode = "continuous" | "interaction" | "still";
 export interface OrbRendererOptions {
   motion?: OrbMotionMode;
   reducedMotion?: boolean;
+  maxFps?: number;
+  maxPixelRatio?: number;
   onContextAvailabilityChange?: (available: boolean) => void;
 }
 
@@ -248,6 +189,8 @@ const SCALAR_UNIFORMS = [
   ["u_drift", 4],
   ["u_turbulence", 5],
   ["u_spin", 6],
+  ["u_depth", 7],
+  ["u_glow", 8],
 ] as const;
 
 interface FlatRecipe {
@@ -268,7 +211,7 @@ function rgb(hex: string): readonly [number, number, number] {
 
 function flattenRecipe(input: OrbVisualRecipe): FlatRecipe {
   const recipe = normalizeOrbRecipe(input);
-  const motion = orbMotionForEnergy(recipe.energy);
+  const motion = orbMotionForCharacter(recipe.motion);
   const colors = new Float32Array(MAX_ORB_COLORS * 3);
   const weights = new Float32Array(MAX_ORB_COLORS);
   recipe.palette.forEach(({ color, weight }, index) => {
@@ -292,6 +235,8 @@ function flattenRecipe(input: OrbVisualRecipe): FlatRecipe {
       motion.drift,
       motion.turbulence,
       motion.spin,
+      recipe.surface.depth,
+      recipe.surface.glow,
     ]),
   };
 }
@@ -356,38 +301,19 @@ function location(gl: WebGL2RenderingContext, program: WebGLProgram, name: strin
   return value;
 }
 
-/** Owns one canvas and one WebGL program. Programs are never assumed to cross context boundaries. */
-export class OrbRenderer {
-  readonly canvas: HTMLCanvasElement;
-  private readonly gl: WebGL2RenderingContext;
-  private program: WebGLProgram;
-  private buffer: WebGLBuffer;
-  private uniforms: Record<string, WebGLUniformLocation>;
-  private current: FlatRecipe;
-  private transitionFrom: FlatRecipe;
-  private target: FlatRecipe;
-  private transitionStarted = 0;
-  private transitionDuration = 0;
-  private motion: OrbMotionMode;
-  private reducedMotion: boolean;
-  private visible = true;
-  private interacting = false;
-  private contextLost = false;
-  private frame: number | undefined;
-  private startedAt = performance.now();
-  private lastFrame = this.startedAt;
-  private pointer = { x: 0, y: 0, vx: 0, vy: 0, targetX: 0, targetY: 0 };
-  private energy = 0;
-  private resizeObserver: ResizeObserver;
-  private intersectionObserver: IntersectionObserver | undefined;
-  private readonly onContextAvailabilityChange?: (available: boolean) => void;
+const contextReleaseTimers = new WeakMap<HTMLCanvasElement, ReturnType<typeof setTimeout>>();
 
-  constructor(
-    canvas: HTMLCanvasElement,
-    recipe: OrbVisualRecipe,
-    options: OrbRendererOptions = {},
-  ) {
-    this.canvas = canvas;
+/** Shared draw path for live animation and detached thumbnail rendering. */
+class OrbPainter {
+  readonly gl: WebGL2RenderingContext;
+  private program!: WebGLProgram;
+  private buffer!: WebGLBuffer;
+  private uniforms!: Record<string, WebGLUniformLocation>;
+  private lastRecipe: FlatRecipe | undefined;
+
+  constructor(readonly canvas: HTMLCanvasElement) {
+    clearTimeout(contextReleaseTimers.get(canvas));
+    contextReleaseTimers.delete(canvas);
     const gl = canvas.getContext("webgl2", {
       alpha: true,
       antialias: true,
@@ -397,39 +323,17 @@ export class OrbRenderer {
     });
     if (!gl) throw new Error("WebGL2 is unavailable");
     this.gl = gl;
-    this.program = createProgram(gl);
-    const buffer = gl.createBuffer();
-    if (!buffer) throw new Error("Could not create the Vibe orb geometry");
-    this.buffer = buffer;
-    this.uniforms = this.resolveUniforms();
-    this.current = flattenRecipe(recipe);
-    this.transitionFrom = this.current;
-    this.target = this.current;
-    this.motion = options.motion ?? "continuous";
-    this.reducedMotion = options.reducedMotion ?? false;
-    this.onContextAvailabilityChange = options.onContextAvailabilityChange;
-
-    this.initializeGeometry();
-    this.resizeObserver = new ResizeObserver(this.handleResize);
-    this.resizeObserver.observe(canvas);
-    if (typeof IntersectionObserver !== "undefined") {
-      this.intersectionObserver = new IntersectionObserver(([entry]) => {
-        this.visible = entry?.isIntersecting ?? true;
-        this.updateSchedule();
-      });
-      this.intersectionObserver.observe(canvas);
+    try {
+      this.program = createProgram(gl);
+      const buffer = gl.createBuffer();
+      if (!buffer) throw new Error("Could not create the Vibe orb geometry");
+      this.buffer = buffer;
+      this.uniforms = this.resolveUniforms();
+      this.initializeGeometry();
+    } catch (error) {
+      this.destroy();
+      throw error;
     }
-
-    canvas.addEventListener("pointerenter", this.handlePointerEnter);
-    canvas.addEventListener("pointermove", this.handlePointerMove);
-    canvas.addEventListener("pointerleave", this.handlePointerLeave);
-    canvas.addEventListener("pointerdown", this.handlePointerDown);
-    canvas.addEventListener("webglcontextlost", this.handleContextLost);
-    canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
-    document.addEventListener("visibilitychange", this.handleVisibilityChange);
-    this.handleResize();
-    this.onContextAvailabilityChange?.(true);
-    this.updateSchedule();
   }
 
   private resolveUniforms(): Record<string, WebGLUniformLocation> {
@@ -464,18 +368,211 @@ export class OrbRenderer {
     gl.clearColor(0, 0, 0, 0);
   }
 
+  draw(recipe: FlatRecipe, time: number, pointerX = 0, pointerY = 0, energy = 0) {
+    const gl = this.gl;
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.program);
+    gl.uniform2f(this.uniforms.u_resolution!, this.canvas.width, this.canvas.height);
+    gl.uniform1f(this.uniforms.u_time!, time);
+    gl.uniform2f(this.uniforms.u_pointer!, pointerX, pointerY);
+    gl.uniform1f(this.uniforms.u_energy!, energy);
+    if (this.lastRecipe !== recipe) {
+      gl.uniform4fv(this.uniforms.u_seed!, recipe.seed);
+      gl.uniform3fv(this.uniforms["u_colors[0]"]!, recipe.colors);
+      gl.uniform1fv(this.uniforms["u_weights[0]"]!, recipe.weights);
+      gl.uniform1i(this.uniforms.u_color_count!, recipe.colorCount);
+      SCALAR_UNIFORMS.forEach(([name, index]) => {
+        const uniform = this.uniforms[name];
+        if (uniform) gl.uniform1f(uniform, recipe.scalars[index] ?? 0);
+      });
+      this.lastRecipe = recipe;
+    }
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+
+  destroy() {
+    if (this.buffer) this.gl.deleteBuffer(this.buffer);
+    if (this.program) this.gl.deleteProgram(this.program);
+    // React StrictMode may immediately set up this same canvas again. Release an abandoned
+    // context on the next task, while allowing that synchronous setup to cancel the release.
+    clearTimeout(contextReleaseTimers.get(this.canvas));
+    contextReleaseTimers.set(
+      this.canvas,
+      setTimeout(() => {
+        contextReleaseTimers.delete(this.canvas);
+        this.gl.getExtension("WEBGL_lose_context")?.loseContext();
+      }, 0),
+    );
+  }
+}
+
+// Retain at most two detached icon canvases and their compiled programs. These have no renderer,
+// animation loop, observers, or React tree while idle, and are released after a short idle period.
+const idlePainters: { painter: OrbPainter; timer: ReturnType<typeof setTimeout> }[] = [];
+
+function takeIdlePainter(): OrbPainter | undefined {
+  while (idlePainters.length) {
+    const entry = idlePainters.pop()!;
+    clearTimeout(entry.timer);
+    if (!entry.painter.gl.isContextLost()) return entry.painter;
+    entry.painter.destroy();
+  }
+}
+
+function recyclePainter(painter: OrbPainter) {
+  const entry = {
+    painter,
+    timer: setTimeout(() => {
+      const index = idlePainters.indexOf(entry);
+      if (index !== -1) idlePainters.splice(index, 1);
+      painter.destroy();
+    }, 30_000),
+  };
+  idlePainters.push(entry);
+  if (idlePainters.length > 2) {
+    const oldest = idlePainters.shift()!;
+    clearTimeout(oldest.timer);
+    oldest.painter.destroy();
+  }
+}
+
+function clearIdlePainters() {
+  for (const entry of idlePainters.splice(0)) {
+    clearTimeout(entry.timer);
+    entry.painter.destroy();
+  }
+}
+
+if (typeof window !== "undefined") window.addEventListener("pagehide", clearIdlePainters);
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    window.removeEventListener("pagehide", clearIdlePainters);
+    clearIdlePainters();
+  });
+}
+
+/** No DOM observers, input listeners, or animation loop. Callers serialize captures. */
+export class OrbRasterizer {
+  private readonly canvas = document.createElement("canvas");
+  private readonly painter = new OrbPainter(this.canvas);
+
+  render(recipe: OrbVisualRecipe, size: number): Promise<Blob> {
+    this.canvas.width = size;
+    this.canvas.height = size;
+    if (this.painter.gl.isContextLost()) throw new Error("Orb rendering context was lost");
+    this.painter.draw(flattenRecipe(recipe), 0);
+    // Snapshot in the same task as draw(), before the browser discards its drawing buffer.
+    return new Promise((resolve, reject) => {
+      this.canvas.toBlob((blob) => {
+        if (blob && !this.painter.gl.isContextLost()) resolve(blob);
+        else reject(new Error("Could not capture the Vibe orb"));
+      }, "image/png");
+    });
+  }
+
+  destroy() {
+    this.painter.destroy();
+  }
+}
+
+/** Owns one canvas and one WebGL program. Programs are never assumed to cross context boundaries. */
+export class OrbRenderer {
+  readonly canvas: HTMLCanvasElement;
+  private painter: OrbPainter;
+  private current: FlatRecipe;
+  private transitionFrom: FlatRecipe;
+  private target: FlatRecipe;
+  private transitionStarted = 0;
+  private transitionDuration = 0;
+  private motion: OrbMotionMode;
+  private reducedMotion: boolean;
+  private visible = true;
+  private interacting = false;
+  private contextLost = false;
+  private destroyed = false;
+  private ready = false;
+  private frame: number | undefined;
+  private startedAt = performance.now();
+  private lastFrame = this.startedAt;
+  private lastDraw = Number.NEGATIVE_INFINITY;
+  private readonly frameInterval: number;
+  private readonly maxPixelRatio: number;
+  private recipeKey: string;
+  private pointer = { x: 0, y: 0, vx: 0, vy: 0, targetX: 0, targetY: 0 };
+  private energy = 0;
+  private resizeObserver: ResizeObserver;
+  private intersectionObserver: IntersectionObserver | undefined;
+  private readonly onContextAvailabilityChange?: (available: boolean) => void;
+
+  constructor(
+    canvas: HTMLCanvasElement,
+    recipe: OrbVisualRecipe,
+    options: OrbRendererOptions = {},
+    painter?: OrbPainter,
+  ) {
+    this.canvas = canvas;
+    this.painter = painter ?? new OrbPainter(canvas);
+    this.recipeKey = JSON.stringify(normalizeOrbRecipe(recipe));
+    this.current = flattenRecipe(recipe);
+    this.transitionFrom = this.current;
+    this.target = this.current;
+    this.motion = options.motion ?? "continuous";
+    this.reducedMotion = options.reducedMotion ?? false;
+    this.frameInterval = 1000 / Math.max(1, options.maxFps ?? 60);
+    this.maxPixelRatio = Math.max(1, options.maxPixelRatio ?? 2);
+    this.onContextAvailabilityChange = options.onContextAvailabilityChange;
+
+    this.resizeObserver = new ResizeObserver(this.handleResize);
+    this.resizeObserver.observe(canvas);
+    if (typeof IntersectionObserver !== "undefined") {
+      this.intersectionObserver = new IntersectionObserver(([entry]) => {
+        this.visible = entry?.isIntersecting ?? true;
+        this.updateSchedule();
+      });
+      this.intersectionObserver.observe(canvas);
+    }
+
+    canvas.addEventListener("pointerenter", this.handlePointerEnter);
+    canvas.addEventListener("pointermove", this.handlePointerMove);
+    canvas.addEventListener("pointerleave", this.handlePointerLeave);
+    canvas.addEventListener("pointerdown", this.handlePointerDown);
+    canvas.addEventListener("webglcontextlost", this.handleContextLost);
+    canvas.addEventListener("webglcontextrestored", this.handleContextRestored);
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
+    this.handleResize();
+    this.updateSchedule();
+  }
+
+  /** Acquire reusable graphics resources, with fresh interaction state for the new icon. */
+  static forIcon(recipe: OrbVisualRecipe, options: OrbRendererOptions = {}): OrbRenderer {
+    const painter = takeIdlePainter();
+    const canvas = painter?.canvas ?? document.createElement("canvas");
+    return new OrbRenderer(canvas, recipe, { ...options, maxFps: 30, maxPixelRatio: 1.5 }, painter);
+  }
+
+  /** Refresh after an imperative mount or moving a recycled canvas into its new container. */
+  resize() {
+    this.handleResize();
+  }
+
   setRecipe(recipe: OrbVisualRecipe, transitionMs = 900) {
+    const key = JSON.stringify(normalizeOrbRecipe(recipe));
+    if (key === this.recipeKey) return;
+    this.recipeKey = key;
     const now = performance.now();
     this.current = this.sampleRecipe(now);
     this.transitionFrom = this.current;
     this.target = flattenRecipe(recipe);
     this.transitionStarted = now;
-    this.transitionDuration = this.reducedMotion ? 0 : Math.max(0, transitionMs);
+    this.transitionDuration =
+      this.reducedMotion || this.motion === "still" ? 0 : Math.max(0, transitionMs);
     this.updateSchedule();
   }
 
   setMotion(motion: OrbMotionMode) {
     this.motion = motion;
+    if (motion === "still") this.transitionDuration = 0;
     this.updateSchedule();
   }
 
@@ -503,20 +600,33 @@ export class OrbRenderer {
   private sampleRecipe(now: number): FlatRecipe {
     if (this.transitionDuration === 0) return this.target;
     const progress = Math.min(1, (now - this.transitionStarted) / this.transitionDuration);
+    if (progress >= 1) {
+      this.transitionDuration = 0;
+      this.transitionFrom = this.target;
+      return this.target;
+    }
     const eased = 1 - Math.pow(1 - progress, 3);
     return mixRecipe(this.transitionFrom, this.target, eased);
   }
 
-  private readonly handleResize = () => {
-    const bounds = this.canvas.getBoundingClientRect();
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    const width = Math.max(1, Math.round(bounds.width * pixelRatio));
-    const height = Math.max(1, Math.round(bounds.height * pixelRatio));
+  private readonly handleResize = (entries?: ResizeObserverEntry[]) => {
+    // A borrowed canvas has no layout until it is attached. Keep its existing drawing buffer
+    // instead of reallocating it to 1×1 and immediately back to icon size on every hover.
+    if (this.destroyed || !this.canvas.isConnected) return;
+    // Dock opening scales an ancestor. Its screen-space rect can be only a few pixels wide,
+    // and transforms don't trigger a later layout resize. Size the buffer from the content box.
+    const bounds = entries?.[0]?.contentRect;
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, this.maxPixelRatio);
+    const width = Math.max(1, Math.round((bounds?.width ?? this.canvas.clientWidth) * pixelRatio));
+    const height = Math.max(
+      1,
+      Math.round((bounds?.height ?? this.canvas.clientHeight) * pixelRatio),
+    );
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
     }
-    this.render(performance.now());
+    this.updateSchedule();
   };
 
   private readonly handlePointerEnter = () => {
@@ -549,6 +659,7 @@ export class OrbRenderer {
   private readonly handleContextLost = (event: Event) => {
     event.preventDefault();
     this.contextLost = true;
+    this.ready = false;
     this.canvas.dataset.vibeOrbAnimating = "false";
     if (this.frame !== undefined) cancelAnimationFrame(this.frame);
     this.frame = undefined;
@@ -557,14 +668,8 @@ export class OrbRenderer {
 
   private readonly handleContextRestored = () => {
     try {
-      this.program = createProgram(this.gl);
-      const buffer = this.gl.createBuffer();
-      if (!buffer) throw new Error("Could not restore the Vibe orb geometry");
-      this.buffer = buffer;
-      this.uniforms = this.resolveUniforms();
-      this.initializeGeometry();
+      this.painter = new OrbPainter(this.canvas);
       this.contextLost = false;
-      this.onContextAvailabilityChange?.(true);
       this.handleResize();
       this.updateSchedule();
     } catch {
@@ -587,16 +692,24 @@ export class OrbRenderer {
     );
   }
 
+  private canRender(): boolean {
+    return (
+      !this.destroyed &&
+      !this.contextLost &&
+      this.canvas.isConnected &&
+      this.visible &&
+      !document.hidden
+    );
+  }
+
   private updateSchedule() {
-    if (this.contextLost) return;
     const now = performance.now();
-    this.render(now);
-    const animate = this.shouldAnimate(now);
+    const animate = this.canRender() && this.shouldAnimate(now);
     this.canvas.dataset.vibeOrbAnimating = String(animate);
-    if (animate && this.frame === undefined) {
+    if (this.canRender() && this.frame === undefined) {
       this.lastFrame = now;
       this.frame = requestAnimationFrame(this.tick);
-    } else if (!this.shouldAnimate(now) && this.frame !== undefined) {
+    } else if (!this.canRender() && this.frame !== undefined) {
       cancelAnimationFrame(this.frame);
       this.frame = undefined;
     }
@@ -604,6 +717,15 @@ export class OrbRenderer {
 
   private readonly tick = (now: number) => {
     this.frame = undefined;
+    if (!this.canRender()) {
+      this.canvas.dataset.vibeOrbAnimating = "false";
+      return;
+    }
+    // Event bursts only invalidate the next frame. Small icons also skip excess display frames.
+    if (now - this.lastDraw < this.frameInterval - 0.5) {
+      this.frame = requestAnimationFrame(this.tick);
+      return;
+    }
     const delta = Math.min(0.05, Math.max(0.001, (now - this.lastFrame) / 1000));
     this.lastFrame = now;
     const viscosity = ORB_MATERIAL.response.viscosity;
@@ -619,6 +741,7 @@ export class OrbRenderer {
     const decay = Math.exp(-delta * (1.4 + (1 - ORB_MATERIAL.response.settle) * 5.6));
     this.energy = hoverFloor + (this.energy - hoverFloor) * decay;
     this.render(now);
+    this.lastDraw = now;
     if (this.shouldAnimate(now)) this.frame = requestAnimationFrame(this.tick);
     else this.canvas.dataset.vibeOrbAnimating = "false";
   };
@@ -626,29 +749,23 @@ export class OrbRenderer {
   private render(now: number) {
     if (this.contextLost || !this.canvas.width || !this.canvas.height) return;
     this.current = this.sampleRecipe(now);
-    const recipe = this.current;
-    const gl = this.gl;
-
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(this.program);
-    gl.uniform2f(this.uniforms.u_resolution!, this.canvas.width, this.canvas.height);
-    const elapsed = this.reducedMotion ? 0 : (now - this.startedAt) / 1000;
-    gl.uniform1f(this.uniforms.u_time!, elapsed);
-    gl.uniform4fv(this.uniforms.u_seed!, recipe.seed);
-    gl.uniform2f(this.uniforms.u_pointer!, this.pointer.x, this.pointer.y);
-    gl.uniform1f(this.uniforms.u_energy!, this.energy);
-    gl.uniform3fv(this.uniforms["u_colors[0]"]!, recipe.colors);
-    gl.uniform1fv(this.uniforms["u_weights[0]"]!, recipe.weights);
-    gl.uniform1i(this.uniforms.u_color_count!, recipe.colorCount);
-    SCALAR_UNIFORMS.forEach(([name, index]) => {
-      const uniform = this.uniforms[name];
-      if (uniform) gl.uniform1f(uniform, recipe.scalars[index] ?? 0);
-    });
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    const frozen = this.reducedMotion || this.motion === "still";
+    this.painter.draw(
+      this.current,
+      frozen ? 0 : (now - this.startedAt) / 1000,
+      frozen ? 0 : this.pointer.x,
+      frozen ? 0 : this.pointer.y,
+      frozen ? 0 : this.energy,
+    );
+    if (!this.ready) {
+      this.ready = true;
+      this.onContextAvailabilityChange?.(true);
+    }
   }
 
-  destroy() {
+  destroy({ recycle = false }: { recycle?: boolean } = {}) {
+    if (this.destroyed) return;
+    this.destroyed = true;
     if (this.frame !== undefined) cancelAnimationFrame(this.frame);
     this.canvas.dataset.vibeOrbAnimating = "false";
     this.resizeObserver.disconnect();
@@ -660,8 +777,11 @@ export class OrbRenderer {
     this.canvas.removeEventListener("webglcontextlost", this.handleContextLost);
     this.canvas.removeEventListener("webglcontextrestored", this.handleContextRestored);
     document.removeEventListener("visibilitychange", this.handleVisibilityChange);
-    this.gl.deleteBuffer(this.buffer);
-    this.gl.deleteProgram(this.program);
+    if (recycle && !this.contextLost && !this.painter.gl.isContextLost()) {
+      recyclePainter(this.painter);
+    } else {
+      this.painter.destroy();
+    }
   }
 }
 

@@ -164,7 +164,7 @@ export const DockBento: Story = {
                           items: (
                             <>
                               <LauncherItem label="Open Vibes" icon="⌘" />
-                              <LauncherItem label="Show Desktop" icon="⌘" />
+                              <LauncherItem label="Dark Mode" icon="⌘" />
                             </>
                           ),
                         },
@@ -215,7 +215,7 @@ export const Launcher: Story = {
                 items: (
                   <>
                     <LauncherItem label="Open Vibes" icon="⌘" />
-                    <LauncherItem label="Show Desktop" icon="⌘" />
+                    <LauncherItem label="Dark Mode" icon="⌘" />
                   </>
                 ),
               },

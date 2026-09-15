@@ -1,29 +1,16 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "version",
-    "seed",
-    "palette",
-    "contrast",
-    "field",
-    "confidence",
-    "surface",
-    "motion"
-  ],
+  "required": ["version", "palette", "contrast", "field", "confidence", "surface", "motion"],
   "properties": {
     "version": {
       "type": "integer",
-      "const": 3
-    },
-    "seed": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{32}$"
+      "const": 1
     },
     "palette": {
       "type": "array",
-      "minItems": 3,
-      "maxItems": 6,
+      "minItems": 2,
+      "maxItems": 3,
       "items": {
         "type": "object",
         "additionalProperties": false,

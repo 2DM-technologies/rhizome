@@ -51,7 +51,7 @@ export interface SurfaceNavigation {
       origin: Element | null;
       source: DockTransitionSource;
       mode?: ViewMode;
-      /** Preserve the current window instead of replacing it with this surface. */
+      /** Keep the current route available in the dock; its window still unmounts. */
       keepCurrentOpen?: boolean;
     },
   ) => void;
@@ -65,7 +65,7 @@ export interface SurfaceOpenOptions {
   mode?: ViewMode;
   /** Surface-specific search parameters. Presentation mode is merged in by the shell. */
   search?: Readonly<Record<string, string>>;
-  /** Preserve the current window instead of replacing it with this surface. */
+  /** Keep the current route available in the dock; its window still unmounts. */
   keepCurrentOpen?: boolean;
 }
 
@@ -98,7 +98,7 @@ export function useSurfaceNavigation(): SurfaceNavigation {
   return {
     home: ({ origin = null, source = "home" } = {}) => {
       if (focused) {
-        // Showing the desktop hides this mounted window; preserve its exact presentation for
+        // Showing the desktop unmounts the window; remember its exact presentation for
         // the next Home click instead of applying the default from some earlier surface.
         setDefaultViewMode(mode);
         navigate("/");
@@ -149,7 +149,9 @@ export function useSurfaceNavigation(): SurfaceNavigation {
       closeSurface(id);
       // The only place the store drives a navigation, and it is a direct user action rather
       // than a reactive effect — which is what keeps it from becoming a loop.
-      if (focused && surfaceId(focused) === id) navigate("/");
+      // Reveal the desktop in the same commit that removes the window. A deferred route
+      // update leaves one frame with neither surface visible.
+      if (focused && surfaceId(focused) === id) void navigate("/", { flushSync: true });
     },
 
     toggleMaximized: () => {

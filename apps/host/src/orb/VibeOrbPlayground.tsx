@@ -3,11 +3,13 @@ import { useState } from "react";
 import { ProceduralVibeOrb } from "./ProceduralVibeOrb.tsx";
 import {
   ORB_PRESETS,
+  composeVibeOrb,
   normalizeOrbRecipe,
   type OrbPresetName,
   type OrbVisualRecipe,
 } from "./recipe.ts";
 import type { OrbMotionMode } from "./renderer.ts";
+import { fallbackOrbRecipe } from "./vibeRecipe.ts";
 
 interface ScalarControl {
   label: string;
@@ -17,7 +19,7 @@ interface ScalarControl {
 
 const FIELD_CONTROLS: ScalarControl[] = [
   {
-    label: "Grain",
+    label: "Pattern scale",
     read: ({ field }) => field.grain,
     write: (recipe, grain) => ({ ...recipe, field: { ...recipe.field, grain } }),
   },
@@ -29,17 +31,39 @@ const FIELD_CONTROLS: ScalarControl[] = [
   },
 
   {
-    label: "Anisotropy",
+    label: "Ribbons",
     read: ({ field }) => field.anisotropy,
     write: (recipe, anisotropy) => ({ ...recipe, field: { ...recipe.field, anisotropy } }),
   },
 ];
 
+const SURFACE_CONTROLS: ScalarControl[] = [
+  {
+    label: "Depth",
+    read: ({ surface }) => surface.depth,
+    write: (recipe, depth) => ({ ...recipe, surface: { ...recipe.surface, depth } }),
+  },
+  {
+    label: "Glow",
+    read: ({ surface }) => surface.glow,
+    write: (recipe, glow) => ({ ...recipe, surface: { ...recipe.surface, glow } }),
+  },
+];
 const MOTION_CONTROLS: ScalarControl[] = [
   {
-    label: "Energy",
-    read: ({ energy }) => energy,
-    write: (recipe, energy) => ({ ...recipe, energy }),
+    label: "Drift",
+    read: ({ motion }) => motion.drift,
+    write: (recipe, drift) => ({ ...recipe, motion: { ...recipe.motion, drift } }),
+  },
+  {
+    label: "Turbulence",
+    read: ({ motion }) => motion.turbulence,
+    write: (recipe, turbulence) => ({ ...recipe, motion: { ...recipe.motion, turbulence } }),
+  },
+  {
+    label: "Spin",
+    read: ({ motion }) => motion.spin,
+    write: (recipe, spin) => ({ ...recipe, motion: { ...recipe.motion, spin } }),
   },
 ];
 
@@ -55,6 +79,8 @@ function copyRecipe(recipe: OrbVisualRecipe): OrbVisualRecipe {
     ...recipe,
     palette: recipe.palette.map((stop) => ({ ...stop })),
     field: { ...recipe.field },
+    surface: { ...recipe.surface },
+    motion: { ...recipe.motion },
   };
 }
 
@@ -140,6 +166,27 @@ export function VibeOrbPlayground() {
   const [recipe, setRecipe] = useState(() => copyRecipe(ORB_PRESETS.bloom));
   const [selectedPreset, setSelectedPreset] = useState<OrbPresetName | null>("bloom");
   const [motion, setMotion] = useState<OrbMotionMode>("continuous");
+  const [contributions, setContributions] = useState<Record<OrbPresetName, number>>({
+    bloom: 1,
+    ember: 0,
+    tideglass: 0,
+    lichen: 0,
+  });
+
+  const compose = (next: Record<OrbPresetName, number>) => {
+    setContributions(next);
+    setSelectedPreset(null);
+    setRecipe(
+      composeVibeOrb(
+        recipe.seed,
+        (Object.keys(next) as OrbPresetName[]).map((name) => ({
+          id: name,
+          character: ORB_PRESETS[name],
+          weight: next[name],
+        })),
+      ) ?? fallbackOrbRecipe(recipe.seed),
+    );
+  };
 
   const updateRecipe = (next: OrbVisualRecipe) => {
     setSelectedPreset(null);
@@ -165,8 +212,8 @@ export function VibeOrbPlayground() {
           <h1 className="font-serif text-[34px] leading-none tracking-[-0.02em]">Vibe orb</h1>
         </div>
         <p className="w-[28rem] max-w-[50vw] shrink-0 text-right text-[12px] leading-relaxed text-secondary">
-          One glass material, four distinct interiors. Tune the palette, field, and energy; hover,
-          focus, and click to feel their shared response.
+          Compose media contributions or tune each orb’s palette, pattern, depth, glow, and
+          independent motion.
         </p>
       </header>
 
@@ -174,7 +221,7 @@ export function VibeOrbPlayground() {
         <section className="min-w-0 p-6">
           <div className="vibe-orb-stage relative flex min-h-[500px] items-center justify-center overflow-hidden rounded-lg border border-hairline bg-pill">
             <div className="vibe-orb-stage-grid absolute inset-0 opacity-50" />
-            <div className="absolute top-5 left-5 flex items-center gap-2 rounded-pill border border-hairline bg-canvas/80 p-1 backdrop-blur-md">
+            <div className="absolute top-5 left-5 z-10 flex items-center gap-2 rounded-pill border border-hairline bg-canvas/80 p-1 backdrop-blur-md">
               {(["continuous", "interaction", "still"] as const).map((mode) => (
                 <button
                   key={mode}
@@ -195,6 +242,39 @@ export function VibeOrbPlayground() {
               className="drop-shadow-[0_28px_38px_rgb(16_12_30/20%)]"
             />
           </div>
+
+          <fieldset className="mt-5 rounded-lg border border-hairline bg-pill p-4">
+            <legend className="px-2 text-[11px] font-semibold text-secondary">
+              Compose from media objects
+            </legend>
+            <p className="mb-3 text-[11px] text-secondary">
+              Try a collection of different object characters. Each object has one vote; colors
+              combine by hue and the other controls average independently.
+            </p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+              {(Object.keys(contributions) as OrbPresetName[]).map((name) => (
+                <label
+                  key={name}
+                  className="grid grid-cols-[5rem_1fr_1rem] items-center gap-2 text-[11px] text-secondary"
+                >
+                  <span>{PRESET_LABELS[name]}</span>
+                  <input
+                    className="vibe-orb-range w-full accent-[var(--rz-accent-primary)]"
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="1"
+                    aria-label={`${PRESET_LABELS[name]} objects`}
+                    value={contributions[name]}
+                    onChange={(event) =>
+                      compose({ ...contributions, [name]: Number(event.currentTarget.value) })
+                    }
+                  />
+                  <output>{contributions[name]}</output>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
           <div className="mt-5 grid gap-5 xl:grid-cols-[auto_1fr]">
             <div>
@@ -330,14 +410,19 @@ export function VibeOrbPlayground() {
           </fieldset>
 
           <p className="mt-5 text-[11px] leading-relaxed text-secondary">
-            Every orb shares the same polished glass, fine texture, subtle breathing, and
-            interaction response. Energy controls how quickly the interior drifts, deforms, and
-            turns.
+            Rounded pools, flowing ribbons, shallow glass, deep lensing, and independent movement.
+            The polished shell stays consistent.
           </p>
           <div className="mt-5 grid gap-5">
             <ControlGroup
               title="Field"
               controls={FIELD_CONTROLS}
+              recipe={recipe}
+              onChange={updateRecipe}
+            />
+            <ControlGroup
+              title="Surface"
+              controls={SURFACE_CONTROLS}
               recipe={recipe}
               onChange={updateRecipe}
             />

@@ -3,6 +3,7 @@ import type { Vibe } from "@rnet/types";
 import { PushTaskCatalog, type PushTaskDefinition } from "./task-catalog.ts";
 import type { VibeContext } from "./context.ts";
 import { describeMedia } from "./tasks/element/describe-media/manifest.ts";
+import { orbIdentity } from "./tasks/object/orb-identity/manifest.ts";
 import { displayName } from "./tasks/object/display-name/manifest.ts";
 import { searchKeywords } from "./tasks/object/search-keywords/manifest.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
@@ -16,6 +17,7 @@ export const installedPushTasks = new PushTaskCatalog([
   vibeOrb,
   displayName,
   searchKeywords,
+  orbIdentity,
   describeMedia,
 ]);
 
