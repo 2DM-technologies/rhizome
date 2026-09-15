@@ -118,6 +118,53 @@ describe("M2 committed Are.na v3 parser", () => {
     }
   });
 
+  test("imports images and link previews with missing, null, or blank alt text", async () => {
+    for (const altText of [undefined, null, "", " \t\n "]) {
+      const capture = await fixtureCapture();
+      mutatePage(capture, (page) => {
+        for (const entry of array(page.data, "data")) {
+          const block = record(entry, "block");
+          if (block.image) record(block.image, "image").alt_text = altText;
+        }
+      });
+      const parsed = parseArenaCapture(captureBytes(capture));
+      expect(parsed.blocks).toHaveLength(5);
+      expect(verifyArena(parsed).ok).toBe(true);
+      const images = parsed.blocks.flatMap(({ elements }) =>
+        elements.filter(({ kind }) => kind === "image"),
+      );
+      expect(images).toHaveLength(2);
+      for (const image of images) expect(image).not.toHaveProperty("alt");
+      for (const block of parsed.blocks) {
+        expect(block.sourceProperties).not.toHaveProperty("alt_text");
+        expect(block.sourceProperties).not.toHaveProperty("preview_alt_text");
+      }
+    }
+  });
+
+  test("preserves meaningful alt text exactly as authored", async () => {
+    const capture = await fixtureCapture();
+    const altText = "  A café window 🌿\nwith plants.  ";
+    mutatePage(capture, (page) => {
+      const block = record(array(page.data, "data")[1], "block");
+      record(block.image, "image").alt_text = altText;
+    });
+    const parsed = parseArenaCapture(captureBytes(capture));
+    expect(parsed.blocks[1]?.elements[1]?.alt).toBe(altText);
+    expect(parsed.blocks[1]?.sourceProperties.alt_text).toBe(altText);
+  });
+
+  test("still rejects non-string alt text", async () => {
+    for (const altText of [42, false, {}, []]) {
+      const capture = await fixtureCapture();
+      mutatePage(capture, (page) => {
+        const block = record(array(page.data, "data")[1], "block");
+        record(block.image, "image").alt_text = altText;
+      });
+      expect(() => parseArenaCapture(captureBytes(capture))).toThrow("image alt text");
+    }
+  });
+
   test("passes VERIFY with block, order, MIME, hash, and byte evidence", async () => {
     const parsed = parseArenaCapture(await fixtureBytes());
     expect(verifyArena(parsed)).toEqual({
