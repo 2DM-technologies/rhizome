@@ -17,6 +17,7 @@ import { vibeUpdatedAt } from "../vibeRecency.ts";
 import { useSurfaceNavigation } from "./focus.ts";
 
 const CARD_PREVIEW_LIMIT = 6;
+const MAX_TEXT_PREVIEW_BYTES = 16 * 1024;
 
 function cardBackgroundColor(recipe: OrbVisualRecipe): string {
   const dominant = [...recipe.palette].sort(
@@ -97,7 +98,7 @@ function TextThumbnail({ src }: { src: string }) {
   );
 }
 
-/** A deliberately tiny, inert object preview for the Figma thumbnail strip. */
+/** Small cached images/text only; videos and oversized text use a metadata placeholder. */
 function ObjectThumbnail({ object }: { object: MediaObject }) {
   const reference = elementReference(object);
   const elementUuid = reference ? uuidOf(reference.uri) : undefined;
@@ -106,7 +107,12 @@ function ObjectThumbnail({ object }: { object: MediaObject }) {
   const thumbnail = useElementThumbnailUrl(presentation === "image" ? elementUuid : undefined);
   const payload = usePayloadUrl(
     "elements",
-    presentation === "video" || presentation === "text" ? elementUuid : undefined,
+    presentation === "text" &&
+      typeof element.data?.byte_size === "number" &&
+      element.data.byte_size <= MAX_TEXT_PREVIEW_BYTES
+      ? elementUuid
+      : undefined,
+    { gcTime: 5 * 60 * 1000 },
   );
 
   return (
@@ -120,16 +126,6 @@ function ObjectThumbnail({ object }: { object: MediaObject }) {
           alt=""
           aria-hidden
           data-element-presentation="image"
-          className="size-full object-cover"
-        />
-      ) : payload.data && presentation === "video" ? (
-        <video
-          src={payload.data}
-          muted
-          playsInline
-          preload="metadata"
-          aria-hidden
-          data-element-presentation="video"
           className="size-full object-cover"
         />
       ) : payload.data && presentation === "text" ? (

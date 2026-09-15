@@ -32,7 +32,11 @@ function useObjectUrl(blob: Blob | undefined): string | undefined {
  * the store has no signed-URL endpoint yet. When it does, this hook changes and its callers
  * do not.
  */
-export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undefined) {
+export function usePayloadUrl(
+  kind: "elements" | "origins",
+  uuid: string | undefined,
+  options: { gcTime?: number } = {},
+) {
   const path = kind === "elements" ? "/rnet/v0/elements/{id}/bytes" : "/rnet/v0/origins/{id}/bytes";
   const query = api.useQuery(
     "get",
@@ -43,7 +47,7 @@ export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undef
     },
     {
       enabled: Boolean(uuid),
-      gcTime: 0,
+      gcTime: options.gcTime ?? 0,
       staleTime: Number.POSITIVE_INFINITY,
       refetchOnWindowFocus: false,
     },
