@@ -25,7 +25,7 @@ These are draft PRs with the follow-up repairs validated locally. Verify the cur
 13. **#36 — status scan scope:** restrict operation queries to readable memberships of the requested object and other parents of its returned elements, plus owned deleted-Vibe history, before record-selection matching. Use each Vibe's actual owner for authorization; shared-element running/error status is visible through both readable parents, while removing a read grant hides it.
 14. **#36 / #42 — safe diagnostics:** unexpected execution failures log operation UUID and a fixed error classification. The concurrent dispatcher and accounting boundaries retain this logging without exposing provider bodies.
 15. **#36 — JSONB strings:** NUL and unpaired UTF-16 strings become record-level invalid output, preserving valid siblings, later batches, and metering; Vibe output is checked too.
-16. **#35/#36 — validator lifetime:** each weak-key cached validator owns a collectible compiler lifetime. There is no process-lifetime Ajv scope holding every transient schema. A 100-schema regression verifies exact validation and collection of all dropped schema WeakRefs.
+16. **#35/#36 — validator lifetime:** each weak-key cached validator owns a collectible compiler lifetime. There is no process-lifetime Ajv scope holding every transient schema. A 100-schema regression verifies exact validation and bounded retention of dropped schema WeakRefs. It allows one conservatively retained JavaScriptCore temporary; the old shared compiler still fails this regression with all 100 references alive.
 17. **#36 tests — image race:** verified S3rver 3.7.1 acknowledges PUT before its backing file finishes. The fixture now waits for the exact backing-file length before running the intentionally oversized-payload check. Checking through GET could race a growing response stream and timed out in CI; filesystem readiness avoids that race and passed 20 repeats. Runtime attachment limits remain enforced.
 18. **#37 — Are.na titles:** trim/cap source destination titles to 256 UTF-16 units without a trailing unmatched surrogate.
 19. **#38 — neutral orb coverage:** valid neutral identities emit real inferred coverage with the neutral fallback recipe, avoiding permanent loading.
@@ -53,8 +53,8 @@ Agents may review all eight PRs concurrently. Merge in that order, preserve ance
 
 - Original feature branch: `m3/01-push-pipeline`, at `f75bd8e443d6fe7ee8cce905508d0e974876c958` when split. Its aggregate branch remains separate. The shared primary checkout now uses local branch `m3/local-latest` at the earlier #42 tip plus unpublished edits from other tasks; it is not a clean PR-review target.
 - Original main: `220e289be5b064b6b5e80803c8a2f5e99698872c`.
-- Repaired seven-PR application head: `7e2217d0fda37cf7a2b0d54847376a964a6e7678`.
-- Combined concurrency application head: `4ba15f99d0c13c739667480d27f9a17d9d0ca359`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
+- Repaired seven-PR application head: `17d3a18b928b05feedebf7fee0f3041791a01000`.
+- Combined concurrency application head: `3a00b8af1f71698a7a481401026d56d061b798d5`. The original concurrency commit was `8419decd0353b49688616a88a0f2879fc49c4cbb` on `25392267436def7c9c295ef149ad38e9ef1a811d`; an ordinary merge reconciled it with all repairs.
 - Documentation-only commits updating this packet, and downstream merges carrying those docs, may follow these code pins. Review each pinned base-to-code-head diff and inspect later commits separately. The pinned #41 base for the concurrency review deliberately excludes handoff-only updates.
 - Before repairs, original and split had identical tree `0f05054c92a31e86f928007bf8072bc6dec9acdc`. New repairs intentionally change that tree. Original scope was 44 commits, 262 files, 25,129 insertions and 1,258 deletions plus binary assets.
 - Recovery ref: `refs/backup/pre-split-20260914-220544`, commit `6e71545cc23084ee1ceb0d2efd8e453eb6dd9f59`.
@@ -127,7 +127,7 @@ The 400k token ceiling measures observed usage, so already-admitted calls can ov
 ### September 15 independent re-review follow-up
 
 - Clean combined repairs at `1593ffe` passed `bun run check`: **593 tests**, OpenAPI freshness, formatting, types, and production build. Full Chromium suite: **134 passed**. Logs: `/private/tmp/rhizome-rereview-fixes-check.log` and `/private/tmp/rhizome-rereview-fixes-browser-full.log`.
-- Final stack integration has the exact same complete tree as that tested repair commit before this packet update. The #36 backport separately passed type checking and both real-DB repair probes on its serial engine; #42 retains the two-batch deletion regression.
+- Final stack integration retains the tested application implementation. The only later test change tolerates one conservatively retained JavaScriptCore temporary in the GC regression; a negative control using the previous compiler still fails with all 100 schemas retained. See `/private/tmp/rhizome-validator-negative-control.log`. The #36 backport separately passed type checking and both real-DB repair probes on its serial engine; #42 retains the two-batch deletion regression.
 - The new tests assert repaired behavior, not reproduction of the defect: five calls/five writes for six selected images when the sixth is tombstoned before preparation; authorized shared-element status; changing completed operation identity; compiler collection; one small-text fetch and zero video/oversized-text fetches across three Home reveals.
 - Tests used only `rhizome_rereview_fixes_20260915`, with both database environment variables explicit and no live provider key. The running shared app and development data were preserved.
 - Historical independent report: `/Users/noahputnam/2dm/rhizome/impl/reviews/m3-stack-rereview-codex.md`. Its five findings describe the prior code pins. Re-review their fixes independently; the report itself is not overwritten.
@@ -193,13 +193,13 @@ Adds browser-safe push request/result contracts, optional provider configuration
 - PR: [https://github.com/2DM-technologies/rhizome/pull/35](https://github.com/2DM-technologies/rhizome/pull/35)
 - Branch: `m3/review-01-foundations`
 - Base: `220e289be5b064b6b5e80803c8a2f5e99698872c` (`main`)
-- Code head: `1883ad3d24e17a09447a590ba4d6aaf17f6bec0e`
-- Incremental scope: 34 files changed, 2516 insertions(+), 17 deletions(-)
+- Code head: `00b4c57df459768616e3852b1d30b1b8b710cb7a`
+- Incremental scope: 34 files changed, 2518 insertions(+), 17 deletions(-)
 
 ```bash
 git fetch origin m3/review-01-foundations
-git diff --stat 220e289be5b064b6b5e80803c8a2f5e99698872c...1883ad3d24e17a09447a590ba4d6aaf17f6bec0e
-git diff 220e289be5b064b6b5e80803c8a2f5e99698872c...1883ad3d24e17a09447a590ba4d6aaf17f6bec0e -- path/to/assigned/file
+git diff --stat 220e289be5b064b6b5e80803c8a2f5e99698872c...00b4c57df459768616e3852b1d30b1b8b710cb7a
+git diff 220e289be5b064b6b5e80803c8a2f5e99698872c...00b4c57df459768616e3852b1d30b1b8b710cb7a -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -262,14 +262,14 @@ Runs asynchronous element, object, and Vibe tasks with permission checks, bounde
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/36](https://github.com/2DM-technologies/rhizome/pull/36)
 - Branch: `m3/review-02-push-engine`
-- Base: `1883ad3d24e17a09447a590ba4d6aaf17f6bec0e` (`m3/review-01-foundations`)
-- Code head: `029b7b7a684bfba2fc21c8aad0d19aac9c29d10a`
+- Base: `00b4c57df459768616e3852b1d30b1b8b710cb7a` (`m3/review-01-foundations`)
+- Code head: `d2e95b5c8d89c5a69a0bdc148883f37bfe679371`
 - Incremental scope: 69 files changed, 10648 insertions(+), 91 deletions(-)
 
 ```bash
 git fetch origin m3/review-02-push-engine
-git diff --stat 1883ad3d24e17a09447a590ba4d6aaf17f6bec0e...029b7b7a684bfba2fc21c8aad0d19aac9c29d10a
-git diff 1883ad3d24e17a09447a590ba4d6aaf17f6bec0e...029b7b7a684bfba2fc21c8aad0d19aac9c29d10a -- path/to/assigned/file
+git diff --stat 00b4c57df459768616e3852b1d30b1b8b710cb7a...d2e95b5c8d89c5a69a0bdc148883f37bfe679371
+git diff 00b4c57df459768616e3852b1d30b1b8b710cb7a...d2e95b5c8d89c5a69a0bdc148883f37bfe679371 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -374,14 +374,14 @@ Source manifests declare their enrichment graph. Confirmation schedules tasks af
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/37](https://github.com/2DM-technologies/rhizome/pull/37)
 - Branch: `m3/review-03-import-enrichment`
-- Base: `029b7b7a684bfba2fc21c8aad0d19aac9c29d10a` (`m3/review-02-push-engine`)
-- Code head: `424de0c455b801ca588a5044baa185e7ec8e258b`
+- Base: `d2e95b5c8d89c5a69a0bdc148883f37bfe679371` (`m3/review-02-push-engine`)
+- Code head: `03ddf7321a6c81fcf9a3079ff75e2920365587c2`
 - Incremental scope: 47 files changed, 2076 insertions(+), 63 deletions(-)
 
 ```bash
 git fetch origin m3/review-03-import-enrichment
-git diff --stat 029b7b7a684bfba2fc21c8aad0d19aac9c29d10a...424de0c455b801ca588a5044baa185e7ec8e258b
-git diff 029b7b7a684bfba2fc21c8aad0d19aac9c29d10a...424de0c455b801ca588a5044baa185e7ec8e258b -- path/to/assigned/file
+git diff --stat d2e95b5c8d89c5a69a0bdc148883f37bfe679371...03ddf7321a6c81fcf9a3079ff75e2920365587c2
+git diff d2e95b5c8d89c5a69a0bdc148883f37bfe679371...03ddf7321a6c81fcf9a3079ff75e2920365587c2 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -454,14 +454,14 @@ Adds reusable object orb identities and shared version-3 Vibe recipes. Vibe appe
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/38](https://github.com/2DM-technologies/rhizome/pull/38)
 - Branch: `m3/review-05-orb-identities`
-- Base: `424de0c455b801ca588a5044baa185e7ec8e258b` (`m3/review-03-import-enrichment`)
-- Code head: `260f8067844d8aa7ad09d5f8fd77f81542965e8b`
+- Base: `03ddf7321a6c81fcf9a3079ff75e2920365587c2` (`m3/review-03-import-enrichment`)
+- Code head: `907dcb7a07500ca0ed431fd0df32ebe794709511`
 - Incremental scope: 23 files changed, 1724 insertions(+), 68 deletions(-)
 
 ```bash
 git fetch origin m3/review-05-orb-identities
-git diff --stat 424de0c455b801ca588a5044baa185e7ec8e258b...260f8067844d8aa7ad09d5f8fd77f81542965e8b
-git diff 424de0c455b801ca588a5044baa185e7ec8e258b...260f8067844d8aa7ad09d5f8fd77f81542965e8b -- path/to/assigned/file
+git diff --stat 03ddf7321a6c81fcf9a3079ff75e2920365587c2...907dcb7a07500ca0ed431fd0df32ebe794709511
+git diff 03ddf7321a6c81fcf9a3079ff75e2920365587c2...907dcb7a07500ca0ed431fd0df32ebe794709511 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -508,14 +508,14 @@ Adds the shared WebGL/raster painter, persistent raster cache, procedural fallba
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/39](https://github.com/2DM-technologies/rhizome/pull/39)
 - Branch: `m3/review-06-orb-rendering`
-- Base: `260f8067844d8aa7ad09d5f8fd77f81542965e8b` (`m3/review-05-orb-identities`)
-- Code head: `6796c0b1eb7d1e0842ac47d0fc5de69016c22e3d`
+- Base: `907dcb7a07500ca0ed431fd0df32ebe794709511` (`m3/review-05-orb-identities`)
+- Code head: `66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae`
 - Incremental scope: 16 files changed, 2716 insertions(+), 1 deletion(-)
 
 ```bash
 git fetch origin m3/review-06-orb-rendering
-git diff --stat 260f8067844d8aa7ad09d5f8fd77f81542965e8b...6796c0b1eb7d1e0842ac47d0fc5de69016c22e3d
-git diff 260f8067844d8aa7ad09d5f8fd77f81542965e8b...6796c0b1eb7d1e0842ac47d0fc5de69016c22e3d -- path/to/assigned/file
+git diff --stat 907dcb7a07500ca0ed431fd0df32ebe794709511...66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae
+git diff 907dcb7a07500ca0ed431fd0df32ebe794709511...66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -556,14 +556,14 @@ Adds push controls and polling, inferred object/Vibe views, live status/error sk
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/40](https://github.com/2DM-technologies/rhizome/pull/40)
 - Branch: `m3/review-04-inferred-views`
-- Base: `6796c0b1eb7d1e0842ac47d0fc5de69016c22e3d` (`m3/review-06-orb-rendering`)
-- Code head: `575c26ce8f1ae5daf74e1720f086a7622a5a2286`
+- Base: `66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae` (`m3/review-06-orb-rendering`)
+- Code head: `c93a8c841f0957c0a65a5a4782df9516c225e81e`
 - Incremental scope: 48 files changed, 4055 insertions(+), 691 deletions(-)
 
 ```bash
 git fetch origin m3/review-04-inferred-views
-git diff --stat 6796c0b1eb7d1e0842ac47d0fc5de69016c22e3d...575c26ce8f1ae5daf74e1720f086a7622a5a2286
-git diff 6796c0b1eb7d1e0842ac47d0fc5de69016c22e3d...575c26ce8f1ae5daf74e1720f086a7622a5a2286 -- path/to/assigned/file
+git diff --stat 66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae...c93a8c841f0957c0a65a5a4782df9516c225e81e
+git diff 66e35d4665a51fa4dd74ab5f19f59f33a0bdbeae...c93a8c841f0957c0a65a5a4782df9516c225e81e -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -641,14 +641,14 @@ Adds desktop cards, account totals, dock pins and navigation, theme/assets, and 
 
 - PR: [https://github.com/2DM-technologies/rhizome/pull/41](https://github.com/2DM-technologies/rhizome/pull/41)
 - Branch: `m3/review-07-desktop-shell`
-- Base: `575c26ce8f1ae5daf74e1720f086a7622a5a2286` (`m3/review-04-inferred-views`)
-- Code head: `7e2217d0fda37cf7a2b0d54847376a964a6e7678`
-- Incremental scope: 100 files changed, 4726 insertions(+), 723 deletions(-)
+- Base: `c93a8c841f0957c0a65a5a4782df9516c225e81e` (`m3/review-04-inferred-views`)
+- Code head: `17d3a18b928b05feedebf7fee0f3041791a01000`
+- Incremental scope: 100 files changed, 4739 insertions(+), 723 deletions(-)
 
 ```bash
 git fetch origin m3/review-07-desktop-shell
-git diff --stat 575c26ce8f1ae5daf74e1720f086a7622a5a2286...7e2217d0fda37cf7a2b0d54847376a964a6e7678
-git diff 575c26ce8f1ae5daf74e1720f086a7622a5a2286...7e2217d0fda37cf7a2b0d54847376a964a6e7678 -- path/to/assigned/file
+git diff --stat c93a8c841f0957c0a65a5a4782df9516c225e81e...17d3a18b928b05feedebf7fee0f3041791a01000
+git diff c93a8c841f0957c0a65a5a4782df9516c225e81e...17d3a18b928b05feedebf7fee0f3041791a01000 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
@@ -785,14 +785,14 @@ Defaults to two complete object/element batches per operation and four logical L
 
 - PR: https://github.com/2DM-technologies/rhizome/pull/42
 - Branch: `m3/parallel-batches`
-- Base: `7e2217d0fda37cf7a2b0d54847376a964a6e7678` (`m3/review-07-desktop-shell`)
-- Code head: `4ba15f99d0c13c739667480d27f9a17d9d0ca359`
+- Base: `17d3a18b928b05feedebf7fee0f3041791a01000` (`m3/review-07-desktop-shell`)
+- Code head: `3a00b8af1f71698a7a481401026d56d061b798d5`
 - Incremental scope: 9 files changed, 1122 insertions(+), 130 deletions(-)
 
 ```bash
 git fetch origin m3/parallel-batches
-git diff --stat 7e2217d0fda37cf7a2b0d54847376a964a6e7678...4ba15f99d0c13c739667480d27f9a17d9d0ca359
-git diff 7e2217d0fda37cf7a2b0d54847376a964a6e7678...4ba15f99d0c13c739667480d27f9a17d9d0ca359 -- path/to/assigned/file
+git diff --stat 17d3a18b928b05feedebf7fee0f3041791a01000...3a00b8af1f71698a7a481401026d56d061b798d5
+git diff 17d3a18b928b05feedebf7fee0f3041791a01000...3a00b8af1f71698a7a481401026d56d061b798d5 -- path/to/assigned/file
 ```
 
 **Questions to trace:**
