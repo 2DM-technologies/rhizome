@@ -12,6 +12,7 @@ import { mediaElements } from "../db/models/media-element.ts";
 import { mediaObjectElements } from "../db/models/media-object-element.ts";
 import { operations, type DbOperation } from "../db/models/operation.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
+import { vibes } from "../db/models/vibe.ts";
 import { Problem } from "../errors.ts";
 import { AccessService } from "../services/access-service.ts";
 import type { PushTaskDefinition } from "./task-catalog.ts";
@@ -110,13 +111,37 @@ export async function readObjectInferenceStatus(
       return false;
     }
   }
+  // A returned element can be enriched through another parent object/Vibe.
+  const elementParents = elements.length
+    ? await db
+        .select({
+          objectUuid: mediaObjectElements.mediaObjectUuid,
+          elementUuid: mediaObjectElements.mediaElementUuid,
+        })
+        .from(mediaObjectElements)
+        .where(
+          inArray(
+            mediaObjectElements.mediaElementUuid,
+            elements.map(({ element }) => element.uuid),
+          ),
+        )
+    : [];
+  const relatedObjects = [
+    ...new Set([uuid, ...elementParents.map(({ objectUuid }) => objectUuid)]),
+  ];
   const memberships = await db
-    .select({ vibeUuid: vibeMediaObjects.vibeUuid })
+    .select({
+      vibeUuid: vibeMediaObjects.vibeUuid,
+      objectUuid: vibeMediaObjects.mediaObjectUuid,
+      ownerUuid: vibes.ownerUuid,
+    })
     .from(vibeMediaObjects)
-    .where(eq(vibeMediaObjects.mediaObjectUuid, uuid));
+    .innerJoin(vibes, eq(vibes.uuid, vibeMediaObjects.vibeUuid))
+    .where(inArray(vibeMediaObjects.mediaObjectUuid, relatedObjects));
   const readableIds: string[] = [];
-  for (const { vibeUuid } of memberships)
-    if (await canRead(vibeUuid, object.ownerUuid)) readableIds.push(vibeUuid);
+  for (const { vibeUuid, ownerUuid } of memberships)
+    if (!readableIds.includes(vibeUuid) && (await canRead(vibeUuid, ownerUuid)))
+      readableIds.push(vibeUuid);
   const pushes = await db
     .select()
     .from(operations)
@@ -140,14 +165,23 @@ export async function readObjectInferenceStatus(
   const visiblePushes: DbOperation[] = [];
   for (const push of pushes)
     if (await canRead(push.vibeUuid, push.ownerUuid)) visiblePushes.push(push);
-  const pending: PendingTask[] = [];
-  for (const { vibeUuid } of memberships) {
-    if (!activity.pending.has(vibeUuid) || !(await canRead(vibeUuid, object.ownerUuid))) continue;
-    pending.push(
-      ...[...activity.pending.get(vibeUuid)!.values()].filter(
-        (task) => !task.objectUuids || task.objectUuids.includes(uuid),
-      ),
-    );
+  const pending: Array<PendingTask & { recordUuids: readonly string[] }> = [];
+  for (const { vibeUuid, objectUuid, ownerUuid } of memberships) {
+    if (!activity.pending.has(vibeUuid) || !(await canRead(vibeUuid, ownerUuid))) continue;
+    for (const task of activity.pending.get(vibeUuid)!.values()) {
+      if (task.objectUuids && !task.objectUuids.includes(objectUuid)) continue;
+      const recordUuids =
+        task.level === "object"
+          ? objectUuid === uuid
+            ? [uuid]
+            : []
+          : task.level === "element"
+            ? elementParents
+                .filter((parent) => parent.objectUuid === objectUuid)
+                .map(({ elementUuid }) => elementUuid)
+            : [];
+      if (recordUuids.length) pending.push({ ...task, recordUuids });
+    }
   }
   return {
     records: records.map((record) => {
@@ -213,6 +247,7 @@ export async function readObjectInferenceStatus(
       for (const task of pending) {
         if (
           task.level !== record.level ||
+          !task.recordUuids.includes(record.uuid) ||
           (record.level === "element" && !task.elementKinds?.includes(record.kind!)) ||
           record.inferred[storeTaskKey(task.name)]?.durable
         )
