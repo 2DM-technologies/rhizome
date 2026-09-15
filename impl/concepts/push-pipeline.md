@@ -799,6 +799,8 @@ Same shape on `vibes` with `rev = rev + 1` and a `vibe_revisions` row via `snaps
 
 Pushes with the same `(vibe, level, task)` are refused at accept (409) while one is running, and the Vibe row lock in the accept transaction makes that check atomic between two simultaneous accepts. Different tasks or Vibes run concurrently; per-record `FOR UPDATE` serializes their writes with each other and with `setInferred` and `setUser`. Two runs of the same task in sequence: later commit wins (spec §6.2), the earlier snapshot stays in the revision log. Membership changes and `user` edits during a run are not guarded against (CONFORMANCE, M7): object output is Vibe-independent (§5.3), so an object that left the Vibe mid-run carries the entry harmlessly, and an edit made mid-run is reflected by the next run.
 
+Automatic import graph nodes wait for a conflicting same-task run to reach terminal state before releasing dependent nodes. After the wait, object/element nodes accept only records not already written, preserved, or classified as not applicable by that run; failed records remain eligible. A Vibe-level result covers the node only when its captured membership includes the graph's requested members. A reused summary does not become the graph's own naming result. Reacceptance checks permissions, live membership, and durability again. This is bounded, process-local best-effort waiting (a terminal-row check every 250 ms, up to the existing operation wall limit plus 60 seconds); a stalled finalizer ends the wait with an error. It does not add restart recovery or a durable job queue. Manual requests continue to receive the existing private 409 response while a task is running.
+
 ## 8. Metering
 
 ### 8.1 Payer
