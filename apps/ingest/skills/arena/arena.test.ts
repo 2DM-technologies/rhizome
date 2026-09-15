@@ -165,6 +165,81 @@ describe("M2 committed Are.na v3 parser", () => {
     }
   });
 
+  test("preserves HTTP source, provider, and embed destinations as metadata", async () => {
+    const capture = await fixtureCapture();
+    mutatePage(capture, (page) => {
+      const blocks = array(page.data, "data");
+      const link = record(blocks[2], "link");
+      const source = record(link.source, "source");
+      source.url = "http://urbanscreens.org/";
+      source.provider = { name: "Urban Screens", url: "http://urbanscreens.org/" };
+      const embed = record(blocks[4], "embed");
+      record(embed.source, "source").url = "http://video.example.test/watch/synthetic";
+      record(embed.embed, "embed").url = "http://video.example.test/embed/synthetic";
+    });
+    const parsed = parseArenaCapture(captureBytes(capture));
+    expect(verifyArena(parsed).ok).toBe(true);
+    expect(parsed.blocks[2]?.sourceProperties).toMatchObject({
+      source_url: "http://urbanscreens.org/",
+      source_provider: { name: "Urban Screens", url: "http://urbanscreens.org/" },
+    });
+    expect(parsed.blocks[4]?.sourceProperties).toMatchObject({
+      source_url: "http://video.example.test/watch/synthetic",
+      embed_url: "http://video.example.test/embed/synthetic",
+      embed_source_url: "http://video.example.test/watch/synthetic",
+    });
+    expect(parsed.blocks[2]?.elements.find(({ role }) => role === "preview")?.sourceUrl).toMatch(
+      /^https:\/\//,
+    );
+  });
+
+  test("rejects unsafe schemes and credentials in metadata URLs", async () => {
+    for (const url of [
+      "javascript:alert(1)",
+      "data:text/html,unsafe",
+      "file:///tmp/example",
+      "ftp://example.test/file",
+      "http://user:password@example.test/",
+      "https://user:password@example.test/",
+    ]) {
+      for (const field of ["source", "provider", "embed"] as const) {
+        const capture = await fixtureCapture();
+        mutatePage(capture, (page) => {
+          const blocks = array(page.data, "data");
+          if (field === "embed") {
+            record(record(blocks[4], "block").embed, "embed").url = url;
+          } else {
+            const source = record(record(blocks[2], "block").source, "source");
+            if (field === "source") source.url = url;
+            else source.provider = { name: "Provider", url };
+          }
+        });
+        expect(() => parseArenaCapture(captureBytes(capture))).toThrow(
+          "must be an HTTP or HTTPS URL without credentials",
+        );
+      }
+    }
+  });
+
+  test("continues to reject HTTP media download URLs", async () => {
+    for (const field of ["image", "attachment"] as const) {
+      const capture = await fixtureCapture();
+      mutatePage(capture, (page) => {
+        const blocks = array(page.data, "data");
+        if (field === "image") {
+          record(record(blocks[1], "block").image, "image").src =
+            "http://images.are.na/original.png";
+        } else {
+          record(record(blocks[3], "block").attachment, "attachment").url =
+            "http://files.are.na/original.pdf";
+        }
+      });
+      expect(() => parseArenaCapture(captureBytes(capture))).toThrow(
+        "must be an HTTPS URL without credentials",
+      );
+    }
+  });
+
   test("passes VERIFY with block, order, MIME, hash, and byte evidence", async () => {
     const parsed = parseArenaCapture(await fixtureBytes());
     expect(verifyArena(parsed)).toEqual({
