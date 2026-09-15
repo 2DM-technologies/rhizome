@@ -56,6 +56,12 @@ import {
   type ContextCounts,
 } from "./context.ts";
 import type { PushLimits } from "./limits.ts";
+import {
+  assertConcurrency,
+  dispatchBounded,
+  sharedPushCalls,
+  type PushConcurrency,
+} from "./concurrency.ts";
 import type {
   CompiledImportPushPipeline,
   ImportPushPipelineCatalog,
@@ -76,6 +82,13 @@ type RecordOutcome =
   WriteOutcome | { outcome: "skipped"; reason: SkipReason; code?: ModelConnectorErrorKind };
 type VibeOutcome = Extract<PushOperationResult, { level: "vibe" }>["vibe"];
 type TerminalStatus = "done" | "failed" | "aborted";
+interface RunControl {
+  signal: AbortSignal;
+  queueSignal: AbortSignal;
+  stopForCeiling: () => boolean;
+  fail: () => void;
+  abort: () => void;
+}
 interface RunState {
   request: StoredPushRequest;
   outcomes: Map<string, RecordOutcome>;
@@ -115,8 +128,11 @@ export class PushService {
       pushTasks: PushTaskCatalog;
       importPushPipelines: ImportPushPipelineCatalog;
       pushLimits: PushLimits;
+      pushConcurrency?: PushConcurrency;
     },
-  ) {}
+  ) {
+    assertConcurrency(dependencies.pushConcurrency?.batchesPerOperation ?? 2);
+  }
 
   async startPush(vibeUuid: string, input: PushVibeRequest, actor: Actor): Promise<DbOperation> {
     const operation = await this.acceptPush(vibeUuid, input, actor);
@@ -395,21 +411,53 @@ export class PushService {
     if (request.level === "vibe" && state.outcomes.size)
       state.vibe = { outcome: "preserved_durable", key };
     const controller = new AbortController();
-    const wallRemaining = limits.maxWallMs - (Date.now() - operation.createdAt.getTime());
-    const wallTimer = setTimeout(() => controller.abort(), Math.max(0, wallRemaining));
-    if (wallRemaining <= 0) controller.abort();
+    const scheduling = new AbortController();
     const stopForCeiling = () => {
+      if (state.status !== "done") return true;
       const usage = ledger.usage;
-      state.abortReason = controller.signal.aborted
+      const reason = controller.signal.aborted
         ? "max_wall"
         : state.calls >= limits.maxCalls
           ? "max_turns"
           : usage.tokens_in + usage.tokens_out >= limits.maxTokens
             ? "max_tokens"
             : null;
-      if (state.abortReason) state.status = "aborted";
-      return state.abortReason !== null;
+      if (reason) {
+        state.abortReason = reason;
+        state.status = "aborted";
+        scheduling.abort();
+      }
+      return reason !== null;
     };
+    const fail = () => {
+      if (controller.signal.aborted) stopForCeiling();
+      else if (state.status !== "failed") {
+        state.status = "failed";
+        state.abortReason = null;
+        state.error = "The push operation could not complete.";
+      }
+      scheduling.abort();
+    };
+    const abort = () => {
+      if (state.status !== "failed") {
+        state.abortReason = "max_wall";
+        state.status = "aborted";
+      }
+      scheduling.abort();
+    };
+    const control: RunControl = {
+      signal: controller.signal,
+      queueSignal: scheduling.signal,
+      stopForCeiling,
+      fail,
+      abort,
+    };
+    const canWrite = () =>
+      state.status !== "failed" && state.abortReason !== "max_wall" && !controller.signal.aborted;
+    const wallRemaining = limits.maxWallMs - (Date.now() - operation.createdAt.getTime());
+    const wallTimer = setTimeout(() => controller.abort(), Math.max(0, wallRemaining));
+    controller.signal.addEventListener("abort", abort, { once: true });
+    if (wallRemaining <= 0) controller.abort();
     try {
       const task = pushTasks.get(request.level, request.task);
       if (!task) throw new Error("Push task disappeared");
@@ -450,7 +498,7 @@ export class PushService {
                 operationUuid,
                 state,
                 ledger,
-                controller.signal,
+                control,
               );
               if (result) output = result.output as TaskOutput;
             }
@@ -489,6 +537,7 @@ export class PushService {
           attachment?: { mime: string; bytes: Uint8Array };
         };
         const { blobs } = this.dependencies;
+        const dispatched = new Set<string>();
         const prepare = async function* (): AsyncGenerator<Prepared> {
           if (request.level === "object") {
             for (const record of await loadContextObjects(db, pending)) {
@@ -498,10 +547,7 @@ export class PushService {
             }
           } else {
             for (const element of await loadElements(db, pending)) {
-              if (controller.signal.aborted) {
-                stopForCeiling();
-                return;
-              }
+              if (scheduling.signal.aborted) return;
               if (
                 element.byteSize > limits.maxAttachmentBytes ||
                 !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(element.mime)
@@ -559,71 +605,86 @@ export class PushService {
             state.outcomes.set(record.uuid, { outcome: "skipped", reason: "context_too_large" }),
           attachmentsFor,
         );
-        for await (const chunk of packed) {
-          if (stopForCeiling()) break;
-          const refs = chunk.map((_, index) => `${prefix}${index + 1}`);
-          const result = await this.complete(
-            task,
-            inputFor(chunk),
-            batchEnvelope(task.outputSchema, refs),
-            chunk.length,
-            operationUuid,
-            state,
-            ledger,
-            controller.signal,
-            chunk.map((record) => record.uuid),
-            attachmentsFor(chunk),
-          );
-          if (state.status !== "done") break;
-          if (!result) continue;
-          let outputs: Array<TaskOutput | null>;
-          try {
-            outputs = unpackResults(task.outputSchema, refs, result.output);
-          } catch {
-            for (const record of chunk)
-              state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
-            continue;
-          }
-          for (const [index, record] of chunk.entries()) {
-            if (controller.signal.aborted) {
-              state.abortReason = "max_wall";
-              state.status = "aborted";
-              break;
-            }
-            const output = outputs[index]!;
-            if (output !== null && task.validateOutput?.(output) === false) {
-              state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
-              continue;
-            }
-            const input = {
-              task: task.name,
-              entry: output === null ? null : toEntry(output, state.producer!),
-              operationUuid,
-            };
-            const outcome =
-              request.level === "object"
-                ? await writeObjectTaskInferred(db, { ...input, mediaObjectUuid: record.uuid })
-                : await writeElementTaskInferred(db, { ...input, mediaElementUuid: record.uuid });
-            state.outcomes.set(
-              record.uuid,
-              outcome.outcome === "preserved_durable"
-                ? { outcome: "skipped", reason: "preserved_durable" }
-                : outcome,
+        await dispatchBounded(
+          packed,
+          this.dependencies.pushConcurrency?.batchesPerOperation ?? 2,
+          () => {
+            if (state.status !== "done") return false;
+            // Do not label an exactly exhausted workset as ceiling-aborted, or fetch more
+            // image bytes once a ceiling has stopped the remaining work.
+            const remaining = pending.some(
+              (uuid) => !dispatched.has(uuid) && !state.outcomes.has(uuid),
             );
-            if (outcome.outcome === "written" || outcome.outcome === "removed")
-              state.committed = true;
-          }
-          if (state.status !== "done") break;
-        }
+            return !remaining || !stopForCeiling();
+          },
+          async (chunk) => {
+            for (const record of chunk) dispatched.add(record.uuid);
+            let callIndex: number | undefined;
+            try {
+              const refs = chunk.map((_, index) => `${prefix}${index + 1}`);
+              const result = await this.complete(
+                task,
+                inputFor(chunk),
+                batchEnvelope(task.outputSchema, refs),
+                chunk.length,
+                operationUuid,
+                state,
+                ledger,
+                control,
+                chunk.map((record) => record.uuid),
+                attachmentsFor(chunk),
+              );
+              callIndex = result?.callIndex;
+              // Call/token ceilings stop admission; admitted calls may still commit their results.
+              // Fatal failures and the wall deadline suppress all further inferred writes.
+              if (!result || !canWrite()) return;
+              let outputs: Array<TaskOutput | null>;
+              try {
+                outputs = unpackResults(task.outputSchema, refs, result.output);
+              } catch {
+                for (const record of chunk)
+                  state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
+                return;
+              }
+              for (const [index, record] of chunk.entries()) {
+                if (!canWrite()) break;
+                const output = outputs[index]!;
+                if (output !== null && task.validateOutput?.(output) === false) {
+                  state.outcomes.set(record.uuid, { outcome: "skipped", reason: "invalid_output" });
+                  continue;
+                }
+                const input = {
+                  task: task.name,
+                  entry: output === null ? null : toEntry(output, state.producer!),
+                  operationUuid,
+                };
+                const outcome =
+                  request.level === "object"
+                    ? await writeObjectTaskInferred(db, { ...input, mediaObjectUuid: record.uuid })
+                    : await writeElementTaskInferred(db, {
+                        ...input,
+                        mediaElementUuid: record.uuid,
+                      });
+                state.outcomes.set(
+                  record.uuid,
+                  outcome.outcome === "preserved_durable"
+                    ? { outcome: "skipped", reason: "preserved_durable" }
+                    : outcome,
+                );
+                if (outcome.outcome === "written" || outcome.outcome === "removed")
+                  state.committed = true;
+              }
+            } finally {
+              if (callIndex !== undefined) this.activity.finishBatch(operationUuid, callIndex);
+            }
+          },
+          fail,
+        );
       }
     } catch {
-      if (controller.signal.aborted) stopForCeiling();
-      else {
-        state.status = "failed";
-        state.abortReason = null;
-        state.error = "The push operation could not complete.";
-      }
+      fail();
     } finally {
+      await ledger.drain();
       clearTimeout(wallTimer);
       if (state.committed && afterCommit) {
         try {
@@ -632,8 +693,6 @@ export class PushService {
           console.error("Derived orb refresh failed", operationUuid);
         }
       }
-      this.activity.calls.delete(operationUuid);
-      this.activity.settled.delete(operationUuid);
       await finalizePush(db, {
         operationUuid,
         ledger,
@@ -643,6 +702,7 @@ export class PushService {
         committed: state.committed,
         createdAt: operation.createdAt,
       });
+      this.activity.finishOperation(operationUuid);
     }
   }
 
@@ -654,57 +714,81 @@ export class PushService {
     operationUuid: string,
     state: RunState,
     ledger: MeterLedger,
-    signal: AbortSignal,
+    control: RunControl,
     uuids: string[] = [],
     attachments?: CompletionRequest["attachments"],
-  ): Promise<CompletionResult | undefined> {
+  ): Promise<(CompletionResult & { callIndex: number }) | undefined> {
     const registry = this.dependencies.modelConnectors!;
     assertStructuredOutputSchema(schema);
-    state.calls++;
-    state.producer = registry.identity;
+    if (control.stopForCeiling()) return;
+    let release: () => void;
+    try {
+      release = await (this.dependencies.pushConcurrency?.sharedCalls ?? sharedPushCalls).acquire(
+        control.queueSignal,
+      );
+    } catch (error) {
+      if (control.queueSignal.aborted) return;
+      throw error;
+    }
     let result: CompletionResult | undefined;
     let failure: unknown;
-    this.activity.calls.set(operationUuid, new Set(uuids));
-    // The boundary only captures a result/error. Its usage is the first thing handled afterward.
+    let call: number | undefined;
+    let delivered = false;
     try {
-      result = await registry.connector.complete({
-        target: registry.target,
-        instructions: task.prompt,
-        input,
-        ...(attachments?.length ? { attachments } : {}),
-        schema,
-        schemaName: `rhizome_${task.name}`,
-        effort: task.effort,
-        maxOutputTokens: task.outputTokens.base + task.outputTokens.perObject * count,
-        timeoutMs: 600_000,
-        signal,
-        trace: { operationUuid, call: state.calls },
-      });
+      // No await between this recheck and claiming the immutable index: maxCalls is exact.
+      if (control.stopForCeiling()) return;
+      call = ++state.calls;
+      this.activity.startBatch(operationUuid, call, uuids);
+      // Capture usage even for failed/aborted responses; meter before inferred writes.
+      try {
+        result = await registry.connector.complete({
+          target: registry.target,
+          instructions: task.prompt,
+          input,
+          ...(attachments?.length ? { attachments } : {}),
+          schema,
+          schemaName: `rhizome_${task.name}`,
+          effort: task.effort,
+          maxOutputTokens: task.outputTokens.base + task.outputTokens.perObject * count,
+          timeoutMs: 600_000,
+          signal: control.signal,
+          trace: { operationUuid, call },
+        });
+      } catch (error) {
+        failure = error;
+        if (
+          !(error instanceof ModelConnectorError) ||
+          error.kind === "auth" ||
+          error.kind === "invalid_request"
+        )
+          control.fail();
+        else if (error.kind === "aborted") control.abort();
+      }
+      const usage =
+        result?.usage ?? (failure instanceof ModelConnectorError ? failure.usage : undefined);
+      if (result || usage) state.producer = registry.identity;
+      if (usage)
+        await ledger.record(usage, {
+          index: call,
+          objects: count,
+          outcome: failure instanceof ModelConnectorError ? failure.kind : "completed",
+        });
+      if (result) {
+        delivered = true;
+        return { ...result, callIndex: call };
+      }
+      if (!(failure instanceof ModelConnectorError)) throw failure;
+      if (failure.kind === "aborted") return;
+      const outcome = { outcome: "skipped", reason: "call_failed", code: failure.kind } as const;
+      if (task.level === "vibe") state.vibe = outcome;
+      else for (const uuid of uuids) state.outcomes.set(uuid, outcome);
     } catch (error) {
-      failure = error;
-    }
-    const usage =
-      result?.usage ?? (failure instanceof ModelConnectorError ? failure.usage : undefined);
-    if (usage)
-      await ledger.record(usage, {
-        index: state.calls,
-        objects: count,
-        outcome: failure instanceof ModelConnectorError ? failure.kind : "completed",
-      });
-    this.activity.calls.delete(operationUuid);
-    if (result) return result;
-    if (!(failure instanceof ModelConnectorError)) throw failure;
-    if (failure.kind === "aborted") {
-      state.abortReason = "max_wall";
-      state.status = "aborted";
-      return;
-    }
-    const outcome = { outcome: "skipped", reason: "call_failed", code: failure.kind } as const;
-    if (task.level === "vibe") state.vibe = outcome;
-    else for (const uuid of uuids) state.outcomes.set(uuid, outcome);
-    if (failure.kind === "auth" || failure.kind === "invalid_request") {
-      state.status = "failed";
-      state.error = "The push operation could not complete.";
+      control.fail();
+      throw error;
+    } finally {
+      // Release after accounting so queued siblings recheck the latest reported token totals.
+      release();
+      if (call !== undefined && !delivered) this.activity.finishBatch(operationUuid, call);
     }
   }
 }

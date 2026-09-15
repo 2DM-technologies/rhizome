@@ -26,6 +26,26 @@ type PendingTask = Pick<PushTaskDefinition, "level" | "name" | "elementKinds"> &
 export class PushActivity {
   readonly pending = new Map<string, Map<string, PendingTask>>();
   readonly calls = new Map<string, ReadonlySet<string>>();
+  private readonly batches = new Map<string, Map<number, readonly string[]>>();
+
+  startBatch(operationUuid: string, index: number, uuids: readonly string[]) {
+    const batches = this.batches.get(operationUuid) ?? new Map<number, readonly string[]>();
+    batches.set(index, uuids);
+    this.batches.set(operationUuid, batches);
+    this.calls.set(operationUuid, new Set([...batches.values()].flat()));
+  }
+
+  finishBatch(operationUuid: string, index: number) {
+    const batches = this.batches.get(operationUuid);
+    batches?.delete(index);
+    this.calls.set(operationUuid, new Set([...(batches?.values() ?? [])].flat()));
+  }
+
+  finishOperation(operationUuid: string) {
+    this.batches.delete(operationUuid);
+    this.calls.delete(operationUuid);
+    this.settled.delete(operationUuid);
+  }
   readonly settled = new Map<string, ReadonlyMap<string, unknown>>();
 
   begin(vibeUuid: string, tasks: readonly PushTaskDefinition[], objectUuids?: readonly string[]) {

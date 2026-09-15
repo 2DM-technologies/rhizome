@@ -600,6 +600,40 @@ Image payload reads observe the same operation wall signal, through both the sto
 | `auth`, `invalid_request`, a missing row at write time, an unexpected exception, or a result that fails its own schema      | `failed`  | null; `error` set                       |
 | the process restarted while the run was queued or running (boot sweep)                                                      | `failed`  | null; `error = "interrupted"`           |
 
+**Bounded batch overlap (Alpha).** Object and element runs dispatch at most two batches at
+once by default. The dispatcher reserves a batch position before advancing the async chunk
+iterator, and keeps it through accounting and per-record writes. For images this retains at
+most two bounded attachment payloads plus the packer's existing single-record lookahead:
+with the current limits, at most 2 × 32 MiB + 8 MiB of attachment bytes per operation.
+Base64 encoding, request serialization, and ordinary metadata add memory overhead. The
+workset's metadata may still be loaded together; image bytes are never eagerly materialized.
+
+All push model calls, including Vibe-level fallback/summarize calls and calls from different
+`PushService` instances, share one process-local FIFO limiter of four logical calls. A slot
+stays occupied through connector retries and the returned usage's accounting, so a queued
+sibling sees the latest observed token total when it acquires the slot. No second retry layer
+is added. Tests can inject `pushConcurrency.batchesPerOperation` and one shared
+`FifoLimiter` through `pushConcurrency.sharedCalls`; serial mode is concurrency one.
+
+Before dispatch, the run checks its cancellation/ceilings, waits for a shared slot with its
+acceptance-based wall deadline, rechecks, and claims an immutable call index synchronously.
+The 40-call ceiling therefore cannot overshoot. Call and observed-token ceilings stop new
+admission; already started calls settle, record their usage, and may finish their per-record
+writes. The 400,000-token ceiling remains an **observed-usage stop**, not a reserved token
+budget: the call crossing it and up to the other already admitted batches can carry the total
+past it (one other batch at the default per-operation limit of two). The shared cap can reduce
+that overlap. There is no token reservation engine and no increase in existing task/batch limits.
+
+Fatal connector errors and unexpected exceptions stop scheduling immediately; wall aborts also
+cancel connector/image I/O and queued slot waits. Fatal/wall stops suppress further inferred
+writes; a transaction already entered still settles. Every started batch and accounting record
+is drained before the terminal transaction, including late successful or billed error responses.
+Earlier writes remain reported. Active batches are tracked by immutable call index, so finishing
+one cannot clear a sibling's loading state, and operation activity is cleared after finalization
+commits. Results retain selection order and UUID/ref mapping even when completion order differs.
+The import dependency graph, prompts, schemas, grants, durable-entry guards, and per-record
+transactions are unchanged; a graph dependency settles only after the complete task run.
+
 ### 6.4a Durable execution readiness
 
 Everything runs in the API process for the alpha; scaling is a later problem. CONFORMANCE's M7 entry moves preview and pull to durable execution with a reaper, and push rides that same move rather than getting its own queue. Three constraints keep that move a relocation instead of a rewrite, and the implementation must not drift from them:
@@ -779,6 +813,8 @@ The store pays for everything in the alpha. Every `meter_entry` row is written w
 
 ### 8.2 Ledger (`metering/meter-ledger.ts`)
 
+`record` calls are serialized per operation, including both whole-row persistence steps and pricing. A failed record does not block sibling accounting; the run drains the queue before finalization. `breakdown.calls` is stored in immutable call-index order even when responses arrive out of order.
+
 `open` inserts the row with zeros in the accept transaction; `record` runs after **every** provider response that carried usage (a result, or any `ModelConnectorError` with `usage` set, which the catch boundary in §6.4 guarantees for every kind): it appends the call to `breakdown.calls`, adds tokens and `usd` (BigInt nano-USD rendered as a 6-dp string), increments `turns`, and writes the row, so the ledger is persisted per call and is never behind a write; `close` runs in the finalizer's transaction with `duration_ms` and `abort_reason`. A failure after chunk 2 of 5 leaves chunks 1–2 written and recorded and chunk 3's usage recorded if a response reached us. A call in flight when the process dies is not recorded, and a run the boot sweep fails is never closed: its row keeps the usage recorded so far with `duration_ms` null (§6.4).
 
 ### 8.3 Breakdown
@@ -830,6 +866,7 @@ The API process tracks not-yet-accepted automatic tasks, current call record IDs
 - **Automatic import follow-up (`push.integration.test.ts`):** confirmation commits before a gated fake connector is released and returns while inference is pending; a replay triggers no second sequence; the source skill selects its compiled pipeline; all six content-enrichment tasks persist inferred results; unconfirmed, unauthorized, invalid, and failed-VERIFY imports create no tasks; ordinary creation, later imports, and pulls do not trigger the sequence; keyless imports succeed without tasks; orchestration is MediaObject-type agnostic; dependency ordering provides fresh prior results and independent ready tasks overlap; each task receives a separate closed meter; failed tasks and workset rejections do not stop descendants or siblings.
 - **Import naming follow-up:** `push-tasks.test.ts` validates the required title and its bounds; `push.integration.test.ts` proves a nameless import receives the summary title with no extra model call, source titles win (including a source named `Imported objects`), failed/invalid summaries leave the fallback intact with metered usage, and manual summarize runs leave the canonical title alone. Are.na and X browser tests prove source names are used without a title input and confirmation opens the created Vibe immediately; generic file and OAuth tests cover the same navigation, including returning to import without replaying OAuth staging.
 - **Inferred loading follow-up:** `push.integration.test.ts` covers automatic waiting, per-chunk active and settled records, durable preservation, shared-element deduplication, read permissions, failure messages, partial retries after acceptance rejection, and keyless idle state. `inference-status.e2e.ts` covers gray-to-purple/violet JSON skeletons, existing content during reruns, error text, revision-driven refresh, and reduced motion.
+- **Batch concurrency (`push-concurrency.test.ts`, `push-concurrency.integration.test.ts`):** serial compatibility and overlap at c=1/2/4; default two active batches; default shared cap four across operations, service instances, and Vibe calls; FIFO cancellation and permit release; immutable call IDs and reversed batch/ref completion; exact usage/cost totals; independent active status; fatal/wall/iterator failures drain siblings before finalization; failed pricing preserves sibling accounting; queued ceiling rechecks; observed-token overshoot; image buffering remains two batches plus lookahead while shared slots wait. These use controlled fake calls, not live-provider timing measurements.
 - **Deliberately not tested in CI:** the live OpenAI API (an out-of-CI smoke script may follow), restart recovery beyond the boot sweep (M7), budgets.
 
 The final local gate, including the import and host follow-ups, passes **502 tests** in `bun run check` and **75 Playwright tests** in `bun run test:e2e`, including the image path. `image-attachments.test.ts` proves MIME/header checks, high-detail patch arithmetic, part ordering, and bounded packing; `push.integration.test.ts` proves installed `describe-media` write-back, deduplication, revisions, metering, and unsupported-image skips. Its unbilled-failure test proves the distinction between meter turns and scheduling attempts; its duplicate-ref test proves that `invalid_output` contributes to the skipped tally. `m3-push.e2e.ts` covers both object/Vibe tasks and refreshed element inferred data. Provider calls are fake or stubbed; the live API remains outside CI.

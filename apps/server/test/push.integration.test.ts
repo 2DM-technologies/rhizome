@@ -201,6 +201,8 @@ function application(
     providerLeasePool,
     blobs: createBlobStore(config),
     pushTasks: tasks,
+    // Retain the original serial-policy regression lane; parallel cases have their own suite.
+    pushConcurrency: { batchesPerOperation: 1 },
     ...(connector ? { modelConnectors: registry(connector) } : {}),
     ...overrides,
   }).app;

@@ -46,6 +46,7 @@ import {
 } from "./inference/connector-registry.ts";
 import { installedPushTasks } from "./push/installed-tasks.ts";
 import { DEFAULT_PUSH_LIMITS, type PushLimits } from "./push/limits.ts";
+import type { PushConcurrency } from "./push/concurrency.ts";
 import { PushService } from "./push/push-service.ts";
 import type { PushTaskCatalog } from "./push/task-catalog.ts";
 import { ImportPushPipelineCatalog } from "./push/import-push-pipeline.ts";
@@ -64,6 +65,7 @@ export interface AppDependencies {
   modelConnectors?: ModelConnectorRegistry;
   pushTasks?: PushTaskCatalog;
   pushLimits?: PushLimits;
+  pushConcurrency?: PushConcurrency;
 }
 
 export function createApp({
@@ -79,6 +81,7 @@ export function createApp({
   modelConnectors,
   pushTasks,
   pushLimits,
+  pushConcurrency,
 }: AppDependencies) {
   const app = new Hono<AppEnvironment>();
   const resolvedCredentialedSources =
@@ -108,6 +111,7 @@ export function createApp({
     pushTasks: resolvedPushTasks,
     importPushPipelines,
     pushLimits: pushLimits ?? DEFAULT_PUSH_LIMITS,
+    pushConcurrency,
   });
 
   const requestLogger = logger();
