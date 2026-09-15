@@ -36,7 +36,7 @@ const fixtureVibe = {
   title: "Spending",
   objects: [OBJECT_URI],
   created_at: "2026-08-27T12:00:00.000Z",
-  "x-rhizome-updated-at": "2026-08-28T12:00:00.000Z",
+  updated_at: "2026-08-28T12:00:00.000Z",
   grants: [],
   inferred: {},
   pull: {
@@ -153,6 +153,7 @@ function applyPush(operation: MockPushOperation, store: MockStore) {
             }
           : { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } };
     vibe.inferred = { ...(vibe.inferred ?? {}), [key]: envelope(taskProperties) };
+    vibe.updated_at = new Date().toISOString();
     operation.document.result = {
       ...shared,
       level: "vibe",
@@ -712,6 +713,7 @@ export async function installMockStore(
         title: input.title,
         objects: [],
         created_at: "2026-08-27T12:02:00.000Z",
+        updated_at: "2026-08-27T12:02:00.000Z",
         grants: [],
         inferred: {},
       } satisfies Vibe;
@@ -1028,6 +1030,7 @@ export async function installMockStore(
         const input = request.postDataJSON() as { objects: string[] };
         if (method === "POST") vibe.objects.push(...input.objects);
         else vibe.objects = vibe.objects.filter((uri) => !input.objects.includes(uri));
+        vibe.updated_at = new Date().toISOString();
         return noContent(route);
       }
     }
@@ -1050,6 +1053,7 @@ export async function installMockStore(
         title: input.title,
         objects: staged.candidates.map(({ uri }) => uri),
         created_at: "2026-08-28T12:00:04.000Z",
+        updated_at: "2026-08-28T12:00:04.000Z",
         grants: [],
         inferred: {},
         pull: {
@@ -1068,6 +1072,7 @@ export async function installMockStore(
         elementPayloads.set(id, element.payload);
       }
       staged.document.committed_at = "2026-08-28T12:00:04.000Z";
+      vibe.updated_at = staged.document.committed_at;
       return json(route, vibe);
     }
 
@@ -1100,6 +1105,7 @@ export async function installMockStore(
           : [...configuredSources, staged.source],
       };
       staged.document.committed_at = "2026-08-28T12:00:04.000Z";
+      vibe.updated_at = staged.document.committed_at;
       return json(route, vibe);
     }
 
@@ -1332,6 +1338,7 @@ export async function installMockStore(
       if (method === "PATCH") {
         const input = request.postDataJSON() as { title?: string };
         if (input.title !== undefined) vibe.title = input.title;
+        vibe.updated_at = new Date().toISOString();
         return json(route, vibe);
       }
       if (method === "DELETE") {

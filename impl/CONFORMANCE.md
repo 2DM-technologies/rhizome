@@ -56,7 +56,7 @@ suites.
   validation, and positive/negative fixtures including a non-Strava activity. The Strava skill
   must consume this canonical vocabulary; it is not registered yet.
 - Add the planned `apps/ingest/skills/strava/` file source described in
-  [Strava import](./concepts/strava-import.md): recognized activity CSV and supported original
+  [Strava import](./speculative/strava-import.md): recognized activity CSV and supported original
   files, running summaries, recorded laps and calculated mile splits with explicit timing bases,
   VERIFY coverage, and the existing reviewed candidate-bundle commit path. Summary-only import
   is an intermediate slice; the skill is not yet installed.

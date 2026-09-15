@@ -14,7 +14,7 @@ function VibeListItem({ vibe, open }: { vibe: Vibe; open: () => void }) {
   return (
     <li>
       <EntityRow
-        className="transition-[background-color,box-shadow] duration-150 hover:bg-surface/40 hover:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] focus-within:bg-surface/40 focus-within:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] motion-reduce:transition-none [&>button]:cursor-pointer"
+        className="transition-[background-color,box-shadow] duration-150 ease-in hover:bg-surface/40 hover:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] focus-within:bg-surface/40 focus-within:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] motion-reduce:transition-none [&>button]:cursor-pointer"
         leading={<RasterVibeOrb recipe={visual.recipe} loading={visual.loading} size={20} />}
         title={vibe.title}
         meta={`${vibe.objects.length} objects`}

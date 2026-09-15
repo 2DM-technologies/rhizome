@@ -12,13 +12,19 @@ export function usePushVibe() {
   const client = useQueryClient();
   return api.useMutation("post", "/rnet/v0/vibes/{id}/push", {
     gcTime: 0,
-    onSuccess: (operation) =>
+    onSuccess: (operation) => {
       client.setQueryData(
         api.queryOptions("get", operationPath, {
           params: { path: { id: operation.operation_id } },
         }).queryKey,
         operation,
-      ),
+      );
+      // A locally started job should leave idle polling immediately, including tasks whose
+      // status was cached before Run was pressed. Completion also refreshes its final state.
+      void client.invalidateQueries({
+        queryKey: ["get", "/rnet/v0/vibes/{id}/inference-status"],
+      });
+    },
   });
 }
 
@@ -42,6 +48,9 @@ export function invalidatePushResult(
         ]
       : [];
   return Promise.all([
+    client.invalidateQueries({
+      queryKey: ["get", "/rnet/v0/vibes/{id}/inference-status"],
+    }),
     ...uris.map((uri) => {
       const kind = uri.startsWith("rnet://element/") ? "elements" : "objects";
       const path = kind === "elements" ? "/rnet/v0/elements/{id}" : "/rnet/v0/objects/{id}";

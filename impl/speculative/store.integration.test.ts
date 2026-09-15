@@ -5,57 +5,60 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { MediaObject } from "@rnet/types";
 import {
+  and,
+  asc,
+  eq,
+  sql,
+  S3rver,
+  sharp,
+  uuidv7,
   type IngestionSourceDocument,
   type OperationDocument,
   type SourceConnectionAttemptDocument,
   type SourceCredentialDocument,
   type StartSourceConnectionResponse,
-} from "@rhizome/store-contract";
-import { and, asc, eq, sql } from "drizzle-orm";
-import S3rver from "s3rver";
-import sharp from "sharp";
-import { v7 as uuidv7 } from "uuid";
+} from "../../apps/server/test/store-integration-dependencies.ts";
 
 import {
   CredentialedSourceCatalog,
   CredentialConnectionError,
   type CredentialedSourceSkill,
   type OAuth2PkceCredentialResult,
-} from "../../ingest/connected-sources/types.ts";
-import { FileSourceCatalog, type FileSourceSkill } from "../../ingest/file-sources/types.ts";
+} from "../../apps/ingest/connected-sources/types.ts";
+import { FileSourceCatalog, type FileSourceSkill } from "../../apps/ingest/file-sources/types.ts";
 import {
   PublicRemoteSourceCatalog,
   type PublicRemoteSourceSkill,
-} from "../../ingest/public-sources/types.ts";
+} from "../../apps/ingest/public-sources/types.ts";
 import {
   CANDIDATE_BUNDLE_CAPABILITY,
   candidateBundle,
-} from "../../ingest/source-skills/candidate-bundle.ts";
+} from "../../apps/ingest/source-skills/candidate-bundle.ts";
 import {
   SIMPLEFIN_CONNECTOR_VERSION,
   SIMPLEFIN_PARSER_NAME,
   SIMPLEFIN_SKILL_ID,
-} from "../../ingest/skills/transactions/simplefin/contracts.ts";
-import { createSimpleFinSkill } from "../../ingest/skills/transactions/simplefin/source.ts";
-import { ofxSourceSkill } from "../../ingest/skills/transactions/ofx/source.ts";
-import { createApp } from "../src/app.ts";
-import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../src/auth.ts";
-import { createBlobStore } from "../src/blobs/index.ts";
-import type { ServerConfig } from "../src/config.ts";
-import { createDatabase, createProviderLeasePool } from "../src/db/index.ts";
-import { ingestionSourceFetches } from "../src/db/models/ingestion-source-fetch.ts";
-import { ingestionSources } from "../src/db/models/ingestion-source.ts";
-import { mediaObjectRevisions } from "../src/db/models/media-object-revision.ts";
-import { operations } from "../src/db/models/operation.ts";
-import { originArtifacts } from "../src/db/models/origin-artifact.ts";
-import { sourceCredentials } from "../src/db/models/source-credential.ts";
-import { seedDb } from "../src/db/seedDb.ts";
+} from "../../apps/ingest/skills/transactions/simplefin/contracts.ts";
+import { createSimpleFinSkill } from "../../apps/ingest/skills/transactions/simplefin/source.ts";
+import { ofxSourceSkill } from "../../apps/ingest/skills/transactions/ofx/source.ts";
+import { createApp } from "../../apps/server/src/app.ts";
+import { DEV_OTHER_USER_UUID, DEV_USER_UUID } from "../../apps/server/src/auth.ts";
+import { createBlobStore } from "../../apps/server/src/blobs/index.ts";
+import type { ServerConfig } from "../../apps/server/src/config.ts";
+import { createDatabase, createProviderLeasePool } from "../../apps/server/src/db/index.ts";
+import { ingestionSourceFetches } from "../../apps/server/src/db/models/ingestion-source-fetch.ts";
+import { ingestionSources } from "../../apps/server/src/db/models/ingestion-source.ts";
+import { mediaObjectRevisions } from "../../apps/server/src/db/models/media-object-revision.ts";
+import { operations } from "../../apps/server/src/db/models/operation.ts";
+import { originArtifacts } from "../../apps/server/src/db/models/origin-artifact.ts";
+import { sourceCredentials } from "../../apps/server/src/db/models/source-credential.ts";
+import { seedDb } from "../../apps/server/src/db/seedDb.ts";
 import {
   createCredentialKeyring,
   credentialAssociatedData,
   openCredentialSecret,
   sealCredentialSecret,
-} from "../src/services/source-credential-crypto.ts";
+} from "../../apps/server/src/services/source-credential-crypto.ts";
 
 const databaseUrl = process.env.RHIZOME_TEST_DATABASE_URL ?? "postgres://localhost/rhizome_m1_test";
 const { db, client } = createDatabase(databaseUrl, { max: 4 });
@@ -1910,7 +1913,7 @@ describe("rNet M1 store", () => {
     ).toBe(422);
 
     const qfxBytes = await Bun.file(
-      new URL("../../ingest/skills/transactions/ofx/fixtures/checking.qfx", import.meta.url),
+      new URL("../../apps/ingest/skills/transactions/ofx/fixtures/checking.qfx", import.meta.url),
     ).text();
     const qfxOriginResponse = await app.request("http://rhizome.test/rnet/v0/origins", {
       method: "POST",
@@ -3757,7 +3760,7 @@ async function connectedFetches(
 async function simpleFinFixtureBytes(name: string): Promise<Uint8Array> {
   return new Uint8Array(
     await Bun.file(
-      new URL(`../../ingest/skills/transactions/simplefin/fixtures/${name}`, import.meta.url),
+      new URL(`../../apps/ingest/skills/transactions/simplefin/fixtures/${name}`, import.meta.url),
     ).arrayBuffer(),
   );
 }

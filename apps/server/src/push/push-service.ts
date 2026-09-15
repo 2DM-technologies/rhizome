@@ -619,14 +619,17 @@ export class PushService {
               const result = await this.complete(
                 task,
                 assembled.input,
-                task.outputSchema,
+                task.modelOutput?.schema ?? task.outputSchema,
                 1,
                 operationUuid,
                 state,
                 ledger,
                 control,
               );
-              if (result) output = result.output as TaskOutput;
+              if (result) {
+                const modelOutput = result.output as TaskOutput;
+                output = task.modelOutput ? task.modelOutput.decode(modelOutput) : modelOutput;
+              }
             }
           }
           if (output !== undefined) {

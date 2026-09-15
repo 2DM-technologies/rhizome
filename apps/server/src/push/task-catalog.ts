@@ -25,6 +25,11 @@ export interface PushTaskDefinition {
   outputSchema: JSONSchema;
   /** Semantic constraints that the provider's JSON Schema subset cannot express. */
   validateOutput?: (output: TaskOutput) => boolean;
+  /** Optional Vibe-only generation envelope, decoded to outputSchema before write validation. */
+  modelOutput?: {
+    schema: JSONSchema;
+    decode: (output: TaskOutput) => TaskOutput;
+  };
   rules?: (context: VibeContext) => TaskOutput | undefined;
   /** Bounded deterministic data gathered inside the push operation before a Vibe call. */
   prepareVibeContext?: (input: PrepareVibeContextInput) => Promise<Record<string, unknown>>;
@@ -57,7 +62,10 @@ export class PushTaskCatalog {
       if (this.tasks.has(key)) throw new Error(`Duplicate push task: ${key}`);
       if (!task.prompt.trim()) throw new Error(`Empty push prompt: ${key}`);
       if (task.rules && task.level !== "vibe") throw new Error("Rules require a Vibe task");
-      if ((task.prepareVibeContext || task.transformVibeOutput) && task.level !== "vibe")
+      if (
+        (task.prepareVibeContext || task.transformVibeOutput || task.modelOutput) &&
+        task.level !== "vibe"
+      )
         throw new Error("Vibe context hooks require a Vibe task");
       if (
         task.level === "element"
@@ -67,6 +75,10 @@ export class PushTaskCatalog {
         throw new Error("Element tasks must declare supported image elementKinds only");
       assertStructuredOutputSchema(task.outputSchema);
       ajv.compile(task.outputSchema);
+      if (task.modelOutput) {
+        assertStructuredOutputSchema(task.modelOutput.schema);
+        ajv.compile(task.modelOutput.schema);
+      }
       this.tasks.set(key, task);
     }
   }

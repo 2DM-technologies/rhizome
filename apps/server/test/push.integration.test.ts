@@ -67,6 +67,7 @@ import { displayName } from "../src/push/tasks/object/display-name/manifest.ts";
 import { searchKeywords } from "../src/push/tasks/object/search-keywords/manifest.ts";
 import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
 import { RNET_SCHEMA_VERSION } from "../src/rnet.ts";
+import orbIdentities from "./fixtures/orb-identities.json";
 import { jsonSchema } from "../src/routes/contracts.ts";
 import * as writer from "../src/services/inferred-writer.ts";
 import { sweepInterruptedOperations } from "../src/services/operation-sweep.ts";
@@ -407,7 +408,12 @@ function installedTaskResponse(request: CompletionRequest): CompletionResult {
       };
     case `rhizome_${vibeView.name}`:
       return {
-        output: { view: "simplelist", config: { subtitle_pointer: "/source/properties/title" } },
+        output: {
+          selection: {
+            view: "simplelist",
+            config: { subtitle_pointer: "/source/properties/title" },
+          },
+        },
         usage,
       };
     case `rhizome_${orbIdentity.name}`:
@@ -2071,8 +2077,10 @@ describe("push lifecycle and inferred writes", () => {
       respond: () => ({
         usage,
         output: {
-          view: "simplelist",
-          config: { subtitle_pointer: "/source/properties/title" },
+          selection: {
+            view: "simplelist",
+            config: { subtitle_pointer: "/source/properties/title" },
+          },
         },
       }),
     });
@@ -2095,7 +2103,7 @@ describe("push lifecycle and inferred writes", () => {
     });
     expect(fake.requests).toHaveLength(1);
   });
-  test("vibe-view rejects model pointers and config branches that fail its context post-check", async () => {
+  test("vibe-view rejects mismatched model branches before decoding and checks decoded pointers", async () => {
     for (const output of [
       {
         view: "simplelist",
@@ -2112,14 +2120,19 @@ describe("push lifecycle and inferred writes", () => {
         .set({ type: "transaction" })
         .where(eq(mediaObjects.uuid, ids[1]!));
       await imageFor(ids[0]!);
-      const fake = new FakeModelConnector({ respond: () => ({ usage, output }) });
+      const fake = new FakeModelConnector({
+        respond: () => ({ usage, output: { selection: output } }),
+      });
       const operation = await run(application(fake), vibeUuid, {
         level: "vibe",
         task: vibeView.name,
       });
       expect(operation.result).toMatchObject({
         llm_calls: 1,
-        vibe: { outcome: "skipped", reason: "invalid_output" },
+        vibe:
+          "caption_pointer" in output.config
+            ? { outcome: "skipped", reason: "call_failed", code: "output_invalid" }
+            : { outcome: "skipped", reason: "invalid_output" },
         usage: { tokens_in: usage.tokensIn, tokens_out: usage.tokensOut },
       });
       expect(
@@ -3085,7 +3098,7 @@ describe("review regressions", () => {
 describe("installed image push", () => {
   test("orb identity rejects all-zero palettes while preserving valid votes and billed usage", async () => {
     const { vibeUuid, ids } = await fixture(2);
-    const example = JSON.parse(orbIdentity.prompt.match(/```json\n([\s\S]*?)\n```/u)![1]!);
+    const example = orbIdentities[0]!;
     const connector = new FakeModelConnector({
       respond: () => ({
         usage,

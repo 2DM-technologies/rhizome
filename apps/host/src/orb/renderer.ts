@@ -7,6 +7,9 @@ import {
   type OrbVisualRecipe,
 } from "./recipe.ts";
 
+// Playback speed is a rendering choice; stored motion values keep their original meaning.
+const ORB_PLAYBACK_SPEED = 1.5;
+
 const VERTEX_SHADER = `#version 300 es
 in vec2 a_position;
 out vec2 v_uv;
@@ -759,7 +762,7 @@ export class OrbRenderer {
     const frozen = this.reducedMotion || this.motion === "still";
     this.painter.draw(
       this.current,
-      frozen ? 0 : (now - this.startedAt) / 1000,
+      frozen ? 0 : ((now - this.startedAt) / 1000) * ORB_PLAYBACK_SPEED,
       frozen ? 0 : this.pointer.x,
       frozen ? 0 : this.pointer.y,
       frozen ? 0 : this.energy,

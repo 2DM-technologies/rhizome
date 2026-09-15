@@ -6,18 +6,12 @@ import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
 import { ProceduralVibeOrb, useOrbHover, useReducedMotion } from "../orb/ProceduralVibeOrb.tsx";
 import type { OrbVisualRecipe } from "../orb/recipe.ts";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
-import {
-  useElementThumbnailUrl,
-  useMediaElement,
-  usePayloadUrl,
-  useVibeObjects,
-} from "../queries/index.ts";
+import { useVibeObjects } from "../queries/index.ts";
+import { MediaObjectThumbnail } from "../surfaces/MediaObjectThumbnail.tsx";
 import { useNearViewport } from "../ui/useNearViewport.ts";
-import { vibeUpdatedAt } from "../vibeRecency.ts";
 import { useSurfaceNavigation } from "./focus.ts";
 
-const CARD_PREVIEW_LIMIT = 6;
-const MAX_TEXT_PREVIEW_BYTES = 16 * 1024;
+const CARD_PREVIEW_LIMIT = 5;
 
 function cardBackgroundColor(recipe: OrbVisualRecipe): string {
   const dominant = [...recipe.palette].sort(
@@ -39,104 +33,6 @@ export function relativeAge(isoDate: string, now: number): string {
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo`;
   return `${Math.floor(months / 12)}y`;
-}
-
-function elementReference(object: MediaObject) {
-  return (
-    object.elements.find(({ role }) => role === "preview") ??
-    object.elements.find(({ role }) => role === "content") ??
-    object.elements[0]
-  );
-}
-
-function payloadKind(mime: string | undefined): "image" | "video" | "text" | "other" {
-  const mediaType = mime?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (mediaType.startsWith("image/")) return "image";
-  if (mediaType.startsWith("video/")) return "video";
-  if (
-    mediaType.startsWith("text/") ||
-    mediaType === "application/json" ||
-    mediaType === "application/xml" ||
-    mediaType === "application/javascript"
-  ) {
-    return "text";
-  }
-  return "other";
-}
-
-function TextThumbnail({ src }: { src: string }) {
-  const [current, setCurrent] = useState<
-    { src: string; status: "loaded"; text: string } | { src: string; status: "error" } | null
-  >(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch(src, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`Text payload returned ${response.status}`);
-        return response.text();
-      })
-      .then(
-        (text) => {
-          if (!controller.signal.aborted) setCurrent({ src, status: "loaded", text });
-        },
-        () => {
-          if (!controller.signal.aborted) setCurrent({ src, status: "error" });
-        },
-      );
-    return () => controller.abort();
-  }, [src]);
-
-  const state = current?.src === src ? current : null;
-  return (
-    <span
-      data-element-presentation="text"
-      className="block size-full overflow-hidden whitespace-pre-wrap break-all bg-canvas p-px font-mono text-[3px] leading-[1.05] text-primary"
-    >
-      {!state ? "" : state.status === "loaded" ? state.text : "Text"}
-    </span>
-  );
-}
-
-/** Small cached images/text only; videos and oversized text use a metadata placeholder. */
-function ObjectThumbnail({ object }: { object: MediaObject }) {
-  const reference = elementReference(object);
-  const elementUuid = reference ? uuidOf(reference.uri) : undefined;
-  const element = useMediaElement(elementUuid);
-  const presentation = payloadKind(element.data?.mime);
-  const thumbnail = useElementThumbnailUrl(presentation === "image" ? elementUuid : undefined);
-  const payload = usePayloadUrl(
-    "elements",
-    presentation === "text" &&
-      typeof element.data?.byte_size === "number" &&
-      element.data.byte_size <= MAX_TEXT_PREVIEW_BYTES
-      ? elementUuid
-      : undefined,
-    { gcTime: 5 * 60 * 1000 },
-  );
-
-  return (
-    <span
-      data-object-thumbnail
-      className="block size-5 shrink-0 overflow-hidden border border-neutral-border bg-canvas/60"
-    >
-      {thumbnail.data && presentation === "image" ? (
-        <img
-          src={thumbnail.data}
-          alt=""
-          aria-hidden
-          data-element-presentation="image"
-          className="size-full object-cover"
-        />
-      ) : payload.data && presentation === "text" ? (
-        <TextThumbnail src={payload.data} />
-      ) : (
-        <span className="flex size-full items-center justify-center overflow-hidden text-[6px] font-medium uppercase leading-none text-secondary">
-          {element.data?.kind?.slice(0, 1) ?? object.type.slice(0, 1)}
-        </span>
-      )}
-    </span>
-  );
 }
 
 function humanize(value: string): string {
@@ -186,7 +82,7 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
   const type = details[0] ? humanize(details[0].type) : undefined;
   const remaining = Math.max(0, vibe.objects.length - previews.length);
   const objectLabel = `${vibe.objects.length} ${vibe.objects.length === 1 ? "object" : "objects"}`;
-  const updatedAge = relativeAge(vibeUpdatedAt(vibe), now);
+  const updatedAge = relativeAge(vibe.updated_at, now);
   const visual = useMemo(() => {
     const orb = orbVisualForVibe(vibe);
     return {
@@ -222,7 +118,7 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
       style={{
         backgroundColor: `color-mix(in srgb, ${visual.backgroundColor} var(--vibe-card-opacity), transparent)`,
       }}
-      className="group relative h-[102px] min-h-0 min-w-0 overflow-hidden rounded-sm shadow-[0_2px_10px_rgb(20_21_26/4%)] transition-[background-color,box-shadow] duration-150 [--vibe-card-opacity:92%] hover:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] hover:[--vibe-card-opacity:100%] focus-within:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] focus-within:[--vibe-card-opacity:100%] motion-reduce:transition-none"
+      className="group relative h-[102px] min-h-0 min-w-0 overflow-hidden rounded-sm shadow-[0_2px_10px_rgb(20_21_26/4%)] transition-[background-color,box-shadow] duration-150 ease-in [--vibe-card-opacity:92%] hover:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] hover:[--vibe-card-opacity:100%] focus-within:shadow-[0_0_4px_0px_var(--rz-vibe-hover-shadow)] focus-within:[--vibe-card-opacity:100%] motion-reduce:transition-none"
     >
       <DesktopVibeOpenButton
         uuid={uuid}
@@ -280,11 +176,12 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
         >
           <span className="sr-only">{objectLabel}</span>
           {previews.map((object) => (
-            <ObjectThumbnail key={object.uri} object={object} />
+            <MediaObjectThumbnail key={object.uri} object={object} />
           ))}
           {remaining > 0 ? (
-            <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-accent text-[8px] font-medium leading-none text-on-accent">
-              +{remaining}
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-accent font-sans font-bold leading-none text-on-accent tabular-nums">
+              <span className="text-[8px]">+</span>
+              <span className={remaining >= 100 ? "text-[9px]" : "text-[11px]"}>{remaining}</span>
             </span>
           ) : null}
         </div>

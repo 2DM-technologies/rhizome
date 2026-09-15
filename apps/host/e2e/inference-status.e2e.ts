@@ -5,6 +5,7 @@ import { installMockStore, OBJECT_ID, ELEMENT_ID } from "./support/mockStore.ts"
 test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and retain content on errors", async ({
   page,
 }) => {
+  await page.clock.install();
   const store = await installMockStore(page);
   const object = store.objects.get(OBJECT_ID)!;
   const element = store.elements.get(ELEMENT_ID)!;
@@ -96,6 +97,7 @@ test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and re
   await expect(objectContainer).toHaveAttribute("aria-busy", "false");
 
   status.records[0]!.tasks = [{ task: "display-name", status: "waiting", message: null }];
+  await page.clock.fastForward(10_100);
   await expect(objectContainer).toHaveAttribute("data-inference-state", "waiting");
   await expect(objectBlock.locator("pre")).toContainText("Garden fern");
   status.records[0]!.tasks[0]!.status = "running";
@@ -109,6 +111,7 @@ test("inferred blocks move from gray waiting to Rhizome shimmer, refresh, and re
   await expect(objectBlock.locator("pre")).toContainText("Garden fern");
 
   status.records[0]!.tasks = [{ task: "display-name", status: "running", message: null }];
+  await page.clock.fastForward(10_100);
   await expect(objectBlock.getByRole("alert")).toHaveCount(0);
   store.objects.set(OBJECT_ID, {
     ...object,

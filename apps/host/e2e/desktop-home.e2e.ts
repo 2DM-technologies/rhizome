@@ -24,7 +24,7 @@ test("the bare desktop renders live account totals and newest Vibes first", asyn
     ...structuredClone(base),
     uri: "rnet://vibe/0198f2a1-a09b-76aa-95d8-fc5b55b41fd3",
     title: "Newest",
-    "x-rhizome-updated-at": "2026-09-10T12:00:00.000Z",
+    updated_at: "2026-09-10T12:00:00.000Z",
   } as Vibe);
   mockStore.dashboardStats = {
     account_created_at: "2024-03-14T12:00:00.000Z",
@@ -188,7 +188,8 @@ test("the desktop keeps its DOM while background windows unmount and route short
   await expect(page.locator("[data-surface-window]")).toHaveCount(1);
   await expect(page.locator(`[data-surface-id="object:${OBJECT_ID}"]`)).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Edit Vibe title", exact: true }).click();
+  await page.getByRole("button", { name: "Vibe options", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit title", exact: true }).click();
   await page.getByRole("textbox", { name: "Vibe title", exact: true }).fill("Renamed desktop vibe");
   await page.getByRole("button", { name: "Save Vibe title", exact: true }).click();
   await expect(home).toBeHidden();

@@ -4,6 +4,11 @@ import type { TaskInferenceStatusQuery } from "@rhizome/store-contract";
 import type { MediaObject, Vibe } from "@rnet/types";
 import { api } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
+import {
+  ACTIVE_INFERENCE_POLL_MS,
+  IDLE_INFERENCE_POLL_MS,
+  isInferenceActive,
+} from "./inferencePolling.ts";
 
 /** Poll a task independently of who started it, and refresh the Vibe after inferred writes. */
 export function useTaskInferenceStatus(
@@ -19,7 +24,15 @@ export function useTaskInferenceStatus(
     {
       params: { path: { id: uuid }, query: task },
     },
-    { enabled, refetchInterval: 1000, refetchOnWindowFocus: "always", gcTime: 0 },
+    {
+      enabled,
+      refetchInterval: (query) =>
+        isInferenceActive(query.state.data?.status)
+          ? ACTIVE_INFERENCE_POLL_MS
+          : IDLE_INFERENCE_POLL_MS,
+      refetchOnWindowFocus: "always",
+      gcTime: 0,
+    },
   );
   useEffect(() => {
     if (!query.data) return;

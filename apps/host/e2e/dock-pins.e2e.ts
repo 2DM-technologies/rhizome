@@ -46,7 +46,7 @@ test("a Vibe can be pinned, reopened from a fresh session, and unpinned", async 
   await expect(
     page.locator("[data-dock-app-slot]").getByRole("button", { name: "Spending", exact: true }),
   ).toBeVisible();
-  await expect(page.locator("[data-dock-recent-vibes]")).toHaveAttribute("data-count", "0");
+  await expect(page.locator("[data-dock-recent-surfaces]")).toHaveAttribute("data-count", "0");
 
   // New tabs share local storage but do not inherit this tab's session storage.
   const fresh = await context.newPage();

@@ -6,7 +6,8 @@ import { storeTaskKey, type VIBE_VIEWS } from "@rhizome/store-contract";
 
 import { api } from "../src/api/client.ts";
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
-import { InferredVibeView, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
+import { InferredVibeView } from "../src/surfaces/vibe-view/InferredVibeView.tsx";
+import { resolveVibeView } from "../src/surfaces/vibe-view/utils.ts";
 
 import { VibeOverview } from "../src/surfaces/VibeOverview.tsx";
 
@@ -39,6 +40,7 @@ function vibe(view?: (typeof VIBE_VIEWS)[number], config: object = {}): Vibe {
     owner,
     title: "Test Vibe",
     created_at: "2026-09-10T12:00:00Z",
+    updated_at: "2026-09-10T12:00:00Z",
     objects: [],
     grants: [],
     inferred: view
@@ -173,6 +175,7 @@ describe("inferred Vibe surfaces", () => {
       byte_size: 1,
       bytes: `https://rhizome.test/rnet/v0/elements/${id(200 + index)}/bytes`,
       created_at: "2026-09-10T12:00:00Z",
+      updated_at: "2026-09-10T12:00:00Z",
     }));
     record.elements = elements.map(({ uri }) => ({ uri }));
     const markup = render(

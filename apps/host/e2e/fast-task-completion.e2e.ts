@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { installMockStore, OBJECT_ID, VIBE_ID } from "./support/mockStore.ts";
 
 test("repeat object completion between polls refreshes the rendered result", async ({ page }) => {
+  await page.clock.install();
   const store = await installMockStore(page);
   const vibe = store.vibes.find((item) => item.uri.endsWith(VIBE_ID))!;
   const object = store.objects.get(OBJECT_ID)!;
@@ -44,6 +45,7 @@ test("repeat object completion between polls refreshes the rendered result", asy
   await page.goto(`/vibes/${VIBE_ID}`);
   const list = page.locator('[data-vibe-view="simplelist"]');
   await expect(list).toContainText("First completed label");
+  await page.clock.fastForward(10_100);
   await expect.poll(() => statusReads).toBeGreaterThanOrEqual(2);
   const readsBefore = reads();
 
@@ -56,6 +58,7 @@ test("repeat object completion between polls refreshes the rendered result", asy
     },
   };
   operationId = "0198f2a1-1401-7501-8501-999999999992";
+  await page.clock.fastForward(10_100);
   await expect(list).toContainText("Second completed label");
   await expect(list).not.toContainText("First completed label");
   expect(reads()).toBeGreaterThan(readsBefore);

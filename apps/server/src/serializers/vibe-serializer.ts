@@ -8,11 +8,9 @@ export interface VibeAggregate {
   vibe: DbVibe;
   grants: DbGrant[];
   mediaObjectUuids: string[];
-  /** Timestamp of the latest durable Vibe revision, including membership and inferred writes. */
-  updatedAt?: Date;
 }
 
-export function serializeVibe({ vibe, grants, mediaObjectUuids, updatedAt }: VibeAggregate): Vibe {
+export function serializeVibe({ vibe, grants, mediaObjectUuids }: VibeAggregate): Vibe {
   return {
     rnet_schema: supportedRnetSchemaVersion(vibe.rnetSchema),
     uri: `rnet://vibe/${vibe.uuid}`,
@@ -26,6 +24,6 @@ export function serializeVibe({ vibe, grants, mediaObjectUuids, updatedAt }: Vib
       : {}),
     ...(Object.keys(vibe.inferred).length ? { inferred: vibe.inferred } : {}),
     ...vibe.extensions,
-    "x-rhizome-updated-at": (updatedAt ?? vibe.createdAt).toISOString(),
-  } as Vibe;
+    updated_at: vibe.updatedAt.toISOString(),
+  };
 }

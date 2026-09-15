@@ -314,7 +314,7 @@ describe("record-intrinsic push context", () => {
       alt: "A fern",
     });
   });
-  test("clips strings and trailing properties, notes, and metadata to a 2 KiB object context", () => {
+  test("clips strings and trailing properties, notes, and metadata to a 32 KiB object context", () => {
     const input = record(
       "a",
       Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`p${index}`, "x".repeat(900)])),
@@ -331,12 +331,43 @@ describe("record-intrinsic push context", () => {
     }));
     const result = assembleObjectContext(input, objectTask);
     expect(result.clipped).toBe(true);
-    expect(serializedBytes(result.data)).toBeLessThanOrEqual(2048);
+    expect(serializedBytes(result.data)).toBeLessThanOrEqual(32 * 1024);
     expect(assembleObjectChunkContext([input], objectTask).context.clipped_objects).toBe(1);
     expect(input.object.source.properties.p0).toHaveLength(900);
-    const short = assembleObjectContext(record("b", { value: "x".repeat(513) }), objectTask);
+    const short = assembleObjectContext(record("b", { value: "x".repeat(8193) }), objectTask);
     expect((short.data.source as { properties: { value: string } }).properties.value).toHaveLength(
-      512,
+      8192,
+    );
+  });
+  test("orb identity retains element descriptions alongside verbose import metadata", () => {
+    const input = record("green-image", {
+      title: "image",
+      ...Object.fromEntries(
+        Array.from({ length: 20 }, (_, index) => [`metadata${index}`, "m".repeat(150)]),
+      ),
+    });
+    const description = entry({
+      caption: "A five-by-five grid of green color blocks.",
+      description: "The image contains dark green, yellow-green, and teal-green blocks. ".repeat(
+        12,
+      ),
+    });
+    input.elements = [
+      {
+        role: "content",
+        element: {
+          uuid: "green-element",
+          kind: "image",
+          mime: "image/png",
+          alt: null,
+          inferred: { "rhizome:describe-media": description },
+        },
+      },
+    ];
+    const result = assembleObjectChunkContext([input], orbIdentity);
+    expect(result.context.clipped_objects).toBe(0);
+    expect(decode(result.input).objects[0].elements[0].inferred["rhizome:describe-media"]).toEqual(
+      description,
     );
   });
   test("summarize never sees its prior summary, while other Vibe tasks receive it", () => {
@@ -375,21 +406,21 @@ describe("record-intrinsic push context", () => {
     expect(result.vibe.types.length).toBeLessThanOrEqual(64);
     const pointers = result.vibe.types.reduce((sum, type) => sum + type.pointers.length, 0);
     expect(pointers).toBeLessThanOrEqual(512);
-    expect(serializedBytes(result.vibe)).toBeLessThanOrEqual(8192);
+    expect(serializedBytes(result.vibe)).toBeLessThanOrEqual(64 * 1024);
     expect(result.context.truncated_objects).toBe(70 - result.vibe.types.length);
     expect(result.context.truncated_pointers + pointers).toBe(700);
     const longTypes = inputs.map((input) => ({
       ...input,
       object: {
         ...input.object,
-        type: input.object.type.padEnd(256, "x"),
+        type: input.object.type.padEnd(2048, "x"),
         source: { ...input.object.source, properties: {} },
       },
     }));
     const trimmed = assembleVibeContext(longTypes, { title: "Long types" }, summarize);
     expect(trimmed.vibe.types.length).toBeLessThan(64);
     expect(trimmed.context.truncated_objects).toBe(70 - trimmed.vibe.types.length);
-    expect(serializedBytes(trimmed.vibe)).toBeLessThanOrEqual(8192);
+    expect(serializedBytes(trimmed.vibe)).toBeLessThanOrEqual(64 * 1024);
   });
   test("Vibe input drops distinct members from the end without fanning out", async () => {
     const connector = new FakeModelConnector();
