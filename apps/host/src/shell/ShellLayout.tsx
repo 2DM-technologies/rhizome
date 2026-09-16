@@ -103,8 +103,6 @@ export function ShellLayout() {
     // authoritative catalog arrives, missing or deleted Vibes disappear from the shortcuts.
     return recentSurfaces.filter(
       (surface) =>
-        surface.kind !== "vibes" &&
-        surface.kind !== "import" &&
         surfaceId(surface) !== focusedId &&
         (surface.kind !== "vibe" || !vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
     );
