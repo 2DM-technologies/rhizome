@@ -52,6 +52,7 @@ const zeroUsage = (): ModelUsage => ({
 });
 
 export class MeterLedger {
+  private pending: Promise<void> = Promise.resolve();
   private constructor(
     private readonly db: Database,
     readonly operationUuid: string,
@@ -122,7 +123,21 @@ export class MeterLedger {
     return { ...usage, served_tiers: [...usage.served_tiers] };
   }
 
-  async record(
+  record(
+    usage: ModelUsage,
+    call: Pick<LedgerCall, "index" | "objects" | "outcome">,
+  ): Promise<void> {
+    const recorded = this.pending.then(() => this.recordCall(usage, call));
+    // A failed persistence/pricing call must not prevent siblings from recording their usage.
+    this.pending = recorded.catch(() => {});
+    return recorded;
+  }
+
+  async drain(): Promise<void> {
+    await this.pending;
+  }
+
+  private async recordCall(
     usage: ModelUsage,
     call: Pick<LedgerCall, "index" | "objects" | "outcome">,
   ): Promise<void> {
@@ -141,6 +156,7 @@ export class MeterLedger {
       duration_ms: usage.durationMs,
     };
     this.breakdown.calls.push(row);
+    this.breakdown.calls.sort((a, b) => a.index - b.index);
     this.breakdown.status = "running";
     const totals = this.breakdown.totals;
     totals.tokens_in += usage.tokensIn;
@@ -165,6 +181,7 @@ export class MeterLedger {
     durationMs: number,
     abortReason: PushOperationResult["abort_reason"],
   ): Promise<void> {
+    await this.drain();
     this.breakdown.status = status;
     await transaction
       .update(meterEntries)

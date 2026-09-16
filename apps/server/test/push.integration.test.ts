@@ -204,6 +204,8 @@ function application(
     providerLeasePool,
     blobs: createBlobStore(config),
     pushTasks: tasks,
+    // Retain the original serial-policy regression lane; parallel cases have their own suite.
+    pushConcurrency: { batchesPerOperation: 1 },
     ...(connector ? { modelConnectors: registry(connector) } : {}),
     ...overrides,
   }).app;
@@ -3750,7 +3752,7 @@ test("later image tombstones prevent payload preparation and billing while earli
   const target = await db.query.mediaElements.findFirst({
     where: eq(mediaElements.uuid, targetUuid),
   });
-  const firstStarted = gate();
+  const bothStarted = gate();
   const release = gate();
   const payloads: Array<{ hash: string; deleted: boolean }> = [];
   const sent: Array<{ alt: string; deleted: boolean }> = [];
@@ -3763,8 +3765,8 @@ test("later image tombstones prevent payload preparation and billing while earli
         ...data.elements.map((element: { alt: string }) => ({ alt: element.alt, deleted })),
       );
       calls++;
-      if (calls <= 1) {
-        if (calls === 1) firstStarted.resolve();
+      if (calls <= 2) {
+        if (calls === 2) bothStarted.resolve();
         await release.promise;
       }
       return responseFor(request);
@@ -3779,11 +3781,12 @@ test("later image tombstones prevent payload preparation and billing while earli
   const app = application(connector, {
     blobs,
     pushLimits: { ...DEFAULT_PUSH_LIMITS, maxObjectsPerCall: 1 },
+    pushConcurrency: { batchesPerOperation: 2 },
   });
   try {
     const operation = await accept(app, vibeUuid, { level: "element", task: elementTask.name });
     await Promise.race([
-      firstStarted.promise,
+      bothStarted.promise,
       Bun.sleep(2500).then(() => {
         throw new Error("Probe calls did not start");
       }),
