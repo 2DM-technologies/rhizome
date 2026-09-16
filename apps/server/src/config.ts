@@ -14,6 +14,7 @@ import {
 import { randomBytes, randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadInferenceConfig, type InferenceConfig } from "./inference/config.ts";
 
 import {
   createCredentialKeyring,
@@ -45,6 +46,7 @@ export interface SourceCredentialConfig {
 }
 
 export interface ServerConfig {
+  inference?: InferenceConfig;
   port: number;
   databaseUrl: string;
   authMode: "dev";
@@ -90,6 +92,7 @@ export function loadConfig(): ServerConfig {
 
   return {
     port: Number(process.env.PORT ?? 3000),
+    inference: loadInferenceConfig(),
     databaseUrl: process.env.DATABASE_URL ?? "postgres://localhost/rhizome",
     authMode,
     baseUrl,
