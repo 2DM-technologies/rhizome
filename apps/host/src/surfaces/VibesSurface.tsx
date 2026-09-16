@@ -1,55 +1,25 @@
-import { useState, type FormEvent } from "react";
-
-import { useCreateVibe, useVibes } from "../queries/index.ts";
+import { useVibes } from "../queries/index.ts";
 import { useSurfaceNavigation } from "../shell/focus.ts";
 import { uuidOf } from "../api/uris.ts";
-import { Button, EntityRow, TextInput } from "../ui/index.ts";
+import { Button, EntityRow } from "../ui/index.ts";
+import { StartVibeIcon } from "../ui/icons.tsx";
+import { StartVibeGlow } from "../ui/StartVibeGlow.tsx";
 import { Failed, Pending, StoreSurface } from "./provisional.tsx";
 
 export function VibesSurface() {
   const vibes = useVibes();
-  const create = useCreateVibe();
   const { open } = useSurfaceNavigation();
-  const [title, setTitle] = useState("");
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextTitle = title.trim();
-    if (!nextTitle) return;
-    create.mutate(
-      { body: { title: nextTitle } },
-      {
-        onSuccess: (vibe) => {
-          setTitle("");
-          open({ kind: "vibe", uuid: uuidOf(vibe.uri) });
-        },
-      },
-    );
-  }
-
   return (
     <StoreSurface title="Vibes" detail="Every Vibe you own or have been granted">
-      <form onSubmit={submit} className="mb-6 flex max-w-[36rem] items-center gap-3">
-        <label className="min-w-0 flex-1">
-          <span className="sr-only">New Vibe title</span>
-          <TextInput
-            aria-label="New Vibe title"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Name a new Vibe"
-            maxLength={256}
-          />
-        </label>
-        <Button type="submit" disabled={!title.trim() || create.isPending}>
-          {create.isPending ? "Creating…" : "Create Vibe"}
-        </Button>
-      </form>
-
-      {create.isError ? (
-        <div className="mb-4">
-          <Failed error={create.error} />
-        </div>
-      ) : null}
+      <Button
+        variant="secondary"
+        className="start-vibe-button mb-6 self-start gap-2 rounded-md! px-4! py-2.5! text-[15px]! leading-[1.4]! font-medium!"
+        onClick={() => open({ kind: "import" })}
+      >
+        <StartVibeGlow />
+        <span>Start a Vibe</span>
+        <StartVibeIcon />
+      </Button>
       {vibes.isPending ? <Pending label="vibes" /> : null}
       {vibes.isError ? <Failed error={vibes.error} /> : null}
       {vibes.data?.length === 0 ? (

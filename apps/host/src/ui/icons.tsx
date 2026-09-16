@@ -1,3 +1,4 @@
+import vibesMark from "../assets/brand/vibes-mark.svg?no-inline";
 /**
  * Icon geometry is copied verbatim from the Figma exports (viewBox and path data unchanged);
  * only the hard-coded stroke and fill colours become `currentColor`, so an icon inherits the
@@ -130,6 +131,66 @@ export function CloseIcon({ width = 18, height = 18, ...props }: IconProps) {
         strokeWidth="1.5"
         strokeLinecap="round"
       />
+    </svg>
+  );
+}
+
+export function EditIcon({ width = 18, height = 18, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 18 18" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M10.5 4.5L13.5 7.5M3 15L4 11L12.5 2.5A2.12 2.12 0 0 1 15.5 5.5L7 14L3 15Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** icon/search — Figma 4859:277 */
+
+export function OpenObjectIcon({ width = 22, height = 22, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        d="M16.5 4.5L23 8.25V15.75L16.5 19.5L10 15.75V8.25L16.5 4.5ZM10 8.25L16.5 12L23 8.25M16.5 12V19.5M1 12H7.5M4.5 9L7.5 12L4.5 15"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Twitter bird with an outward arrow alongside it. */
+export function OriginalPostIcon({ width = 22, height = 22, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <path
+        fill="currentColor"
+        transform="translate(1 6) scale(.64)"
+        d="M23.954 4.57a10 10 0 0 1-2.825.775 4.958 4.958 0 0 0 2.163-2.723 9.99 9.99 0 0 1-3.127 1.195 4.916 4.916 0 0 0-8.384 4.482A13.944 13.944 0 0 1 1.64 3.162a4.916 4.916 0 0 0 1.523 6.558 4.903 4.903 0 0 1-2.229-.616v.061a4.917 4.917 0 0 0 3.946 4.818 4.935 4.935 0 0 1-2.224.084 4.923 4.923 0 0 0 4.6 3.419A9.869 9.869 0 0 1 0 19.523a13.94 13.94 0 0 0 7.548 2.212c9.057 0 14.01-7.503 14.01-14.01 0-.213-.005-.425-.014-.636A10.013 10.013 0 0 0 24 4.59z"
+      />
+      <path
+        d="M17.5 16L23 10.5M17.5 10.5H23V16"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Inline title editing. */
+
+export function StartVibeIcon({ width = 19, height = 19, ...props }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" width={width} height={height} aria-hidden {...props}>
+      <use href={`${vibesMark}#vibes-mark`} />
     </svg>
   );
 }

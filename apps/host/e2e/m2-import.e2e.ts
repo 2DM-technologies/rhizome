@@ -30,8 +30,15 @@ test.beforeEach(async ({ page }) => {
   delete target.pull;
 });
 
-test("the shared file picker accepts a dropped file", async ({ page }) => {
+test("Vibe import opens on demand and preserves a dropped file when collapsed", async ({
+  page,
+}) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  const toggle = page.getByRole("button", { name: "Import into this Vibe", exact: true });
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByLabel("Import source", { exact: true })).toBeHidden();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await page
     .getByLabel("Import source", { exact: true })
     .selectOption({ label: SYNTHETIC_FILE_SKILL_LABEL });
@@ -46,6 +53,11 @@ test("the shared file picker accepts a dropped file", async ({ page }) => {
   }, "dropped-source.json");
 
   await expect(page.getByText("dropped-source.json", { exact: true })).toBeVisible();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByText("dropped-source.json", { exact: true })).toBeHidden();
+  await toggle.click();
+  await expect(page.getByText("dropped-source.json", { exact: true })).toBeVisible();
   expect(
     await fileInput.evaluate((input: HTMLInputElement) =>
       Array.from(input.files ?? [], ({ name }) => name),
@@ -55,6 +67,7 @@ test("the shared file picker accepts a dropped file", async ({ page }) => {
 
 async function stageFile(page: Page, fixture: (typeof cases)[number]): Promise<void> {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page
     .getByLabel("Import source", { exact: true })
     .selectOption({ label: SYNTHETIC_FILE_SKILL_LABEL });
@@ -119,7 +132,7 @@ for (const fixture of cases) {
 
     await page.getByRole("button", { name: "Confirm import" }).click();
 
-    await expect(page.getByRole("status")).toContainText(
+    await expect(page.getByRole("status").filter({ hasText: "Imported" })).toContainText(
       `Imported ${fixture.candidateCount} objects from ${fixture.filename}.`,
     );
     await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
@@ -150,7 +163,9 @@ test("cancel abandons a staged generic file review without deleting its raw reco
 
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
-  await expect(page.getByRole("status")).toHaveText("Review canceled. Nothing was imported.");
+  await expect(page.getByRole("status").filter({ hasText: "Review canceled" })).toHaveText(
+    "Review canceled. Nothing was imported.",
+  );
   await expect(page.getByLabel("VERIFY reconciliation")).toHaveCount(0);
   expect(mockStore.vibes[0]?.objects).toEqual(initialMembership);
   expect(mockStore.objects.size).toBe(initialObjectCount);
@@ -168,6 +183,7 @@ test("an unsupported synthetic file fails locally before any origin is uploaded"
   page,
 }) => {
   await page.goto(`/vibes/${VIBE_ID}`);
+  await page.getByRole("button", { name: "Import into this Vibe", exact: true }).click();
   await page
     .getByLabel("Import source", { exact: true })
     .selectOption({ label: SYNTHETIC_FILE_SKILL_LABEL });

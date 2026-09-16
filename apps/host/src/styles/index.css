@@ -114,3 +114,176 @@
     opacity: 0.14;
   }
 }
+
+.inferred-block {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--rz-bg-canvas);
+}
+
+.inferred-block[data-inference-state="waiting"],
+.inferred-block[data-inference-state="running"] {
+  --inferred-base: var(--rz-skeleton-base);
+  --inferred-wave: linear-gradient(
+    110deg,
+    transparent 20%,
+    var(--rz-skeleton-shine) 45%,
+    transparent 70%
+  );
+  background: color-mix(in srgb, var(--inferred-base) 25%, var(--rz-bg-canvas));
+}
+
+.inferred-block[data-inference-state="running"] {
+  --inferred-base: var(--rz-accent-primary);
+  --inferred-wave: linear-gradient(
+    110deg,
+    transparent 10%,
+    #7d59ff33 25%,
+    #b844fe66 42%,
+    #b844fe44 58%,
+    #7d59ff33 72%,
+    transparent 90%
+  );
+}
+
+.inferred-block:not([data-inference-state="idle"])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--inferred-wave);
+  animation: inferred-shimmer 2.4s linear infinite;
+}
+
+.inferred-block:not([data-inference-state="idle"]) pre {
+  background: transparent;
+}
+
+.inferred-skeleton-line {
+  height: 0.8rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--inferred-base) 45%, var(--rz-bg-canvas));
+  transition: background-color 300ms ease;
+}
+
+@keyframes inferred-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inferred-block::after {
+    animation: none !important;
+  }
+  .inferred-skeleton-line {
+    transition: none;
+  }
+}
+
+.start-vibe-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: var(--rz-accent-primary);
+  background: var(--rz-bg-canvas);
+  color: var(--rz-accent-primary);
+  transition:
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.start-vibe-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 250ms ease;
+}
+
+.start-vibe-glow::before,
+.start-vibe-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat-x;
+  background-size: 160px 100%;
+  animation: start-vibe-current 3s linear infinite paused;
+}
+
+.start-vibe-glow::before {
+  background-image: radial-gradient(
+    ellipse 48% 135% at 50% 110%,
+    color-mix(in srgb, var(--rz-accent-primary) 3%, transparent),
+    color-mix(in srgb, var(--rz-accent-primary) 3%, transparent) 40%,
+    transparent 100%
+  );
+}
+
+.start-vibe-glow::after {
+  background-image: radial-gradient(
+    ellipse 48% 135% at 50% -10%,
+    color-mix(in srgb, var(--rz-accent-secondary) 3%, transparent),
+    color-mix(in srgb, var(--rz-accent-secondary) 3%, transparent) 40%,
+    transparent 100%
+  );
+  animation-direction: reverse;
+  animation-delay: -1.5s;
+}
+
+.start-vibe-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0.12;
+  mix-blend-mode: multiply;
+}
+
+.start-vibe-button > svg {
+  transition: transform 220ms ease;
+}
+
+.start-vibe-button:is(:hover, :focus-visible) {
+  cursor: pointer;
+  color: var(--rz-accent-primary);
+  opacity: 1;
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--rz-accent-primary) 16%, transparent);
+}
+
+.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow {
+  opacity: 1;
+  transition-duration: 900ms;
+}
+
+.start-vibe-button:is(:hover, :focus-visible) > svg {
+  transform: scale(1.12);
+}
+
+.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow::before,
+.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow::after {
+  animation-play-state: running;
+}
+
+/* Move one complete tile per cycle: both edges match without a reset or reversal. */
+@keyframes start-vibe-current {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 160px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start-vibe-glow::before,
+  .start-vibe-glow::after {
+    animation: none;
+  }
+}

@@ -183,3 +183,27 @@
   --radius-lg: 20px;
   --radius-pill: 999px;
 }
+
+:root {
+  --rz-skeleton-base: #e5e5e5;
+  --rz-skeleton-shine: #ffffff99;
+  --rz-tooltip-bg: #f5f5f5;
+  --rz-tooltip-text: #14151a;
+  --rz-tooltip-border: #525252;
+}
+[data-tier="dark"] {
+  --rz-skeleton-base: #525252;
+  --rz-skeleton-shine: #ffffff14;
+  --rz-tooltip-bg: #252525;
+  --rz-tooltip-text: #ffffff;
+  --rz-tooltip-border: #fafafa;
+}
+@theme inline {
+  --color-tooltip: var(--rz-tooltip-bg);
+  --color-tooltip-text: var(--rz-tooltip-text);
+  --color-tooltip-border: var(--rz-tooltip-border);
+}
+
+@theme inline {
+  --color-neutral-border: oklab(0 0 0 / 0.1);
+}
