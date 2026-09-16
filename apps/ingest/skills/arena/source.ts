@@ -23,7 +23,11 @@ export interface ArenaSourceSkillDependencies extends ArenaClientOptions {}
 export function createArenaSourceSkill(
   dependencies: ArenaSourceSkillDependencies,
 ): PublicRemoteSourceSkill {
-  const client = new ArenaClient(dependencies);
+  const client = new ArenaClient({
+    maxAssetBytes: arenaSourceSkillManifest.limits.maxElementBytes,
+    maxTotalBytes: arenaSourceSkillManifest.limits.maxTotalElementBytes,
+    ...dependencies,
+  });
   return {
     skillId: ARENA_SKILL_ID,
     displayName: arenaSourceSkillManifest.label,
@@ -69,7 +73,16 @@ export function createArenaSourceSkill(
           })),
           semanticIdentity: { type: "arena.block", keys: block.keys },
         }));
-        return candidateBundle(candidates, verify);
+        return {
+          ...candidateBundle(candidates, verify),
+          destination: {
+            title: channel.channelTitle
+              .trim()
+              .slice(0, 256)
+              .replace(/[\uD800-\uDBFF]$/u, "")
+              .trim(),
+          },
+        };
       },
     },
     sourceRequestSchema: arenaSourceConfigSchema,

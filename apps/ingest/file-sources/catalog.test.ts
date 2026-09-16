@@ -36,6 +36,7 @@ function fakeFileSkill(skillId: string, parserName: string): FileSourceSkill {
         },
       ],
       review_actions: ["review_import"],
+      import_push_pipeline: [],
     },
     parser,
     compiledSource: {

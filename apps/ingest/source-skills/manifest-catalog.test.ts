@@ -22,10 +22,32 @@ function credentialedManifest() {
     },
     input_fields: [],
     review_actions: ["review_import"],
+    import_push_pipeline: [],
   } as const;
 }
 
 describe("SourceSkillManifestCatalog", () => {
+  test("requires a data-only import push pipeline", () => {
+    const manifest = credentialedManifest();
+    const absent = Object.fromEntries(
+      Object.entries(manifest).filter(([key]) => key !== "import_push_pipeline"),
+    );
+    expect(() => new SourceSkillManifestCatalog([absent])).toThrow(
+      "must declare an import push pipeline",
+    );
+    expect(
+      () =>
+        new SourceSkillManifestCatalog([
+          {
+            ...manifest,
+            import_push_pipeline: [
+              { task: { level: "vibe", name: "summarize" }, after: ["describe-media"] },
+            ],
+          },
+        ]),
+    ).toThrow("invalid import push pipeline");
+  });
+
   test("rejects parser pins that cannot be persisted as rNet ingest provenance", () => {
     const manifest = credentialedManifest();
     expect(

@@ -20,6 +20,7 @@ import { mediaObjects } from "../db/models/media-object.ts";
 import { operations, type DbOperation } from "../db/models/operation.ts";
 import { vibeMediaObjects } from "../db/models/vibe-media-object.ts";
 import { vibes } from "../db/models/vibe.ts";
+import { vibeRevisions } from "../db/models/vibe-revision.ts";
 import { notFound, Problem } from "../errors.ts";
 import type { ModelConnectorRegistry } from "../inference/connector-registry.ts";
 import {
@@ -57,6 +58,10 @@ import {
   type ContextCounts,
 } from "./context.ts";
 import type { PushLimits } from "./limits.ts";
+import type {
+  CompiledImportPushPipeline,
+  ImportPushPipelineCatalog,
+} from "./import-push-pipeline.ts";
 import { validateInstalledTaskOutput } from "./installed-tasks.ts";
 import type { PushTaskCatalog, PushTaskDefinition, TaskOutput } from "./task-catalog.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
@@ -73,6 +78,22 @@ type RecordOutcome =
   WriteOutcome | { outcome: "skipped"; reason: SkipReason; code?: ModelConnectorErrorKind };
 type VibeOutcome = Extract<PushOperationResult, { level: "vibe" }>["vibe"];
 type TerminalStatus = "done" | "failed" | "aborted";
+
+/** Internal conflict context; the public 409 response contains no workset or operation details. */
+class ActivePushConflict extends Problem {
+  constructor(
+    readonly operation: DbOperation,
+    readonly selection: readonly string[],
+  ) {
+    super(
+      409,
+      "operation_in_progress",
+      "Operation in progress",
+      "This task is already running on the Vibe",
+    );
+  }
+}
+
 interface RunState {
   request: StoredPushRequest;
   outcomes: Map<string, RecordOutcome>;
@@ -88,6 +109,7 @@ interface RunState {
 
 export class PushService {
   private readonly activity = new PushActivity();
+  private readonly pipelines = new Map<string, Promise<Map<string, string>>>();
 
   getObjectInferenceStatus(uuid: string, actor: Actor) {
     return readObjectInferenceStatus(this.dependencies.db, this.activity, uuid, actor);
@@ -110,6 +132,7 @@ export class PushService {
       blobs: BlobStore;
       modelConnectors?: ModelConnectorRegistry;
       pushTasks: PushTaskCatalog;
+      importPushPipelines: ImportPushPipelineCatalog;
       pushLimits: PushLimits;
     },
   ) {}
@@ -124,11 +147,248 @@ export class PushService {
     return operation;
   }
 
+  /** Run after import commit; ready tasks accept fresh context after their dependencies settle. */
+  async runPushPipeline(
+    vibeUuid: string,
+    actor: Actor,
+    pipeline: CompiledImportPushPipeline,
+    objectUris?: readonly string[],
+  ): Promise<Map<string, string>> {
+    if (!this.dependencies.modelConnectors || !pipeline.nodes.length) return new Map();
+    // A second import must wait for the first graph's writes and activity cleanup.
+    const previous = this.pipelines.get(vibeUuid) ?? Promise.resolve();
+    const run = previous
+      .catch(() => {})
+      .then(() => this.runPushPipelineNow(vibeUuid, actor, pipeline, objectUris));
+    this.pipelines.set(vibeUuid, run);
+    try {
+      return await run;
+    } finally {
+      if (this.pipelines.get(vibeUuid) === run) this.pipelines.delete(vibeUuid);
+    }
+  }
+
+  private async runPushPipelineNow(
+    vibeUuid: string,
+    actor: Actor,
+    pipeline: CompiledImportPushPipeline,
+    objectUris?: readonly string[],
+  ): Promise<Map<string, string>> {
+    const tasks = pipeline.nodes.map(({ task }) => task);
+    const operationsByTask = new Map<string, string>();
+    this.activity.begin(vibeUuid, tasks, objectUris?.map(uriId));
+    try {
+      const completions = new Map<string, Promise<void>>();
+      for (const node of pipeline.nodes) {
+        const dependencies = node.after.map((key) => completions.get(key)!);
+        const completion = Promise.allSettled(dependencies).then(async () => {
+          const operationUuid = await this.runAutomaticTask(vibeUuid, actor, node.task, objectUris);
+          if (operationUuid) operationsByTask.set(node.key, operationUuid);
+        });
+        completions.set(node.key, completion);
+      }
+      await Promise.allSettled(completions.values());
+      return operationsByTask;
+    } finally {
+      this.activity.end(vibeUuid);
+    }
+  }
+
+  async runImportedVibeTasks(
+    vibeUuid: string,
+    actor: Actor,
+    importOperationUuid: string,
+    addedObjectUris?: readonly string[],
+  ): Promise<void> {
+    if (!this.dependencies.modelConnectors) return;
+    if (addedObjectUris?.length === 0) return;
+    const { db } = this.dependencies;
+    const imported = await db.query.operations.findFirst({
+      where: eq(operations.uuid, importOperationUuid),
+    });
+    const request = imported?.request as { mode?: unknown; source?: unknown } | undefined;
+    if (request?.mode !== "import_preview" || typeof request.source !== "string") {
+      throw new Error("Automatic import push requires its import preview source");
+    }
+    const sourceUuid = request.source.startsWith("source:")
+      ? request.source.slice("source:".length)
+      : undefined;
+    if (!sourceUuid) throw new Error("Automatic import push source is malformed");
+    const source = await db.query.ingestionSources.findFirst({
+      where: eq(ingestionSources.uuid, sourceUuid),
+    });
+    if (!source) throw new Error("Automatic import push source disappeared");
+    const pipeline = this.dependencies.importPushPipelines.forSkillId(source.skillId);
+    if (!pipeline) {
+      throw new Error(`Source-skill ${source.skillId} has no compiled import push pipeline`);
+    }
+    const operationsByTask = await this.runPushPipeline(vibeUuid, actor, pipeline, addedObjectUris);
+    // Existing Vibe imports enrich their additions without changing the owner's title.
+    if (addedObjectUris) return;
+
+    if (!imported?.result || imported.result.destination) return;
+
+    const summaryOperation = operationsByTask.get(`vibe:${summarize.name}`);
+    if (!summaryOperation) return;
+    const confirmed = await db.query.vibeRevisions.findFirst({
+      where: and(eq(vibeRevisions.vibeUuid, vibeUuid), eq(vibeRevisions.rev, 1)),
+    });
+    const expectedTitle = confirmed?.snapshot.title;
+    // Only the host's unnamed-import placeholder is eligible for automatic naming.
+    if (expectedTitle !== "Imported objects") return;
+    const summary = await db.query.vibeRevisions.findFirst({
+      where: and(
+        eq(vibeRevisions.vibeUuid, vibeUuid),
+        eq(vibeRevisions.operationUuid, summaryOperation),
+      ),
+    });
+    const inferred = summary?.snapshot.inferred as typeof vibes.$inferSelect.inferred | undefined;
+    const title = inferred?.[storeTaskKey(summarize.name)]?.properties.title;
+    if (typeof title !== "string") return;
+    // Import naming is an owner action; the push writer still changes only inferred data.
+    await new VibesService({ db, actor }).renameVibeIfTitle(vibeUuid, expectedTitle, title);
+  }
+
+  private async runAutomaticTask(
+    vibeUuid: string,
+    actor: Actor,
+    task: PushTaskDefinition,
+    objectUris?: readonly string[],
+  ): Promise<string | undefined> {
+    const level = task.level;
+    try {
+      let input: PushVibeRequest = { level, task: task.name };
+      if (objectUris && level !== "vibe") {
+        const selection =
+          level === "object"
+            ? [...objectUris]
+            : (await loadContextObjects(this.dependencies.db, objectUris.map(uriId))).flatMap(
+                ({ elements }) =>
+                  elements
+                    .filter(({ element }) => task.elementKinds?.includes(element.kind))
+                    .map(({ element }) => `rnet://element/${element.uuid}`),
+              );
+        if (!selection.length) {
+          this.activity.accepted(vibeUuid, task);
+          return;
+        }
+        input = { level, task: task.name, selection: [...new Set(selection)] };
+      }
+      let operation: DbOperation | undefined;
+      for (;;) {
+        try {
+          operation = await this.acceptPush(vibeUuid, input, actor, true);
+          break;
+        } catch (error) {
+          if (!(error instanceof ActivePushConflict)) throw error;
+          // Keep this node pending and its dependents blocked until the conflicting work settles.
+          const completed = await this.waitForConflictingPush(error.operation);
+          const result = completed.result as PushOperationResult | null;
+          if (level === "vibe") {
+            const previous = completed.request as StoredPushRequest;
+            if (
+              result?.level === "vibe" &&
+              (result.vibe.outcome !== "skipped" || result.vibe.reason === "preserved_durable") &&
+              error.selection.every((uuid) => previous.resolved.selection.includes(uuid))
+            ) {
+              this.activity.accepted(vibeUuid, task);
+              // This was another run's summary, so it must not drive automatic import naming.
+              return;
+            }
+          } else {
+            const covered = new Set(
+              result && result.level === level
+                ? [
+                    ...result.written.map(({ uri }) => uri),
+                    ...result.preserved,
+                    ...result.skipped
+                      .filter(({ reason }) =>
+                        ["not_applicable", "preserved_durable"].includes(reason),
+                      )
+                      .map(({ uri }) => uri),
+                  ].map(uriId)
+                : [],
+            );
+            const remaining = error.selection.filter((uuid) => !covered.has(uuid));
+            if (!remaining.length) {
+              this.activity.accepted(vibeUuid, task);
+              return;
+            }
+            input = {
+              level,
+              task: task.name,
+              selection: remaining.map((uuid) => `rnet://${level}/${uuid}`),
+            };
+          }
+          // Reaccept after waiting: permissions, live membership, and durable writes are checked again.
+        }
+      }
+      this.activity.accepted(vibeUuid, task);
+      if (!operation) return;
+      await this.runPush(operation.uuid);
+      return operation.uuid;
+    } catch (error) {
+      this.activity.rejected(vibeUuid, task, error);
+      // Import enrichment is best effort: settled dependencies unblock all remaining nodes.
+      console.error(
+        "Automatic push failed",
+        vibeUuid,
+        level,
+        task.name,
+        error instanceof Problem ? error.code : "internal_error",
+      );
+    }
+  }
+
+  private async waitForConflictingPush(operation: DbOperation): Promise<DbOperation> {
+    const deadline =
+      operation.createdAt.getTime() + this.dependencies.pushLimits.maxWallMs + 60_000;
+    for (;;) {
+      const current = await this.dependencies.db.query.operations.findFirst({
+        where: eq(operations.uuid, operation.uuid),
+      });
+      if (!current || current.vibeUuid !== operation.vibeUuid) throw notFound("Operation");
+      if (!["queued", "running"].includes(current.status)) return current;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        // This process is the sole runner. The wall deadline plus finalization grace has
+        // elapsed; retire the stranded row without overwriting a concurrent terminal result.
+        const [interrupted] = await this.dependencies.db
+          .update(operations)
+          .set({ status: "failed", error: "interrupted", finishedAt: new Date() })
+          .where(
+            and(
+              eq(operations.uuid, operation.uuid),
+              eq(operations.vibeUuid, operation.vibeUuid!),
+              inArray(operations.status, ["queued", "running"]),
+            ),
+          )
+          .returning({ uuid: operations.uuid });
+        if (!interrupted) continue;
+        throw new Problem(
+          503,
+          "push_unavailable",
+          "Push unavailable",
+          "The running inference task did not finish; automatic enrichment could not continue.",
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, remaining)));
+    }
+  }
+
+  private acceptPush(vibeUuid: string, input: PushVibeRequest, actor: Actor): Promise<DbOperation>;
+  private acceptPush(
+    vibeUuid: string,
+    input: PushVibeRequest,
+    actor: Actor,
+    automatic: true,
+  ): Promise<DbOperation | undefined>;
   private async acceptPush(
     vibeUuid: string,
     input: PushVibeRequest,
     actor: Actor,
-  ): Promise<DbOperation> {
+    automatic = false,
+  ): Promise<DbOperation | undefined> {
     const { db, modelConnectors: registry, pushTasks, pushLimits: limits } = this.dependencies;
     const vibe = await new AccessService({ db, actor }).assertVibeScope(vibeUuid, GRANT_SCOPE.PUSH);
     const task = pushTasks.get(input.level, input.task);
@@ -159,18 +419,23 @@ export class PushService {
     const eligible = input.level === "element" ? [...reachableElements.keys()] : memberIds;
     let selection = eligible;
     if (input.level !== "vibe" && input.selection)
-      selection = input.selection.map((uri, index) => {
+      selection = input.selection.flatMap((uri, index) => {
         const uuid = uriId(uri);
-        if (!eligible.includes(uuid))
+        if (!eligible.includes(uuid)) {
+          // Automatic graphs keep their original additions, but membership and liveness may
+          // change while a dependency or another run is in flight. Keep eligible siblings.
+          if (automatic) return [];
           throw schemaProblem([
             {
               instancePath: `/selection/${index}`,
               message: "is not a member at the task's level and kind",
             },
           ]);
-        return uuid;
+        }
+        return [uuid];
       });
     selection = [...new Set(selection)];
+    if (automatic && input.level !== "vibe" && !selection.length) return;
     if (
       (input.level === "object" && selection.length > limits.maxObjects) ||
       (input.level === "element" && selection.length > limits.maxElements)
@@ -204,7 +469,7 @@ export class PushService {
         .for("update");
       if (!locked) throw notFound("Vibe");
       const active = await transaction
-        .select({ uuid: operations.uuid })
+        .select()
         .from(operations)
         .where(
           and(
@@ -217,13 +482,7 @@ export class PushService {
           ),
         )
         .limit(1);
-      if (active.length)
-        throw new Problem(
-          409,
-          "operation_in_progress",
-          "Operation in progress",
-          "This task is already running on the Vibe",
-        );
+      if (active[0]) throw new ActivePushConflict(active[0], selection);
       const [created] = await transaction
         .insert(operations)
         .values({

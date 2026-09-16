@@ -5,6 +5,7 @@ import {
   assertCandidateBundleLimits,
   assertCaptureLimit,
 } from "../../source-skills/execution-limits.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../source-skills/import-push-pipelines.ts";
 import type { ArenaApiFetch } from "./client.ts";
 import {
   ARENA_CONNECTOR_VERSION,
@@ -16,7 +17,7 @@ import { arenaSourceSkillManifest } from "./manifest.ts";
 import { type ArenaCaptureV1, parseArenaCapture } from "./scripts/parse-arena.ts";
 import { createArenaSourceSkill } from "./source.ts";
 
-const LARGE_ASSET_BYTE_SIZE = 13_093_327;
+const LARGE_ASSET_BYTE_SIZE = 41 * 1_024 * 1_024;
 
 describe("Are.na public-remote source skill", () => {
   test("publishes a serializable manifest and normalizes only Are.na channel locators", () => {
@@ -26,8 +27,13 @@ describe("Are.na public-remote source skill", () => {
       source_kind: "public_remote",
       connector_version: ARENA_CONNECTOR_VERSION,
       parser: { name: ARENA_PARSER_NAME, version: "arena@1.2.0" },
-      limits: expect.objectContaining({ maxElementBytes: 16 * 1_024 * 1_024 }),
+      limits: expect.objectContaining({
+        maxCaptureBytes: 640 * 1_024 * 1_024,
+        maxElementBytes: 160 * 1_024 * 1_024,
+        maxTotalElementBytes: 400 * 1_024 * 1_024,
+      }),
       review_actions: ["review_import", "refresh_source"],
+      import_push_pipeline: CONTENT_IMPORT_PUSH_PIPELINE,
       input_fields: [
         expect.objectContaining({ name: "url", control: "url", required: true, secret: false }),
       ],
@@ -58,6 +64,24 @@ describe("Are.na public-remote source skill", () => {
     }
   });
 
+  test("bounds long channel titles before destination validation", async () => {
+    const fixture = JSON.parse(
+      new TextDecoder().decode(await readFixtureBytes()),
+    ) as ArenaCaptureV1;
+    const channel = JSON.parse(Buffer.from(fixture.channel.body_base64, "base64").toString());
+    const title = `  ${"Title ".repeat(60)}  `;
+    (channel.data ?? channel).title = title;
+    fixture.channel.body_base64 = Buffer.from(JSON.stringify(channel)).toString("base64");
+    const skill = createArenaSourceSkill({ assetFetch: async () => Promise.reject() });
+    const bundle = await skill.compiledSource.compile({
+      bytes: new TextEncoder().encode(JSON.stringify(fixture)),
+      config: skill.normalizeConfig({ url: fixture.channel_url }),
+      limits: skill.manifest.limits,
+    });
+    expect(bundle.destination?.title).toBe(title.trim().slice(0, 256).trim());
+    expect(bundle.destination!.title.length).toBeLessThanOrEqual(256);
+  });
+
   test("round-trips the committed fixture through fixed API and injected asset transports", async () => {
     const fixtureBytes = await readFixtureBytes();
     const fixture = JSON.parse(new TextDecoder().decode(fixtureBytes)) as ArenaCaptureV1;
@@ -80,7 +104,7 @@ describe("Are.na public-remote source skill", () => {
     const assetFetch: PublicAssetFetcher = async (request) => {
       assetUrls.push(request.url);
       expect(request.accept).toBe("*/*");
-      expect(request.maxBytes).toBe(16 * 1024 * 1024);
+      expect(request.maxBytes).toBe(160 * 1024 * 1024);
       const asset = fixture.assets.find((entry) => entry.requested_url === request.url);
       if (!asset) throw new Error(`Unexpected asset request: ${request.url}`);
       return {
@@ -111,6 +135,7 @@ describe("Are.na public-remote source skill", () => {
     expect(apiUrls.every((url) => new URL(url).origin === "https://api.are.na")).toBe(true);
     expect(assetUrls).toEqual(fixture.assets.map(({ requested_url }) => requested_url));
     expect(bundle.verify).toMatchObject({ ok: true, candidate_count: 5 });
+    expect(bundle.destination).toEqual({ title: "Synthetic Media Study" });
     expect(bundle.candidates.map(({ keys }) => keys)).toEqual([
       { arena_block_id: "1101", arena_channel_id: "7001" },
       { arena_block_id: "1102", arena_channel_id: "7001" },
@@ -158,7 +183,7 @@ describe("Are.na public-remote source skill", () => {
     expect(bundle.verify.ok).toBe(true);
   });
 
-  test("retrieves and compiles an asset above the former 10 MiB element ceiling", async () => {
+  test("retrieves and compiles an asset above the former per-element and total download ceilings", async () => {
     const fixture = JSON.parse(await Bun.file(fixtureUrl()).text()) as ArenaCaptureV1;
     const page = JSON.parse(
       Buffer.from(fixture.contents_pages[0]!.body_base64, "base64").toString("utf8"),
@@ -192,7 +217,7 @@ describe("Are.na public-remote source skill", () => {
       byteSize: LARGE_ASSET_BYTE_SIZE,
     });
     expect(imageElement?.bytes.byteLength).toBe(LARGE_ASSET_BYTE_SIZE);
-    expect(LARGE_ASSET_BYTE_SIZE).toBeGreaterThan(10 * 1_024 * 1_024);
+    expect(LARGE_ASSET_BYTE_SIZE).toBeGreaterThan(40 * 1_024 * 1_024);
     expect(LARGE_ASSET_BYTE_SIZE).toBeLessThan(skill.manifest.limits.maxElementBytes);
   });
 

@@ -167,7 +167,7 @@ describe("X shared post candidates", () => {
       quotes_without_commentary_excluded: 1,
       eligible_count: 3,
       candidate_count: 3,
-      configured_cap: 100,
+      configured_cap: 25,
       media_omissions: {
         missing_media: 1,
         unsupported_media: 1,

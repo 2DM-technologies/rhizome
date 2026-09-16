@@ -436,11 +436,12 @@ export class ImportService {
     existingVibeUuid: string | undefined,
     operationUuid: string,
     pendingDestination?: ConfirmPendingVibeImportRequest,
-  ): Promise<VibeAggregate> {
+  ): Promise<VibeAggregate & { addedObjectUris: string[] }> {
     if (existingVibeUuid) await this.access.assertVibeOwner(existingVibeUuid);
     if (this.actor.kind !== "user") throw grantMissing("owner");
     const actor = this.actor;
     let committedVibeUuid = existingVibeUuid;
+    const addedObjectUris: string[] = [];
 
     await this.db.transaction(async (transaction: DatabaseTransaction) => {
       let operation: DbOperation | undefined;
@@ -610,7 +611,6 @@ export class ImportService {
       const currentMembers = new Set(memberships.map(({ mediaObjectUuid }) => mediaObjectUuid));
       let nextPosition =
         memberships.reduce((maximum, membership) => Math.max(maximum, membership.position), -1) + 1;
-      const addedObjectUris: string[] = [];
 
       for (const entry of stagedCandidates) {
         const existing = bindingByIdentity.get(entry.identity);
@@ -704,7 +704,12 @@ export class ImportService {
         .where(eq(vibeMediaObjects.vibeUuid, vibeUuid))
         .orderBy(vibeMediaObjects.position),
     ]);
-    return { vibe, grants: activeGrants, mediaObjectUuids: memberships.map(({ uuid }) => uuid) };
+    return {
+      vibe,
+      grants: activeGrants,
+      mediaObjectUuids: memberships.map(({ uuid }) => uuid),
+      addedObjectUris,
+    };
   }
 
   private async runPreview(

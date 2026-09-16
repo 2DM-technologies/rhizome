@@ -9,6 +9,11 @@ and final response URL that produced them. Each asset also retains its requested
 ordered status/from/location/to provenance for every approved redirect hop. Parsing validates the
 chain and never accesses the network.
 
+The compiled preview supplies the captured channel title as its destination title. The shared
+import flow creates the new Vibe with that name when the owner confirms, without showing a title
+field. The owner can rename it on the Vibe page afterward. Imports into existing Vibes keep their
+current title.
+
 Every available top-level Block from a current capture becomes one `arena.block` candidate in
 Are.na's displayed board order (descending connection position). For reproducible replay under the
 same pinned parser version, historical `position_asc` captures remain accepted and preserve their

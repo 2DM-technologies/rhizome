@@ -35,6 +35,7 @@ function fakeSkill(skillId: string, parserName: ParserName): ClaimExchangeSkill 
       },
       input_fields: [],
       review_actions: ["review_import"],
+      import_push_pipeline: [],
     },
     parser: {
       name: parserName,

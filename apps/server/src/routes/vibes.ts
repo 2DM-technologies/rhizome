@@ -253,6 +253,19 @@ export function createVibeRoutes(
         ...connectedSources,
       });
       const vibe = await service.confirm(parameters.id, parameters.operation_id);
+      const actor = context.get("actor");
+      if (vibe.addedObjectUris.length) {
+        queueMicrotask(() => {
+          void pushService
+            .runImportedVibeTasks(
+              parameters.id,
+              actor,
+              parameters.operation_id,
+              vibe.addedObjectUris,
+            )
+            .catch(() => console.error("Automatic import push failed", parameters.id));
+        });
+      }
       return context.json(serializeVibe(vibe));
     },
   );

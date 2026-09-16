@@ -1,4 +1,5 @@
 import type { SourceSkillManifest } from "../../../../packages/store-contract/src/source-skills.ts";
+import { CONTENT_IMPORT_PUSH_PIPELINE } from "../../source-skills/import-push-pipelines.ts";
 
 import { ARENA_CONNECTOR_VERSION, ARENA_PARSER_NAME, ARENA_SKILL_ID } from "./contracts.ts";
 import { ARENA_PARSER_VERSION } from "./scripts/parse-arena.ts";
@@ -14,9 +15,9 @@ export const arenaSourceSkillManifest = {
     maxCandidates: 200,
     // The source client counts decoded response bytes; the persisted JSON capture base64-encodes
     // media, so its generic capture envelope needs the corresponding expansion headroom.
-    maxCaptureBytes: 64 * 1_024 * 1_024,
-    maxElementBytes: 16 * 1_024 * 1_024,
-    maxTotalElementBytes: 40 * 1_024 * 1_024,
+    maxCaptureBytes: 640 * 1_024 * 1_024, // 640 MiB
+    maxElementBytes: 160 * 1_024 * 1_024, // 160 MiB
+    maxTotalElementBytes: 400 * 1_024 * 1_024, // 400 MiB
   },
   input_fields: [
     {
@@ -32,4 +33,5 @@ export const arenaSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import", "refresh_source"],
+  import_push_pipeline: CONTENT_IMPORT_PUSH_PIPELINE,
 } as const satisfies SourceSkillManifest;

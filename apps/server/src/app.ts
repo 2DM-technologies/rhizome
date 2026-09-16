@@ -13,7 +13,10 @@ import type {
   PublicRemoteSourceCatalog,
 } from "../../ingest/public-sources/types.ts";
 import { createCredentialedSourceCatalog } from "../../ingest/src/credentialed-source-catalog.ts";
-import { createPublicRemoteSourceCatalog } from "../../ingest/src/public-remote-source-catalog.ts";
+import {
+  createPublicRemoteSourceCatalog,
+  installedPublicAssetByteLimit,
+} from "../../ingest/src/public-remote-source-catalog.ts";
 import {
   createSourceSkillManifestCatalog,
   installedFileSourceSkills,
@@ -47,6 +50,7 @@ import { installedPushTasks } from "./push/installed-tasks.ts";
 import { DEFAULT_PUSH_LIMITS, type PushLimits } from "./push/limits.ts";
 import { PushService } from "./push/push-service.ts";
 import type { PushTaskCatalog } from "./push/task-catalog.ts";
+import { ImportPushPipelineCatalog } from "./push/import-push-pipeline.ts";
 import { createPushTaskRoutes } from "./routes/push-tasks.ts";
 
 export interface AppDependencies {
@@ -85,7 +89,11 @@ export function createApp({
   const resolvedPublicRemoteSources =
     publicRemoteSources ??
     createPublicRemoteSourceCatalog({
-      assetFetch: publicAssetFetcher ?? createSafePublicAssetFetcher(new SafePublicFetcher()),
+      assetFetch:
+        publicAssetFetcher ??
+        createSafePublicAssetFetcher(
+          new SafePublicFetcher({ maxBytes: installedPublicAssetByteLimit }),
+        ),
     });
   const sourceSkillManifests = createSourceSkillManifestCatalog(
     resolvedFileSources,
@@ -95,11 +103,16 @@ export function createApp({
   const credentialCrypto =
     sourceCredentialCrypto ?? createSourceCredentialCrypto(config.sourceCredentials.keyProvider);
   const resolvedPushTasks = pushTasks ?? installedPushTasks;
+  const importPushPipelines = new ImportPushPipelineCatalog(
+    sourceSkillManifests.all(),
+    resolvedPushTasks,
+  );
   const pushService = new PushService({
     db,
     blobs,
     modelConnectors: modelConnectors ?? createModelConnectorRegistry(config.inference),
     pushTasks: resolvedPushTasks,
+    importPushPipelines,
     pushLimits: pushLimits ?? DEFAULT_PUSH_LIMITS,
   });
 
@@ -174,14 +187,19 @@ export function createApp({
   const routeGroups = [
     {
       basePath: "/rnet/v0/imports",
-      router: createPendingImportRoutes(db, blobs, {
-        baseUrl: config.baseUrl,
-        credentialCrypto,
-        credentialedSources: resolvedCredentialedSources,
-        fileSources: resolvedFileSources,
-        providerLeasePool,
-        publicRemoteSources: resolvedPublicRemoteSources,
-      }),
+      router: createPendingImportRoutes(
+        db,
+        blobs,
+        {
+          baseUrl: config.baseUrl,
+          credentialCrypto,
+          credentialedSources: resolvedCredentialedSources,
+          fileSources: resolvedFileSources,
+          providerLeasePool,
+          publicRemoteSources: resolvedPublicRemoteSources,
+        },
+        pushService,
+      ),
     },
     {
       basePath: "/rnet/v0/vibes",

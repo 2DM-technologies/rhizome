@@ -27,4 +27,5 @@ export const ofxSourceSkillManifest = {
     },
   ],
   review_actions: ["review_import"],
+  import_push_pipeline: [],
 } as const satisfies SourceSkillManifest;
