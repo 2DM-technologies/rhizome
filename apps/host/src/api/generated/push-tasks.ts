@@ -79,6 +79,116 @@ export const PUSH_TASKS = {
         },
       },
     },
+    "orb-identity": {
+      level: "object",
+      name: "orb-identity",
+      label: "Orb identity",
+      description:
+        "Give each media object a reusable palette, pattern, glass depth, and motion character.",
+      output_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["version", "palette", "contrast", "field", "confidence", "surface", "motion"],
+        properties: {
+          version: {
+            type: "integer",
+            const: 1,
+          },
+          palette: {
+            type: "array",
+            minItems: 2,
+            maxItems: 3,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["color", "weight"],
+              properties: {
+                color: {
+                  type: "string",
+                  pattern: "^#[0-9a-fA-F]{6}$",
+                },
+                weight: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: 1,
+                },
+              },
+            },
+          },
+          contrast: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+          },
+          field: {
+            type: "object",
+            additionalProperties: false,
+            required: ["grain", "warp", "anisotropy"],
+            properties: {
+              grain: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              warp: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              anisotropy: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+            },
+          },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+          },
+          surface: {
+            type: "object",
+            additionalProperties: false,
+            required: ["depth", "glow"],
+            properties: {
+              depth: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              glow: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+            },
+          },
+          motion: {
+            type: "object",
+            additionalProperties: false,
+            required: ["drift", "turbulence", "spin"],
+            properties: {
+              drift: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              turbulence: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              spin: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+            },
+          },
+        },
+      },
+    },
   },
   vibe: {
     summarize: {
@@ -213,6 +323,129 @@ export const PUSH_TASKS = {
                 properties: {},
               },
             ],
+          },
+        },
+      },
+    },
+    "vibe-orb": {
+      level: "vibe",
+      name: "vibe-orb",
+      label: "Shape orb",
+      description:
+        "Derive the Vibe's procedural identity by combining its media objects’ visual identities.",
+      output_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "version",
+          "seed",
+          "palette",
+          "contrast",
+          "field",
+          "confidence",
+          "surface",
+          "motion",
+        ],
+        properties: {
+          version: {
+            type: "integer",
+            const: 3,
+          },
+          seed: {
+            type: "string",
+            pattern: "^[a-f0-9]{32}$",
+          },
+          palette: {
+            type: "array",
+            minItems: 3,
+            maxItems: 6,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["color", "weight"],
+              properties: {
+                color: {
+                  type: "string",
+                  pattern: "^#[0-9a-fA-F]{6}$",
+                },
+                weight: {
+                  type: "number",
+                  minimum: 0,
+                  maximum: 1,
+                },
+              },
+            },
+          },
+          contrast: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+          },
+          field: {
+            type: "object",
+            additionalProperties: false,
+            required: ["grain", "warp", "anisotropy"],
+            properties: {
+              grain: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              warp: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              anisotropy: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+            },
+          },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+          },
+          surface: {
+            type: "object",
+            additionalProperties: false,
+            required: ["depth", "glow"],
+            properties: {
+              depth: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              glow: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+            },
+          },
+          motion: {
+            type: "object",
+            additionalProperties: false,
+            required: ["drift", "turbulence", "spin"],
+            properties: {
+              drift: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              turbulence: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+              spin: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+              },
+            },
           },
         },
       },

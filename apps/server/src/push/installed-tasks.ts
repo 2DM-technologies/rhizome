@@ -3,17 +3,21 @@ import type { Vibe } from "@rnet/types";
 import { PushTaskCatalog, type PushTaskDefinition } from "./task-catalog.ts";
 import type { VibeContext } from "./context.ts";
 import { describeMedia } from "./tasks/element/describe-media/manifest.ts";
+import { orbIdentity } from "./tasks/object/orb-identity/manifest.ts";
 import { displayName } from "./tasks/object/display-name/manifest.ts";
 import { searchKeywords } from "./tasks/object/search-keywords/manifest.ts";
 import { summarize } from "./tasks/vibe/summarize/manifest.ts";
+import { vibeOrb } from "./tasks/vibe/vibe-orb/manifest.ts";
 import { vibeView } from "./tasks/vibe/vibe-view/manifest.ts";
 import { validateVibeViewOutput } from "./tasks/vibe/vibe-view/rules.ts";
 
 export const installedPushTasks = new PushTaskCatalog([
   summarize,
   vibeView,
+  vibeOrb,
   displayName,
   searchKeywords,
+  orbIdentity,
   describeMedia,
 ]);
 

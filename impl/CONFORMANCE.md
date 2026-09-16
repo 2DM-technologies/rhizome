@@ -33,16 +33,18 @@ suites.
 - Reviewed imports create no MediaObject, MediaElement, object-element link, Vibe membership, or
   pull-configuration entry before confirmation. Cancellation retains owner-only source and origin
   audit records, while confirmation commits the reviewed object-and-element bundle atomically.
-- Push is an asynchronous, metered operation across elements, objects, and Vibes. Five installed
+- Push is an asynchronous, metered operation across elements, objects, and Vibes. Six installed
   tasks write only their own `rhizome:{task}` entry, preserve same-key durable entries, and keep
   other writers' entries intact under row locks. Each run has one cost row; owner-visible results
   report recorded usage while read grantees receive the same outcomes with usage omitted.
-- Confirming a reviewed import runs the installed tasks in element, object, and Vibe order after
-  commit, using the same push operations and meters. Imports into existing Vibes process only newly
-  added objects and their eligible elements, then refresh the Vibe summary/view without renaming it.
-  Existing-Vibe imports adding no members trigger no additional runs. Automatic imports retain the
-  owner's transaction exclusion; keyless imports remain available. This sequence is in-process
-  under the existing M7 durable-execution deferral.
+- Each source-skill manifest explicitly declares its `import_push_pipeline`; the server validates
+  every declared graph against installed tasks at boot. Confirming a reviewed import executes that
+  graph after commit using the same push operations and meters. Imports into existing Vibes process
+  only newly added objects and their eligible elements, then refresh whole-Vibe tasks without
+  renaming the Vibe. Existing-Vibe imports adding no members trigger no runs. Ready nodes may run
+  concurrently, settled failures still unblock descendants, orchestration is MediaObject-type
+  agnostic, and keyless imports remain available. Execution stays in-process under the existing M7
+  durable-execution deferral.
 - The host consumes generated task manifests, runs and polls push operations, renders inferred
   Vibe views, and refreshes every object or element named by a terminal result. The fake connector,
   provider boundary tests, and stubbed OpenAI tests make the full gate independent of provider spend.
