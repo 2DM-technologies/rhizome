@@ -2,6 +2,11 @@ import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client.ts";
 import { uuidOf } from "../api/uris.ts";
+import {
+  ACTIVE_INFERENCE_POLL_MS,
+  IDLE_INFERENCE_POLL_MS,
+  isInferenceActive,
+} from "./inferencePolling.ts";
 
 /** Discover server-started work too; polling stops when this object surface unmounts. */
 export function useObjectInferenceStatus(uuid: string, enabled: boolean) {
@@ -15,7 +20,12 @@ export function useObjectInferenceStatus(uuid: string, enabled: boolean) {
     },
     {
       enabled,
-      refetchInterval: 1000,
+      refetchInterval: (query) =>
+        query.state.data?.records.some((record) =>
+          record.tasks.some((task) => isInferenceActive(task.status)),
+        )
+          ? ACTIVE_INFERENCE_POLL_MS
+          : IDLE_INFERENCE_POLL_MS,
       refetchOnWindowFocus: "always",
       gcTime: 0,
     },

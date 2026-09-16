@@ -3,7 +3,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEve
 import orbHome from "../assets/orbs/orb-home-48.png";
 import { uuidOf } from "../api/uris.ts";
 import { DarkModeIcon, ImportIcon, LightModeIcon, StartVibeIcon } from "../ui/icons.tsx";
-import { useVibes } from "../queries/index.ts";
+import { useMediaObject, useVibes } from "../queries/index.ts";
+import { MediaObjectThumbnail } from "../surfaces/MediaObjectThumbnail.tsx";
+import { useNearViewport } from "../ui/useNearViewport.ts";
 import {
   Desktop,
   Dock,
@@ -18,10 +20,10 @@ import { SurfaceLayer } from "./SurfaceLayer.tsx";
 import { DesktopHome } from "./DesktopHome.tsx";
 import { useEnsureSurfaceOpen, useFocusedSurface, useSurfaceNavigation } from "./focus.ts";
 import { searchShell, SHELL_SEARCH_GROUPS, type ShellSearchResult } from "./search.ts";
-import { useOpenSurfaces, useShellStore } from "./store.ts";
-import { isVibeSurface, labelOf, surfaceId, type Surface } from "./surfaces.ts";
+import { useShellStore } from "./store.ts";
+import { labelOf, surfaceId, type Surface } from "./surfaces.ts";
 import { markForSurface } from "./surfaceMarks.ts";
-import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
+import { fallbackOrbRecipe, orbVisualForVibe } from "../orb/vibeRecipe.ts";
 import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
 import { useTheme } from "../theme.tsx";
 import { cn } from "../ui/cn.ts";
@@ -29,27 +31,29 @@ import { useDockPinsStore, usePinnedVibeUuids } from "./dockPins.ts";
 
 const DOCK_RAIL_ITEM_SIZE = 44;
 const DOCK_RAIL_GAP = 20;
-const DOCK_RAIL_VISIBLE_VIBE_ITEMS = 3;
+const DOCK_RAIL_VISIBLE_ITEMS = 3;
 const PINNED_DOCK_SURFACES = [{ kind: "vibes" }, { kind: "import" }] as const;
-
-function isPinnedDockSurface(surface: Surface, pinnedVibeUuids: readonly string[]): boolean {
-  return (
-    surface.kind === "vibes" ||
-    surface.kind === "import" ||
-    (surface.kind === "vibe" && pinnedVibeUuids.includes(surface.uuid))
-  );
-}
 
 function iconForDockSurface(surface: Surface) {
   if (surface.kind === "vibes") {
-    return <StartVibeIcon width={32} height={32} className="shrink-0 text-primary" />;
+    return <StartVibeIcon width={36} height={36} className="shrink-0 text-primary" />;
   }
   if (surface.kind === "import") {
     return (
-      <ImportIcon width={32} height={32} viewBox="1 1 22 22" className="shrink-0 text-primary" />
+      <ImportIcon width={36} height={36} viewBox="1 1 22 22" className="shrink-0 text-primary" />
     );
   }
   return undefined;
+}
+
+function ObjectDockPreview({ uuid }: { uuid: string }) {
+  const viewport = useNearViewport<HTMLSpanElement>();
+  const object = useMediaObject(viewport.active ? uuid : undefined);
+  return (
+    <span ref={viewport.ref} className="block size-11">
+      <MediaObjectThumbnail object={object.data} size={44} />
+    </span>
+  );
 }
 
 /**
@@ -62,9 +66,8 @@ export function ShellLayout() {
   const { surface: focused, mode } = useFocusedSurface();
   useEnsureSurfaceOpen(focused);
 
-  const open = useOpenSurfaces();
   const pinnedVibeUuids = usePinnedVibeUuids();
-  const recentVibeSurfaces = useShellStore((state) => state.recentVibeSurfaces);
+  const recentSurfaces = useShellStore((state) => state.recentSurfaces);
   const defaultViewMode = useShellStore((state) => state.defaultViewMode);
   const launcherOpen = useShellStore((state) => state.launcherOpen);
   const setLauncherOpen = useShellStore((state) => state.setLauncherOpen);
@@ -77,10 +80,6 @@ export function ShellLayout() {
   const dockRail = useRef<HTMLDivElement>(null);
 
   const focusedId = focused ? surfaceId(focused) : null;
-  const background = useMemo(
-    () => open.filter((surface) => surfaceId(surface) !== focusedId),
-    [focusedId, open],
-  );
   const loadedVibes = useMemo(
     () =>
       (vibes.data ?? []).map((vibe) => ({
@@ -102,23 +101,12 @@ export function ShellLayout() {
   const dockRailSurfaces = useMemo(() => {
     // Preserve the persisted rail geometry with fallback labels during hydration. Once the
     // authoritative catalog arrives, missing or deleted Vibes disappear from the shortcuts.
-    const recentVibes = recentVibeSurfaces.filter(
+    return recentSurfaces.filter(
       (surface) =>
-        surface.kind === "vibe" &&
-        !pinnedVibeUuids.includes(surface.uuid) &&
         surfaceId(surface) !== focusedId &&
-        (!vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
+        (surface.kind !== "vibe" || !vibeCatalogLoaded || vibeTitles.has(surface.uuid)),
     );
-
-    // Every Vibe route already appears in the shared recency list. Pin only other explicitly
-    // retained windows before those shortcuts so one route cannot appear twice in the rail.
-    return [
-      ...background.filter(
-        (surface) => !isVibeSurface(surface) && !isPinnedDockSurface(surface, pinnedVibeUuids),
-      ),
-      ...recentVibes,
-    ];
-  }, [background, focusedId, recentVibeSurfaces, vibeCatalogLoaded, vibeTitles, pinnedVibeUuids]);
+  }, [focusedId, recentSurfaces, vibeCatalogLoaded, vibeTitles]);
   const pinnedVibes = pinnedVibeUuids.filter((uuid) => !vibeCatalogLoaded || vibeTitles.has(uuid));
 
   useEffect(() => {
@@ -130,15 +118,8 @@ export function ShellLayout() {
     window.addEventListener("storage", syncPins);
     return () => window.removeEventListener("storage", syncPins);
   }, []);
-  const retainedDockRailItems = dockRailSurfaces.filter(
-    (surface) => !isVibeSurface(surface),
-  ).length;
-  // Retained windows do not consume the three visible MRU Vibe slots. Additional Vibes remain
-  // available through the scrollbar-free horizontal rail.
-  const visibleDockRailItems = Math.min(
-    dockRailSurfaces.length,
-    retainedDockRailItems + DOCK_RAIL_VISIBLE_VIBE_ITEMS,
-  );
+  // Recent windows share three visible slots. Older routes remain available by scrolling.
+  const visibleDockRailItems = Math.min(dockRailSurfaces.length, DOCK_RAIL_VISIBLE_ITEMS);
   // Match the tray's active-app transition: an explicit width avoids intrinsic flex reflow
   // moving the launcher in the opposite direction while the active-app reserve animates.
   const dockRailWidth =
@@ -151,7 +132,7 @@ export function ShellLayout() {
     [loadedVibes, query, theme],
   );
 
-  // The rail is an MRU view, so a newly opened Vibe should always restore its newest edge even
+  // The rail is an MRU view, so a newly opened page should always restore its newest edge even
   // if the user had scrolled back through older entries immediately beforehand.
   useLayoutEffect(() => {
     dockRail.current?.scrollTo({ left: 0 });
@@ -255,6 +236,7 @@ export function ShellLayout() {
 
   return (
     <Desktop
+      theme={theme}
       dock={
         <Dock
           leading={
@@ -274,9 +256,19 @@ export function ShellLayout() {
               <DockApp
                 name={labelOf(focused, vibeTitles)}
                 src={markForSurface(focused)}
+                artwork={
+                  focused.kind === "object" ? <ObjectDockPreview uuid={focused.uuid} /> : undefined
+                }
                 icon={iconForDockSurface(focused)}
-                recipe={focused.kind === "vibe" ? vibeOrbs.get(focused.uuid)?.recipe : undefined}
-                orbLoading={focused.kind === "vibe" ? vibeOrbs.get(focused.uuid)?.loading : false}
+                recipe={
+                  focused.kind === "vibe"
+                    ? (vibeOrbs.get(focused.uuid)?.recipe ??
+                      fallbackOrbRecipe(`rnet://vibe/${focused.uuid}`))
+                    : undefined
+                }
+                orbLoading={
+                  focused.kind === "vibe" ? (vibeOrbs.get(focused.uuid)?.loading ?? true) : false
+                }
                 state="active"
               />
             ) : null
@@ -286,8 +278,8 @@ export function ShellLayout() {
               <div
                 ref={dockRail}
                 role="region"
-                aria-label="Recent Vibes and retained windows"
-                data-dock-recent-vibes
+                aria-label="Recent windows"
+                data-dock-recent-surfaces
                 data-dock-running-apps
                 data-count={dockRailSurfaces.length}
                 style={{
@@ -303,11 +295,22 @@ export function ShellLayout() {
                       key={surfaceId(surface)}
                       name={labelOf(surface, vibeTitles)}
                       src={markForSurface(surface)}
+                      artwork={
+                        surface.kind === "object" ? (
+                          <ObjectDockPreview uuid={surface.uuid} />
+                        ) : undefined
+                      }
+                      icon={iconForDockSurface(surface)}
                       recipe={
-                        surface.kind === "vibe" ? vibeOrbs.get(surface.uuid)?.recipe : undefined
+                        surface.kind === "vibe"
+                          ? (vibeOrbs.get(surface.uuid)?.recipe ??
+                            fallbackOrbRecipe(`rnet://vibe/${surface.uuid}`))
+                          : undefined
                       }
                       orbLoading={
-                        surface.kind === "vibe" ? vibeOrbs.get(surface.uuid)?.loading : false
+                        surface.kind === "vibe"
+                          ? (vibeOrbs.get(surface.uuid)?.loading ?? true)
+                          : false
                       }
                       onOpen={(event) =>
                         navigation.openFromDock(surface, {
@@ -363,7 +366,6 @@ export function ShellLayout() {
                   }
                 />
               </div>
-              <DockDivider />
               <div
                 data-dock-pinned-apps
                 role="region"
@@ -401,8 +403,10 @@ export function ShellLayout() {
                             key={uuid}
                             name={labelOf(surface, vibeTitles)}
                             src={markForSurface(surface)}
-                            recipe={vibeOrbs.get(uuid)?.recipe}
-                            orbLoading={vibeOrbs.get(uuid)?.loading}
+                            recipe={
+                              vibeOrbs.get(uuid)?.recipe ?? fallbackOrbRecipe(`rnet://vibe/${uuid}`)
+                            }
+                            orbLoading={vibeOrbs.get(uuid)?.loading ?? true}
                             current={focusedId === surfaceId(surface)}
                             onOpen={(event) => {
                               dismissLauncher({ blurFocus: true, animate: false });

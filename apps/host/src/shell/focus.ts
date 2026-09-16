@@ -129,7 +129,9 @@ export function useSurfaceNavigation(): SurfaceNavigation {
       } = resolveOpenOptions(options, useShellStore.getState().defaultViewMode);
       openSurface(surface, { keepCurrentOpen });
       setDefaultViewMode(nextMode);
-      navigate(locationOf(surface, nextMode, search));
+      // Commit URL focus with the new recent route. Deferring it briefly puts the target
+      // in the recent rail before moving it to the active slot, reversing the dock's width.
+      void navigate(locationOf(surface, nextMode, search), { flushSync: true });
     },
 
     openFromDock: (surface, { origin, source, mode: requestedMode, keepCurrentOpen = false }) => {

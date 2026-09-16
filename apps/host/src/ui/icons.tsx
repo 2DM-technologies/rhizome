@@ -82,7 +82,7 @@ export function ImportIcon({ width = 24, height = 24, ...props }: IconProps) {
           <image href={appMark} x="1" y="1" width="22" height="22" />
         </mask>
       </defs>
-      <rect width="24" height="24" fill="#333" mask={`url(#${maskId})`} />
+      <rect width="24" height="24" fill="light-dark(#333, #eee)" mask={`url(#${maskId})`} />
     </svg>
   );
 }

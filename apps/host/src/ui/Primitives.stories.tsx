@@ -19,7 +19,8 @@ import { TextArea } from "./TextArea.tsx";
 import { TextInput } from "./TextInput.tsx";
 import { TextLink } from "./TextLink.tsx";
 import { VibeOrb } from "./VibeOrb.tsx";
-import { orbs } from "./fixtures.ts";
+import { RasterVibeOrb } from "../orb/RasterVibeOrb.tsx";
+import { orbRecipes, orbs } from "./fixtures.ts";
 
 const meta = { title: "Primitives" } satisfies Meta;
 export default meta;
@@ -163,7 +164,7 @@ export const Orb: Story = {
         <span className="text-caption text-tertiary">sm · 20</span>
       </div>
       <div className="flex flex-col items-center gap-2">
-        <VibeOrb src={orbs.a} size="md" />
+        <RasterVibeOrb recipe={orbRecipes.a} size={44} />
         <span className="text-caption text-tertiary">md · 44</span>
       </div>
       <div className="flex flex-col items-center gap-2">

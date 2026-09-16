@@ -68,16 +68,21 @@ test("desktop cards defer collection and payload requests until scrolled into vi
   await expect(cards).toHaveCount(30);
   const requested = (path: string) =>
     store.requests.some((request) => new URL(request.url()).pathname === path);
-  await expect(cards.first().locator('[data-element-presentation="text"]')).toHaveCount(6);
+  await expect(cards.first().locator('[data-element-presentation="text"]')).toHaveCount(5);
   expect(requested(`/rnet/v0/vibes/${vibeIds[29]}/objects`)).toBe(false);
   for (const id of elementIds[29]!) {
     expect(requested(`/rnet/v0/elements/${id}`)).toBe(false);
     expect(requested(`/rnet/v0/elements/${id}/bytes`)).toBe(false);
   }
   await cards.last().scrollIntoViewIfNeeded();
-  await expect(cards.last().locator('[data-element-presentation="text"]')).toHaveCount(6);
+  await expect(cards.last().locator('[data-element-presentation="text"]')).toHaveCount(5);
+  await expect(cards.last().getByText("+1", { exact: true })).toBeVisible();
   expect(requested(`/rnet/v0/vibes/${vibeIds[29]}/objects`)).toBe(true);
-  for (const id of elementIds[29]!) expect(requested(`/rnet/v0/elements/${id}/bytes`)).toBe(true);
+  for (const id of elementIds[29]!.slice(0, 5))
+    expect(requested(`/rnet/v0/elements/${id}/bytes`)).toBe(true);
+  const hiddenElement = elementIds[29]![5]!;
+  expect(requested(`/rnet/v0/elements/${hiddenElement}`)).toBe(false);
+  expect(requested(`/rnet/v0/elements/${hiddenElement}/bytes`)).toBe(false);
 });
 
 test("unsupported desktop previews show a placeholder without downloading their payload", async ({

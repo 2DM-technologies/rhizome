@@ -18,9 +18,32 @@
 }
 
 .desktop-wallpaper {
+  isolation: isolate;
   background-image: var(--rz-wallpaper);
   background-size: cover;
   background-position: center;
+}
+
+.desktop-wallpaper-transition {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.desktop-wallpaper-layer {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.desktop-wallpaper-light {
+  background-image: var(--rz-wallpaper-light);
+}
+
+.desktop-wallpaper-dark {
+  background-image: var(--rz-wallpaper-dark);
 }
 
 .vibe-orb-stage {

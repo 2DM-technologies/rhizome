@@ -5,7 +5,15 @@ import { useDockPinsStore, usePinnedVibeUuids } from "../shell/dockPins.ts";
 import { IconButton } from "../ui/IconButton.tsx";
 import { MoreIcon } from "../ui/icons.tsx";
 
-export function VibeActionsMenu({ uuid, onDelete }: { uuid: string; onDelete?: () => void }) {
+export function VibeActionsMenu({
+  uuid,
+  onEditTitle,
+  onDelete,
+}: {
+  uuid: string;
+  onEditTitle?: () => void;
+  onDelete?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -83,10 +91,23 @@ export function VibeActionsMenu({ uuid, onDelete }: { uuid: string; onDelete?: (
           aria-label="Vibe options"
           className="absolute right-0 top-full z-20 mt-2 w-44 rounded-md border border-hairline bg-surface p-1 shadow-lg"
         >
+          {onEditTitle ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-label text-primary hover:bg-accent/12 focus-visible:bg-accent/12 focus:outline-none"
+              onClick={() => {
+                dismiss();
+                onEditTitle();
+              }}
+            >
+              Edit title
+            </button>
+          ) : null}
           <button
             type="button"
             role="menuitem"
-            className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-label text-primary hover:bg-accent/12 focus:bg-accent/12 focus:outline-none"
+            className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-label text-primary hover:bg-accent/12 focus-visible:bg-accent/12 focus:outline-none"
             onClick={() => {
               if (userId) setPinned(userId, uuid, !pinned);
               dismiss();
@@ -98,7 +119,7 @@ export function VibeActionsMenu({ uuid, onDelete }: { uuid: string; onDelete?: (
             <button
               type="button"
               role="menuitem"
-              className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-label text-error hover:bg-error/10 focus:bg-error/10 focus:outline-none"
+              className="w-full cursor-pointer rounded-sm px-3 py-2 text-left text-label text-error hover:bg-error/10 focus-visible:bg-error/10 focus:outline-none"
               onClick={() => {
                 dismiss();
                 onDelete();

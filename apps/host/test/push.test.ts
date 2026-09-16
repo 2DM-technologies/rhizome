@@ -5,7 +5,7 @@ import type { OperationDocument } from "@rhizome/store-contract";
 
 import { PUSH_TASKS } from "../src/api/generated/push-tasks.ts";
 import { invalidatePushResult } from "../src/queries/push.ts";
-import { inferredObjectLabel, resolveVibeView } from "../src/surfaces/InferredVibeView.tsx";
+import { inferredObjectLabel, resolveVibeView } from "../src/surfaces/vibe-view/utils.ts";
 import { missingObjectUris, pushResultSummary } from "../src/surfaces/PushControl.tsx";
 
 const URI = "rnet://object/0198f2a1-b19c-77bb-a6e9-0d6c66c52ae3" as const;
@@ -107,6 +107,30 @@ describe("push host integration", () => {
     expect(client.getQueryState(keys[1]!)?.isInvalidated).toBe(true);
     expect(reads).toBeGreaterThanOrEqual(2);
     unsubscribe();
+  });
+  test("a failed push refreshes active object status even without a result", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let status = "running";
+    const observer = new QueryObserver(client, {
+      queryKey: [
+        "get",
+        "/rnet/v0/objects/{id}/inference-status",
+        { params: { path: { id: URI.split("/").at(-1) } } },
+      ],
+      queryFn: async () => ({ status }),
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      await observer.refetch();
+      expect(observer.getCurrentResult().data?.status).toBe("running");
+      status = "error";
+      await invalidatePushResult(client, { ...operation(null), status: "failed" }, "vibe");
+      expect(observer.getCurrentResult().data?.status).toBe("error");
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
   });
   test("element outcomes invalidate written, preserved, and skipped active queries", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -20,7 +20,7 @@ import { Select } from "./Select.tsx";
 import { Tabs } from "./Tabs.tsx";
 import { ToolCallBlock } from "./ToolCallBlock.tsx";
 import { VibeOrb } from "./VibeOrb.tsx";
-import { marks, orbs, spendRows, spendSlices } from "./fixtures.ts";
+import { marks, orbRecipes, orbs, spendRows, spendSlices } from "./fixtures.ts";
 
 const meta = { title: "Shell", parameters: { layout: "fullscreen" } } satisfies Meta;
 export default meta;
@@ -41,14 +41,14 @@ function TrayContents({ search }: { search: ReactNode }) {
   return (
     <>
       <div className="flex min-w-0 shrink items-center gap-5 overflow-hidden">
-        <DockApp name="Spending" src={orbs.a} />
-        <DockApp name="Library" src={orbs.b} />
+        <DockApp name="Spending" recipe={orbRecipes.a} />
+        <DockApp name="Library" recipe={orbRecipes.b} />
       </div>
       <DockDivider />
       {search}
       <div className="flex min-w-0 shrink items-center gap-5 overflow-hidden">
-        <DockApp name="Reading" src={orbs.c} />
-        <DockApp name="People" src={orbs.d} />
+        <DockApp name="Reading" recipe={orbRecipes.c} />
+        <DockApp name="People" recipe={orbRecipes.d} />
       </div>
     </>
   );
@@ -59,8 +59,8 @@ export const Apps: Story = {
   render: () => (
     <div data-tier="content" className="flex items-center gap-6 rounded-md bg-dock-tray p-4">
       <DockApp name="Rhizome" src={marks.app} state="active" />
-      <DockApp name="Spending" src={orbs.a} />
-      <DockApp name="Library" src={orbs.b} />
+      <DockApp name="Spending" recipe={orbRecipes.a} />
+      <DockApp name="Library" recipe={orbRecipes.b} />
     </div>
   ),
 };

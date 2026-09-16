@@ -204,7 +204,7 @@ test("the neutral pre-inference orb pulses as a reduced-motion-safe loading stat
   await expect(overlay).toHaveCSS("opacity", "0.14");
 });
 
-test("persisted recipes use images for small orbs, animate desktop hover, and keep the hero live", async ({
+test("persisted recipes use images for small orbs and animate the desktop and hero on interaction", async ({
   page,
 }) => {
   const store = await installMockStore(page);
@@ -248,10 +248,10 @@ test("persisted recipes use images for small orbs, animate desktop hover, and ke
   await expect(card).toHaveCSS("background-image", "none");
   await expect(card).not.toHaveClass(/translate-y/);
   await expect(card.locator(":scope > div").first()).toHaveCSS("padding-top", "9px");
-  await expect(card.locator("[data-object-thumbnail]").first()).toHaveCSS("width", "20px");
-  await expect(card.locator("[data-object-thumbnail]").first()).toHaveCSS("height", "20px");
-  await expect(card.locator("[data-object-thumbnail]")).toHaveCount(6);
-  await expect(card.getByText("+3", { exact: true })).toBeVisible();
+  await expect(card.locator("[data-object-thumbnail]").first()).toHaveCSS("width", "24px");
+  await expect(card.locator("[data-object-thumbnail]").first()).toHaveCSS("height", "24px");
+  await expect(card.locator("[data-object-thumbnail]")).toHaveCount(5);
+  await expect(card.getByText("+4", { exact: true })).toBeVisible();
   await expect(cardOrb).toHaveCount(1);
   await expect(card.locator("[data-vibe-orb-loading-overlay]")).toHaveCount(0);
   await expect(card.locator('img[src*="orb-user-24"]')).toHaveCount(0);
@@ -288,10 +288,17 @@ test("persisted recipes use images for small orbs, animate desktop hover, and ke
 
   await card.getByRole("button", { name: "Open Vibe Spending" }).click();
   const hero = page.getByLabel("Spending Vibe orb");
-  await expect(hero).toHaveAttribute("data-vibe-orb-motion", "continuous");
+  await page.mouse.move(0, 0);
+  await expect(hero).toHaveAttribute("data-vibe-orb-motion", "interaction");
+  await expect(hero.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "false");
+  await hero.hover();
   await expect(hero.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "true");
+  await page.mouse.move(0, 0);
+  await expect(hero.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "false");
   const activeDock = page.getByRole("button", { name: "Spending", exact: true });
-  await expect(activeDock.locator('[data-vibe-orb-motion="continuous"]')).toHaveAttribute(
+  await expect(activeDock.locator("canvas")).toHaveCount(0);
+  await activeDock.hover();
+  await expect(activeDock.locator('[data-vibe-orb-motion="interaction"]')).toHaveAttribute(
     "data-vibe-orb-renderer",
     "webgl",
   );
@@ -307,7 +314,7 @@ test("persisted recipes use images for small orbs, animate desktop hover, and ke
   await expect(page.locator("canvas")).toHaveCount(0);
 });
 
-test("dock shortcuts stay rasterized except on hover or keyboard focus, while the active square stays live", async ({
+test("dock shortcuts and the active square stay rasterized except on hover or keyboard focus", async ({
   page,
 }) => {
   const store = await installMockStore(page);
@@ -316,7 +323,17 @@ test("dock shortcuts stay rasterized except on hover or keyboard focus, while th
   };
   await page.goto(`/vibes/${VIBE_ID}`);
   const active = page.locator("[data-dock-app-slot]");
+  await expect(active.locator("canvas")).toHaveCount(0);
+  const activeButton = active.getByRole("button", { name: "Spending", exact: true });
+  await activeButton.hover();
   await expect(active.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "true");
+  await page.mouse.move(0, 0);
+  await expect(active.locator("canvas")).toHaveCount(0);
+  await page.keyboard.press("Tab");
+  await activeButton.focus();
+  await expect(active.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "true");
+  await activeButton.blur();
+  await expect(active.locator("canvas")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Vibe options" }).click();
   await page.getByRole("menuitem", { name: "Pin to dock", exact: true }).click();
@@ -347,11 +364,11 @@ test("dock shortcuts stay rasterized except on hover or keyboard focus, while th
   await shortcut.blur();
   await expect(canvas).toHaveCount(0);
 
-  // Clicking a shortcut may leave DOM focus on it; pointer focus must not keep its canvas alive.
+  // Pointer activation must not keep the shortcut's canvas alive after the pointer leaves.
   await shortcut.click();
   await page.mouse.move(0, 0);
   await expect(canvas).toHaveCount(0);
-  await expect(active.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "true");
+  await expect(active.locator("canvas")).toHaveCount(0);
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await shortcut.hover();
@@ -361,7 +378,7 @@ test("dock shortcuts stay rasterized except on hover or keyboard focus, while th
   await expect(raster.locator("img")).toBeVisible();
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(canvas).toHaveAttribute("data-vibe-orb-animating", "true");
-  await expect(active.locator("canvas")).toHaveAttribute("data-vibe-orb-animating", "true");
+  await expect(active.locator("canvas")).toHaveCount(0);
 
   // If a live context is lost, the cached image becomes visible immediately.
   await canvas.evaluate((element: HTMLCanvasElement) => {
@@ -379,7 +396,7 @@ test("dock shortcuts stay rasterized except on hover or keyboard focus, while th
   await page.getByRole("menuitem", { name: "Unpin from dock", exact: true }).click();
   await page.getByRole("button", { name: "Close surface", exact: true }).click();
   await expect(active.locator("canvas")).toHaveCount(0);
-  const recent = page.locator("[data-dock-recent-vibes]").getByRole("button", {
+  const recent = page.locator("[data-dock-recent-surfaces]").getByRole("button", {
     name: "Spending",
     exact: true,
   });

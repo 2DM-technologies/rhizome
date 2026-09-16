@@ -281,19 +281,25 @@ export function ElementPreview({
   }
 
   return (
-    <iframe
+    // Chrome's native PDF viewer cannot run inside a fully sandboxed iframe. This
+    // branch only accepts document/application-pdf; text (including HTML) stays inert above.
+    <object
       data-element-presentation={presentation}
       data-media-object-presentation={presentation}
-      src={src}
-      title={frameTitle ?? `Document preview for ${title}`}
-      sandbox=""
+      data={src}
+      type="application/pdf"
+      aria-label={frameTitle ?? `Document preview for ${title}`}
       className={cn(
         variant === "card"
           ? "size-full border-0 bg-white"
-          : "h-72 w-full rounded-sm border bg-white",
+          : "aspect-[4/5] h-auto w-full rounded-sm border bg-white",
         variant !== "card" && frameBorder,
         className,
       )}
-    />
+    >
+      <a href={src} download className="text-accent underline">
+        Download PDF
+      </a>
+    </object>
   );
 }

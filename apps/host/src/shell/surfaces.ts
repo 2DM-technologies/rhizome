@@ -12,13 +12,6 @@ export type Surface =
   | { readonly kind: "object"; readonly uuid: string }
   | { readonly kind: "dmachine"; readonly name: string };
 
-/** The Vibes index and an individual Vibe participate in one dock-recency model. */
-export type VibeSurface = Extract<Surface, { readonly kind: "vibes" | "vibe" }>;
-
-export function isVibeSurface(surface: Surface): surface is VibeSurface {
-  return surface.kind === "vibes" || surface.kind === "vibe";
-}
-
 /** Stable identity for the open set, the dock, and React keys. */
 export type SurfaceId = string;
 
