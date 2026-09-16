@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { VIBE_VIEWS } from "@rhizome/store-contract";
 import { jsonSchema } from "../src/routes/contracts.ts";
+import { assertStructuredOutputSchema } from "../src/inference/structured-output-schema.ts";
+import { PushTaskCatalog } from "../src/push/task-catalog.ts";
 import type { VibeContext } from "../src/push/context.ts";
 import { vibeView } from "../src/push/tasks/vibe/vibe-view/manifest.ts";
 import { chooseVibeView, validateVibeViewOutput } from "../src/push/tasks/vibe/vibe-view/rules.ts";
@@ -29,6 +31,55 @@ function expectValid(output: Record<string, unknown>, input: VibeContext) {
 }
 
 describe("vibe-view", () => {
+  test("generation enforces every view/config pairing before decoding the saved format", () => {
+    const modelOutput = vibeView.modelOutput!;
+    assertStructuredOutputSchema(modelOutput.schema);
+    expect(modelOutput.schema).not.toHaveProperty("anyOf");
+    const schema = jsonSchema(modelOutput.schema);
+    const configs = {
+      datatable: { columns: ["/source/properties/title"], sort: null },
+      mediaboard: { caption_pointer: null },
+      simplelist: { subtitle_pointer: null },
+      tweetfeed: {},
+    };
+    expect(Object.keys(configs)).toEqual([...VIBE_VIEWS]);
+    for (const view of VIBE_VIEWS) {
+      for (const [configView, config] of Object.entries(configs)) {
+        const selection = { view, config };
+        expect(schema.validate({ selection }).ok).toBe(view === configView);
+        if (view === configView) {
+          const decoded = modelOutput.decode({ selection });
+          expect(decoded).toEqual(selection);
+          expect(jsonSchema(vibeView.outputSchema).validate(decoded).ok).toBe(true);
+        }
+      }
+    }
+    for (const response of [
+      {},
+      { selection: null },
+      { view: "simplelist", config: configs.simplelist },
+      { selection: { view: "unknown", config: {} } },
+      { selection: { view: "simplelist", config: { ...configs.simplelist, extra: true } } },
+    ])
+      expect(schema.validate(response).ok).toBe(false);
+  });
+
+  test("model envelopes are validated at catalog construction and restricted to Vibe tasks", () => {
+    expect(() => new PushTaskCatalog([vibeView])).not.toThrow();
+    expect(() => new PushTaskCatalog([{ ...vibeView, level: "object", rules: undefined }])).toThrow(
+      "Vibe context hooks require a Vibe task",
+    );
+    expect(
+      () =>
+        new PushTaskCatalog([
+          {
+            ...vibeView,
+            modelOutput: { ...vibeView.modelOutput!, schema: { type: "string" } },
+          },
+        ]),
+    ).toThrow("Structured output requires an object root");
+  });
+
   test("tweet-only Vibes choose tweetfeed before pointer and media rules", () => {
     for (const input of [
       context([type("tweet", [])]),

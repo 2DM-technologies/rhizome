@@ -86,7 +86,7 @@ export function assembleObjectContext(record: ContextObject, task: PushTaskDefin
     notes: storeNotes(record.object.inferred, key),
   };
   const data = clipStrings(raw) as Record<string, unknown>;
-  while (serializedBytes(data) > 2 * 1024) dropLastProperty(data);
+  while (serializedBytes(data) > 32 * 1024) dropLastProperty(data);
   return { data, clipped: JSON.stringify(raw) !== JSON.stringify(data) };
 }
 
@@ -167,10 +167,10 @@ export function assembleVibeContext(
     return true;
   };
   while (pointers > 512) dropPointer();
-  while (serializedBytes(result) > 8 * 1024 && dropPointer()) {
+  while (serializedBytes(result) > 64 * 1024 && dropPointer()) {
     /* trim trailing pointers first */
   }
-  while (serializedBytes(result) > 8 * 1024 && result.types.length) dropType();
+  while (serializedBytes(result) > 64 * 1024 && result.types.length) dropType();
   return { vibe: result, context };
 }
 
@@ -243,7 +243,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function clipStrings(value: unknown): unknown {
-  if (typeof value === "string") return value.slice(0, 512);
+  if (typeof value === "string") return value.slice(0, 8192);
   if (Array.isArray(value)) return value.map(clipStrings);
   if (isRecord(value))
     return Object.fromEntries(
