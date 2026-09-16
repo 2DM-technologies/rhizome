@@ -33,6 +33,28 @@ const actionFailure: DbOperation = {
 };
 
 describe("operation source-action privacy", () => {
+  test("push always hides resolved execution state and exposes usage only to the owner", () => {
+    const operation: DbOperation = {
+      ...actionFailure,
+      kind: "push",
+      status: "done",
+      request: {
+        mode: "push",
+        level: "object",
+        task: "label",
+        resolved: { selection: ["private-member"] },
+      },
+      result: { level: "object", task: "label", usage: { tokens_in: 100 }, written: [] },
+    };
+    for (const exposeOwnerOnlyResult of [true, false]) {
+      const document = serializeOperation(operation, { exposeOwnerOnlyResult });
+      expect(document.request).toEqual({ mode: "push", level: "object", task: "label" });
+      expect(Object.hasOwn(document.result!, "usage")).toBe(exposeOwnerOnlyResult);
+      expect(document.result).toHaveProperty("written");
+    }
+    expect(operation.request).toHaveProperty("resolved");
+    expect(operation.result).toHaveProperty("usage");
+  });
   test("preserves the owner action envelope", () => {
     const serialized = serializeOperation(actionFailure, { exposeOwnerOnlyResult: true });
 

@@ -5,7 +5,7 @@ Rhizome architecture. Every open gap names the milestone that closes it; product
 evidence belong in the [implementation plan](./IMPLEMENTATION_PLAN.md), concept documents, and test
 suites.
 
-## Implemented through M2
+## Implemented through M3
 
 - The store implements the M1 store surface for origins, elements, MediaObjects, and Vibes, with
   server-enforced grants, provenance validation, last-write-wins user edits, and internal revision
@@ -33,21 +33,51 @@ suites.
 - Reviewed imports create no MediaObject, MediaElement, object-element link, Vibe membership, or
   pull-configuration entry before confirmation. Cancellation retains owner-only source and origin
   audit records, while confirmation commits the reviewed object-and-element bundle atomically.
+- Push is an asynchronous, metered operation across elements, objects, and Vibes. Five installed
+  tasks write only their own `rhizome:{task}` entry, preserve same-key durable entries, and keep
+  other writers' entries intact under row locks. Each run has one cost row; owner-visible results
+  report recorded usage while read grantees receive the same outcomes with usage omitted.
+- Confirming a reviewed import runs the installed tasks in element, object, and Vibe order after
+  commit, using the same push operations and meters. Imports into existing Vibes process only newly
+  added objects and their eligible elements, then refresh the Vibe summary/view without renaming it.
+  Existing-Vibe imports adding no members trigger no additional runs. Automatic imports retain the
+  owner's transaction exclusion; keyless imports remain available. This sequence is in-process
+  under the existing M7 durable-execution deferral.
+- The host consumes generated task manifests, runs and polls push operations, renders inferred
+  Vibe views, and refreshes every object or element named by a terminal result. The fake connector,
+  provider boundary tests, and stubbed OpenAI tests make the full gate independent of provider spend.
 
-## M3
+## S1 — Strava export ingestion
 
-- Make `POST /vibes/{id}/push` operational while preserving any existing `durable: true` inferred
-  entry instead of overwriting it.
+- Register the provider-independent `activity` vocabulary in rNet: canonical schema/spec,
+  generated `ActivityProperties` and schema exports, standalone and full-MediaObject runtime
+  validation, and positive/negative fixtures including a non-Strava activity. The Strava skill
+  must consume this canonical vocabulary; it is not registered yet.
+- Add the planned `apps/ingest/skills/strava/` file source described in
+  [Strava import](./concepts/strava-import.md): recognized activity CSV and supported original
+  files, running summaries, recorded laps and calculated mile splits with explicit timing bases,
+  VERIFY coverage, and the existing reviewed candidate-bundle commit path. Summary-only import
+  is an intermediate slice; the skill is not yet installed.
+- Bring forward the shared ZIP reader and reviewed-file E2E support extraction described under
+  M7 before the Strava skill consumes them. Enforce total expanded bytes as well as per-entry
+  limits, and establish upload budgets against the representative export and API transport.
+- Add reviewed reconciliation for successive exports. Current semantic deduplication is scoped
+  to one source binding; uploading another export creates a new source and can duplicate activity
+  objects. S1 must recognize unchanged runs and preserve owner annotations while reviewing new
+  or changed runs, with immutable source lineage and owner-only reuse enforced by the platform.
 
 ## M5
 
+- Define the `users.inferred` warm-start policy, including its writer and what client-invoked
+  inference may read without leaking cross-Vibe information. M3 excludes this block from push
+  context and writes.
 - The schema conditionals already require `parser_hash` for `generated_parser` and prohibit
   reproducible `agent` records, but current execution and object-creation paths make only
   `parser`/reproducible and `authored`/non-reproducible stamps reachable. Add executable `agent` and
   `generated_parser` paths and accept their conformant ingest records.
-- No committed CSV parser ships. “CSV” is a convention rather than a format, so a hand-written CSV
-  skill is a registry of bank dialects that is never complete; file-based bank import is QFX/OFX-only
-  until this path lands, and every CSV dialect reaches the store through it.
+- A generic CSV importer does not ship. Unsupported bank CSV dialects use the M5 generated-parser
+  path; file-based bank import remains QFX/OFX-only until then. A committed parser for a bounded,
+  identified provider export is allowed and is owned by that source skill, including S1 Strava.
 
 ## M7
 
@@ -57,6 +87,12 @@ suites.
 - Move import preview and pull work from in-process `queueMicrotask` jobs to durable execution. Add
   a reaper that reconciles work interrupted while `queued` or `running`, and stop host polling when a
   job can no longer make progress.
+- Push runs in the API process like preview and pull (`impl/concepts/push-pipeline.md` §6.4a). Until
+  durable execution: a restart fails every `queued` or `running` operation at the next boot,
+  rejecting their open source fetches, instead of resuming it; a push's writes are not guarded
+  against `user` edits or membership changes between assembly and write; a stranded run's late
+  writes are not fenced, since a run cannot be stranded while its process is alive; and a provider
+  call in flight when the process dies is not metered.
 - Add reference-aware garbage collection for unreferenced staged capture/origin and element bytes
   left by failed, canceled, or abandoned previews. Preserve bytes referenced by live
   OriginArtifacts, MediaElements, or retained preview manifests.
@@ -84,8 +120,8 @@ These become required only when the associated source or product scope expands:
   chip instead of reporting that it is unsupported. Before adding element kinds or media types
   beyond the currently rendered set, replace this with an explicit capability registry and a
   distinct unsupported state.
-- Define file refresh and reselection semantics for replacing the origin bytes bound to an existing
-  file source.
+- Define general file refresh and reselection semantics beyond S1's reviewed successive-export
+  use case. Existing file sources continue to pin immutable origin bytes.
 
 ## M8
 

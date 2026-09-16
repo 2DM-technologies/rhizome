@@ -24,6 +24,10 @@ function operationRequestForViewer(
   operation: DbOperation,
   exposeOwnerOnlyResult: boolean,
 ): DbOperation["request"] {
+  if (operation.request.mode === "push") {
+    const { resolved: _resolved, ...request } = operation.request;
+    return request;
+  }
   if (exposeOwnerOnlyResult || operation.kind !== "pull" || operation.request.mode !== "pull") {
     return operation.request;
   }
@@ -35,6 +39,10 @@ function operationResultForViewer(
   operation: DbOperation,
   exposeOwnerOnlyResult: boolean,
 ): DbOperation["result"] {
+  if (operation.request.mode === "push" && operation.result && !exposeOwnerOnlyResult) {
+    const { usage: _usage, ...result } = operation.result;
+    return result;
+  }
   if (
     exposeOwnerOnlyResult ||
     operation.kind !== "pull" ||

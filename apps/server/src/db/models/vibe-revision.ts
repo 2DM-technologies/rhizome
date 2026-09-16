@@ -2,6 +2,7 @@ import { jsonb, pgTable, primaryKey, integer, text, timestamp, uuid } from "driz
 
 import type { JsonObject } from "./shared.ts";
 import { vibes } from "./vibe.ts";
+import { operations } from "./operation.ts";
 
 export const vibeRevisions = pgTable(
   "vibe_revisions",
@@ -13,6 +14,7 @@ export const vibeRevisions = pgTable(
     snapshot: jsonb("snapshot").$type<JsonObject>().notNull(),
     membershipDelta: jsonb("membership_delta").$type<{ added: string[]; removed: string[] }>(),
     actor: text("actor").notNull(),
+    operationUuid: uuid("operation_uuid").references(() => operations.uuid),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (vibeRevision) => [primaryKey({ columns: [vibeRevision.vibeUuid, vibeRevision.rev] })],

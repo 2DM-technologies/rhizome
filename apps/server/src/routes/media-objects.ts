@@ -6,11 +6,13 @@ import {
   ownerCreateMediaObjectsRequestSchema,
   setMediaObjectInferredRequestSchema,
   setMediaObjectUserRequestSchema,
+  objectInferenceStatusSchema,
   type CreateMediaObjectInput,
 } from "@rhizome/store-contract";
 
 import type { BlobStore } from "../blobs/index.ts";
 import type { Database } from "../db/index.ts";
+import type { PushService } from "../push/push-service.ts";
 import type { PendingMediaElementUpload } from "../services/media-element-service.ts";
 import { MediaObjectsService } from "../services/media-object-service.ts";
 import { schemaProblem } from "../services/problems.ts";
@@ -59,9 +61,31 @@ const MediaObjectCollectionSchema = collectionOf(
 );
 const SetMediaObjectUserRequestSchema = jsonSchema(setMediaObjectUserRequestSchema);
 const SetMediaObjectInferredRequestSchema = jsonSchema(setMediaObjectInferredRequestSchema);
+const ObjectInferenceStatusSchema = jsonSchema(objectInferenceStatusSchema);
 
-export function createMediaObjectRoutes(db: Database, blobs: BlobStore) {
+export function createMediaObjectRoutes(db: Database, blobs: BlobStore, pushService: PushService) {
   const router = createRhizomeRouter();
+
+  router.get(
+    "/:id/inference-status",
+    {
+      operationId: "getObjectInferenceStatus",
+      request: { param: RecordIdParamsSchema },
+      responses: {
+        200: ObjectInferenceStatusSchema,
+        403: ProblemSchema,
+        404: ProblemSchema,
+        422: ProblemSchema,
+      },
+    },
+    async (context) =>
+      context.json(
+        await pushService.getObjectInferenceStatus(
+          context.req.valid("param").id,
+          context.get("actor"),
+        ),
+      ),
+  );
 
   router.post(
     "/",

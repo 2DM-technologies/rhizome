@@ -20,7 +20,7 @@ Core objects (defined fully in the spec + schemas):
 
 - **MediaElement** — immutable, UUIDv7-identified atomic content record: an immutable `owner`, a payload, and contextual metadata. Five kinds (`text|image|audio|video|document`), closed set, rule: _a kind exists iff a human consumes that thing directly_. URI: `rnet://element/{uuid}`; the payload is independently identified by required `content_hash`.
 - **OriginArtifact** — immutable, UUIDv7-identified provenance record around raw uploaded bytes (bank export, data dump), with an immutable `owner`. URI: `rnet://origin/{uuid}`; the payload is independently identified by required `content_hash`. Ontologically inert: not media, never inside a Vibe, never model-consumed. **Every raw upload is an origin, never an element.** Exists so ingestion can always re-run against ground truth.
-- **MediaObject** — owned unit of meaning. Fields: immutable `owner`, `type` (open vocabulary; registered: `transaction`, `track`; reserved: `post`, `photo`, `note`, `contact`, `event`, `book`, `article`, `receipt`), zero-or-more element refs, `keys` (global identifiers: fitid, isrc…), and three property blocks:
+- **MediaObject** — owned unit of meaning. Fields: immutable `owner`, `type` (open vocabulary; registered: `transaction`, `track`, `tweet`; S1 adds `activity`; reserved: `post`, `photo`, `note`, `contact`, `event`, `book`, `article`, `receipt`), zero-or-more element refs, `keys` (global identifiers: fitid, isrc…), and three property blocks:
   - `source` — written by ingestion only, immutable; contains the `ingest` record, `origins` refs, and properties.
   - `user` — owner-mutable and last-write-wins. The store records every accepted version
     internally for history, undo, and revert; revisions are not write preconditions.
@@ -78,7 +78,7 @@ rhizome/                            # PRODUCT (closed).
 │   │       ├── services/           # domain methods; routes never query the database directly
 │   │       ├── db/models/          # one Drizzle table definition per database model
 │   │       ├── blobs/ pull/ auth/ metering/
-│   │       └── push/tasks/         # one dir per task: prompt + output schema (plan §5.1)
+│   │       └── push/tasks/         # {level}/{name}: manifest, prompt, output schema (plan §5.1)
 │   ├── host/                       # the Rhizome shell — Vite + React SPA, React Router.
 │   │                               # Holds the session, talks to the store directly, and
 │   │                               # renders the sandbox iframes that dmachines/ run inside.
@@ -135,7 +135,7 @@ JSON columns are `JSONB`. Timestamps are `TIMESTAMPTZ`.
 
 **Record ownership is explicit in both protocol and storage, not inferred from Vibe membership.** Origins, elements, objects, and Vibes carry required immutable `owner` URIs on the wire; Rhizome stores their local identifiers as `owner_uuid`. A record may be temporarily unattached or referenced by several Vibes, so joins cannot answer who may administer, tombstone, or garbage-collect it. A dMachine-created element or object inherits the owner of the Vibe that authorized the atomic write. `created_by` remains separate audit data identifying the actor, while Vibe membership and grants continue to determine delegated read/write access. No persistent upload entitlement is needed: delegated element creation is inseparable from the first object reference and Vibe membership. For v0.1, an object's owner must match its Vibe, its elements, and any OriginArtifacts in its provenance; cross-owner references wait for sharing semantics.
 
-**`updated_at` only where there is no revision log.** `media_objects` and `vibes` carry rev counters and write to `media_object_revisions` / `vibe_revisions` on every mutation, so "when did this change" is answered more precisely — and with _what_ changed and _who_ changed it — by the log. `origins` and `media_elements` are immutable (only tombstoned). `dMachines` has no log, so it carries `updated_at`. `users` carries both: `updated_at` for editable fields, and `user_revisions` for `inferred`, because memory is not recomputable and an accidental clear must be recoverable.
+**`updated_at` only where there is no revision log.** `media_objects` and `vibes` carry rev counters and write to `media_object_revisions` / `vibe_revisions` on every mutation, so "when did this change" is answered more precisely — and with _what_ changed and _who_ changed it — by the log. `origins` are immutable (only tombstoned). A `media_elements` row's payload and metadata are immutable, while its `inferred` block is mutable: it carries `inferred_rev` and writes to `media_element_revisions`. `dMachines` has no log, so it carries `updated_at`. `users` carries both: `updated_at` for editable fields, and `user_revisions` for `inferred`, because memory is not recomputable and an accidental clear must be recoverable.
 
 **Every stored document records its version.** `rnet_schema` is on origins, elements, objects, and vibes without exception — a short column on rows you are writing anyway, and the alternative is a carve-out that has to be justified and will eventually be justified wrongly. Note that record metadata is _not_ fully re-derivable from the bytes: `label` is the filename the user handed over, `uploaded_at` is when they did it, and `mime` cannot be reliably sniffed. Only `content_hash` and `byte_size` come from the content.
 
@@ -167,12 +167,16 @@ CREATE TABLE media_elements (           -- media records: what a human consumes
   kind          TEXT NOT NULL CHECK (kind IN ('text','image','audio','video','document')),
   mime          TEXT NOT NULL,
   byte_size     BIGINT NOT NULL,
+  alt           TEXT,                    -- authored alternative text, immutable with the payload
+  inferred      JSONB NOT NULL DEFAULT '{}'::jsonb,  -- {writer}:{task} keyed map; the one mutable block
+  inferred_rev  INTEGER NOT NULL DEFAULT 0,
   rnet_schema   TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL,
   created_by    TEXT NOT NULL,           -- authenticated user/client URI; internal audit
   tombstoned_at TIMESTAMPTZ
 );
 CREATE INDEX media_elements_content_hash_idx ON media_elements(content_hash);
+CREATE INDEX media_elements_inferred_idx ON media_elements USING GIN (inferred jsonb_path_ops);
 
 -- ══ Objects ══════════════════════════════════════════════════════════
 CREATE TABLE media_objects (
@@ -188,6 +192,7 @@ CREATE TABLE media_objects (
                                         -- `SELECT user` silently returns CURRENT_USER.
   user_rev      INTEGER NOT NULL DEFAULT 0,   -- internal history sequence; not an MVP API field
   inferred      JSONB NOT NULL DEFAULT '{}'::jsonb,  -- {writer}:{task} keyed map
+  inferred_rev  INTEGER NOT NULL DEFAULT 0,   -- same per-block counter as source_rev and user_rev
   extensions    JSONB NOT NULL DEFAULT '{}'::jsonb,  -- x-* namespaced
   rnet_schema   TEXT NOT NULL,          -- protocol version this row was written under
   created_at    TIMESTAMPTZ NOT NULL
@@ -201,7 +206,6 @@ CREATE TABLE media_object_elements (    -- ordered element refs
   media_element_uuid UUID NOT NULL REFERENCES media_elements(uuid),
   position      INTEGER NOT NULL,
   role          TEXT CHECK (role IN ('title', 'content', 'preview')),
-  alt           TEXT,
   PRIMARY KEY (media_object_uuid, position)
 );
 
@@ -270,12 +274,24 @@ CREATE TABLE media_object_revisions (
   PRIMARY KEY (media_object_uuid, block, rev)
 );
 
+CREATE TABLE media_element_revisions (
+  media_element_uuid UUID NOT NULL REFERENCES media_elements(uuid) ON DELETE CASCADE,
+  block         TEXT NOT NULL CHECK (block IN ('inferred')),   -- the only mutable block on an element
+  rev           INTEGER NOT NULL,
+  snapshot      JSONB,
+  actor         TEXT NOT NULL,          -- 'id:…' | 'client:…' | 'rhizome'
+  operation_uuid UUID REFERENCES operations(uuid),
+  created_at    TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (media_element_uuid, block, rev)
+);
+
 CREATE TABLE vibe_revisions (
   vibe_uuid     UUID NOT NULL REFERENCES vibes(uuid) ON DELETE CASCADE,
   rev           INTEGER NOT NULL,
   snapshot      JSONB NOT NULL,         -- title, inferred, pull_config, grants
   membership_delta JSONB,               -- {added:[…], removed:[…]}
   actor         TEXT NOT NULL,
+  operation_uuid UUID REFERENCES operations(uuid),   -- the push that wrote inferred; null for pull
   created_at    TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (vibe_uuid, rev)
 );
@@ -489,7 +505,7 @@ Base: `/rnet/v0`, bearer session auth, JSON structured bodies except multipart a
 
 Full surface per spec §4: Vibes CRUD, `/objects`, `/elements`, `/origins`, two operations (`push`, `pull`), and `/operations/{id}` polling.
 
-**Alpha scope (single-user).** Implement the full surface: Vibes / objects / elements / origins CRUD, push, pull, operations polling. Scope checking is real from M1 — every request validates the caller's scopes against the Vibe's grants, server-side — there just happens to be one user and one granted dMachine in the alpha, so the grants table has one row. Multiple tabs or an authorized dMachine can race; last-write-wins deliberately keeps writes stateless, while retained history and revert provide recovery. `CONFORMANCE.md` records chosen gaps and their target milestone. Behaviour that diverges from this plan unintentionally is a bug: fix it, don't merely document it.
+**Alpha scope.** Implement the full surface: Vibes / objects / elements / origins CRUD, push, pull, operations polling. Scope checking is real from M1 — every request validates the caller's scopes against the Vibe's grants, server-side — the alpha simply has a handful of users and one granted dMachine, so the grants table stays small. Multiple tabs or an authorized dMachine can race; last-write-wins deliberately keeps writes stateless, while retained history and revert provide recovery. `CONFORMANCE.md` records chosen gaps and their target milestone. Behaviour that diverges from this plan unintentionally is a bug: fix it, don't merely document it.
 
 Semantics that must be real even in alpha:
 
@@ -523,15 +539,16 @@ This initial review is an **owner-only Rhizome import binding**, not the protoco
 
 ### 5.1 Push tasks
 
-A push task is a **triple: a name, a prompt, and an output schema.** Tasks live in `apps/server/push/tasks/{name}/`:
+A push task is a **triple: an identity `(level, name)`, a prompt, and an output schema.** Tasks live in `apps/server/src/push/tasks/{level}/{name}/`:
 
 ```
-push/tasks/categorize/
+push/tasks/object/categorize/
+├── manifest.ts     # identity, label, and the settings the pipeline needs
 ├── PROMPT.md       # the instruction, with the context assembly it expects
 └── output.json     # JSON Schema for what one result looks like
 ```
 
-The schema does three jobs: it constrains generation through `ModelConnector.complete({schema})`, it validates the model's response before anything is written, and it is what a future `GET /tasks` discovery endpoint would return so a client can learn a store's vocabulary rather than assume it.
+The schema does three jobs: it constrains generation through `ModelConnector.complete({schema})`, it validates the model's response before anything is written, and it is what `GET /push-tasks` returns (M3) so a client can learn a store's vocabulary rather than assume it.
 
 **Why tasks carry their own schema rather than borrowing a protocol one.** `inferred.properties` is deliberately open — `{"type": "object"}` in `media-object.json` — because the whole point of the block is that a task may produce whatever its analysis produced. The protocol constrains the _envelope_ (`{writer}:{task}` key, `model`, `inferred_at`, optional `confidence`) and says nothing about the contents. So the shape of `rhizome:categorize`'s output is a store concern, defined with the task, versioned with the task, and changed when the task changes. This is the concrete meaning of "task names are store-defined" in spec §4.3.
 
@@ -591,7 +608,9 @@ Only the first step differs. Same origins table, same endpoint, same conformance
 
 **Monthly pull actually works** — a re-fetch rather than asking the user to re-upload, which was hand-wavy when files were the only path.
 
-Keep the QFX/OFX upload path alive as the fallback: it exercises user-supplied origins, and some banks will never be reachable any other way. **CSV is deliberately not a committed skill.** OFX is a published format and SimpleFIN is a published API, so a hand-written parser for either is a bounded artifact that can be finished. “CSV” is a convention, not a format, so a committed CSV parser is really a registry of bank dialects that grows one entry per user and is never done. Every CSV export therefore fails closed at M2 and belongs to the M5 `generated_parser` path, which exists precisely to produce a reviewed, fixture-backed parser per dialect.
+Keep the QFX/OFX upload path alive as the fallback: it exercises user-supplied origins, and some banks will never be reachable any other way. **A generic CSV ingestion skill is deliberately out of scope.** An open-ended collection of unrelated bank CSV dialects belongs to the M5 `generated_parser` path, which produces a reviewed, fixture-backed parser per dialect. This does not prohibit a committed parser for an identified provider export with a bounded, validated format. The Strava export skill in S1 owns its recognized activity CSV dialect alongside its activity-file parsers; it is not a generic CSV importer.
+
+**S1 Strava export flow:** add `apps/ingest/skills/strava/` as a deterministic file source using the same `candidate_bundle@1`, VERIFY, preview, and atomic-confirmation boundary. Its first user is a runner training for a second marathon who wants her running history, mile times, performance trends, and race results. Parse the recognized activity summary CSV and supported original activity files from a user-supplied export; CSV-only history is an intermediate slice because mile splits need distance/time evidence. Preserve measured facts and explicit race labels, distinguish recorded laps from calculated mile splits, and keep owner-entered official results in `user`. The full scope, export-contract discovery, archive limits, repeated-export reconciliation, and exit evidence are defined in [Strava import](./concepts/strava-import.md). S1 uses exports and requires no Strava API connection.
 
 **M2 host file flow:** from “start something new” or an existing Vibe, choose or create the target Vibe → select a QFX/OFX file → store its bytes as an owner-only OriginArtifact → create its source binding → run schema validation and VERIFY through an import-preview operation → show the candidate transactions and reconciliation → cancel or confirm the staged review. Before confirmation, no derived objects, Vibe membership, or pull configuration are committed. Confirmation atomically commits the reviewed result and adds the source to the target Vibe; cancellation or failed validation commits neither. The owner-only source and origin remain retained for audit, retry, or re-ingestion. Later refreshes of that configured source use ordinary `pull`.
 
@@ -742,7 +761,7 @@ objects.history(uri, { block? }): Promise<Revision[]>
 objects.revert(uri, block, rev): Promise<MediaObject>   // replay, not time travel
 
 // ── 5. Operations ─────────────────────────────────────────────────
-ops.push(vibeUri, { task, selection?, target?, write_back? }): Promise<Operation>
+ops.push(vibeUri, { level, task, selection? }): Promise<Operation>
 ops.pull(vibeUri, { dry_run? }): Promise<Operation>    // needs `pull`; runs already-
                                                        // configured sources only
 ops.watch(id): AsyncIterable<OperationEvent>    // progress + completion
@@ -811,7 +830,7 @@ Notes for implementers:
 | `usage.current`, `usage.onCost`, `ui.toast`, `ui.pickVibe`    | M4                                                  |
 | `objects.history`, `objects.revert`                           | M7 (store keeps revisions from M1; this is the UI)  |
 | `agent.*`, `<AgentSurface>`                                   | M5 (harness); the Maker at M6 is the first consumer |
-| `session.requestGrant`                                        | M7 (single-user alpha grants at install)            |
+| `session.requestGrant`                                        | M7 (alpha grants are given at install)              |
 
 ---
 
@@ -823,7 +842,7 @@ Notes for implementers:
 2. A stranger with an unsupported, weird credit-union CSV gets the same result via the generated-parser path.
 3. **The next level:** a stranger describes an app and the Maker generates a working dMachine against their Vibe, sandboxed and scope-limited.
 
-**Current status:** M0 through M2 are complete. M3 is the next implementation milestone.
+**Current status:** M0 through M3 are complete. M4 is the next core implementation milestone. S1 (Strava export ingestion, §8.1) is an additional source milestone that can proceed alongside the core roadmap using the M2/M3 foundation.
 
 | #    | Milestone                   | Contents                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Exit test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -831,14 +850,43 @@ Notes for implementers:
 | M1   | Store                       | server: origins / elements / objects / vibes CRUD; Postgres; R2 via BlobStore; grant enforcement; auth (dev-bypass acceptable — real OTP at M7). Frontend implementation is out of M1 and begins in M1.5.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | the rNet semantics suite passes against the R2/S3-compatible configuration except explicit `CONFORMANCE.md` milestone deferrals                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | M1.5 | Host foundation             | the real `apps/host` application: persistent OS shell; functional home, dock, launcher, and search over commands, open surfaces, and loaded Vibe titles; URL-driven retained surfaces; Vibe CRUD and existing-object membership; object graph browsing and element payload display; last-write-wins user-property editing; development session; browser-level host/store tests                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | from `/`, home and launcher open Vibes, search finds a loaded Vibe, then create a Vibe → add an existing fixture object → edit it → navigate away and back → observe persisted state; remove/re-add membership, deep-link, cache-invalidation, and CRUD browser tests pass                                                                                                                                                                                                                                                                                                                            |
 | M2   | Compiled ingestion + import | **SimpleFIN** connect flow (token exchange and credential storage); read-only public **Are.na v3 channel** integration; owner-only file, credential, and allowlisted remote ingestion-source bindings; committed parsers for SimpleFIN, Are.na, and QFX/OFX; OriginArtifact capture; candidate bundles containing objects plus zero-or-more staged MediaElements; VERIFY; pull polling and reviewed atomic commit; host flow choose/create Vibe → choose source → preview candidates/elements → confirm                                                                                                                                                                                                                                                                                                                                                                                                 | QFX/OFX and SimpleFIN retain raw origins and commit no derived state before confirmation; SimpleFIN connect and unchanged re-pull pass invariants. A fixture Are.na channel with Markdown, image, link-preview, and PDF Blocks preserves order and attribution through preview/confirm: before confirm no MediaObject or MediaElement records exist; afterward every element endpoint returns owner-authorized bytes matching its hash, cancel commits neither records nor membership, and unchanged re-pull deduplicates by block identity plus element content hashes                               |
-| M3   | Push pipeline               | `ModelConnector` interface + OpenAI connector (`gpt-5.6-luna`, batch or flex); `push/tasks/categorize/` (prompt + output schema) and a Vibe-level `summarize` task; write-back under `rhizome:{task}`; metering rows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | inferred blocks present, costs queryable, connector swappable, per-run cost visible in `meter_entry`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| M4   | rBudget                     | `dmachines/rbudget` on the SDK only, **inside the sandbox with granted scopes from day one**; reuse the M2 import/review flow → dashboard → user edits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | the three-minute stranger test, with the dMachine holding no privilege a stranger's wouldn't                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| M3   | Push pipeline               | `ModelConnector` interface + OpenAI connector (`gpt-5.6-luna`, flex tier); the push task registry and the M3 task set defined in `impl/concepts/push-pipeline.md` (element-, object-, and Vibe-level tasks keyed on observed shape); write-back under `rhizome:{task}`; metering rows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | inferred blocks present, costs queryable, connector swappable, per-run cost visible in `meter_entry`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| M4   | rBudget                     | `dmachines/rbudget` on the SDK only, **inside the sandbox with granted scopes from day one**; the `categorize` push task (finance taxonomy negotiated against the dashboard); reuse the M2 import/review flow → dashboard → user edits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | the three-minute stranger test, with the dMachine holding no privilege a stranger's wouldn't                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | M5   | Agentic tail                | `@rhizome/harness` live (ceilings + usage reporting); skill-guided path; generated-parser path; VERIFY gauntlet; draft promotion                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | a cursed credit-union CSV survives the gauntlet and opens a promotion PR; harness model chosen by measurement (`gpt-5.6-sol` vs `gpt-5.3-codex` vs a second provider) using the VERIFY gauntlet as the eval                                                                                                                                                                                                                                                                                                                                                                                           |
 | M6   | The Maker                   | intent → generation from the rBudget template → sandbox preview → grant request → registered dMachine                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | success criterion 3: a stranger describes a dMachine and gets it, sandboxed                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | M7   | Polish for strangers        | real phone-auth integration; docs site; dMachine registry/provenance UI; object history/revert; production-ready empty, loading, failure, recovery, consent, and account-management flows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | the release candidate completes criteria 1 and 3 in a production-like environment, with external providers allowed to remain in test mode                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | M8   | Productionizing             | provision the production Railway project for the API and website plus managed Postgres; run migrations and seed deploy-time records; configure database backups and prove a restore; provision the four Cloudflare R2 buckets and their production access, CORS, lifecycle, and backup policies; provision the AWS KMS encryption key, immutable HMAC keys, and least-privilege workload role, then run the deferred live seal/open/fingerprint smoke test; deploy `PublicAssetFetcher` behind a separately isolated, least-privilege public-egress worker with no database/provider credentials or private-network route and keep arbitrary-domain fetching out of the API process; provision Twilio Verify with production credentials, Fraud Guard, send limits, and launch geo-fencing; install all runtime secrets, custom domains, TLS, health checks, logs, alerts, and deploy/rollback runbooks | from the public production URL, a new user signs in through Twilio, connects SimpleFIN or imports a file, completes review, and reopens the resulting Vibe after a fresh deploy; Postgres and R2 durability are verified, credential rows use KMS v3 envelopes, no secret reaches the browser or logs, and a rollback plus database restore drill succeeds; the isolated egress smoke test proves an allowed bounded public HTTPS/443 fetch succeeds while database, loopback, link-local, private, and special destinations remain unreachable and the API has no direct arbitrary-domain fetch path |
 
 **Ordering doctrine:** deterministic before generative, and generated _parsers_ (M5) before generated _dMachines_ (M6) — rBudget must exist as a hand-built template before the Maker can generate variations of it. _Variation before invention._ Nothing is thrown away: M1.5's shell hosts every later product flow; M2's import/review is reused by rBudget at M4; M2's committed parser and VERIFY assets are reused by M5's skill-guided and generated-parser promotion pipeline; M4's rBudget becomes M6's template #1. M8 adds production infrastructure and live-provider proof to the completed application; it does not introduce a new protocol or product behavior milestone.
+
+---
+
+### 8.1 S1 — Strava export ingestion
+
+**Status:** Planned; implementation has not started. This source milestone extends M2 ingestion
+and integrates with M3 without renumbering or replacing M4–M8.
+
+**Deliverables:** a registered, provider-independent rNet `activity` source-properties vocabulary
+and `apps/ingest/skills/strava/`, a committed parser for recognized Strava exports that emits it.
+The type covers exercise sessions, with running summaries and original-file lap/mile-split
+evidence in S1. Include the canonical schema/spec, generated `ActivityProperties` exports,
+runtime vocabulary registration, source VERIFY, and reviewed imports. Follow
+[Strava import](./concepts/strava-import.md) for the detailed contract.
+
+**Delivery order:** establish the actual export contract and synthetic fixtures → register and
+validate the rNet `activity` vocabulary and generated exports → reviewed
+activity summaries → bounded archive/original-file parsing and mile splits → reviewed newer
+exports with owner-scoped reconciliation. Bring forward the shared ZIP and E2E support work
+required by this source from M7. Establish real upload budgets from the representative archive.
+
+**Exit test:** the `activity` vocabulary passes standalone and full-MediaObject validation,
+including provider-independent fixtures; then import a representative supported running archive,
+account for every activity,
+verify summary values and supported mile splits including pauses/partial miles, report unavailable
+detail explicitly, preserve race facts and owner annotations, and review a newer export without
+duplicating unchanged runs. Preview/cancel isolation, atomic confirmation, replay, owner isolation,
+and bounded failure tests pass with no provider network access. A dedicated running dMachine is
+a later consumer, not part of this source milestone.
 
 ---
 
@@ -856,7 +904,7 @@ Element, origin, object, Vibe, user, and client record URIs use UUIDv7 in canoni
 
 ## 10. Alpha scope rules
 
-Single-user alpha. Breaking DB changes are fine — nuke and re-migrate freely; the database is disposable.
+Alpha envelope: one API process serving roughly one to twenty people, with disposable pre-production state. Concurrency and restart handling are designed for that envelope (`impl/concepts/push-pipeline.md` §6.4a, §7.5), not beyond it. Breaking DB changes are fine — nuke and re-migrate freely; the database is disposable.
 
 The **spec does not get slimmer because the DB is disposable.** `rhizome/impl/CONFORMANCE.md` is a running list of _deliberate_ gaps — things deferred on purpose — and remains the punch list for later milestones. Unintentional divergence is a bug and gets fixed, not logged. The roadmap still targets the whole spec, but the file is nonempty while an explicit milestone deferral remains; every entry must name and be closed by its target milestone. Product/runtime gaps close by M7, while production-infrastructure proof may close in M8.
 
