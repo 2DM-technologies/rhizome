@@ -5,9 +5,9 @@
 All previously unpublished code from the primary checkout is now included in four follow-up PRs after the unchanged #35–#42 stack. This packet supersedes the earlier overlap-only handoff for a review of the whole application. Historical reports remain evidence for their recorded revisions; their successful reviews do not cover these new changes.
 
 - Existing published stack base: #42, `c4efffb7df01df370b9a4f10847bf5e247c7c354`.
-- Combined follow-up code head: `40ddd42f0235c64a00d56d15341d07b4fd3e7e81`. Later packet-only commits may follow it on #46.
+- Combined follow-up code head: `44e5e8de4b064e6fdde707fb8c5a265a2c6a3532`. Later packet-only commits may follow it on #46.
 - Canonical schema prerequisite: [rNet #5](https://github.com/2DM-technologies/rnet/pull/5), `e297130b6dd156aa2d961b3ba873b1b8734a1add`, based on `036288c4064fb978399c6cb3eaba8f0699afa37c`.
-- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..40ddd42f0235c64a00d56d15341d07b4fd3e7e81`.
+- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..44e5e8de4b064e6fdde707fb8c5a265a2c6a3532`.
 
 ## PRs and ownership
 
@@ -35,7 +35,7 @@ Base `871cf35ef740afb6936f7b284f60b482b8778c09`; head `1d9ddbea213a5e5e4eaa7a010
 ### #45 — host UI and idle resources
 
 [PR #45](https://github.com/2DM-technologies/rhizome/pull/45), branch `m3/followup-03-host`.
-Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `e4990510f0edff0fa1d334b3d556f825eb42cecb`.
+Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `8a3e050a83a3517c39de23530029c9937c41cb49`.
 
 - `b642716` extracts inferred Vibe view components into `surfaces/vibe-view`; `809d62c` contains the host behavior/style changes; `e5dfa6e` aligns desktop-loading coverage with five previews and checks the sixth item remains unloaded.
 - Recent dock routes include all window types, including the Vibes index and Ingest as well as individual Vibes, objects, and apps. Pinned shortcuts still remain available. Shell session storage advances to version 5; older disposable shell state is discarded. Add shared media thumbnails, Vibe deletion controls, PDF object rendering, wallpaper transitions, and updated dock/preview styling.
@@ -49,7 +49,7 @@ Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `e4990510f0edff0fa1d334b3d
 ### #46 — API metadata, speculative material, and this packet
 
 [PR #46](https://github.com/2DM-technologies/rhizome/pull/46), branch `m3/followup-04-speculative`.
-Base `e4990510f0edff0fa1d334b3d556f825eb42cecb`; code head `40ddd42f0235c64a00d56d15341d07b4fd3e7e81`.
+Base `8a3e050a83a3517c39de23530029c9937c41cb49`; code head `44e5e8de4b064e6fdde707fb8c5a265a2c6a3532`.
 
 - Move `apps/server/test/store.integration.test.ts` to `impl/speculative/store.integration.test.ts`, preserving dependency resolution and TypeScript inclusion. Bun still discovers and executes it.
 - Move `impl/concepts/strava-import.md` to `impl/speculative/strava-import.md` and update links. This does not implement Strava.
@@ -85,6 +85,12 @@ The stutter regressions observe inserted shortcut labels, so they continue rejec
 #45 `e499051` fixes the fallback-image flash when switching between already displayed Vibes. Previously each raster component recreated a Blob URL and waited through effects plus image loading, exposing the CSS approximation even when the raster Blob was cached. The cache now retains a decoded reusable data URL alongside the Blob, and a warm component reads that source during its first render. Image elements are keyed by source so the previous recipe's pixels cannot be reused during a source swap. Cold generation, unsupported-WebGL fallback, and visibility gating remain.
 
 Both the Blob and reusable string count toward the existing **64-entry / 8 MiB** memory budget; strings remain valid for mounted consumers after cache eviction. A browser regression observed `pending`/CSS fallback on the old code when navigating among warmed Vibes; it observes only raster states after this change. **30 related browser tests** passed (29 orb/dock/desktop tests plus the new cache eviction test), as did **8 orb unit tests**, TypeScript, formatting, and diff checks. The previous full 143-test browser run predates this raster change; the new head has its own CI run.
+
+### Dock pointer-focus cleanup
+
+#45 `8a3e050` clears focus from dock buttons after pointer activation. Previously a pointer-opened Vibes or Ingest shortcut stayed focused; pressing Escape switched browser input modality and revealed its keyboard-only raised/label styling after the window closed. Keyboard activation (`click.detail === 0`) retains focus and its visible cue.
+
+Both new Escape regressions failed before the fix and pass afterward. They verify the shortcut returns to rest after pointer-open/Escape and still shows its label/lift and opens with Tab/Enter. **20 related browser tests** passed, including local Escape handling, dock navigation, pinning, and orb interaction. TypeScript, formatting, and diff checks passed. Full browser/DB gates were not repeated locally for this small follow-up; check CI on the current heads.
 
 ## Validation and limitations
 
