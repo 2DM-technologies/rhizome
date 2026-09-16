@@ -5,7 +5,7 @@ The product scope and source boundary below guide the build; exact export dialec
 field names, and file-size budgets must be established from representative exports first.
 
 **Companion docs:** [implementation plan](../IMPLEMENTATION_PLAN.md),
-[conformance status](../CONFORMANCE.md), and [push pipeline](./push-pipeline.md).
+[conformance status](../CONFORMANCE.md), and [push pipeline](../concepts/push-pipeline.md).
 
 ## 1. Product purpose
 

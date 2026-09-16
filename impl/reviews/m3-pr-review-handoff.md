@@ -1,5 +1,9 @@
 # M3 — PR stack review handoff
 
+## Latest follow-ups — start here
+
+All formerly unpublished application code is now in follow-up PRs #43–#46, with rNet #5 as the schema prerequisite. Read [the complete follow-up handoff](./m3-followups-review-handoff.md) for the current combined code pin, per-PR scope, 609 passing deterministic tests, 141 passing browser tests, and isolated review setup. The sections below describe the earlier #35–#42 stack and its historical review targets; they remain regression context.
+
 This is the single context packet for agents reviewing the seven conceptual PRs split from [#33](https://github.com/2DM-technologies/rhizome/pull/33), plus the separately approved bounded-concurrency PR #42. Assign each agent one PR; this packet includes the exact incremental review targets, full file manifests, decisions, repair dispositions, and test setup. No earlier conversation is required.
 
 ## Current state — September 15

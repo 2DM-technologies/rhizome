@@ -65,21 +65,33 @@ describe("OpenAPI", () => {
     expect(serialized).toContain('"operationId":"confirmImportPreview"');
     expect(serialized).toContain('"operationId":"getDashboardStats"');
     expect(serialized).toContain('"/rnet/v0/elements/{id}/bytes"');
-    expect(serialized).toContain('"BearerAuth":{"type":"http","scheme":"bearer"}');
     expect(serialized).toContain('"name":"x-rnet-kind","in":"header","required":true');
     expect(serialized).toContain('"name":"x-rnet-label","in":"header","required":false');
     expect(serialized).not.toContain("https://rnet.network/schemas/0.1/");
+    expect(serialized).not.toContain('"x-rhizome-');
   });
 
-  test("documents optional identity and required authenticated operations", () => {
-    expect(openApiDocument.security).toEqual([{ BearerAuth: [] }, {}]);
+  test("documents optional identity and user/client authentication requirements", () => {
+    expect(openApiDocument.components.securitySchemes).toEqual({
+      UserBearer: expect.objectContaining({ type: "http", scheme: "bearer" }),
+      ClientBearer: expect.objectContaining({ type: "http", scheme: "bearer" }),
+    });
+    expect(openApiDocument.security).toEqual([{ UserBearer: [] }, { ClientBearer: [] }, {}]);
     const createVibe = openApiDocument.paths["/rnet/v0/vibes"]?.post as
       { security?: unknown } | undefined;
-    expect(createVibe?.security).toEqual([{ BearerAuth: [] }]);
+    expect(createVibe?.security).toEqual([{ UserBearer: [] }]);
 
     const getDashboardStats = openApiDocument.paths["/rnet/v0/me/stats"]?.get as
       { security?: unknown } | undefined;
-    expect(getDashboardStats?.security).toEqual([{ BearerAuth: [] }]);
+    expect(getDashboardStats?.security).toEqual([{ UserBearer: [] }]);
+
+    const setInferred = openApiDocument.paths["/rnet/v0/objects/{id}/inferred"]?.put as
+      { security?: unknown } | undefined;
+    expect(setInferred?.security).toEqual([{ ClientBearer: [] }]);
+
+    const createObjects = openApiDocument.paths["/rnet/v0/objects"]?.post as
+      { security?: unknown } | undefined;
+    expect(createObjects?.security).toEqual([{ UserBearer: [] }, { ClientBearer: [] }]);
 
     const getVibe = openApiDocument.paths["/rnet/v0/vibes/{id}"]?.get as
       { security?: unknown } | undefined;
@@ -106,7 +118,7 @@ describe("OpenAPI", () => {
       | undefined;
     const schema = createObjects?.requestBody?.content?.["multipart/form-data"]?.schema;
     expect(schema?.additionalProperties).toEqual({ type: "string", format: "binary" });
-    expect(schema?.["x-rhizome-typescript-type"]).toBe("FormData");
+    expect(schema?.required).toEqual(["metadata"]);
   });
 
   test("serves the generated document", async () => {

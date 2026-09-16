@@ -197,7 +197,8 @@ const types = await openapiTS(JSON.parse(JSON.stringify(openApiDocument)) as Ope
     const componentName = path?.match(/^#\/components\/schemas\/([^/]+)$/)?.[1];
     const aliasedType = componentName && KNOWN_COMPONENT_TYPES[componentName];
     if (aliasedType) return ts.factory.createTypeReferenceNode(aliasedType);
-    if (schema["x-rhizome-typescript-type"] === "FormData") {
+    // Choose the browser upload type from the standard request body's media type.
+    if (path?.endsWith("/requestBody/content/multipart~1form-data")) {
       return ts.factory.createTypeReferenceNode("FormData");
     }
     if (schema.format === "binary") return ts.factory.createTypeReferenceNode("Blob");

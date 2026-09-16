@@ -7,12 +7,19 @@ import {
   type ContractResponseWithHeaders,
   type ContractSchema,
   type OpenApiRouteContract,
+  type RouteAuth,
   type UnvalidatedContractResponse,
 } from "./routes/contracts.ts";
 import type { RegisteredRhizomeRoute } from "./routes/rhizome-router.ts";
 
 type JsonObject = Record<string, unknown>;
 type OpenApiSchema = boolean | JsonObject;
+
+const REQUIRED_SECURITY = {
+  user: [{ UserBearer: [] }],
+  client: [{ ClientBearer: [] }],
+  user_or_client: [{ UserBearer: [] }, { ClientBearer: [] }],
+} satisfies Record<RouteAuth, JsonObject[]>;
 
 const COMPONENT_NAMES = {
   grant: "Grant",
@@ -82,11 +89,20 @@ export function createOpenApiDocument(routes: readonly RegisteredRhizomeRoute[])
     servers: [{ url: "/", description: "Current Rhizome store" }],
     // Every route accepts an identity when supplied, while public-readable routes also
     // work anonymously. Routes with a required `auth` contract override this below.
-    security: [{ BearerAuth: [] }, {}],
+    security: [...REQUIRED_SECURITY.user_or_client, {}],
     paths,
     components: {
       securitySchemes: {
-        BearerAuth: { type: "http", scheme: "bearer" },
+        UserBearer: {
+          type: "http",
+          scheme: "bearer",
+          description: "Bearer token identifying a user.",
+        },
+        ClientBearer: {
+          type: "http",
+          scheme: "bearer",
+          description: "Bearer token identifying an installed client.",
+        },
       },
       schemas: {
         ...RNET_SCHEMA_COMPONENTS,
@@ -119,12 +135,7 @@ function operation(contract: OpenApiRouteContract): JsonObject {
   return {
     operationId: contract.operationId,
     tags: [tagForOperation(contract.operationId)],
-    ...(contract.auth
-      ? {
-          security: [{ BearerAuth: [] }],
-          "x-rhizome-auth": contract.auth,
-        }
-      : {}),
+    ...(contract.auth ? { security: REQUIRED_SECURITY[contract.auth] } : {}),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses,
@@ -174,7 +185,6 @@ function requestBodyFor(
         "multipart/form-data": {
           schema: {
             type: "object",
-            "x-rhizome-typescript-type": "FormData",
             required: ["metadata"],
             properties: {
               metadata: {
