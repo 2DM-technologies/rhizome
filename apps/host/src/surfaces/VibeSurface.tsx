@@ -25,6 +25,7 @@ import { useTaskInferenceStatus } from "../queries/taskInferenceStatus.ts";
 import { PUSH_TASKS } from "../api/generated/push-tasks.ts";
 import { ProceduralVibeOrb } from "../orb/ProceduralVibeOrb.tsx";
 import { orbVisualForVibe } from "../orb/vibeRecipe.ts";
+import { VibeActionsMenu } from "./VibeActionsMenu.tsx";
 
 export function VibeSurface({ uuid }: { uuid: string }) {
   const sourceConnectionReturn = useSourceConnectionReturn({
@@ -112,7 +113,19 @@ export function VibeSurface({ uuid }: { uuid: string }) {
               label={`${vibe.data.title} Vibe orb`}
             />
             {isOwner ? (
-              <form onSubmit={rename} className="group/title relative min-w-0">
+              <form
+                onSubmit={rename}
+                className="group/title relative min-w-0"
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape" || titleDraft === null) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!update.isPending) {
+                    setTitleDraft(null);
+                    update.reset();
+                  }
+                }}
+              >
                 {titleDraft === null ? (
                   <>
                     <h1 className="text-heading text-primary">{vibe.data.title}</h1>
@@ -143,13 +156,6 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                       readOnly={update.isPending}
                       onFocus={(event) => event.currentTarget.select()}
                       onChange={(event) => setTitleDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Escape" && !update.isPending) {
-                          event.preventDefault();
-                          setTitleDraft(null);
-                          update.reset();
-                        }
-                      }}
                     />
                     <IconButton
                       type="submit"
@@ -173,9 +179,9 @@ export function VibeSurface({ uuid }: { uuid: string }) {
       }
       detail={vibe.data?.uri}
       actions={
-        vibe.data && isOwner ? (
+        vibe.data ? (
           <div className="flex items-center gap-2">
-            {confirmDelete ? (
+            {isOwner && confirmDelete ? (
               <>
                 <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
                   Cancel
@@ -189,11 +195,11 @@ export function VibeSurface({ uuid }: { uuid: string }) {
                   {deleteVibe.isPending ? "Deleting…" : "Confirm delete"}
                 </Button>
               </>
-            ) : (
-              <Button variant="secondary" onClick={() => setConfirmDelete(true)}>
-                Delete Vibe
-              </Button>
-            )}
+            ) : null}
+            <VibeActionsMenu
+              uuid={uuid}
+              onDelete={isOwner && !confirmDelete ? () => setConfirmDelete(true) : undefined}
+            />
           </div>
         ) : null
       }

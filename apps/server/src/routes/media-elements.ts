@@ -1,6 +1,7 @@
 import { mediaElementSchema, type MediaElement } from "@rnet/types";
 
 import type { BlobStore } from "../blobs/index.ts";
+import { ElementThumbnailCache } from "../blobs/element-thumbnails.ts";
 import type { Database } from "../db/index.ts";
 import { serializeMediaElement } from "../serializers/media-element-serializer.ts";
 import { MediaElementsService } from "../services/media-element-service.ts";
@@ -30,6 +31,7 @@ const MediaElementUploadHeadersSchema = jsonObjectSchema(
 
 export function createMediaElementRoutes(db: Database, blobs: BlobStore, baseUrl: string) {
   const router = createRhizomeRouter();
+  const thumbnails = new ElementThumbnailCache(blobs);
 
   router.post(
     "/",
@@ -99,6 +101,22 @@ export function createMediaElementRoutes(db: Database, blobs: BlobStore, baseUrl
         blob,
         mediaElementContentType(mediaElement.kind, mediaElement.mime),
       );
+    },
+  );
+  router.get(
+    "/:id/thumbnail",
+    {
+      operationId: "getMediaElementThumbnail",
+      request: { param: RecordIdParamsSchema },
+      responses: { 200: binaryResponse("image/webp"), 404: ProblemSchema, 422: ProblemSchema },
+    },
+    async (context) => {
+      const mediaElementsService = new MediaElementsService({ db, actor: context.get("actor") });
+      // A shared content-hash cache must never bypass grants or tombstone checks.
+      const mediaElement = await mediaElementsService.getMediaElement(
+        context.req.valid("param").id,
+      );
+      return blobResponse(context, await thumbnails.get(mediaElement), "image/webp");
     },
   );
   router.delete(

@@ -19,19 +19,30 @@ async function openImportFromLauncher(page: Page): Promise<void> {
   await page.getByRole("searchbox", { name: "Search everything" }).click();
   await page
     .locator('[data-launcher-section="Commands"]')
-    .getByRole("button", { name: "Import", exact: true })
+    .getByRole("button", { name: "Ingest", exact: true })
     .click();
 }
 
 test("the start-something-new launcher opens a retained import surface", async ({ page }) => {
   await openImportFromLauncher(page);
 
-  await expect(page).toHaveURL(/\/imports$/);
+  await expect(page).toHaveURL(/\/imports\?mode=maximized$/);
   await expect(page.locator('[data-surface-id="import"][data-view-mode]')).toBeVisible();
   await expect(page.getByRole("heading", { name: "Import", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("list", { name: "Owned Vibes" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Choose another Vibe" })).toHaveCount(0);
   await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
+  const active = page.locator("[data-dock-app-slot]");
+  const pinned = page
+    .getByRole("region", { name: "Pinned apps", exact: true })
+    .getByRole("button", { name: "Ingest", exact: true });
+  await expect(active).toHaveAttribute("data-present", "true");
+  await expect(active.locator("[data-dock-app-label]")).toHaveText("Ingest");
+  await expect(active.locator("svg")).toBeVisible();
+  await expect(active.locator("svg image")).toHaveAttribute(
+    "href",
+    (await pinned.locator("svg image").getAttribute("href"))!,
+  );
 });
 
 test("the new-Vibe import flow survives surface history", async ({ page }) => {
@@ -41,9 +52,10 @@ test("the new-Vibe import flow survives surface history", async ({ page }) => {
   await expect(page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL)).toBeAttached();
 
   await page.getByRole("button", { name: "Home" }).click();
-  await expect(page).toHaveURL(/\/vibes$/);
-  await page.goBack();
-  await expect(page).toHaveURL(/\/imports$/);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("main", { name: "Home" })).toBeVisible();
+  await page.getByRole("button", { name: "Home" }).click();
+  await expect(page).toHaveURL(/\/imports\?mode=maximized$/);
   await expect(page.getByLabel("Import source", { exact: true })).toBeVisible();
 
   await page.getByLabel(SYNTHETIC_FILE_INPUT_LABEL).setInputFiles(SYNTHETIC_FILE_FIXTURE);
@@ -87,7 +99,7 @@ test("a new destination is created only when its reviewed import is confirmed", 
   expect(mockStore.vibes.some((vibe) => vibe.uri.endsWith(`/${NEW_VIBE_ID}`))).toBe(false);
 
   await page.getByRole("button", { name: "Confirm import" }).click();
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "Imported objects", exact: true, level: 1 }),
   ).toBeVisible();

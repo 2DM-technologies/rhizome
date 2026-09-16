@@ -42,7 +42,7 @@ function Swatch({ name, variable }: { name: string; variable: string }) {
   return (
     <div className="flex items-center gap-4">
       <span
-        className="size-8 shrink-0 rounded-sm border border-black/10"
+        className="size-8 shrink-0 rounded-sm border border-neutral-border"
         style={{ background: `var(${variable})` }}
       />
       <span className="min-w-0 flex-1 truncate text-label text-primary">{name}</span>
@@ -50,7 +50,7 @@ function Swatch({ name, variable }: { name: string; variable: string }) {
   );
 }
 
-function TierColumn({ tier }: { tier: "light" | "dark" }) {
+function TierColumn({ tier }: { tier: "control" | "content" }) {
   return (
     <div data-tier={tier} className="flex flex-col gap-3 rounded-md bg-canvas p-6">
       <span className="text-mono-label text-tertiary">{tier.toUpperCase()} TIER</span>
@@ -69,8 +69,8 @@ export const Color: Story = {
   render: () => (
     <div className="flex flex-col gap-8">
       <div className="grid grid-cols-2 gap-6">
-        <TierColumn tier="light" />
-        <TierColumn tier="dark" />
+        <TierColumn tier="control" />
+        <TierColumn tier="content" />
       </div>
       <div className="flex flex-col gap-3">
         <span className="text-mono-label text-tertiary">TIER-INVARIANT — signal, not ground</span>

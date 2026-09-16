@@ -168,7 +168,7 @@ for (const width of [1280, 390]) {
     await expect(open).toHaveAttribute("href", `/objects/${uuid(2)}`);
     await open.focus();
     await open.press("Enter");
-    await expect(page).toHaveURL(new RegExp(`/objects/${uuid(2)}$`));
+    await expect(page).toHaveURL(new RegExp(`/objects/${uuid(2)}\\?mode=maximized$`));
     await expect(page.getByLabel("User properties, as JSON")).toBeVisible();
   });
 }

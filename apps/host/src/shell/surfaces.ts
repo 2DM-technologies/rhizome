@@ -91,9 +91,18 @@ export function viewModeOf(search: string): ViewMode {
  * it is deep-linkable, and callers navigate to it with `replace` so toggling never costs a back
  * press to unwind.
  */
-export function locationOf(surface: Surface, mode: ViewMode = "standard"): string {
+export function locationOf(
+  surface: Surface,
+  mode: ViewMode = "standard",
+  search?: URLSearchParams | Readonly<Record<string, string>>,
+): string {
   const path = pathOf(surface);
-  return mode === "maximized" ? `${path}?${MODE_PARAM}=maximized` : path;
+  const parameters =
+    search instanceof URLSearchParams ? new URLSearchParams(search) : new URLSearchParams(search);
+  if (mode === "maximized") parameters.set(MODE_PARAM, "maximized");
+  else parameters.delete(MODE_PARAM);
+  const query = parameters.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 /** A stable, human-readable label without copying server-owned titles into shell state. */
@@ -103,7 +112,7 @@ export function labelOf(
 ): string {
   switch (surface.kind) {
     case "import":
-      return "Import";
+      return "Ingest";
     case "vibes":
       return "Vibes";
     case "vibe":

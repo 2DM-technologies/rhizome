@@ -22,6 +22,7 @@ const RNET_COMPONENT_TYPES = {
 } as const;
 
 const STORE_COMPONENT_TYPES = {
+  DashboardStats: "StoreDashboardStats",
   ObjectInferenceStatus: "StoreObjectInferenceStatus",
   TaskInferenceStatus: "StoreTaskInferenceStatus",
   PushVibeRequest: "StorePushVibeRequest",
@@ -72,6 +73,7 @@ import type {
   Vibe as RnetVibe,
 } from "@rnet/types";
 import type {
+  DashboardStats as StoreDashboardStats,
   PushVibeRequest as StorePushVibeRequest,
   ObjectInferenceStatus as StoreObjectInferenceStatus,
   TaskInferenceStatus as StoreTaskInferenceStatus,

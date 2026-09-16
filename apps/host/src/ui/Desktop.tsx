@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 
-import wallpaper from "../assets/brand/wallpaper.jpg";
 import { cn } from "./cn.ts";
 
 export interface DesktopProps {
@@ -12,26 +11,14 @@ export interface DesktopProps {
 }
 
 /**
- * The shell ground: wallpaper under a white wash, surfaces above it, dock pinned to the bottom
+ * The shell ground: wallpaper with surfaces above it, dock pinned to the bottom
  * inset (48px sides, 24px bottom).
- *
- * The wash is a second background layer rather than an overlay element. CSS composites the
- * gradient over the image in one declaration, so the ground is a single node with no extra
- * element to keep out of the accessibility tree and no stacking context to manage.
  */
-const GROUND = `linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.65),
-    rgba(255, 255, 255, 0.7) 90.993%,
-    rgba(255, 255, 255, 0.8)
-  ), url(${wallpaper})`;
-
 export function Desktop({ children, dock, className }: DesktopProps) {
   return (
     <div
-      data-tier="light"
-      style={{ backgroundImage: GROUND, backgroundSize: "cover", backgroundPosition: "center" }}
-      className={cn("relative h-full w-full overflow-hidden", className)}
+      data-tier="control"
+      className={cn("desktop-wallpaper relative h-full w-full overflow-hidden", className)}
     >
       {children}
       <div data-shell-dock className="absolute right-12 bottom-6 left-12 z-20">

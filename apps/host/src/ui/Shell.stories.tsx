@@ -57,7 +57,7 @@ function TrayContents({ search }: { search: ReactNode }) {
 export const Apps: Story = {
   name: "Dock App",
   render: () => (
-    <div className="flex items-center gap-6 rounded-md bg-dock-tray p-4">
+    <div data-tier="content" className="flex items-center gap-6 rounded-md bg-dock-tray p-4">
       <DockApp name="Rhizome" src={marks.app} state="active" />
       <DockApp name="Spending" src={orbs.a} />
       <DockApp name="Library" src={orbs.b} />
@@ -164,7 +164,7 @@ export const DockBento: Story = {
                           items: (
                             <>
                               <LauncherItem label="Open Vibes" icon="⌘" />
-                              <LauncherItem label="Show Desktop" icon="⌘" />
+                              <LauncherItem label="Dark Mode" icon="⌘" />
                             </>
                           ),
                         },
@@ -215,7 +215,7 @@ export const Launcher: Story = {
                 items: (
                   <>
                     <LauncherItem label="Open Vibes" icon="⌘" />
-                    <LauncherItem label="Show Desktop" icon="⌘" />
+                    <LauncherItem label="Dark Mode" icon="⌘" />
                   </>
                 ),
               },

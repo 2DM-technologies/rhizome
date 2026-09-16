@@ -79,7 +79,7 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
         aria-label={open ? "Start something new" : undefined}
         data-launcher-container
         data-expanded={open ? "true" : "false"}
-        data-tier="light"
+        data-tier="control"
         onKeyDownCapture={(event) => {
           if (!open || event.key !== "Escape") return;
           event.preventDefault();
@@ -145,7 +145,7 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
             open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
           )}
         >
-          <div className="flex max-h-full min-h-0 flex-col gap-6 overflow-y-auto px-6 pt-4 pb-6">
+          <div className="flex max-h-full min-h-0 flex-col gap-6 overflow-y-auto px-6 pt-4 pb-5">
             {displayedSections.map((section) => (
               <div
                 key={section.title}
@@ -154,7 +154,13 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
               >
                 <span className="flex items-center gap-1 text-body-lg font-medium text-primary">
                   {section.title}
-                  <span className="size-1.5 rounded-full bg-accent" aria-hidden />
+                  <span
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      section.title === "Commands" ? "bg-[#ff0000]" : "bg-accent",
+                    )}
+                    aria-hidden
+                  />
                 </span>
                 <div
                   data-launcher-item-rail
@@ -165,6 +171,11 @@ export const LauncherPanel = forwardRef<HTMLInputElement, LauncherPanelProps>(
               </div>
             ))}
           </div>
+          <span
+            data-launcher-divider
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-1.5 h-px bg-gray-700"
+          />
         </div>
         <SearchField
           ref={ref}

@@ -156,9 +156,8 @@ function TextElementPreview({
       data-media-object-presentation="text"
       title={frameTitle ?? `Text content for ${title}`}
       aria-busy={!state}
-      style={{ colorScheme: "light" }}
       className={cn(
-        "m-0 overflow-auto whitespace-pre-wrap break-words bg-white text-left font-mono text-primary",
+        "m-0 overflow-auto whitespace-pre-wrap break-words bg-canvas text-left font-mono text-primary",
         variant === "card" ? "size-full border-0 p-3" : "h-72 w-full rounded-sm border p-4",
         variant !== "card" && frameBorder,
         className,

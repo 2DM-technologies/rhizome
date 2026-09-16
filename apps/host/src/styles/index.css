@@ -17,6 +17,49 @@
   }
 }
 
+.desktop-wallpaper {
+  background-image: var(--rz-wallpaper);
+  background-size: cover;
+  background-position: center;
+}
+
+.vibe-orb-stage {
+  background:
+    radial-gradient(
+      circle at 50% 44%,
+      color-mix(in srgb, var(--rz-bg-canvas) 82%, transparent),
+      transparent 58%
+    ),
+    linear-gradient(145deg, var(--rz-bg-pill), var(--rz-bg-canvas));
+}
+
+.vibe-orb-stage-grid {
+  background-image:
+    linear-gradient(var(--rz-border-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rz-border-hairline) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black, transparent 72%);
+}
+
+.vibe-orb-range {
+  height: 0.8rem;
+}
+
+.vibe-orb-loading-overlay {
+  opacity: 0.05;
+  animation: vibe-orb-loading-pulse 1.55s ease-in-out infinite;
+}
+
+@keyframes vibe-orb-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.05;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
 @property --rz-launcher-expanded-alpha {
   syntax: "<number>";
   inherits: false;
@@ -69,50 +112,6 @@
   background: var(--rz-bg-canvas);
   transform-origin: top left;
   will-change: transform, clip-path;
-}
-
-.vibe-orb-stage {
-  background:
-    radial-gradient(
-      circle at 50% 44%,
-      color-mix(in srgb, var(--rz-bg-canvas) 82%, transparent),
-      transparent 58%
-    ),
-    linear-gradient(145deg, var(--rz-bg-pill), var(--rz-bg-canvas));
-}
-
-.vibe-orb-stage-grid {
-  background-image:
-    linear-gradient(var(--rz-border-hairline) 1px, transparent 1px),
-    linear-gradient(90deg, var(--rz-border-hairline) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: radial-gradient(circle at center, black, transparent 72%);
-}
-
-.vibe-orb-range {
-  height: 0.8rem;
-}
-
-.vibe-orb-loading-overlay {
-  opacity: 0.05;
-  animation: vibe-orb-loading-pulse 1.55s ease-in-out infinite;
-}
-
-@keyframes vibe-orb-loading-pulse {
-  0%,
-  100% {
-    opacity: 0.05;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vibe-orb-loading-overlay {
-    animation: none;
-    opacity: 0.14;
-  }
 }
 
 .inferred-block {
@@ -183,107 +182,8 @@
   .inferred-skeleton-line {
     transition: none;
   }
-}
-
-.start-vibe-button {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  border-color: var(--rz-accent-primary);
-  background: var(--rz-bg-canvas);
-  color: var(--rz-accent-primary);
-  transition:
-    color 180ms ease,
-    box-shadow 180ms ease;
-}
-
-.start-vibe-glow {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  overflow: hidden;
-  border-radius: inherit;
-  opacity: 0;
-  transition: opacity 250ms ease;
-}
-
-.start-vibe-glow::before,
-.start-vibe-glow::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-repeat: repeat-x;
-  background-size: 160px 100%;
-  animation: start-vibe-current 3s linear infinite paused;
-}
-
-.start-vibe-glow::before {
-  background-image: radial-gradient(
-    ellipse 48% 135% at 50% 110%,
-    color-mix(in srgb, var(--rz-accent-primary) 3%, transparent),
-    color-mix(in srgb, var(--rz-accent-primary) 3%, transparent) 40%,
-    transparent 100%
-  );
-}
-
-.start-vibe-glow::after {
-  background-image: radial-gradient(
-    ellipse 48% 135% at 50% -10%,
-    color-mix(in srgb, var(--rz-accent-secondary) 3%, transparent),
-    color-mix(in srgb, var(--rz-accent-secondary) 3%, transparent) 40%,
-    transparent 100%
-  );
-  animation-direction: reverse;
-  animation-delay: -1.5s;
-}
-
-.start-vibe-grain {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  opacity: 0.12;
-  mix-blend-mode: multiply;
-}
-
-.start-vibe-button > svg {
-  transition: transform 220ms ease;
-}
-
-.start-vibe-button:is(:hover, :focus-visible) {
-  cursor: pointer;
-  color: var(--rz-accent-primary);
-  opacity: 1;
-  box-shadow: 0 3px 14px color-mix(in srgb, var(--rz-accent-primary) 16%, transparent);
-}
-
-.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow {
-  opacity: 1;
-  transition-duration: 900ms;
-}
-
-.start-vibe-button:is(:hover, :focus-visible) > svg {
-  transform: scale(1.12);
-}
-
-.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow::before,
-.start-vibe-button:is(:hover, :focus-visible) .start-vibe-glow::after {
-  animation-play-state: running;
-}
-
-/* Move one complete tile per cycle: both edges match without a reset or reversal. */
-@keyframes start-vibe-current {
-  from {
-    background-position: 0 0;
-  }
-  to {
-    background-position: 160px 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .start-vibe-glow::before,
-  .start-vibe-glow::after {
+  .vibe-orb-loading-overlay {
     animation: none;
+    opacity: 0.14;
   }
 }

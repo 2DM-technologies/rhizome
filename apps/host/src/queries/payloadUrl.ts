@@ -32,7 +32,11 @@ function useObjectUrl(blob: Blob | undefined): string | undefined {
  * the store has no signed-URL endpoint yet. When it does, this hook changes and its callers
  * do not.
  */
-export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undefined) {
+export function usePayloadUrl(
+  kind: "elements" | "origins",
+  uuid: string | undefined,
+  options: { gcTime?: number } = {},
+) {
   const path = kind === "elements" ? "/rnet/v0/elements/{id}/bytes" : "/rnet/v0/origins/{id}/bytes";
   const query = api.useQuery(
     "get",
@@ -43,7 +47,7 @@ export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undef
     },
     {
       enabled: Boolean(uuid),
-      gcTime: 0,
+      gcTime: options.gcTime ?? 0,
       staleTime: Number.POSITIVE_INFINITY,
       refetchOnWindowFocus: false,
     },
@@ -52,6 +56,24 @@ export function usePayloadUrl(kind: "elements" | "origins", uuid: string | undef
   // Keep the fetched Blob in the query cache, but make the object URL component-owned. Query
   // selectors may reuse their result across observer lifecycles; a reused URL may already have
   // been revoked by the surface that created it.
+  return { ...query, data: useObjectUrl(query.data) };
+}
+
+/** Fetch only the server's cached 64px image, never the original as a thumbnail fallback. */
+export function useElementThumbnailUrl(uuid: string | undefined) {
+  const query = api.useQuery(
+    "get",
+    "/rnet/v0/elements/{id}/thumbnail",
+    { params: { path: { id: uuid ?? "" } }, parseAs: "blob" },
+    {
+      enabled: Boolean(uuid),
+      // Retained desktop subscriptions pause while covered; keep small images across reveals.
+      gcTime: 5 * 60 * 1000,
+      staleTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+      retry: false,
+    },
+  );
   return { ...query, data: useObjectUrl(query.data) };
 }
 

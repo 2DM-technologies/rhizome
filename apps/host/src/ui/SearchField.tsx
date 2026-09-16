@@ -17,7 +17,7 @@ export interface SearchFieldProps extends Omit<InputHTMLAttributes<HTMLInputElem
 
 /**
  * Universal dock search. Its 240 × 48px geometry stays fixed while the
- * translucent fill keeps the desktop blur visible without changing across tiers.
+ * translucent control-tier fill keeps the desktop blur visible in either system theme.
  */
 export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(function SearchField(
   {
@@ -33,6 +33,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(functi
   return (
     <div
       {...containerProps}
+      data-tier="control"
       data-search-field
       data-surface={surface}
       className={cn(

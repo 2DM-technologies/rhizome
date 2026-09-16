@@ -44,7 +44,7 @@ test("a new Vibe uses the Are.na board title without entering a name", async ({ 
 
   await page.getByRole("button", { name: "Confirm import" }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}$`));
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?mode=maximized$`));
   await expect(
     page.getByRole("heading", { name: "Synthetic Media Study", exact: true, level: 1 }),
   ).toBeVisible();

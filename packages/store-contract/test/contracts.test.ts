@@ -12,6 +12,7 @@ import {
   clientCreateMediaObjectInputSchema,
   clientCreateMediaObjectsRequestSchema,
   createCredentialIngestionSourceRequestSchema,
+  dashboardStatsSchema,
   createFileIngestionSourceRequestSchema,
   createImportPreviewRequestSchema,
   createPendingVibeImportRequestSchema,
@@ -98,6 +99,7 @@ describe("shared store schemas", () => {
 
   test("registers stable component names without cloning schema objects", () => {
     expect(STORE_SCHEMA_COMPONENTS.CreateVibeRequest).toBe(createVibeRequestSchema);
+    expect(STORE_SCHEMA_COMPONENTS.DashboardStats).toBe(dashboardStatsSchema);
     expect(STORE_SCHEMA_COMPONENTS.CreateMediaObjectsRequest).toBe(createMediaObjectsRequestSchema);
     expect(STORE_SCHEMA_COMPONENTS.CreateIngestionSourceRequest).toBe(
       createIngestionSourceRequestSchema,
@@ -120,6 +122,17 @@ describe("shared store schemas", () => {
     expect(STORE_SCHEMA_COMPONENTS.SourceActionRequired).toBe(sourceActionRequiredSchema);
     expect(STORE_SCHEMA_COMPONENTS.SourceCredential).toBe(sourceCredentialDocumentSchema);
     expect(Object.values(STORE_SCHEMA_COMPONENTS).every((schema) => !("$id" in schema))).toBe(true);
+  });
+
+  test("defines lifetime dashboard totals without a misleading billing period", () => {
+    expect(dashboardStatsSchema.required).toEqual([
+      "account_created_at",
+      "objects",
+      "elements",
+      "tokens",
+    ]);
+    expect(dashboardStatsSchema.properties.tokens.required).toEqual(["input", "output", "total"]);
+    expect(dashboardStatsSchema.properties).not.toHaveProperty("period");
   });
 
   test("selects file sources by skill and pins their resolved implementation versions", () => {

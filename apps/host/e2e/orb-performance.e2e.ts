@@ -42,6 +42,73 @@ async function graphics(page: Page) {
   );
 }
 
+test("passing over cards skips live renderers, and repeated hover reuses the canvas and program", async ({
+  page,
+}) => {
+  const store = await installMockStore(page);
+  const base = store.vibes[0]!;
+  base.inferred = {
+    "rhizome:vibe-orb": { model: "test", properties: { ...ORB_PRESETS.bloom } },
+  };
+  store.vibes.push({
+    ...structuredClone(base),
+    uri: "rnet://vibe/0198f2a1-a09b-76aa-95d8-fc5b55b41fd3",
+    title: "Other card",
+  });
+  await probeGraphics(page);
+  await page.goto("/");
+  const cards = page.locator("[data-desktop-vibe-card]");
+  await expect(cards.locator('[data-vibe-orb-renderer="raster"] img')).toHaveCount(2);
+  const baseline = await graphics(page);
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
+  for (const card of await cards.all()) {
+    await card.dispatchEvent("pointerover", { pointerType: "mouse" });
+    await page.clock.runFor(50);
+    await card.dispatchEvent("pointerout", { pointerType: "mouse" });
+  }
+  await page.clock.runFor(150);
+  await expect(cards.locator("canvas")).toHaveCount(0);
+  expect((await graphics(page)).programs).toBe(baseline.programs);
+
+  await cards.first().dispatchEvent("pointerover", { pointerType: "mouse" });
+  await page.clock.runFor(150);
+  await expect(cards.first().locator("canvas")).toHaveCount(1);
+  await page.clock.runFor(50);
+  await expect(cards.first().locator('[data-vibe-orb-renderer="webgl"]')).toHaveCount(1);
+  const canvas = await cards.first().locator("canvas").elementHandle();
+  const afterHover = await graphics(page);
+  expect(afterHover.programs - baseline.programs).toBe(1);
+  await cards.first().dispatchEvent("pointerout", { pointerType: "mouse" });
+  await expect(cards.locator("canvas")).toHaveCount(0);
+  expect(await canvas!.evaluate((element) => element.isConnected)).toBe(false);
+  const idle = await graphics(page);
+  await page.clock.runFor(500);
+  expect(await graphics(page)).toEqual(idle);
+
+  await cards.last().dispatchEvent("pointerover", { pointerType: "mouse" });
+  await page.clock.runFor(150);
+  await expect(cards.last().locator("canvas")).toHaveCount(1);
+  await page.clock.runFor(50);
+  await expect(cards.last().locator('[data-vibe-orb-renderer="webgl"]')).toHaveCount(1);
+  expect(
+    await canvas!.evaluate(
+      (element) => element === document.querySelector("[data-desktop-vibe-card] canvas"),
+    ),
+  ).toBe(true);
+  expect((await graphics(page)).programs).toBe(afterHover.programs);
+  expect((await graphics(page)).bufferResizes).toBe(afterHover.bufferResizes);
+  await cards.last().dispatchEvent("pointerout", { pointerType: "mouse" });
+  await expect(cards.locator("canvas")).toHaveCount(0);
+  await page.clock.runFor(30_100);
+  expect(
+    await canvas!.evaluate((element) =>
+      (element as HTMLCanvasElement).getContext("webgl2")!.isContextLost(),
+    ),
+  ).toBe(true);
+  await canvas!.dispose();
+});
+
 test("icon draws are capped on fast displays, event bursts coalesce, and settled recipes stop allocating", async ({
   page,
 }) => {
