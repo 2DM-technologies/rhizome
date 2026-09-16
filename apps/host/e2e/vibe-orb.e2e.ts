@@ -364,7 +364,7 @@ test("dock shortcuts and the active square stay rasterized except on hover or ke
   await shortcut.blur();
   await expect(canvas).toHaveCount(0);
 
-  // Clicking a shortcut may leave DOM focus on it; pointer focus must not keep its canvas alive.
+  // Pointer activation must not keep the shortcut's canvas alive after the pointer leaves.
   await shortcut.click();
   await page.mouse.move(0, 0);
   await expect(canvas).toHaveCount(0);
