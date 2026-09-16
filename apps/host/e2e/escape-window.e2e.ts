@@ -18,6 +18,34 @@ test("Escape closes the active window, including when focus is outside it", asyn
   await expect(page).toHaveURL(/\/vibes\?mode=maximized$/);
 });
 
+for (const name of ["Vibes", "Ingest"]) {
+  test(`Escape after clicking ${name} leaves its dock shortcut at rest`, async ({ page }) => {
+    await page.goto("/");
+    const shortcut = page
+      .getByRole("region", { name: "Pinned apps", exact: true })
+      .getByRole("button", { name, exact: true });
+    const label = shortcut.locator("[data-dock-app-label]");
+    await shortcut.click();
+    await expect(page.locator("[data-surface-window]")).toBeVisible();
+    await page.mouse.move(0, 0);
+    await page.keyboard.press("Escape");
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator("[data-surface-window]")).toHaveCount(0);
+    await expect(shortcut).not.toBeFocused();
+    await expect(label).toHaveCSS("opacity", "0");
+    await expect(shortcut).toHaveCSS("translate", "none");
+
+    // Real keyboard navigation still gets the label/lift and can open the app with Enter.
+    await page.keyboard.press("Tab");
+    await shortcut.focus();
+    await expect(label).toHaveCSS("opacity", "1");
+    await expect(shortcut).toHaveCSS("translate", "0px -5px");
+    await shortcut.press("Enter");
+    await expect(page.locator("[data-surface-window]")).toBeVisible();
+    await expect(shortcut).toBeFocused();
+  });
+}
+
 test("Escape in the JSON editor preserves the draft and its window", async ({ page }) => {
   await page.goto(`/objects/${OBJECT_ID}`);
   const editor = page.getByLabel("User properties, as JSON");
