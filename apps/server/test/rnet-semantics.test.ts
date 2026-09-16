@@ -185,6 +185,8 @@ describe("rNet semantics", () => {
     const validation = validateSchema("vibe", vibe);
     if (!validation.ok) expect(validation.issues).toEqual([]);
     expect(validation.ok).toBe(true);
+    expect(vibe.created_at).toBe(vibe.updated_at);
+    expect(vibe).not.toHaveProperty("x-rhizome-updated-at");
   });
 
   test("a read grant is enforced positively", async () => {
@@ -718,17 +720,10 @@ describe("rNet semantics", () => {
       confidence: 0.5,
     });
     expect(after.inferred?.[storeTaskKey(summarizeTask.name)]).not.toHaveProperty("durable");
-    const {
-      inferred: _beforeInferred,
-      "x-rhizome-updated-at": _beforeUpdatedAt,
-      ...beforeOther
-    } = before;
-    const {
-      inferred: _afterInferred,
-      "x-rhizome-updated-at": _afterUpdatedAt,
-      ...afterOther
-    } = after;
+    const { inferred: _beforeInferred, updated_at: _beforeUpdatedAt, ...beforeOther } = before;
+    const { inferred: _afterInferred, updated_at: _afterUpdatedAt, ...afterOther } = after;
     expect(afterOther).toEqual(beforeOther);
+    expect(Date.parse(after.updated_at)).toBeGreaterThan(Date.parse(before.updated_at));
   });
 
   test("a keyless store serves discovery and rejects authorized push with 503", async () => {

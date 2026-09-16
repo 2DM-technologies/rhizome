@@ -13,7 +13,6 @@ import {
   useVibeObjects,
 } from "../queries/index.ts";
 import { useNearViewport } from "../ui/useNearViewport.ts";
-import { vibeUpdatedAt } from "../vibeRecency.ts";
 import { useSurfaceNavigation } from "./focus.ts";
 
 const CARD_PREVIEW_LIMIT = 6;
@@ -186,7 +185,7 @@ export function DesktopVibeCard({ vibe, now }: { vibe: Vibe; now: number }) {
   const type = details[0] ? humanize(details[0].type) : undefined;
   const remaining = Math.max(0, vibe.objects.length - previews.length);
   const objectLabel = `${vibe.objects.length} ${vibe.objects.length === 1 ? "object" : "objects"}`;
-  const updatedAge = relativeAge(vibeUpdatedAt(vibe), now);
+  const updatedAge = relativeAge(vibe.updated_at, now);
   const visual = useMemo(() => {
     const orb = orbVisualForVibe(vibe);
     return {

@@ -39,6 +39,7 @@ function vibe(view?: (typeof VIBE_VIEWS)[number], config: object = {}): Vibe {
     owner,
     title: "Test Vibe",
     created_at: "2026-09-10T12:00:00Z",
+    updated_at: "2026-09-10T12:00:00Z",
     objects: [],
     grants: [],
     inferred: view
@@ -173,6 +174,7 @@ describe("inferred Vibe surfaces", () => {
       byte_size: 1,
       bytes: `https://rhizome.test/rnet/v0/elements/${id(200 + index)}/bytes`,
       created_at: "2026-09-10T12:00:00Z",
+      updated_at: "2026-09-10T12:00:00Z",
     }));
     record.elements = elements.map(({ uri }) => ({ uri }));
     const markup = render(
