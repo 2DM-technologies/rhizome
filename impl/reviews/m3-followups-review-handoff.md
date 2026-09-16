@@ -5,9 +5,9 @@
 All previously unpublished code from the primary checkout is now included in four follow-up PRs after the unchanged #35–#42 stack. This packet supersedes the earlier overlap-only handoff for a review of the whole application. Historical reports remain evidence for their recorded revisions; their successful reviews do not cover these new changes.
 
 - Existing published stack base: #42, `c4efffb7df01df370b9a4f10847bf5e247c7c354`.
-- Combined follow-up code head: `178aa4ece81a3e7ee1d72a1071750a9c078c2514`. Later packet-only commits may follow it on #46.
+- Combined follow-up code head: `9fae0764b29d352e2a19cc8bd9b451724559fc5d`. Later packet-only commits may follow it on #46.
 - Canonical schema prerequisite: [rNet #5](https://github.com/2DM-technologies/rnet/pull/5), `e297130b6dd156aa2d961b3ba873b1b8734a1add`, based on `036288c4064fb978399c6cb3eaba8f0699afa37c`.
-- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..178aa4ece81a3e7ee1d72a1071750a9c078c2514`.
+- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..9fae0764b29d352e2a19cc8bd9b451724559fc5d`.
 
 ## PRs and ownership
 
@@ -35,7 +35,7 @@ Base `871cf35ef740afb6936f7b284f60b482b8778c09`; head `1d9ddbea213a5e5e4eaa7a010
 ### #45 — host UI and idle resources
 
 [PR #45](https://github.com/2DM-technologies/rhizome/pull/45), branch `m3/followup-03-host`.
-Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `892515cff062cfb2141ebfa83b4ebb5d0a8bbe4d`.
+Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `dcf44339baf2c04f24c14e590968a954602a2b08`.
 
 - `b642716` extracts inferred Vibe view components into `surfaces/vibe-view`; `809d62c` contains the host behavior/style changes; `e5dfa6e` aligns desktop-loading coverage with five previews and checks the sixth item remains unloaded.
 - Recent dock routes include objects/apps as well as Vibes. Shell session storage advances to version 5; older disposable shell state is discarded. Add shared media thumbnails, Vibe deletion controls, PDF object rendering, wallpaper transitions, and updated dock/preview styling.
@@ -49,7 +49,7 @@ Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `892515cff062cfb2141ebfa83
 ### #46 — API metadata, speculative material, and this packet
 
 [PR #46](https://github.com/2DM-technologies/rhizome/pull/46), branch `m3/followup-04-speculative`.
-Base `892515cff062cfb2141ebfa83b4ebb5d0a8bbe4d`; code head `178aa4ece81a3e7ee1d72a1071750a9c078c2514`.
+Base `dcf44339baf2c04f24c14e590968a954602a2b08`; code head `9fae0764b29d352e2a19cc8bd9b451724559fc5d`.
 
 - Move `apps/server/test/store.integration.test.ts` to `impl/speculative/store.integration.test.ts`, preserving dependency resolution and TypeScript inclusion. Bun still discovers and executes it.
 - Move `impl/concepts/strava-import.md` to `impl/speculative/strava-import.md` and update links. This does not implement Strava.
@@ -67,6 +67,12 @@ Both nonblocking P3 findings are addressed at the current code heads:
 - #45 `892515c`: refresh object inference status on local push start and completion alongside Vibe status. A regression verifies that a failed push with no result refreshes an active object's cached status. This commit also applies the requested default cursor to desktop Vibe cards. Playback remains 1.5x following the owner's final preference.
 - #46 `178aa4e`: document user/client auth using standard named bearer schemes, with assertions for user-only, client-only, either-identity, and optional identity. No private annotation is reintroduced; generated client types remain unchanged.
 - Final focused verification at combined code `178aa4e`: **82 unit/API tests passed** (74 host and 8 OpenAPI), **8 browser tests passed** (inference polling and orb performance), plus TypeScript, generated-client freshness, formatting, and diff checks. Full application and browser gates were not rerun locally for these small changes; check CI on the new published heads.
+
+### Dock navigation repair after focused review
+
+#45 `dcf4433` fixes the reported stutter when opening a Vibe from either the Vibes list or a desktop card. The shell store added the new recent route before deferred URL navigation changed the active slot. The rail briefly grew from zero to one item and back to zero, reversing its width animation. Normal surface opens now commit navigation synchronously, as existing dock transitions already do.
+
+Both new browser regressions failed before the fix with rail counts `0 → 1 → 0` and pass afterward. All **47 related browser tests** passed, including dock motion, history, pinned shortcuts, retained desktop behavior, and async window-mode handling. TypeScript, formatting, diff checks, and **9 shell unit tests** also passed. This changes one navigation call and adds the two regressions; renderer playback remains 1.5x.
 
 ## Validation and limitations
 
