@@ -24,6 +24,9 @@ export function usePushVibe() {
       void client.invalidateQueries({
         queryKey: ["get", "/rnet/v0/vibes/{id}/inference-status"],
       });
+      void client.invalidateQueries({
+        queryKey: ["get", "/rnet/v0/objects/{id}/inference-status"],
+      });
     },
   });
 }
@@ -50,6 +53,9 @@ export function invalidatePushResult(
   return Promise.all([
     client.invalidateQueries({
       queryKey: ["get", "/rnet/v0/vibes/{id}/inference-status"],
+    }),
+    client.invalidateQueries({
+      queryKey: ["get", "/rnet/v0/objects/{id}/inference-status"],
     }),
     ...uris.map((uri) => {
       const kind = uri.startsWith("rnet://element/") ? "elements" : "objects";
