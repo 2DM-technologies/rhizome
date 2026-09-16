@@ -81,7 +81,12 @@ export function DockApp({
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={(event) => {
+        onOpen?.(event);
+        // A pointer click must not leave latent focus that Escape turns into a lifted label.
+        // Keyboard activation has detail 0 and keeps its visible focus cue.
+        if (event.detail > 0) event.currentTarget.blur();
+      }}
       onPointerEnter={(event) => {
         if (event.pointerType !== "touch") setOrbHovered(true);
       }}
