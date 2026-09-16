@@ -5,9 +5,9 @@
 All previously unpublished code from the primary checkout is now included in four follow-up PRs after the unchanged #35–#42 stack. This packet supersedes the earlier overlap-only handoff for a review of the whole application. Historical reports remain evidence for their recorded revisions; their successful reviews do not cover these new changes.
 
 - Existing published stack base: #42, `c4efffb7df01df370b9a4f10847bf5e247c7c354`.
-- Combined follow-up code head: `c27e480b25839a89e00c408e606cf2265f878bf7`. Later packet-only commits may follow it on #46.
+- Combined follow-up code head: `178aa4ece81a3e7ee1d72a1071750a9c078c2514`. Later packet-only commits may follow it on #46.
 - Canonical schema prerequisite: [rNet #5](https://github.com/2DM-technologies/rnet/pull/5), `e297130b6dd156aa2d961b3ba873b1b8734a1add`, based on `036288c4064fb978399c6cb3eaba8f0699afa37c`.
-- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..c27e480b25839a89e00c408e606cf2265f878bf7`.
+- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..178aa4ece81a3e7ee1d72a1071750a9c078c2514`.
 
 ## PRs and ownership
 
@@ -35,27 +35,38 @@ Base `871cf35ef740afb6936f7b284f60b482b8778c09`; head `1d9ddbea213a5e5e4eaa7a010
 ### #45 — host UI and idle resources
 
 [PR #45](https://github.com/2DM-technologies/rhizome/pull/45), branch `m3/followup-03-host`.
-Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `e5dfa6ee234261efb1342cd071af06200e878e03`.
+Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `892515cff062cfb2141ebfa83b4ebb5d0a8bbe4d`.
 
 - `b642716` extracts inferred Vibe view components into `surfaces/vibe-view`; `809d62c` contains the host behavior/style changes; `e5dfa6e` aligns desktop-loading coverage with five previews and checks the sixth item remains unloaded.
 - Recent dock routes include objects/apps as well as Vibes. Shell session storage advances to version 5; older disposable shell state is discarded. Add shared media thumbnails, Vibe deletion controls, PDF object rendering, wallpaper transitions, and updated dock/preview styling.
 - Desktop cards show five 24px thumbnails. Existing near-viewport gating, retained thumbnail caches, small-text limits, and metadata-only unsupported previews remain required.
 - Hero and active dock orbs animate on interaction; settled idle surfaces stop drawing. Renderer playback is 1.5x. Reduced-motion, context-loss recovery, raster reuse, and retained desktop behavior must survive.
-- Idle status polling is 10 seconds; active waiting/running work polls every second. Local starts invalidate status immediately. Work started elsewhere can take up to 10 seconds to appear. This tradeoff was approved in the performance task.
+- Idle status polling is 10 seconds; active waiting/running work polls every second. Local starts and completion invalidate both Vibe and object status immediately, including failures with no result. Work started elsewhere can take up to 10 seconds to appear. This tradeoff was approved in the performance task.
+- Desktop Vibe cards use the default cursor; the Vibes list keeps its pointer cursor.
 - The latest dot moves down 1px. Running dock shortcuts use their focus label without the clipped purple outline; active cards retain their focus outline.
 - Review navigation persistence, destructive-action focus/error handling, theme transition cleanup, and status transitions across local and external work.
 
 ### #46 — API metadata, speculative material, and this packet
 
 [PR #46](https://github.com/2DM-technologies/rhizome/pull/46), branch `m3/followup-04-speculative`.
-Base `e5dfa6ee234261efb1342cd071af06200e878e03`; code head `c27e480b25839a89e00c408e606cf2265f878bf7`.
+Base `892515cff062cfb2141ebfa83b4ebb5d0a8bbe4d`; code head `178aa4ece81a3e7ee1d72a1071750a9c078c2514`.
 
 - Move `apps/server/test/store.integration.test.ts` to `impl/speculative/store.integration.test.ts`, preserving dependency resolution and TypeScript inclusion. Bun still discovers and executes it.
 - Move `impl/concepts/strava-import.md` to `impl/speculative/strava-import.md` and update links. This does not implement Strava.
-- Remove the two private OpenAPI annotations. Authentication requirements remain in standard `security` metadata and server route enforcement. Client generation recognizes multipart request bodies by their standard media type and still emits `FormData`; the generated client contract is unchanged. An OpenAPI assertion rejects platform-prefixed annotations.
+- Remove the two private OpenAPI annotations. Standard `UserBearer` and `ClientBearer` security schemes retain the distinction between user-only, client-only, and either-identity operations. Separate security entries express either-identity access; public routes also allow anonymous access. Server route enforcement is unchanged. Client generation recognizes multipart request bodies by their standard media type and still emits `FormData`; the generated client contract is unchanged. An OpenAPI assertion rejects platform-prefixed annotations.
 - Later packet-only changes publish this handoff and link it from the prior stack packet.
 
 Merge order: original #35–#42 stack, then #43 → #44 → #45 → #46, with rNet #5 merged before #43. Keep stacked ancestry intact; no merge is requested by this review handoff.
+
+## Focused review outcome and final follow-ups
+
+Claude independently reviewed rNet `e297130b`, #43 `871cf35e`, #44 `1d9ddbea`, #45 `e5dfa6ee`, and #46 code `c27e480b` (packet `01b9adec`), finding no merge blockers. The report remains at `impl/reviews/m3-followups-review-claude.md` in the primary checkout.
+
+Both nonblocking P3 findings are addressed at the current code heads:
+
+- #45 `892515c`: refresh object inference status on local push start and completion alongside Vibe status. A regression verifies that a failed push with no result refreshes an active object's cached status. This commit also applies the requested default cursor to desktop Vibe cards. Playback remains 1.5x following the owner's final preference.
+- #46 `178aa4e`: document user/client auth using standard named bearer schemes, with assertions for user-only, client-only, either-identity, and optional identity. No private annotation is reintroduced; generated client types remain unchanged.
+- Final focused verification at combined code `178aa4e`: **82 unit/API tests passed** (74 host and 8 OpenAPI), **8 browser tests passed** (inference polling and orb performance), plus TypeScript, generated-client freshness, formatting, and diff checks. Full application and browser gates were not rerun locally for these small changes; check CI on the new published heads.
 
 ## Validation and limitations
 
