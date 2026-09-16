@@ -119,12 +119,7 @@ function operation(contract: OpenApiRouteContract): JsonObject {
   return {
     operationId: contract.operationId,
     tags: [tagForOperation(contract.operationId)],
-    ...(contract.auth
-      ? {
-          security: [{ BearerAuth: [] }],
-          "x-rhizome-auth": contract.auth,
-        }
-      : {}),
+    ...(contract.auth ? { security: [{ BearerAuth: [] }] } : {}),
     ...(parameters.length ? { parameters } : {}),
     ...(requestBody ? { requestBody } : {}),
     responses,
@@ -174,7 +169,6 @@ function requestBodyFor(
         "multipart/form-data": {
           schema: {
             type: "object",
-            "x-rhizome-typescript-type": "FormData",
             required: ["metadata"],
             properties: {
               metadata: {

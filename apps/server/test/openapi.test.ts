@@ -69,6 +69,7 @@ describe("OpenAPI", () => {
     expect(serialized).toContain('"name":"x-rnet-kind","in":"header","required":true');
     expect(serialized).toContain('"name":"x-rnet-label","in":"header","required":false');
     expect(serialized).not.toContain("https://rnet.network/schemas/0.1/");
+    expect(serialized).not.toContain('"x-rhizome-');
   });
 
   test("documents optional identity and required authenticated operations", () => {
@@ -106,7 +107,7 @@ describe("OpenAPI", () => {
       | undefined;
     const schema = createObjects?.requestBody?.content?.["multipart/form-data"]?.schema;
     expect(schema?.additionalProperties).toEqual({ type: "string", format: "binary" });
-    expect(schema?.["x-rhizome-typescript-type"]).toBe("FormData");
+    expect(schema?.required).toEqual(["metadata"]);
   });
 
   test("serves the generated document", async () => {

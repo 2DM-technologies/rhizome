@@ -5,9 +5,9 @@
 All previously unpublished code from the primary checkout is now included in four follow-up PRs after the unchanged #35–#42 stack. This packet supersedes the earlier overlap-only handoff for a review of the whole application. Historical reports remain evidence for their recorded revisions; their successful reviews do not cover these new changes.
 
 - Existing published stack base: #42, `c4efffb7df01df370b9a4f10847bf5e247c7c354`.
-- Combined follow-up code head: `4e04c4e1ccbc55bd22d7e7d67ba9809010ffde3f`. Later packet-only commits may follow it on #46.
+- Combined follow-up code head: `c27e480b25839a89e00c408e606cf2265f878bf7`. Later packet-only commits may follow it on #46.
 - Canonical schema prerequisite: [rNet #5](https://github.com/2DM-technologies/rnet/pull/5), `e297130b6dd156aa2d961b3ba873b1b8734a1add`, based on `036288c4064fb978399c6cb3eaba8f0699afa37c`.
-- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..4e04c4e1ccbc55bd22d7e7d67ba9809010ffde3f`.
+- Complete incremental application diff: `c4efffb7df01df370b9a4f10847bf5e247c7c354..c27e480b25839a89e00c408e606cf2265f878bf7`.
 
 ## PRs and ownership
 
@@ -45,14 +45,15 @@ Base `1d9ddbea213a5e5e4eaa7a010e189b81b8823a0b`; head `e5dfa6ee234261efb1342cd07
 - The latest dot moves down 1px. Running dock shortcuts use their focus label without the clipped purple outline; active cards retain their focus outline.
 - Review navigation persistence, destructive-action focus/error handling, theme transition cleanup, and status transitions across local and external work.
 
-### #46 — speculative material and this packet
+### #46 — API metadata, speculative material, and this packet
 
 [PR #46](https://github.com/2DM-technologies/rhizome/pull/46), branch `m3/followup-04-speculative`.
-Base `e5dfa6ee234261efb1342cd071af06200e878e03`; code head `4e04c4e1ccbc55bd22d7e7d67ba9809010ffde3f`.
+Base `e5dfa6ee234261efb1342cd071af06200e878e03`; code head `c27e480b25839a89e00c408e606cf2265f878bf7`.
 
 - Move `apps/server/test/store.integration.test.ts` to `impl/speculative/store.integration.test.ts`, preserving dependency resolution and TypeScript inclusion. Bun still discovers and executes it.
 - Move `impl/concepts/strava-import.md` to `impl/speculative/strava-import.md` and update links. This does not implement Strava.
-- Later changes in this PR only publish the handoff and link it from the prior stack packet.
+- Remove the two private OpenAPI annotations. Authentication requirements remain in standard `security` metadata and server route enforcement. Client generation recognizes multipart request bodies by their standard media type and still emits `FormData`; the generated client contract is unchanged. An OpenAPI assertion rejects platform-prefixed annotations.
+- Later packet-only changes publish this handoff and link it from the prior stack packet.
 
 Merge order: original #35–#42 stack, then #43 → #44 → #45 → #46, with rNet #5 merged before #43. Keep stacked ancestry intact; no merge is requested by this review handoff.
 
@@ -61,9 +62,10 @@ Merge order: original #35–#42 stack, then #43 → #44 → #45 → #46, with rN
 - rNet: full `bun run check`, **41 pass / 0 fail**, including generated-schema freshness and types.
 - #43: full `bun run check`, **608 pass / 0 fail**.
 - #44: full `bun run check`, **611 pass / 0 fail**.
-- Combined implementation: full `bun run check`, **609 pass / 0 fail**, including formatting, OpenAPI freshness, types, builds, and the relocated speculative integration suite. The host removes obsolete shell compatibility tests, so totals differ from the preceding PR.
-- Final combined Chromium run: **141 pass / 0 fail**. An initial run passed 140 and exposed a stale six-thumbnail expectation. The corrected test passed a focused three-test suite and the complete rerun. No application behavior, timeout, or assertion bound was relaxed to hide a failure.
-- Code preservation audit: the complete original local source snapshot merged onto #42 matched the published source byte-for-byte, except the required CI schema pin. The only subsequent source/test edit was the desktop-loading expectation/extra unloaded-item assertion above.
+- Combined implementation before the API metadata cleanup, `4e04c4e1ccbc55bd22d7e7d67ba9809010ffde3f`: full `bun run check`, **609 pass / 0 fail**, including formatting, OpenAPI freshness, types, builds, and the relocated speculative integration suite. The host removes obsolete shell compatibility tests, so totals differ from the preceding PR.
+- Combined Chromium run at `4e04c4e1ccbc55bd22d7e7d67ba9809010ffde3f`: **141 pass / 0 fail**. An initial run passed 140 and exposed a stale six-thumbnail expectation. The corrected test passed a focused three-test suite and the complete rerun. No application behavior, timeout, or assertion bound was relaxed to hide a failure.
+- Latest API metadata cleanup: **8 OpenAPI tests passed**, plus generated-client freshness, formatting, TypeScript, and diff checks. No host application code or generated client type changed. Check the new #46 CI run separately.
+- Code preservation audit: the complete original local source snapshot merged onto #42 matched the published source byte-for-byte, except the required CI schema pin. Subsequent source/test edits were the desktop-loading expectation/extra unloaded-item assertion and the API metadata cleanup described above.
 - The earlier performance task measured idle renderer CPU around **0.18% of one core** versus **11–12%** before, zero idle animation frames, and 12 rather than about 100 requests over 25 seconds. This was a short local measurement, not a leak study or performance guarantee. Evidence: `.rhizome/idle-optimization-20260915/REPORT.md` in the primary checkout.
 - The earlier independent Codex overlap re-review found no new actionable defect at #42 `c4efffb`. Its full gates passed 605 deterministic and 134 browser tests, plus race, grant, coalescing, and negative-control probes. That conclusion covers the old overlap repairs, not the new follow-ups.
 - CI status can change; check the exact published heads. Do not treat local passes as completed GitHub checks.
