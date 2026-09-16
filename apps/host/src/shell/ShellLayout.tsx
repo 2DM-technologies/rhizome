@@ -31,7 +31,7 @@ import { useDockPinsStore, usePinnedVibeUuids } from "./dockPins.ts";
 
 const DOCK_RAIL_ITEM_SIZE = 44;
 const DOCK_RAIL_GAP = 20;
-const DOCK_RAIL_VISIBLE_ITEMS = 3;
+const DOCK_RAIL_VISIBLE_ITEMS = 2;
 const PINNED_DOCK_SURFACES = [{ kind: "vibes" }, { kind: "import" }] as const;
 
 function iconForDockSurface(surface: Surface) {
@@ -118,7 +118,7 @@ export function ShellLayout() {
     window.addEventListener("storage", syncPins);
     return () => window.removeEventListener("storage", syncPins);
   }, []);
-  // Recent windows share three visible slots. Older routes remain available by scrolling.
+  // Recent windows share two visible slots. Older routes remain available by scrolling.
   const visibleDockRailItems = Math.min(dockRailSurfaces.length, DOCK_RAIL_VISIBLE_ITEMS);
   // Match the tray's active-app transition: an explicit width avoids intrinsic flex reflow
   // moving the launcher in the opposite direction while the active-app reserve animates.
