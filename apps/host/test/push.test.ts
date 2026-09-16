@@ -108,6 +108,30 @@ describe("push host integration", () => {
     expect(reads).toBeGreaterThanOrEqual(2);
     unsubscribe();
   });
+  test("a failed push refreshes active object status even without a result", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let status = "running";
+    const observer = new QueryObserver(client, {
+      queryKey: [
+        "get",
+        "/rnet/v0/objects/{id}/inference-status",
+        { params: { path: { id: URI.split("/").at(-1) } } },
+      ],
+      queryFn: async () => ({ status }),
+      staleTime: Infinity,
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      await observer.refetch();
+      expect(observer.getCurrentResult().data?.status).toBe("running");
+      status = "error";
+      await invalidatePushResult(client, { ...operation(null), status: "failed" }, "vibe");
+      expect(observer.getCurrentResult().data?.status).toBe("error");
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
+  });
   test("element outcomes invalidate written, preserved, and skipped active queries", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const ids = [

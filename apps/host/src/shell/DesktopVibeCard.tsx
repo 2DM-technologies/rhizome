@@ -61,7 +61,7 @@ function DesktopVibeOpenButton({
   return (
     <button
       type="button"
-      className="absolute inset-0 z-10 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      className="absolute inset-0 z-10 cursor-default rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       aria-label={`Open Vibe ${title}`}
       onClick={() => {
         onOpen();
