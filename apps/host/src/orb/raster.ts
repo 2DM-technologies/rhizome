@@ -7,8 +7,14 @@ export const ORB_RASTER_SIZE = 256;
 const RASTER_VERSION = 1;
 const MEMORY_ENTRIES = 64;
 const MEMORY_BYTES = 8 * 1024 * 1024;
-const memory = new Map<string, Blob>();
+interface CachedRaster {
+  blob: Blob;
+  source?: string;
+}
+
+const memory = new Map<string, CachedRaster>();
 const pending = new Map<string, Promise<Blob>>();
+const pendingSources = new Map<string, Promise<string>>();
 let memoryBytes = 0;
 let renderer: OrbRasterizer | undefined;
 let queue: Promise<unknown> = Promise.resolve();
@@ -58,13 +64,17 @@ function render(recipe: OrbVisualRecipe): Promise<Blob> {
 }
 
 function remember(key: string, blob: Blob) {
-  memory.set(key, blob);
+  memory.set(key, { blob });
   memoryBytes += blob.size;
+  trimMemory();
+}
+
+function trimMemory() {
   while (memory.size > MEMORY_ENTRIES || memoryBytes > MEMORY_BYTES) {
     const oldest = memory.entries().next().value;
     if (!oldest) break;
     memory.delete(oldest[0]);
-    memoryBytes -= oldest[1].size;
+    memoryBytes -= oldest[1].blob.size + (oldest[1].source?.length ?? 0) * 2;
   }
 }
 
@@ -76,7 +86,7 @@ export function getOrbRaster(input: OrbVisualRecipe): Promise<Blob> {
   if (cached) {
     memory.delete(key);
     memory.set(key, cached);
-    return Promise.resolve(cached);
+    return Promise.resolve(cached.blob);
   }
   const existing = pending.get(key);
   if (existing) return existing;
@@ -89,6 +99,42 @@ export function getOrbRaster(input: OrbVisualRecipe): Promise<Blob> {
     return blob;
   })().finally(() => pending.delete(key));
   pending.set(key, job);
+  return job;
+}
+
+/** A decoded, reusable source can render on the first commit when a cached orb changes slots. */
+export function cachedOrbRasterSource(key: string): string | undefined {
+  return memory.get(key)?.source;
+}
+
+export function getOrbRasterSource(recipe: OrbVisualRecipe): Promise<string> {
+  const key = orbRasterKey(recipe);
+  const existing = pendingSources.get(key);
+  if (existing) return existing;
+  const job = getOrbRaster(recipe)
+    .then(async (blob) => {
+      const cached = memory.get(key)?.source;
+      if (cached) return cached;
+      const source = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      const image = new Image();
+      image.src = source;
+      await image.decode();
+      const entry = memory.get(key);
+      if (entry?.blob === blob) {
+        entry.source = source;
+        // Account for the reusable string as well as the Blob in the existing cache budget.
+        memoryBytes += source.length * 2;
+        trimMemory();
+      }
+      return source;
+    })
+    .finally(() => pendingSources.delete(key));
+  pendingSources.set(key, job);
   return job;
 }
 

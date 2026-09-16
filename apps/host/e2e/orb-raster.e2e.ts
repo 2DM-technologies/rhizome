@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { ORB_PRESETS } from "../src/orb/recipe.ts";
-import { installMockStore } from "./support/mockStore.ts";
+import { installMockStore, NEW_VIBE_ID, VIBE_ID } from "./support/mockStore.ts";
 
 const inferred = (properties = ORB_PRESETS.bloom) => ({
   "rhizome:vibe-orb": { model: "test", confidence: 1, properties: { ...properties } },
@@ -132,6 +132,64 @@ test("a cached image survives reload without WebGL, while recipe changes replace
   ).toBe(0);
 });
 
+test("switching between warmed Vibes shows their raster immediately without a fallback flash", async ({
+  page,
+}) => {
+  const store = await installMockStore(page);
+  store.vibes[0]!.inferred = inferred();
+  store.vibes.push({
+    ...structuredClone(store.vibes[0]!),
+    uri: `rnet://vibe/${NEW_VIBE_ID}`,
+    title: "Library",
+    inferred: inferred(ORB_PRESETS.ember),
+  });
+  await page.goto("/vibes");
+  for (const title of ["Spending", "Library"]) {
+    await expect(
+      page
+        .getByRole("button", { name: `Open Vibe ${title}`, exact: true })
+        .locator("[data-vibe-orb-renderer]"),
+    ).toHaveAttribute("data-vibe-orb-renderer", "raster");
+  }
+  const dock = page.locator("[data-shell-dock]");
+  await dock.evaluate((element) => {
+    const states: (string | null)[] = [];
+    const observer = new MutationObserver(() => {
+      for (const orb of element.querySelectorAll('[data-vibe-orb-motion="still"]')) {
+        states.push(orb.getAttribute("data-vibe-orb-renderer"));
+      }
+    });
+    observer.observe(element, { attributes: true, childList: true, subtree: true });
+    Object.assign(window, { __warmOrbProbe: { states, stop: () => observer.disconnect() } });
+  });
+  await page.getByRole("button", { name: "Open Vibe Spending", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${VIBE_ID}\\?`));
+  await page
+    .getByRole("region", { name: "Pinned apps", exact: true })
+    .getByRole("button", { name: "Vibes", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Open Vibe Library", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/vibes/${NEW_VIBE_ID}\\?`));
+  const recent = page.getByRole("region", { name: "Recent windows", exact: true });
+  for (const title of ["Spending", "Library", "Spending"]) {
+    await recent.getByRole("button", { name: title, exact: true }).click();
+    await expect(
+      page.locator("[data-dock-app-slot]").getByRole("button", { name: title, exact: true }),
+    ).toBeVisible();
+  }
+  const states = await page.evaluate(() => {
+    const probe = (
+      window as typeof window & {
+        __warmOrbProbe: { states: (string | null)[]; stop: () => void };
+      }
+    ).__warmOrbProbe;
+    probe.stop();
+    return probe.states;
+  });
+  expect(states.length).toBeGreaterThan(0);
+  expect([...new Set(states)]).toEqual(["raster"]);
+});
+
 test("a long list rasterizes visible orbs through a single shared context", async ({ page }) => {
   const store = await installMockStore(page);
   const source = store.vibes[0]!;
@@ -190,6 +248,47 @@ test("blocked storage still renders images and missing WebGL retains the CSS ide
   await expect(orb).toHaveAttribute("data-vibe-orb-renderer", "fallback");
   await expect(orb.locator("span[aria-hidden]")).toHaveCSS("opacity", "1");
   await expect(orb.locator("img, canvas")).toHaveCount(0);
+});
+
+test("decoded raster sources share the bounded cache and remain usable after eviction", async ({
+  page,
+}) => {
+  await installMockStore(page);
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const path = "/src/orb/raster.ts";
+    const recipePath = "/src/orb/recipe.ts";
+    const { getOrbRaster, getOrbRasterSource, cachedOrbRasterSource, orbRasterKey } = await import(
+      path
+    );
+    const { ORB_PRESETS } = await import(recipePath);
+    const entries: { key: string; bytes: number }[] = [];
+    let retainedSource = "";
+    for (let i = 0; i < 65; i++) {
+      const recipe = { ...ORB_PRESETS.bloom, seed: `bounded-${i}` };
+      const blob = await getOrbRaster(recipe);
+      const source = await getOrbRasterSource(recipe);
+      if (i === 0) retainedSource = source;
+      entries.push({ key: orbRasterKey(recipe), bytes: blob.size + source.length * 2 });
+    }
+    const cached = entries.filter(({ key }) => cachedOrbRasterSource(key) !== undefined);
+    // Mounted consumers can keep their source independently of its eviction from the cache.
+    const image = new Image();
+    image.src = retainedSource;
+    await image.decode();
+    return {
+      entries: cached.length,
+      bytes: cached.reduce((sum, entry) => sum + entry.bytes, 0),
+      oldestEvicted: cachedOrbRasterSource(entries[0]!.key) === undefined,
+      newestRetained: cachedOrbRasterSource(entries.at(-1)!.key) !== undefined,
+      retainedWidth: image.naturalWidth,
+    };
+  });
+  expect(result.entries).toBeLessThanOrEqual(64);
+  expect(result.bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+  expect(result.oldestEvicted).toBe(true);
+  expect(result.newestRetained).toBe(true);
+  expect(result.retainedWidth).toBe(256);
 });
 
 test("disk cache evicts old entries by recency and encoded size", async ({ page }) => {
